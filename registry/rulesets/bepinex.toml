@@ -1,0 +1,49 @@
+# Install rules for BepInEx 5 games, following the layout r2modman uses for
+# Thunderstore packages. Rules are tried in order and the first match wins.
+#
+#   files  glob matched against each file's path inside the mod
+#   mods   optional glob matched against the mod's name
+#   strip  leading path components to drop (the rule doesn't apply if there
+#          aren't enough)
+#   to     destination in the game directory; {mod}, {path} (after stripping)
+#          and {file} are filled in. Defaults to "{path}".
+#   skip   don't deploy matching files
+
+# The loader itself: BepInExPack keeps everything under BepInExPack/.
+[[rules]]
+files = "BepInExPack/**"
+strip = 1
+
+# Thunderstore package metadata isn't part of the mod.
+[[rules]]
+files = "{manifest.json,icon.png,README.md,CHANGELOG.md,LICENSE,LICENSE.md,LICENSE.txt}"
+skip = true
+
+# Mods that already ship a BepInEx/ folder go in as-is.
+[[rules]]
+files = "BepInEx/**"
+
+[[rules]]
+files = "plugins/**"
+strip = 1
+to = "BepInEx/plugins/{mod}/{path}"
+
+[[rules]]
+files = "patchers/**"
+strip = 1
+to = "BepInEx/patchers/{mod}/{path}"
+
+[[rules]]
+files = "config/**"
+strip = 1
+to = "BepInEx/config/{path}"
+
+[[rules]]
+files = "core/**"
+strip = 1
+to = "BepInEx/core/{path}"
+
+# Anything else is treated as plugin content.
+[[rules]]
+files = "**"
+to = "BepInEx/plugins/{mod}/{path}"

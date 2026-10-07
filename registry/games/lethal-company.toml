@@ -1,0 +1,10 @@
+schema = 1
+id = "lethal-company"
+name = "Lethal Company"
+
+[sources.thunderstore]
+community = "lethal-company"
+
+[deployer]
+kind = "rules"
+rulesets = ["bepinex"]

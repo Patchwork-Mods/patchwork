@@ -1,0 +1,74 @@
+use std::path::{Path, PathBuf};
+
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("{}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{}: {message}", path.display())]
+    Parse { path: PathBuf, message: String },
+    #[error(
+        "{} uses {kind} schema {found}, but this build only supports up to {supported}; update patchwork",
+        path.display()
+    )]
+    Schema {
+        kind: &'static str,
+        path: PathBuf,
+        found: u32,
+        supported: u32,
+    },
+    #[error("reqwest error {url}: {result}")]
+    Reqwest {
+        url: String,
+        #[source]
+        result: reqwest::Error,
+    },
+    #[error("error decoding json!")]
+    JsonDecode(#[from] serde_json::Error),
+    #[error("unknown game `{0}`")]
+    UnknownGame(String),
+    #[error("unknown source `{0}`")]
+    UnknownSource(String),
+    #[error("unknown deployer `{0}`")]
+    UnknownDeployer(String),
+    #[error("source `{source_id}`: {message}")]
+    Source { source_id: String, message: String },
+    #[error("deployer `{kind}`: {message}")]
+    Deployer { kind: String, message: String },
+    #[error("another patchwork process is running (lock held on {})", .0.display())]
+    Busy(PathBuf),
+    #[error("{0}")]
+    Invalid(String),
+}
+
+impl Error {
+    pub fn invalid(message: impl Into<String>) -> Self {
+        Error::Invalid(message.into())
+    }
+
+    pub fn parse(path: impl Into<PathBuf>, message: impl ToString) -> Self {
+        Error::Parse {
+            path: path.into(),
+            message: message.to_string(),
+        }
+    }
+}
+
+/// Attaches the offending path to I/O errors.
+pub trait IoContext<T> {
+    fn at(self, path: &Path) -> Result<T>;
+}
+
+impl<T> IoContext<T> for std::io::Result<T> {
+    fn at(self, path: &Path) -> Result<T> {
+        self.map_err(|source| Error::Io {
+            path: path.to_owned(),
+            source,
+        })
+    }
+}
