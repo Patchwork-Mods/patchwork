@@ -50,6 +50,11 @@ impl Paths {
         self.data.join("store")
     }
 
+    /// Where artifacts are downloaded to before they go into the store.
+    pub fn downloads(&self) -> PathBuf {
+        self.cache.join("downloads")
+    }
+
     pub fn profiles(&self) -> PathBuf {
         self.data.join("profiles")
     }

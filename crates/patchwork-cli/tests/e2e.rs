@@ -64,6 +64,33 @@ fn read(path: PathBuf) -> String {
 }
 
 #[test]
+#[ignore = "needs network"]
+fn installs_from_thunderstore() {
+    let env = Env::new();
+    let game = env.path("Lethal Company");
+    fs::create_dir_all(&game).unwrap();
+
+    env.run(&["game", "set-path", "lethal-company", game.to_str().unwrap()]);
+    env.run(&["profile", "new", "lethal-company/main"]);
+    env.run(&[
+        "add",
+        "thunderstore:notnotnotswipez-MoreCompany",
+        "--version",
+        "1.11.0",
+    ]);
+    env.run(&["deploy"]);
+
+    // BepInExPack comes in as a dependency
+    assert!(game.join("winhttp.dll").is_file());
+    assert!(game.join("BepInEx/core/BepInEx.dll").is_file());
+    // MoreCompany ships its own BepInEx/ folder, so it goes in as-is
+    assert!(game.join("BepInEx/plugins/MoreCompany.dll").is_file());
+    let lock = read(env.path("home/data/profiles/lethal-company/main/profile.lock"));
+    assert!(lock.contains("1.11.0"), "{lock}");
+    assert!(env.run(&["deploy"]).contains("nothing to do"));
+}
+
+#[test]
 fn thunderstore_style_mods_round_trip() {
     let env = Env::new();
     let game = env.path("Lethal Company");

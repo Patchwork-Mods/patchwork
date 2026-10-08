@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -378,7 +379,7 @@ impl Patchwork {
                         self.reporter.report(Event::Fetching {
                             name: old.name.clone(),
                         });
-                        let hash = self.fetch(&old.artifact, old.format)?;
+                        let hash = self.fetch(&old.artifact, old.format).await?;
                         if hash != old.hash {
                             return Err(Error::invalid(format!(
                                 "`{}` changed since it was locked (expected {}, got {}); \
@@ -397,7 +398,7 @@ impl Patchwork {
                     let resolved = self.resolve(&loaded.game, &spec).await?;
                     let name = name.unwrap_or_else(|| resolved.name.clone());
                     self.reporter.report(Event::Fetching { name: name.clone() });
-                    let hash = self.fetch(&resolved.artifact, resolved.format)?;
+                    let hash = self.fetch(&resolved.artifact, resolved.format).await?;
                     LockedMod {
                         name,
                         source: spec.source.clone(),
@@ -440,12 +441,25 @@ impl Patchwork {
         Ok(lock)
     }
 
-    fn fetch(&self, artifact: &ArtifactLocation, format: ArtifactFormat) -> Result<ContentHash> {
+    async fn fetch(
+        &self,
+        artifact: &ArtifactLocation,
+        format: ArtifactFormat,
+    ) -> Result<ContentHash> {
         match artifact {
             ArtifactLocation::Path { path } => self.store.ingest_path(path, format),
-            ArtifactLocation::Url { url } => Err(Error::invalid(format!(
-                "can't download {url}: downloading isn't implemented yet"
-            ))),
+            ArtifactLocation::Url { url } => {
+                if format == ArtifactFormat::Dir {
+                    return Err(Error::invalid(format!(
+                        "{url} can't be downloaded as a directory"
+                    )));
+                }
+                let tmp = self.paths.downloads().join("download.tmp");
+                download(url, &tmp).await?;
+                let hash = self.store.ingest_path(&tmp, format);
+                fs::remove_file(&tmp).at(&tmp)?;
+                hash
+            }
         }
     }
 
@@ -555,6 +569,27 @@ impl Patchwork {
     }
 }
 
+/// Streams `url` into the file at `dest`. Holding the state lock means only
+/// one download happens at a time, so `dest` can be a fixed path.
+async fn download(url: &str, dest: &Path) -> Result<()> {
+    let reqwest_error = |result| Error::Reqwest {
+        url: url.to_owned(),
+        result,
+    };
+    let mut response = reqwest::get(url)
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(reqwest_error)?;
+    if let Some(dir) = dest.parent() {
+        fs::create_dir_all(dir).at(dir)?;
+    }
+    let mut file = fs::File::create(dest).at(dest)?;
+    while let Some(chunk) = response.chunk().await.map_err(reqwest_error)? {
+        file.write_all(&chunk).at(dest)?;
+    }
+    Ok(())
+}
+
 /// Depth-first, so dependencies come before the mods that need them.
 fn visit<'a>(
     key: &str,
@@ -576,4 +611,51 @@ fn visit<'a>(
 
 fn no_such_mod(profile: &ProfileRef, name: &str) -> Error {
     Error::invalid(format!("{profile} has no mod named `{name}`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    use super::*;
+
+    /// Answers one HTTP request with `status` and `body`, returning its URL.
+    fn serve_once(status: &'static str, body: &'static [u8]) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mod.zip", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(body).unwrap();
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn downloads_to_a_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("downloads/download.tmp");
+        download(&serve_once("200 OK", b"zip bytes"), &dest)
+            .await
+            .unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"zip bytes");
+    }
+
+    #[tokio::test]
+    async fn http_errors_fail_the_download() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("download.tmp");
+        let err = download(&serve_once("404 Not Found", b""), &dest)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("404"), "{err}");
+    }
 }

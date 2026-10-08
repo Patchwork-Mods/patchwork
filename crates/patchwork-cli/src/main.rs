@@ -9,7 +9,7 @@ use patchwork_core::event::{Event, Reporter};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::ProfileRef;
 use patchwork_deployers::RulesDeployer;
-use patchwork_sources::LocalSource;
+use patchwork_sources::{LocalSource, Thunderstore};
 
 #[derive(Parser)]
 #[command(name = "patchwork", version, about = "A universal mod manager")]
@@ -120,6 +120,7 @@ async fn main() -> ExitCode {
 async fn run(cli: Cli) -> Result<()> {
     let pw = Patchwork::builder(Paths::from_env()?)
         .source(LocalSource)
+        .source(Thunderstore)
         .deployer(RulesDeployer)
         .reporter(Printer)
         .open()?;
