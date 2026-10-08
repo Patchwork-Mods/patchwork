@@ -1,12 +1,16 @@
 use async_trait::async_trait;
 use jiff::Timestamp;
-use jiff::civil::DateTime;
 use patchwork_core::Result;
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+const API: &str = "https://thunderstore.io/api/experimental";
+
+/// Mods from Thunderstore. Ids are `Namespace-Name`, the same form Thunderstore
+/// uses in dependency strings, e.g. `thunderstore:BepInEx-BepInExPack`.
 pub struct Thunderstore;
 
 #[derive(Debug, Clone)]
@@ -25,10 +29,10 @@ pub struct PackageExperimental {
     pub package_url: Option<String>,
     pub date_created: Option<Timestamp>,
     pub date_updated: Option<Timestamp>,
-    pub rating_score: Option<String>,
+    pub rating_score: Option<i64>,
     pub is_pinned: Option<bool>,
     pub is_deprecated: Option<bool>,
-    pub total_downloads: Option<String>,
+    pub total_downloads: Option<i64>,
     pub latest: PackageVersionExperimental,
     pub community_listings: Vec<PackageListingExperimental>,
 }
@@ -43,16 +47,16 @@ pub struct PackageVersionExperimental {
     pub icon: Option<String>,
     pub dependencies: Option<Vec<String>>,
     pub download_url: Option<String>,
-    pub downloads: Option<u32>,
-    pub date_created: Option<DateTime>,
-    pub website_url: String,
+    pub downloads: Option<u64>,
+    pub date_created: Option<Timestamp>,
+    pub website_url: Option<String>,
     pub is_active: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageListingExperimental {
     pub has_nsfw_content: Option<bool>,
-    pub categories: Option<String>,
+    pub categories: Option<Vec<String>>,
     pub community: Option<String>,
     pub review_status: Option<ReviewStatus>,
 }
@@ -65,13 +69,22 @@ pub enum ReviewStatus {
     Rejected,
 }
 
+// --- End API Responses ---
+
+fn error(message: impl Into<String>) -> patchwork_core::Error {
+    patchwork_core::Error::Source {
+        source_id: "thunderstore".to_owned(),
+        message: message.into(),
+    }
+}
+
 // converts a thunderstore mod to our internal version of a mod
 fn thunderstore_to_resolved_mod(mod_: PackageVersion) -> Option<ResolvedMod> {
+    let PackageVersion { package, version } = mod_;
     let artifact = ArtifactLocation::Url {
-        url: mod_.package.package_url?,
+        url: version.download_url?,
     };
-    let dependencies = mod_
-        .version
+    let dependencies = version
         .dependencies
         .unwrap_or_default()
         .iter()
@@ -85,10 +98,11 @@ fn thunderstore_to_resolved_mod(mod_: PackageVersion) -> Option<ResolvedMod> {
         })
         .collect::<Option<Vec<_>>>()?;
 
+    let id = format!("{}-{}", package.namespace?, package.name);
     Some(ResolvedMod {
-        id: mod_.package.name.clone(),
-        name: mod_.package.full_name.unwrap_or(mod_.package.name),
-        version: None,
+        name: package.full_name.unwrap_or_else(|| id.clone()),
+        id,
+        version: Some(version.version_number),
         artifact,
         format: ArtifactFormat::Zip,
         dependencies,
@@ -107,8 +121,6 @@ fn decode_mod_version_name(name_version: &str) -> Option<ModNameVersion> {
         version: version.to_string(),
     })
 }
-
-// --- End API Responses ---
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -131,71 +143,229 @@ impl Source for Thunderstore {
         let config: Config = ctx
             .config
             .cloned()
-            .ok_or_else(|| patchwork_core::Error::Source {
-                source_id: id.to_string(),
-                message: format!(
+            .ok_or_else(|| {
+                error(format!(
                     "{} isn't on Thunderstore (no [sources.thunderstore] in its definition)",
                     ctx.game.id
-                ),
+                ))
             })?
             .try_into()
-            .map_err(|e| patchwork_core::Error::Source {
-                source_id: id.to_string(),
-                message: format!("bad [sources.thunderstore] for {}: {e}", ctx.game.id),
+            .map_err(|e| {
+                error(format!(
+                    "bad [sources.thunderstore] for {}: {e}",
+                    ctx.game.id
+                ))
             })?;
 
-        let response = get_thunderstore_package(id, &config.community, version).await?;
-        thunderstore_to_resolved_mod(response.clone()).ok_or(patchwork_core::Error::Source {
-            source_id: "thunderstore".to_string(),
-            message: format!("Could not resolve thunderstore mod: {response:?}"),
-        })
+        let response = get_thunderstore_package(id, version).await?;
+        if !response
+            .package
+            .community_listings
+            .iter()
+            .any(|l| l.community.as_deref() == Some(config.community.as_str()))
+        {
+            return Err(error(format!(
+                "{id} isn't listed in the {} community",
+                config.community
+            )));
+        }
+        thunderstore_to_resolved_mod(response.clone())
+            .ok_or_else(|| error(format!("could not resolve thunderstore mod: {response:?}")))
     }
 }
 
-async fn get_thunderstore_package(
-    id: &str,
-    community: &str,
-    version: Option<&str>,
-) -> Result<PackageVersion> {
-    let url = format!(
-        "https://thunderstore.io/api/experimental/package/{}/{}",
-        community, id
-    );
-    let response = reqwest::get(url.clone())
-        .await
-        .map_err(|e| patchwork_core::Error::Reqwest {
-            url: url.clone(),
-            result: e,
-        })?;
-    let package: PackageExperimental =
-        serde_json::from_slice(&response.bytes().await.map_err(|result| {
-            patchwork_core::Error::Reqwest {
-                url: url.clone(),
-                result,
-            }
-        })?)?;
-
-    // kinda wasteful to do the first call if we only need the version package, but who cares
-    let version_package = if let Some(v) = version {
-        let url = format!("{url}/{v}");
-        let response =
-            reqwest::get(url.clone())
-                .await
-                .map_err(|e| patchwork_core::Error::Reqwest {
-                    url: url.clone(),
-                    result: e,
-                })?;
-        serde_json::from_slice(
-            &response
-                .bytes()
-                .await
-                .map_err(|result| patchwork_core::Error::Reqwest { url, result })?,
-        )?
-    } else {
-        todo! {}
+async fn get_json<T: DeserializeOwned>(url: String) -> Result<T> {
+    let reqwest_error = |result| patchwork_core::Error::Reqwest {
+        url: url.clone(),
+        result,
     };
-    Ok(PackageVersion {
-        package,
-        version: version_package,
-    })
+    let bytes = reqwest::get(&url)
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(reqwest_error)?
+        .bytes()
+        .await
+        .map_err(reqwest_error)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+async fn get_thunderstore_package(id: &str, version: Option<&str>) -> Result<PackageVersion> {
+    let (namespace, name) = id
+        .split_once('-')
+        .ok_or_else(|| error(format!("`{id}` should look like `Namespace-Name`")))?;
+    // the trailing slashes matter, thunderstore 502s without them
+    let url = format!("{API}/package/{namespace}/{name}/");
+    // we need the package either way for its community listings
+    let package: PackageExperimental = get_json(url.clone()).await?;
+    let version = match version {
+        Some(v) => get_json(format!("{url}{v}/")).await?,
+        None => package.latest.clone(),
+    };
+    Ok(PackageVersion { package, version })
+}
+
+#[cfg(test)]
+mod thunderstore_test {
+    use super::*;
+    use patchwork_core::game::GameDef;
+
+    // a response for notnotnotswipez/MoreCompany
+    const PACKAGE: &str = r#"{
+        "namespace": "notnotnotswipez",
+        "name": "MoreCompany",
+        "full_name": "notnotnotswipez-MoreCompany",
+        "owner": "notnotnotswipez",
+        "package_url": "https://thunderstore.io/package/notnotnotswipez/MoreCompany/",
+        "date_created": "2023-11-16T04:46:27.899881Z",
+        "date_updated": "2026-04-25T01:28:42.076106Z",
+        "rating_score": -1,
+        "is_pinned": false,
+        "is_deprecated": false,
+        "total_downloads": -1,
+        "latest": {
+            "namespace": "notnotnotswipez",
+            "name": "MoreCompany",
+            "version_number": "1.14.0",
+            "full_name": "notnotnotswipez-MoreCompany-1.14.0",
+            "description": "A stable lobby player count expansion mod. With cosmetics!",
+            "icon": "https://ccdn.thunderstore.io/live/repository/icons/notnotnotswipez-MoreCompany-1.14.0.png",
+            "dependencies": ["BepInEx-BepInExPack-5.4.2100"],
+            "download_url": "https://thunderstore.io/package/download/notnotnotswipez/MoreCompany/1.14.0/",
+            "downloads": 917031,
+            "date_created": "2026-04-25T01:28:40.943994Z",
+            "website_url": "https://github.com/notnotnotswipez/MoreCompany",
+            "is_active": true
+        },
+        "community_listings": [{
+            "has_nsfw_content": false,
+            "categories": ["Mods", "BepInEx", "Tweaks & Quality Of Life"],
+            "community": "lethal-company",
+            "review_status": "approved"
+        }]
+    }"#;
+
+    fn lethal_company() -> GameDef {
+        toml::from_str(
+            r#"
+            schema = 1
+            id = "lethal-company"
+            name = "Lethal Company"
+
+            [sources.thunderstore]
+            community = "lethal-company"
+
+            [deployer]
+            kind = "rules"
+            "#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn converts_api_response() {
+        let package: PackageExperimental = serde_json::from_str(PACKAGE).unwrap();
+        let version = package.latest.clone();
+        let resolved = thunderstore_to_resolved_mod(PackageVersion { package, version }).unwrap();
+
+        assert_eq!(resolved.id, "notnotnotswipez-MoreCompany");
+        assert_eq!(resolved.name, "notnotnotswipez-MoreCompany");
+        assert_eq!(resolved.version.as_deref(), Some("1.14.0"));
+        assert_eq!(resolved.format, ArtifactFormat::Zip);
+        assert_eq!(
+            resolved.artifact,
+            ArtifactLocation::Url {
+                url: "https://thunderstore.io/package/download/notnotnotswipez/MoreCompany/1.14.0/"
+                    .to_owned()
+            }
+        );
+        assert_eq!(
+            resolved.dependencies,
+            vec![ModSpec {
+                source: "thunderstore".to_owned(),
+                id: "BepInEx-BepInExPack".to_owned(),
+                version: Some("5.4.2100".to_owned()),
+            }]
+        );
+    }
+
+    #[test]
+    fn decodes_dependency_strings() {
+        let ModNameVersion { name, version } =
+            decode_mod_version_name("BepInEx-BepInExPack-5.4.2100").unwrap();
+        assert_eq!(name, "BepInEx-BepInExPack");
+        assert_eq!(version, "5.4.2100");
+        assert!(decode_mod_version_name("nohyphens").is_none());
+    }
+
+    #[tokio::test]
+    async fn needs_community_config() {
+        let mut game = lethal_company();
+        game.sources.clear();
+        let ctx = SourceContext {
+            game: &game,
+            config: None,
+        };
+        let err = Thunderstore
+            .resolve(&ctx, "notnotnotswipez-MoreCompany", None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("isn't on Thunderstore"), "{err}");
+    }
+
+    // These talk to thunderstore.io; run them with `cargo test -- --ignored`.
+
+    #[tokio::test]
+    #[ignore = "needs network"]
+    async fn test_get_mod() {
+        let game = lethal_company();
+        let ctx = SourceContext {
+            game: &game,
+            config: game.sources.get("thunderstore"),
+        };
+
+        let latest = Thunderstore
+            .resolve(&ctx, "notnotnotswipez-MoreCompany", None)
+            .await
+            .unwrap();
+        assert_eq!(latest.id, "notnotnotswipez-MoreCompany");
+        assert!(latest.version.is_some());
+
+        let pinned = Thunderstore
+            .resolve(&ctx, "notnotnotswipez-MoreCompany", Some("1.11.0"))
+            .await
+            .unwrap();
+        assert_eq!(pinned.version.as_deref(), Some("1.11.0"));
+        assert_eq!(
+            pinned.artifact,
+            ArtifactLocation::Url {
+                url: "https://thunderstore.io/package/download/notnotnotswipez/MoreCompany/1.11.0/"
+                    .to_owned()
+            }
+        );
+        assert!(
+            pinned
+                .dependencies
+                .iter()
+                .any(|d| d.id == "BepInEx-BepInExPack")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs network"]
+    async fn rejects_other_communities() {
+        let mut game = lethal_company();
+        game.sources.get_mut("thunderstore").unwrap().insert(
+            "community".to_owned(),
+            toml::Value::String("riskofrain2".to_owned()),
+        );
+        let ctx = SourceContext {
+            game: &game,
+            config: game.sources.get("thunderstore"),
+        };
+        let err = Thunderstore
+            .resolve(&ctx, "notnotnotswipez-MoreCompany", None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("isn't listed"), "{err}");
+    }
 }
