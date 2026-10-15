@@ -1,15 +1,17 @@
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use patchwork_core::Patchwork;
+use patchwork_core::{ImportOptions, Patchwork};
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileRef};
 use patchwork_deployers::RulesDeployer;
-use patchwork_sources::{LocalSource, Nexus, Thunderstore};
+use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
+use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
 
 #[derive(Parser)]
 #[command(name = "patchwork", version, about = "A universal mod manager")]
@@ -91,6 +93,34 @@ enum ProfileCommand {
     List,
     /// Switch to a profile.
     Use { profile: String },
+    /// Export the profile to share it (see `profile formats`).
+    Export {
+        #[arg(short, long, default_value = "patchwork")]
+        format: String,
+        /// Where to write it; `-` for stdout. Files default to
+        /// `<name>.<ext>`, and text (codes, links) to stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Import a profile from a file, a code or a list of links (`-` reads
+    /// stdin), and switch to it.
+    Import {
+        input: String,
+        /// Worked out from the input if not given.
+        #[arg(short, long)]
+        format: Option<String>,
+        /// The game it's for, if the format doesn't say.
+        #[arg(long)]
+        game: Option<String>,
+        /// What to call it, instead of the name it was shared with.
+        #[arg(long)]
+        name: Option<String>,
+        /// Update the profile if it's already here, rather than failing.
+        #[arg(long)]
+        replace: bool,
+    },
+    /// List the formats profiles can be exported to and imported from.
+    Formats,
 }
 
 struct Printer;
@@ -122,7 +152,12 @@ async fn run(cli: Cli) -> Result<()> {
         .source(LocalSource)
         .source(Thunderstore)
         .source(Nexus::from_env())
+        .source(UrlSource)
         .deployer(RulesDeployer)
+        .format(Archive)
+        .format(UrlList)
+        .format(R2modman)
+        .format(ThunderstoreCode::default())
         .reporter(Printer)
         .open()?;
     for problem in &pw.registry().problems {
@@ -131,7 +166,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Command::Game(command) => game(&pw, command)?,
-        Command::Profile(command) => profile(&pw, command)?,
+        Command::Profile(command) => profile(&pw, command, &cli.profile).await?,
         Command::Add {
             spec,
             name,
@@ -219,7 +254,7 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
     Ok(())
 }
 
-fn profile(pw: &Patchwork, command: ProfileCommand) -> Result<()> {
+async fn profile(pw: &Patchwork, command: ProfileCommand, explicit: &Option<String>) -> Result<()> {
     match command {
         ProfileCommand::New { profile } => {
             let Some((game, name)) = profile.split_once('/') else {
@@ -243,6 +278,57 @@ fn profile(pw: &Patchwork, command: ProfileCommand) -> Result<()> {
         ProfileCommand::Use { profile } => {
             pw.use_profile(&pw.find_profile(&profile)?)?;
             println!("switched to {profile}");
+        }
+        ProfileCommand::Export { format, output } => {
+            let (profile, loaded) = selected(pw, explicit)?;
+            let extension = pw.format(&format)?.extension();
+            let output = output.or_else(|| {
+                extension.map(|ext| PathBuf::from(format!("{}.{ext}", loaded.name)))
+            });
+            let bytes = pw.export_profile(&profile, &format).await?;
+            match output {
+                Some(path) if path != Path::new("-") => {
+                    std::fs::write(&path, bytes)
+                        .with_context(|| format!("writing {}", path.display()))?;
+                    eprintln!("exported {} to {}", loaded.label(), path.display());
+                }
+                _ => std::io::stdout().write_all(&bytes)?,
+            }
+        }
+        ProfileCommand::Import {
+            input,
+            format,
+            game,
+            name,
+            replace,
+        } => {
+            let bytes = if input == "-" {
+                let mut bytes = Vec::new();
+                std::io::stdin().read_to_end(&mut bytes)?;
+                bytes
+            } else if Path::new(&input).is_file() {
+                std::fs::read(&input).with_context(|| format!("reading {input}"))?
+            } else {
+                input.into_bytes()
+            };
+            let options = ImportOptions {
+                format: format.as_deref(),
+                game: game.as_deref(),
+                name: name.as_deref(),
+                replace,
+            };
+            let imported = pw.import_profile(&bytes, &options).await?;
+            pw.use_profile(&imported.profile)?;
+            let verb = if imported.replaced { "updated" } else { "imported" };
+            println!(
+                "{verb} {} ({} mods, from {}) and switched to it; run `patchwork deploy` to install them",
+                imported.label, imported.mods, imported.format
+            );
+        }
+        ProfileCommand::Formats => {
+            for format in pw.formats() {
+                println!("{:<18} {}", format.id(), format.description());
+            }
         }
     }
     Ok(())

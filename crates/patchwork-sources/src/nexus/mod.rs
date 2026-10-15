@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use patchwork_core::Result;
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, ResolvedMod, Source, SourceContext,
+    ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext, url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -104,6 +104,19 @@ struct Config {
     game_domain: String,
 }
 
+fn config(ctx: &SourceContext<'_>) -> Result<Config> {
+    ctx.config
+        .cloned()
+        .ok_or_else(|| {
+            error(format!(
+                "{} isn't on Nexus (no [sources.nexus] in its definition)",
+                ctx.game.id
+            ))
+        })?
+        .try_into()
+        .map_err(|e| error(format!("bad [sources.nexus] for {}: {e}", ctx.game.id)))
+}
+
 /// Picks which of a mod's files `version` refers to. Main files win over
 /// optional ones, then the newest upload wins; old and archived files are
 /// only considered when a version is asked for.
@@ -152,17 +165,7 @@ impl Source for Nexus {
         id: &str,
         version: Option<&str>,
     ) -> Result<ResolvedMod> {
-        let config: Config = ctx
-            .config
-            .cloned()
-            .ok_or_else(|| {
-                error(format!(
-                    "{} isn't on Nexus (no [sources.nexus] in its definition)",
-                    ctx.game.id
-                ))
-            })?
-            .try_into()
-            .map_err(|e| error(format!("bad [sources.nexus] for {}: {e}", ctx.game.id)))?;
+        let config = config(ctx)?;
         let mod_id: u64 = id
             .parse()
             .map_err(|_| error(format!("`{id}` should be a numeric Nexus mod id")))?;
@@ -200,6 +203,33 @@ impl Source for Nexus {
             .ok_or_else(|| error(format!("Nexus gave no download links for {id}")))?
             .uri;
         Ok(nexus_to_resolved_mod(&mod_, file, url))
+    }
+
+    /// Mod pages don't pin a version, so it's dropped.
+    fn mod_url(&self, ctx: &SourceContext<'_>, id: &str, _version: Option<&str>) -> Option<String> {
+        let domain = config(ctx).ok()?.game_domain;
+        Some(format!("https://www.nexusmods.com/{domain}/mods/{id}"))
+    }
+
+    fn parse_url(&self, ctx: &SourceContext<'_>, url: &str) -> Result<Option<ModSpec>> {
+        let Some(("nexusmods.com", segments)) = url_parts(url) else {
+            return Ok(None);
+        };
+        let [domain, "mods", id, ..] = segments.as_slice() else {
+            return Ok(None);
+        };
+        if id.parse::<u64>().is_err() {
+            return Ok(None);
+        }
+        let expected = config(ctx)?.game_domain;
+        if *domain != expected {
+            return Err(error(format!("{url} is a mod for {domain}, not {expected}")));
+        }
+        Ok(Some(ModSpec {
+            source: "nexus".to_owned(),
+            id: id.to_string(),
+            version: None,
+        }))
     }
 }
 

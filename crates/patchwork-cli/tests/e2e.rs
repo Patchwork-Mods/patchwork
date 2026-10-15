@@ -282,3 +282,139 @@ id = "notnotnotswipez-MoreCompany"
     assert!(profile.contains("schema = 2"), "{profile}");
     assert!(profile.contains("name = \"main\""), "{profile}");
 }
+
+#[test]
+fn profiles_move_between_machines_as_zips() {
+    let alice = Env::new();
+    let plugin = alice.path("MoreCompany.zip");
+    write_zip(&plugin, &[("plugins/MoreCompany.dll", "more")]);
+    let folder = alice.path("Tweaks");
+    fs::create_dir_all(folder.join("plugins")).unwrap();
+    fs::write(folder.join("plugins/Tweaks.dll"), "tweaks").unwrap();
+
+    alice.run(&["profile", "new", "lethal-company/main"]);
+    alice.run(&["add", plugin.to_str().unwrap()]);
+    alice.run(&["add", folder.to_str().unwrap(), "--disabled"]);
+    let export = alice.path("main.zip");
+    alice.run(&["profile", "export", "-o", export.to_str().unwrap()]);
+
+    // Bob has none of Alice's files.
+    let bob = Env::new();
+    let game = bob.path("Lethal Company");
+    fs::create_dir_all(&game).unwrap();
+    bob.run(&["game", "set-path", "lethal-company", game.to_str().unwrap()]);
+    let out = bob.run(&["profile", "import", export.to_str().unwrap()]);
+    assert!(
+        out.contains("imported lethal-company/main (2 mods, from patchwork)"),
+        "{out}"
+    );
+    let list = bob.run(&["list"]);
+    assert!(list.contains("[x] MoreCompany"), "{list}");
+    assert!(list.contains("[ ] Tweaks"), "{list}");
+    bob.run(&["enable", "Tweaks"]);
+    bob.run(&["deploy"]);
+    assert_eq!(
+        read(game.join("BepInEx/plugins/MoreCompany/MoreCompany.dll")),
+        "more"
+    );
+    assert_eq!(
+        read(game.join("BepInEx/plugins/Tweaks/Tweaks.dll")),
+        "tweaks"
+    );
+
+    // It's recognized as the same profile the second time around.
+    let err = bob.fails(&["profile", "import", export.to_str().unwrap()]);
+    assert!(err.contains("already exists"), "{err}");
+    bob.run(&["remove", "Tweaks"]);
+    let out = bob.run(&["profile", "import", export.to_str().unwrap(), "--replace"]);
+    assert!(out.contains("updated lethal-company/main"), "{out}");
+    assert!(bob.run(&["list"]).contains("Tweaks"));
+    bob.run(&["deploy"]);
+    let out = bob.run(&[
+        "profile",
+        "import",
+        export.to_str().unwrap(),
+        "--name",
+        "copy",
+    ]);
+    assert!(out.contains("imported lethal-company/copy"), "{out}");
+    assert!(
+        bob.run(&["profile", "list"])
+            .contains("* lethal-company/copy")
+    );
+}
+
+#[test]
+fn profiles_can_be_shared_as_links() {
+    let alice = Env::new();
+    alice.run(&["profile", "new", "lethal-company/main"]);
+    alice.run(&["add", "url:https://example.com/mods/Cool.Mod.zip"]);
+    alice.run(&["add", "url:https://example.com/Other.dll", "--disabled"]);
+    let local = alice.path("Local.zip");
+    write_zip(&local, &[("plugins/a.dll", "a")]);
+    alice.run(&["add", local.to_str().unwrap()]);
+    let links = alice.run(&["profile", "export", "--format", "urls"]);
+    assert_eq!(links.trim(), "https://example.com/mods/Cool.Mod.zip");
+
+    let bob = Env::new();
+    let out = bob.run(&[
+        "profile",
+        "import",
+        "https://example.com/a.zip, https://example.com/b.pak",
+        "--name",
+        "linked",
+        "--game",
+        "lethal-company",
+    ]);
+    assert!(out.contains("(2 mods, from urls)"), "{out}");
+    let list = bob.run(&["list"]);
+    assert!(
+        list.contains("[x] a  (url:https://example.com/a.zip)"),
+        "{list}"
+    );
+    assert!(
+        list.contains("[x] b  (url:https://example.com/b.pak)"),
+        "{list}"
+    );
+
+    let err = bob.fails(&["profile", "import", "not a thing"]);
+    assert!(err.contains("couldn't tell what format"), "{err}");
+}
+
+#[test]
+fn r2modman_profiles_are_imported() {
+    let env = Env::new();
+    let r2z = env.path("Friends.r2z");
+    write_zip(
+        &r2z,
+        &[
+            (
+                "export.r2x",
+                "profileName: Friends Pack\nmods:\n  - name: BepInEx-BepInExPack\n    version:\n      major: 5\n      minor: 4\n      patch: 2100\n    enabled: true\n  - name: notnotnotswipez-MoreCompany\n    version:\n      major: 1\n      minor: 11\n      patch: 0\n    enabled: false\n",
+            ),
+            ("BepInEx/config/MoreCompany.cfg", "x"),
+        ],
+    );
+    let out = env.run(&[
+        "profile",
+        "import",
+        r2z.to_str().unwrap(),
+        "--game",
+        "lethal-company",
+    ]);
+    assert!(
+        out.contains("imported lethal-company/Friends-Pack (2 mods, from r2modman)"),
+        "{out}"
+    );
+    let list = env.run(&["list"]);
+    assert!(
+        list.contains("[x] BepInEx-BepInExPack  (thunderstore:BepInEx-BepInExPack @ 5.4.2100)"),
+        "{list}"
+    );
+    assert!(list.contains("[ ] notnotnotswipez-MoreCompany"), "{list}");
+
+    assert!(
+        env.run(&["profile", "formats"])
+            .contains("thunderstore-code")
+    );
+}

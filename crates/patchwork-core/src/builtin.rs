@@ -21,5 +21,6 @@ macro_rules! entry {
 /// `(kind, id, contents)`
 pub const ENTRIES: &[(&str, &str, &str)] = &[
     entry!("games", "lethal-company"),
+    entry!("games", "risk-of-rain-2"),
     entry!("rulesets", "bepinex"),
 ];

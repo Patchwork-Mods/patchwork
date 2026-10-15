@@ -12,6 +12,7 @@ path = "src/main.rs"
 patchwork-core.workspace = true
 patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
+patchwork-formats.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true

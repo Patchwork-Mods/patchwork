@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use jiff::Timestamp;
 use patchwork_core::Result;
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext,
+    ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext, url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -128,6 +128,49 @@ struct Config {
     community: String,
 }
 
+fn config(ctx: &SourceContext<'_>) -> Result<Config> {
+    ctx.config
+        .cloned()
+        .ok_or_else(|| {
+            error(format!(
+                "{} isn't on Thunderstore (no [sources.thunderstore] in its definition)",
+                ctx.game.id
+            ))
+        })?
+        .try_into()
+        .map_err(|e| {
+            error(format!(
+                "bad [sources.thunderstore] for {}: {e}",
+                ctx.game.id
+            ))
+        })
+}
+
+/// Recognizes package pages (`/c/<community>/p/<namespace>/<name>/`, maybe
+/// with `v/<version>/`) and download links
+/// (`/package/download/<namespace>/<name>/<version>/`), returning the
+/// community if the URL has one, the id and the version.
+fn parse_package_url(url: &str) -> Option<(Option<&str>, String, Option<String>)> {
+    let (host, segments) = url_parts(url)?;
+    if host != "thunderstore.io" {
+        return None;
+    }
+    match segments.as_slice() {
+        ["c", community, "p", namespace, name, rest @ ..] => {
+            let version = match rest {
+                [] => None,
+                ["v", version] => Some(version.to_string()),
+                _ => return None,
+            };
+            Some((Some(community), format!("{namespace}-{name}"), version))
+        }
+        ["package", "download", namespace, name, version] => {
+            Some((None, format!("{namespace}-{name}"), Some(version.to_string())))
+        }
+        _ => None,
+    }
+}
+
 #[async_trait]
 impl Source for Thunderstore {
     fn id(&self) -> &str {
@@ -140,23 +183,7 @@ impl Source for Thunderstore {
         id: &str,
         version: Option<&str>,
     ) -> Result<ResolvedMod> {
-        let config: Config = ctx
-            .config
-            .cloned()
-            .ok_or_else(|| {
-                error(format!(
-                    "{} isn't on Thunderstore (no [sources.thunderstore] in its definition)",
-                    ctx.game.id
-                ))
-            })?
-            .try_into()
-            .map_err(|e| {
-                error(format!(
-                    "bad [sources.thunderstore] for {}: {e}",
-                    ctx.game.id
-                ))
-            })?;
-
+        let config = config(ctx)?;
         let response = get_thunderstore_package(id, version).await?;
         if !response
             .package
@@ -171,6 +198,35 @@ impl Source for Thunderstore {
         }
         thunderstore_to_resolved_mod(response.clone())
             .ok_or_else(|| error(format!("could not resolve thunderstore mod: {response:?}")))
+    }
+
+    fn mod_url(&self, ctx: &SourceContext<'_>, id: &str, version: Option<&str>) -> Option<String> {
+        let community = config(ctx).ok()?.community;
+        let (namespace, name) = id.split_once('-')?;
+        let mut url = format!("https://thunderstore.io/c/{community}/p/{namespace}/{name}/");
+        if let Some(version) = version {
+            url.push_str(&format!("v/{version}/"));
+        }
+        Some(url)
+    }
+
+    fn parse_url(&self, ctx: &SourceContext<'_>, url: &str) -> Result<Option<ModSpec>> {
+        let Some((community, id, version)) = parse_package_url(url) else {
+            return Ok(None);
+        };
+        let expected = config(ctx)?.community;
+        if let Some(community) = community
+            && community != expected
+        {
+            return Err(error(format!(
+                "{url} is in the {community} community, not {expected}"
+            )));
+        }
+        Ok(Some(ModSpec {
+            source: "thunderstore".to_owned(),
+            id,
+            version,
+        }))
     }
 }
 
@@ -295,6 +351,55 @@ mod thunderstore_test {
         assert_eq!(name, "BepInEx-BepInExPack");
         assert_eq!(version, "5.4.2100");
         assert!(decode_mod_version_name("nohyphens").is_none());
+    }
+
+    #[test]
+    fn urls_round_trip() {
+        let game = lethal_company();
+        let ctx = SourceContext {
+            game: &game,
+            config: game.sources.get("thunderstore"),
+        };
+        let url = Thunderstore
+            .mod_url(&ctx, "notnotnotswipez-MoreCompany", Some("1.11.0"))
+            .unwrap();
+        assert_eq!(
+            url,
+            "https://thunderstore.io/c/lethal-company/p/notnotnotswipez/MoreCompany/v/1.11.0/"
+        );
+        let spec = Thunderstore.parse_url(&ctx, &url).unwrap().unwrap();
+        assert_eq!(spec.id, "notnotnotswipez-MoreCompany");
+        assert_eq!(spec.version.as_deref(), Some("1.11.0"));
+
+        let spec = Thunderstore
+            .parse_url(
+                &ctx,
+                "https://thunderstore.io/package/download/BepInEx/BepInExPack/5.4.2100/",
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(spec.id, "BepInEx-BepInExPack");
+        assert_eq!(spec.version.as_deref(), Some("5.4.2100"));
+
+        let spec = Thunderstore
+            .parse_url(
+                &ctx,
+                "https://thunderstore.io/c/lethal-company/p/notnotnotswipez/MoreCompany/?tab=wiki",
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(spec.version, None);
+
+        assert!(
+            Thunderstore
+                .parse_url(&ctx, "https://example.com/c/x/p/a/b/")
+                .unwrap()
+                .is_none()
+        );
+        let err = Thunderstore
+            .parse_url(&ctx, "https://thunderstore.io/c/riskofrain2/p/a/b/")
+            .unwrap_err();
+        assert!(err.to_string().contains("riskofrain2"), "{err}");
     }
 
     #[tokio::test]

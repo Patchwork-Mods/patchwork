@@ -35,6 +35,15 @@ impl Store {
         self.root.join("trees").join(hash.to_string())
     }
 
+    /// Where an artifact lives in the store: the file as it was fetched, or
+    /// the directory for directory mods.
+    pub fn path(&self, hash: &ContentHash, format: ArtifactFormat) -> PathBuf {
+        match format {
+            ArtifactFormat::Zip | ArtifactFormat::File => self.blob(hash),
+            ArtifactFormat::Dir => self.tree(hash),
+        }
+    }
+
     pub fn contains(&self, hash: &ContentHash, format: ArtifactFormat) -> bool {
         match format {
             ArtifactFormat::Zip | ArtifactFormat::File => self.blob(hash).is_file(),

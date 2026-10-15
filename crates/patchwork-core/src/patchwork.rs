@@ -11,11 +11,13 @@ use crate::deploy::{self, DeployContext, DeployPlan, DeployState, Deployer, Inst
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
 use crate::fsutil::{self, StateLock};
+use crate::game::GameDef;
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
 use crate::paths::Paths;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod, ProfileRef, validate_name};
 use crate::registry::Registry;
+use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{ArtifactFormat, ArtifactLocation, ModSpec, Source, SourceContext};
 use crate::store::Store;
 use crate::{Error, Result};
@@ -24,6 +26,31 @@ use crate::{Error, Result};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameInstall {
     pub path: PathBuf,
+}
+
+/// How to import a profile; see [`Patchwork::import_profile`].
+#[derive(Debug, Clone, Default)]
+pub struct ImportOptions<'a> {
+    /// Worked out from the input if not given.
+    pub format: Option<&'a str>,
+    /// Needed for formats that don't record the game, unless only one game
+    /// supports the format.
+    pub game: Option<&'a str>,
+    /// Defaults to the name the profile was shared with.
+    pub name: Option<&'a str>,
+    /// Overwrite the mods of a profile that's already here: the same profile
+    /// imported before (matched by id), or else one with the same name. The
+    /// existing profile keeps its name.
+    pub replace: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Imported {
+    pub profile: ProfileRef,
+    pub label: String,
+    pub format: String,
+    pub mods: usize,
+    pub replaced: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -36,6 +63,7 @@ pub struct Builder {
     paths: Paths,
     sources: BTreeMap<String, Arc<dyn Source>>,
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
+    formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
     reporter: Arc<dyn Reporter>,
 }
 
@@ -49,6 +77,12 @@ impl Builder {
     pub fn deployer(mut self, deployer: impl Deployer + 'static) -> Self {
         self.deployers
             .insert(deployer.kind().to_owned(), Arc::new(deployer));
+        self
+    }
+
+    pub fn format(mut self, format: impl ProfileFormat + 'static) -> Self {
+        self.formats
+            .insert(format.id().to_owned(), Arc::new(format));
         self
     }
 
@@ -67,6 +101,7 @@ impl Builder {
             paths: self.paths,
             sources: self.sources,
             deployers: self.deployers,
+            formats: self.formats,
             reporter: self.reporter,
             _lock: lock,
         };
@@ -83,6 +118,7 @@ pub struct Patchwork {
     store: Store,
     sources: BTreeMap<String, Arc<dyn Source>>,
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
+    formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
     reporter: Arc<dyn Reporter>,
     _lock: StateLock,
 }
@@ -93,6 +129,7 @@ impl Patchwork {
             paths,
             sources: BTreeMap::new(),
             deployers: BTreeMap::new(),
+            formats: BTreeMap::new(),
             reporter: Arc::new(Silent),
         }
     }
@@ -541,6 +578,265 @@ impl Patchwork {
         }
     }
 
+    // Sharing
+
+    pub fn formats(&self) -> impl Iterator<Item = &dyn ProfileFormat> {
+        self.formats.values().map(|f| f.as_ref())
+    }
+
+    pub fn format(&self, id: &str) -> Result<&dyn ProfileFormat> {
+        self.formats
+            .get(id)
+            .map(|f| f.as_ref())
+            .ok_or_else(|| Error::UnknownFormat(id.to_owned()))
+    }
+
+    fn format_context<'a>(&'a self, game: Option<&'a GameDef>, scratch: &'a Path) -> FormatContext<'a> {
+        FormatContext {
+            game,
+            sources: &self.sources,
+            reporter: self.reporter.as_ref(),
+            scratch,
+        }
+    }
+
+    /// Exports a profile in the given format. Formats that need the exact
+    /// versions lock the profile first, which may fetch mods.
+    pub async fn export_profile(&self, profile: &ProfileRef, format: &str) -> Result<Vec<u8>> {
+        let format = self.format(format)?;
+        let loaded = self.load_profile(profile)?;
+        let game = &self.registry.game(&loaded.game)?.value;
+        if !format.supports(game) {
+            return Err(Error::invalid(format!(
+                "{} profiles can't be exported as {}",
+                game.name,
+                format.id()
+            )));
+        }
+        let mut shared = SharedProfile {
+            game: Some(loaded.game.clone()),
+            name: Some(loaded.name.clone()),
+            id: Some(loaded.id),
+            mods: loaded.mods,
+            ..Default::default()
+        };
+        if format.needs_lock() {
+            let lock = self.lock(profile, false).await?;
+            for m in &lock.mods {
+                if let ArtifactLocation::Path { .. } = m.artifact {
+                    let bundled = Bundled {
+                        path: self.store.path(&m.hash, m.format),
+                        name: m.artifact.file_name(),
+                    };
+                    shared.bundled.insert(m.hash, bundled);
+                }
+            }
+            shared.lock = Some(lock);
+        }
+        let scratch = self.import_scratch();
+        format
+            .export(&self.format_context(Some(game), &scratch), &shared)
+            .await
+    }
+
+    /// Creates a profile from an export (or updates one; see
+    /// [`ImportOptions::replace`]). Nothing is fetched until it's locked.
+    pub async fn import_profile(
+        &self,
+        input: &[u8],
+        options: &ImportOptions<'_>,
+    ) -> Result<Imported> {
+        let format = match options.format {
+            Some(id) => self.format(id)?,
+            None => self.formats().find(|f| f.detect(input)).ok_or_else(|| {
+                Error::invalid(
+                    "couldn't tell what format that is; pass --format (see `patchwork profile formats`)",
+                )
+            })?,
+        };
+        let explicit = match options.game {
+            Some(id) => {
+                let game = &self.registry.game(id)?.value;
+                if !format.supports(game) {
+                    return Err(Error::invalid(format!(
+                        "{} profiles can't be imported from {}",
+                        game.name,
+                        format.id()
+                    )));
+                }
+                Some(game)
+            }
+            None => None,
+        };
+        let game = explicit.or_else(|| {
+            let mut supported = self
+                .registry
+                .games()
+                .map(|e| &e.value)
+                .filter(|g| format.supports(g));
+            match (supported.next(), supported.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        });
+
+        let scratch = self.import_scratch();
+        if scratch.exists() {
+            fs::remove_dir_all(&scratch).at(&scratch)?;
+        }
+        fs::create_dir_all(&scratch).at(&scratch)?;
+        let ctx = self.format_context(game, &scratch);
+        let result = match format.import(&ctx, input).await {
+            Ok(shared) => self.save_import(shared, format.id(), game, explicit.is_some(), options),
+            Err(e) => Err(e),
+        };
+        let _ = fs::remove_dir_all(&scratch);
+        result
+    }
+
+    fn save_import(
+        &self,
+        mut shared: SharedProfile,
+        format: &str,
+        game: Option<&GameDef>,
+        explicit_game: bool,
+        options: &ImportOptions<'_>,
+    ) -> Result<Imported> {
+        let game = match (shared.game.take(), game) {
+            (Some(theirs), Some(ours)) if explicit_game && theirs != ours.id => {
+                return Err(Error::invalid(format!(
+                    "that's a {theirs} profile, not {}",
+                    ours.id
+                )));
+            }
+            (Some(theirs), _) => theirs,
+            (None, Some(ours)) => ours.id.clone(),
+            (None, None) => {
+                return Err(Error::invalid(
+                    "couldn't tell which game this profile is for; pass --game",
+                ));
+            }
+        };
+        self.registry.game(&game)?;
+        if let Some(m) = shared.mods.iter().find(|m| !self.has_source(&m.source)) {
+            return Err(Error::UnknownSource(m.source.clone()));
+        }
+        if let Some(lock) = &shared.lock {
+            if lock.schema > LOCK_SCHEMA {
+                return Err(Error::invalid(format!(
+                    "the imported lockfile uses schema {}, but this build only supports up to {LOCK_SCHEMA}; update patchwork",
+                    lock.schema
+                )));
+            }
+            if lock.game.id != game {
+                return Err(Error::invalid(format!(
+                    "the imported lockfile is for {}, not {game}",
+                    lock.game.id
+                )));
+            }
+        }
+
+        let name = match options.name {
+            Some(name) => name.to_owned(),
+            None => sanitize_name(shared.name.as_deref().unwrap_or("imported")),
+        };
+        validate_name(&name)?;
+        let label = format!("{game}/{name}");
+        let profiles = self.profiles()?;
+        let same_id = shared
+            .id
+            .and_then(|id| profiles.iter().find(|(r, _)| r.uuid == id));
+        let same_label = profiles.iter().find(|(_, p)| p.label() == label);
+        let target = if options.replace {
+            same_id.or(same_label)
+        } else if let Some((_, existing)) = same_label {
+            return Err(Error::invalid(format!(
+                "{} already exists; pass --name to import it under another name, or --replace to overwrite it",
+                existing.label()
+            )));
+        } else if let Some((_, existing)) = same_id.filter(|_| options.name.is_none()) {
+            return Err(Error::invalid(format!(
+                "that profile is already here as {}; pass --replace to update it, or --name to import a separate copy",
+                existing.label()
+            )));
+        } else {
+            None
+        };
+
+        let (profile_ref, mut profile) = match target {
+            Some((r, existing)) => {
+                if existing.game != game {
+                    return Err(Error::invalid(format!(
+                        "{} is a {} profile, not {game}",
+                        existing.label(),
+                        existing.game
+                    )));
+                }
+                (r.clone(), existing.clone())
+            }
+            None => {
+                let mut profile = Profile::new(&game, &name);
+                // A copy of a profile that's already here needs its own id.
+                if let Some(id) = shared.id.filter(|_| same_id.is_none()) {
+                    profile.id = id;
+                }
+                (profile.reference(), profile)
+            }
+        };
+
+        // Local mods come along as files, which need a permanent home.
+        let files = self.profile_dir(&profile_ref).join("files");
+        if files.exists() {
+            fs::remove_dir_all(&files).at(&files)?;
+        }
+        if let Some(lock) = &mut shared.lock {
+            for locked in &mut lock.mods {
+                let ArtifactLocation::Path { path: old } = &locked.artifact else {
+                    continue;
+                };
+                let Some(bundled) = shared.bundled.get(&locked.hash) else {
+                    continue;
+                };
+                let dest = files.join(locked.hash.to_string()).join(&bundled.name);
+                if !dest.exists() {
+                    fs::create_dir_all(dest.parent().expect("has a parent")).at(&files)?;
+                    fs::rename(&bundled.path, &dest).at(&bundled.path)?;
+                }
+                let new_id = dest.to_string_lossy().into_owned();
+                // For local mods the id is the path, and it has to follow
+                // the file.
+                if locked.id == old.to_string_lossy() {
+                    for m in &mut shared.mods {
+                        if m.source == locked.source && m.id == locked.id {
+                            m.id = new_id.clone();
+                        }
+                    }
+                    locked.id = new_id;
+                }
+                locked.artifact = ArtifactLocation::Path { path: dest };
+            }
+        }
+
+        profile.mods = dedupe_names(shared.mods);
+        self.save_profile(&profile_ref, &profile)?;
+        if let Some(lock) = &shared.lock {
+            fsutil::write_toml(&self.lock_file(&profile_ref), lock)?;
+        }
+        Ok(Imported {
+            label: profile.label(),
+            profile: profile_ref,
+            format: format.to_owned(),
+            mods: profile.mods.len(),
+            replaced: target.is_some(),
+        })
+    }
+
+    /// Where formats unpack imports. It's under `data` so bundled files can
+    /// be renamed into a profile rather than copied.
+    fn import_scratch(&self) -> PathBuf {
+        self.paths.data.join("import.tmp")
+    }
+
     // Deploying
 
     pub fn deploy_state(&self, game: &str) -> Result<DeployState> {
@@ -685,6 +981,23 @@ fn visit<'a>(
         visit(dep, by_key, visited, order);
     }
     order.push(locked);
+}
+
+/// Mod names have to be unique within a profile, which nothing guarantees for
+/// an import.
+fn dedupe_names(mods: Vec<ProfileMod>) -> Vec<ProfileMod> {
+    let mut taken = HashSet::new();
+    mods.into_iter()
+        .map(|mut m| {
+            let base = m.name.clone();
+            let mut n = 2;
+            while !taken.insert(m.name.clone()) {
+                m.name = format!("{base}-{n}");
+                n += 1;
+            }
+            m
+        })
+        .collect()
 }
 
 fn no_such_mod(profile: &str, name: &str) -> Error {

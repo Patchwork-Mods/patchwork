@@ -1,0 +1,10 @@
+schema = 1
+id = "risk-of-rain-2"
+name = "Risk of Rain 2"
+
+[sources.thunderstore]
+community = "riskofrain2"
+
+[deployer]
+kind = "rules"
+rulesets = ["bepinex"]

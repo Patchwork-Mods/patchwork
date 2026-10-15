@@ -1,0 +1,22 @@
+[package]
+name = "patchwork-formats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+patchwork-core.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+reqwest = { version = "0.13.5", features = ["json"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+toml.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

@@ -89,6 +89,34 @@ fn parses_api_responses() {
 }
 
 #[test]
+fn urls_round_trip() {
+    let game = skyrim();
+    let ctx = SourceContext {
+        game: &game,
+        config: game.sources.get("nexus"),
+    };
+    let nexus = Nexus::new(None);
+    let url = nexus.mod_url(&ctx, "12604", Some("5.2SE")).unwrap();
+    assert_eq!(url, "https://www.nexusmods.com/skyrimspecialedition/mods/12604");
+    let spec = nexus
+        .parse_url(&ctx, &format!("{url}?tab=files"))
+        .unwrap()
+        .unwrap();
+    assert_eq!((spec.id.as_str(), spec.version), ("12604", None));
+
+    assert!(
+        nexus
+            .parse_url(&ctx, "https://thunderstore.io/c/x/p/a/b/")
+            .unwrap()
+            .is_none()
+    );
+    let err = nexus
+        .parse_url(&ctx, "https://nexusmods.com/fallout4/mods/1")
+        .unwrap_err();
+    assert!(err.to_string().contains("fallout4"), "{err}");
+}
+
+#[test]
 fn picks_files() {
     let files: NexusFiles = serde_json::from_str(FILES).unwrap();
     let pick = |v| pick_file(&files.files, v).map(|f| f.file_id);

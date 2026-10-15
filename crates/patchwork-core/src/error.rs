@@ -36,6 +36,10 @@ pub enum Error {
     UnknownSource(String),
     #[error("unknown deployer `{0}`")]
     UnknownDeployer(String),
+    #[error("unknown profile format `{0}`")]
+    UnknownFormat(String),
+    #[error("{format_id}: {message}")]
+    Format { format_id: String, message: String },
     #[error("source `{source_id}`: {message}")]
     Source { source_id: String, message: String },
     #[error("uuid error: {0}")]
