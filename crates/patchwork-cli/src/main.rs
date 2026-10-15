@@ -4,11 +4,11 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use patchwork_core::{ImportOptions, Patchwork};
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileRef};
+use patchwork_core::{ImportOptions, Patchwork};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
@@ -282,9 +282,8 @@ async fn profile(pw: &Patchwork, command: ProfileCommand, explicit: &Option<Stri
         ProfileCommand::Export { format, output } => {
             let (profile, loaded) = selected(pw, explicit)?;
             let extension = pw.format(&format)?.extension();
-            let output = output.or_else(|| {
-                extension.map(|ext| PathBuf::from(format!("{}.{ext}", loaded.name)))
-            });
+            let output = output
+                .or_else(|| extension.map(|ext| PathBuf::from(format!("{}.{ext}", loaded.name))));
             let bytes = pw.export_profile(&profile, &format).await?;
             match output {
                 Some(path) if path != Path::new("-") => {
@@ -319,7 +318,11 @@ async fn profile(pw: &Patchwork, command: ProfileCommand, explicit: &Option<Stri
             };
             let imported = pw.import_profile(&bytes, &options).await?;
             pw.use_profile(&imported.profile)?;
-            let verb = if imported.replaced { "updated" } else { "imported" };
+            let verb = if imported.replaced {
+                "updated"
+            } else {
+                "imported"
+            };
             println!(
                 "{verb} {} ({} mods, from {}) and switched to it; run `patchwork deploy` to install them",
                 imported.label, imported.mods, imported.format

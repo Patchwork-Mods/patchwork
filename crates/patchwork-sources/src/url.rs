@@ -54,7 +54,12 @@ impl Source for UrlSource {
         })
     }
 
-    fn mod_url(&self, _ctx: &SourceContext<'_>, id: &str, _version: Option<&str>) -> Option<String> {
+    fn mod_url(
+        &self,
+        _ctx: &SourceContext<'_>,
+        id: &str,
+        _version: Option<&str>,
+    ) -> Option<String> {
         Some(id.to_owned())
     }
 }

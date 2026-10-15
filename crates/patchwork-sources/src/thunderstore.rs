@@ -164,9 +164,11 @@ fn parse_package_url(url: &str) -> Option<(Option<&str>, String, Option<String>)
             };
             Some((Some(community), format!("{namespace}-{name}"), version))
         }
-        ["package", "download", namespace, name, version] => {
-            Some((None, format!("{namespace}-{name}"), Some(version.to_string())))
-        }
+        ["package", "download", namespace, name, version] => Some((
+            None,
+            format!("{namespace}-{name}"),
+            Some(version.to_string()),
+        )),
         _ => None,
     }
 }

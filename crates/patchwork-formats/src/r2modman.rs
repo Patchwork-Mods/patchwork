@@ -57,9 +57,11 @@ impl ManifestVersion {
     fn parse(version: &str) -> Option<Self> {
         let mut parts = version.split('.').map(|p| p.parse().ok());
         match (parts.next(), parts.next(), parts.next(), parts.next()) {
-            (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) => {
-                Some(Self { major, minor, patch })
-            }
+            (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) => Some(Self {
+                major,
+                minor,
+                patch,
+            }),
             _ => None,
         }
     }
@@ -179,7 +181,10 @@ impl ProfileFormat for ThunderstoreCode {
     async fn import(&self, ctx: &FormatContext<'_>, input: &[u8]) -> Result<SharedProfile> {
         let code = std::str::from_utf8(input).unwrap_or_default().trim();
         if !is_code(code) {
-            return Err(crate::error(self.id(), format!("`{code}` isn't a profile code")));
+            return Err(crate::error(
+                self.id(),
+                format!("`{code}` isn't a profile code"),
+            ));
         }
         let url = format!("{API}/get/{code}/");
         let reqwest_error = |result| patchwork_core::Error::Reqwest {
@@ -310,7 +315,11 @@ fn from_r2z(format_id: &str, ctx: &FormatContext<'_>, input: &[u8]) -> Result<Sh
         .mods
         .into_iter()
         .map(|m| {
-            let ManifestVersion { major, minor, patch } = m.version;
+            let ManifestVersion {
+                major,
+                minor,
+                patch,
+            } = m.version;
             ProfileMod {
                 name: m.name.clone(),
                 source: SOURCE.to_owned(),

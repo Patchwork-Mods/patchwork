@@ -97,7 +97,10 @@ fn urls_round_trip() {
     };
     let nexus = Nexus::new(None);
     let url = nexus.mod_url(&ctx, "12604", Some("5.2SE")).unwrap();
-    assert_eq!(url, "https://www.nexusmods.com/skyrimspecialedition/mods/12604");
+    assert_eq!(
+        url,
+        "https://www.nexusmods.com/skyrimspecialedition/mods/12604"
+    );
     let spec = nexus
         .parse_url(&ctx, &format!("{url}?tab=files"))
         .unwrap()

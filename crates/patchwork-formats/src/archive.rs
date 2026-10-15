@@ -66,11 +66,13 @@ impl ProfileFormat for Archive {
 
         let text = toml::to_string_pretty(&profile).map_err(|e| error(e.to_string()))?;
         zip.start_file(PROFILE, options).map_err(zip_error)?;
-        zip.write_all(text.as_bytes()).map_err(|e| error(e.to_string()))?;
+        zip.write_all(text.as_bytes())
+            .map_err(|e| error(e.to_string()))?;
         if let Some(lock) = &shared.lock {
             let text = toml::to_string_pretty(lock).map_err(|e| error(e.to_string()))?;
             zip.start_file(LOCK, options).map_err(zip_error)?;
-            zip.write_all(text.as_bytes()).map_err(|e| error(e.to_string()))?;
+            zip.write_all(text.as_bytes())
+                .map_err(|e| error(e.to_string()))?;
         }
 
         for (hash, bundled) in &shared.bundled {

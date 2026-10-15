@@ -85,7 +85,12 @@ pub trait Source: Send + Sync {
 
     /// A link to `id`'s page, used when sharing a profile as a list of URLs.
     /// It should pin `version` if the source's URLs can express one.
-    fn mod_url(&self, _ctx: &SourceContext<'_>, _id: &str, _version: Option<&str>) -> Option<String> {
+    fn mod_url(
+        &self,
+        _ctx: &SourceContext<'_>,
+        _id: &str,
+        _version: Option<&str>,
+    ) -> Option<String> {
         None
     }
 

@@ -223,7 +223,9 @@ impl Source for Nexus {
         }
         let expected = config(ctx)?.game_domain;
         if *domain != expected {
-            return Err(error(format!("{url} is a mod for {domain}, not {expected}")));
+            return Err(error(format!(
+                "{url} is a mod for {domain}, not {expected}"
+            )));
         }
         Ok(Some(ModSpec {
             source: "nexus".to_owned(),

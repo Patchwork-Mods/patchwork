@@ -591,7 +591,11 @@ impl Patchwork {
             .ok_or_else(|| Error::UnknownFormat(id.to_owned()))
     }
 
-    fn format_context<'a>(&'a self, game: Option<&'a GameDef>, scratch: &'a Path) -> FormatContext<'a> {
+    fn format_context<'a>(
+        &'a self,
+        game: Option<&'a GameDef>,
+        scratch: &'a Path,
+    ) -> FormatContext<'a> {
         FormatContext {
             game,
             sources: &self.sources,
