@@ -38,6 +38,8 @@ pub enum Error {
     UnknownDeployer(String),
     #[error("source `{source_id}`: {message}")]
     Source { source_id: String, message: String },
+    #[error("uuid error: {0}")]
+    UuidError(#[from] uuid::Error),
     #[error("deployer `{kind}`: {message}")]
     Deployer { kind: String, message: String },
     #[error("another patchwork process is running (lock held on {})", .0.display())]

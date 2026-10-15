@@ -35,6 +35,16 @@ impl Env {
         stdout
     }
 
+    /// The directory of the only profile, which is named by its id.
+    fn profile_dir(&self) -> PathBuf {
+        let dirs: Vec<_> = fs::read_dir(self.path("home/data/profiles"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(dirs.len(), 1, "{dirs:?}");
+        dirs.into_iter().next().unwrap()
+    }
+
     fn fails(&self, args: &[&str]) -> String {
         let out = Command::new(env!("CARGO_BIN_EXE_patchwork"))
             .args(args)
@@ -85,7 +95,7 @@ fn installs_from_thunderstore() {
     assert!(game.join("BepInEx/core/BepInEx.dll").is_file());
     // MoreCompany ships its own BepInEx/ folder, so it goes in as-is
     assert!(game.join("BepInEx/plugins/MoreCompany.dll").is_file());
-    let lock = read(env.path("home/data/profiles/lethal-company/main/profile.lock"));
+    let lock = read(env.profile_dir().join("profile.lock"));
     assert!(lock.contains("1.11.0"), "{lock}");
     assert!(env.run(&["deploy"]).contains("nothing to do"));
 }
@@ -135,10 +145,7 @@ fn thunderstore_style_mods_round_trip() {
         "more"
     );
     assert!(!game.join("manifest.json").exists());
-    assert!(
-        env.path("home/data/profiles/lethal-company/main/profile.lock")
-            .is_file()
-    );
+    assert!(env.profile_dir().join("profile.lock").is_file());
 
     assert!(env.run(&["deploy"]).contains("nothing to do"));
 
@@ -207,4 +214,71 @@ to = "Content/Paks/~mods/{file}"
     fs::write(&txt, "?").unwrap();
     env.run(&["add", txt.to_str().unwrap()]);
     assert!(env.fails(&["deploy"]).contains("no rule for notes.txt"));
+}
+
+#[test]
+fn profiles_are_found_by_name() {
+    let env = Env::new();
+    env.run(&["profile", "new", "lethal-company/main"]);
+    env.run(&["profile", "new", "lethal-company/other"]);
+    assert!(
+        env.fails(&["profile", "new", "lethal-company/main"])
+            .contains("already exists")
+    );
+    assert!(
+        env.fails(&["profile", "new", "lethal-company/a/b"])
+            .contains("isn't a valid")
+    );
+
+    let list = env.run(&["profile", "list"]);
+    assert!(list.contains("  lethal-company/main"), "{list}");
+    assert!(list.contains("* lethal-company/other"), "{list}");
+
+    env.run(&["profile", "use", "lethal-company/main"]);
+    assert!(
+        env.run(&["status"])
+            .contains("profile: lethal-company/main")
+    );
+    assert!(
+        env.run(&["-p", "lethal-company/other", "list"])
+            .contains("lethal-company/other has no mods")
+    );
+    assert!(
+        env.fails(&["profile", "use", "lethal-company/nope"])
+            .contains("no profile named")
+    );
+}
+
+#[test]
+fn old_profiles_are_migrated() {
+    let env = Env::new();
+    let old = env.path("home/data/profiles/lethal-company/main");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(
+        old.join("profile.toml"),
+        r#"
+schema = 1
+game = "lethal-company"
+
+[[mod]]
+name = "MoreCompany"
+source = "thunderstore"
+id = "notnotnotswipez-MoreCompany"
+"#,
+    )
+    .unwrap();
+    fs::write(old.join("profile.lock"), "schema = 1").unwrap();
+    fs::write(
+        env.path("home/data/state.toml"),
+        "current_profile = \"lethal-company/main\"\n",
+    )
+    .unwrap();
+
+    assert!(env.run(&["list"]).contains("[x] MoreCompany"));
+    assert!(!env.path("home/data/profiles/lethal-company").exists());
+    let dir = env.profile_dir();
+    assert!(dir.join("profile.lock").is_file());
+    let profile = read(dir.join("profile.toml"));
+    assert!(profile.contains("schema = 2"), "{profile}");
+    assert!(profile.contains("name = \"main\""), "{profile}");
 }

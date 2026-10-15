@@ -7,7 +7,7 @@ use patchwork_core::Patchwork;
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::paths::Paths;
-use patchwork_core::profile::ProfileRef;
+use patchwork_core::profile::{Profile, ProfileRef};
 use patchwork_deployers::RulesDeployer;
 use patchwork_sources::{LocalSource, Nexus, Thunderstore};
 
@@ -138,29 +138,28 @@ async fn run(cli: Cli) -> Result<()> {
             version,
             disabled,
         } => {
-            let profile = selected(&pw, &cli.profile)?;
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
             let spec = pw.parse_spec(&spec, version)?;
             let added = pw.add_mod(&profile, spec, name, !disabled).await?;
-            println!("added {} to {profile}", added.name);
+            println!("added {} to {}", added.name, loaded.label());
         }
         Command::Remove { name } => {
-            let profile = selected(&pw, &cli.profile)?;
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
             pw.remove_mod(&profile, &name)?;
-            println!("removed {name} from {profile}");
+            println!("removed {name} from {}", loaded.label());
         }
         Command::Enable { name } => {
-            pw.set_enabled(&selected(&pw, &cli.profile)?, &name, true)?;
+            pw.set_enabled(&selected(&pw, &cli.profile)?.0, &name, true)?;
             println!("enabled {name}");
         }
         Command::Disable { name } => {
-            pw.set_enabled(&selected(&pw, &cli.profile)?, &name, false)?;
+            pw.set_enabled(&selected(&pw, &cli.profile)?.0, &name, false)?;
             println!("disabled {name}");
         }
         Command::List => {
-            let profile = selected(&pw, &cli.profile)?;
-            let loaded = pw.load_profile(&profile)?;
+            let (_, loaded) = selected(&pw, &cli.profile)?;
             if loaded.mods.is_empty() {
-                println!("{profile} has no mods");
+                println!("{} has no mods", loaded.label());
             }
             for m in &loaded.mods {
                 let mark = if m.enabled { 'x' } else { ' ' };
@@ -173,19 +172,19 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::Lock { update } => {
-            let profile = selected(&pw, &cli.profile)?;
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
             let lock = pw.lock(&profile, update).await?;
-            println!("locked {} mods for {profile}", lock.mods.len());
+            println!("locked {} mods for {}", lock.mods.len(), loaded.label());
         }
         Command::Deploy { dry_run } => {
-            let profile = selected(&pw, &cli.profile)?;
+            let (profile, _) = selected(&pw, &cli.profile)?;
             let plan = pw.plan_deploy(&profile).await?;
             finish(&pw, &plan, dry_run)?;
         }
         Command::Undeploy { game, dry_run } => {
             let game = match game {
                 Some(game) => game,
-                None => selected(&pw, &cli.profile)?.game,
+                None => selected(&pw, &cli.profile)?.1.game,
             };
             let plan = pw.plan_undeploy(&game)?;
             finish(&pw, &plan, dry_run)?;
@@ -223,25 +222,26 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
 fn profile(pw: &Patchwork, command: ProfileCommand) -> Result<()> {
     match command {
         ProfileCommand::New { profile } => {
-            let profile: ProfileRef = profile.parse()?;
-            pw.create_profile(&profile)?;
-            pw.use_profile(&profile)?;
+            let Some((game, name)) = profile.split_once('/') else {
+                bail!("`{profile}` isn't a valid profile; expected `<game>/<name>`");
+            };
+            let created = pw.create_profile(game, name)?;
+            pw.use_profile(&created)?;
             println!("created {profile} and switched to it");
         }
         ProfileCommand::List => {
             let current = pw.current_profile()?;
-            for profile in pw.profiles()? {
+            for (profile, loaded) in pw.profiles()? {
                 let mark = if Some(&profile) == current.as_ref() {
                     '*'
                 } else {
                     ' '
                 };
-                println!("{mark} {profile}");
+                println!("{mark} {}", loaded.label());
             }
         }
         ProfileCommand::Use { profile } => {
-            let profile: ProfileRef = profile.parse()?;
-            pw.use_profile(&profile)?;
+            pw.use_profile(&pw.find_profile(&profile)?)?;
             println!("switched to {profile}");
         }
     }
@@ -250,7 +250,7 @@ fn profile(pw: &Patchwork, command: ProfileCommand) -> Result<()> {
 
 fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
     let profile = match explicit {
-        Some(p) => Some(p.parse()?),
+        Some(p) => Some(pw.find_profile(p)?),
         None => pw.current_profile()?,
     };
     let Some(profile) = profile else {
@@ -260,19 +260,25 @@ fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
     let loaded = pw.load_profile(&profile)?;
     let enabled = loaded.mods.iter().filter(|m| m.enabled).count();
     println!(
-        "profile: {profile} ({enabled}/{} mods enabled)",
+        "profile: {} ({enabled}/{} mods enabled)",
+        loaded.label(),
         loaded.mods.len()
     );
-    match pw.game_install(&profile.game)? {
+    match pw.game_install(&loaded.game)? {
         Some(install) => println!("game:    {}", install.path.display()),
         None => println!(
             "game:    not set up; run `patchwork game set-path {} <dir>`",
-            profile.game
+            loaded.game
         ),
     }
-    let state = pw.deploy_state(&profile.game)?;
+    let state = pw.deploy_state(&loaded.game)?;
     match &state.profile {
         Some(deployed) if !state.files.is_empty() => {
+            // Recorded by id; fall back to that if the profile's gone.
+            let deployed = match pw.find_profile(deployed) {
+                Ok(r) => pw.load_profile(&r)?.label(),
+                Err(_) => deployed.clone(),
+            };
             println!("deployed: {deployed} ({} files)", state.files.len())
         }
         _ => println!("deployed: nothing"),
@@ -323,12 +329,16 @@ fn print_op(op: &DeployOp) {
     }
 }
 
-fn selected(pw: &Patchwork, explicit: &Option<String>) -> Result<ProfileRef> {
-    if let Some(profile) = explicit {
-        return Ok(profile.parse()?);
-    }
-    match pw.current_profile()? {
-        Some(profile) => Ok(profile),
-        None => bail!("no profile selected; create one with `patchwork profile new <game>/<name>`"),
-    }
+fn selected(pw: &Patchwork, explicit: &Option<String>) -> Result<(ProfileRef, Profile)> {
+    let profile = match explicit {
+        Some(profile) => pw.find_profile(profile)?,
+        None => match pw.current_profile()? {
+            Some(profile) => profile,
+            None => {
+                bail!("no profile selected; create one with `patchwork profile new <game>/<name>`")
+            }
+        },
+    };
+    let loaded = pw.load_profile(&profile)?;
+    Ok((profile, loaded))
 }

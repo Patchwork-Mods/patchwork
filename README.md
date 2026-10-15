@@ -32,8 +32,8 @@ All state is files (set `PATCHWORK_HOME` to put it all in one place):
 
 - `<config>/games/*.toml`, `<config>/rulesets/*.toml`: your own definitions, which override everything else
 - `<data>/registries/<name>/`: installed registries
-- `<data>/profiles/<game>/<name>/profile.toml`: what you want
-- `<data>/profiles/<game>/<name>/profile.lock`: exactly what that resolved to
+- `<data>/profiles/<id>/profile.toml`: what you want
+- `<data>/profiles/<id>/profile.lock`: exactly what that resolved to
 - `<data>/store/`: content-addressed (BLAKE3) mod artifacts
 - `<data>/deployments/<game>.json`: every file patchwork put in a game directory
 - `<data>/backups/<game>/`: game files that mods replaced

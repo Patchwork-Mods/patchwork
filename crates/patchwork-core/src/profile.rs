@@ -2,29 +2,47 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::Error;
 
-pub const PROFILE_SCHEMA: u32 = 1;
+/// Schema 2 added `id` and `name`; profiles used to be identified by their
+/// directory, `<game>/<name>`.
+pub const PROFILE_SCHEMA: u32 = 2;
 
 /// What the user wants installed for a game. Meant to be readable and
 /// hand-editable; the exact versions that were resolved live in the lockfile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub schema: u32,
+    /// Stays the same wherever the profile goes, so it can be recognized
+    /// when it's shared even if it's been renamed.
+    pub id: Uuid,
     pub game: String,
+    pub name: String,
     /// In load order: later mods win when two provide the same file.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
 }
 
 impl Profile {
-    pub fn new(game: &str) -> Self {
+    pub fn new(game: &str, name: &str) -> Self {
         Self {
             schema: PROFILE_SCHEMA,
+            id: Uuid::new_v4(),
             game: game.to_owned(),
+            name: name.to_owned(),
             mods: Vec::new(),
         }
+    }
+
+    pub fn reference(&self) -> ProfileRef {
+        ProfileRef { uuid: self.id }
+    }
+
+    /// `<game>/<name>`, which is how users refer to the profile.
+    pub fn label(&self) -> String {
+        format!("{}/{}", self.game, self.name)
     }
 
     pub fn find_mut(&mut self, name: &str) -> Option<&mut ProfileMod> {
@@ -48,16 +66,16 @@ fn enabled_by_default() -> bool {
     true
 }
 
-/// `<game>/<profile>`
+/// Identifies a profile on this machine. Users refer to profiles as
+/// `<game>/<name>`; see `Patchwork::find_profile`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProfileRef {
-    pub game: String,
-    pub name: String,
+    pub uuid: Uuid,
 }
 
 impl fmt::Display for ProfileRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{}", self.game, self.name)
+        write!(f, "{}", self.uuid)
     }
 }
 
@@ -65,22 +83,23 @@ impl FromStr for ProfileRef {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let valid = |part: &str| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-                && part != "."
-                && part != ".."
-        };
-        match s.split_once('/') {
-            Some((game, name)) if valid(game) && valid(name) => Ok(Self {
-                game: game.to_owned(),
-                name: name.to_owned(),
-            }),
-            _ => Err(Error::invalid(format!(
-                "`{s}` isn't a valid profile; expected `<game>/<name>` using letters, digits, `-`, `_` or `.`"
-            ))),
-        }
+        let val = Uuid::from_str(s).map(|u| ProfileRef { uuid: u })?;
+        Ok(val)
+    }
+}
+
+/// Checks a game id or profile name, which must not contain `/` so that
+/// `<game>/<name>` is unambiguous.
+pub fn validate_name(name: &str) -> Result<(), Error> {
+    let valid = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::invalid(format!(
+            "`{name}` isn't a valid profile name; use letters, digits, `-`, `_` or `.`"
+        )))
     }
 }
