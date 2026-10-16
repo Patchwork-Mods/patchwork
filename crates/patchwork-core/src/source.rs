@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Result;
 use crate::game::GameDef;
+use crate::search::{Category, SearchPage, SearchQuery, SortBy};
 
 /// Where the host should fetch an artifact from. Sources only describe this;
 /// the host does the fetching, hashing and storing.
@@ -99,6 +100,26 @@ pub trait Source: Send + Sync {
     /// that's for a different game is an error.
     fn parse_url(&self, _ctx: &SourceContext<'_>, _url: &str) -> Result<Option<ModSpec>> {
         Ok(None)
+    }
+
+    /// The orders [`Source::search`] can return mods in. Empty means the
+    /// source can't be searched.
+    fn search_sorts(&self) -> &[SortBy] {
+        &[]
+    }
+
+    /// The categories searches can be narrowed to for this game.
+    async fn search_categories(&self, _ctx: &SourceContext<'_>) -> Result<Vec<Category>> {
+        Ok(Vec::new())
+    }
+
+    /// Finds mods for this game. The host checks that `query.sort` is one of
+    /// [`Source::search_sorts`] first.
+    async fn search(&self, _ctx: &SourceContext<'_>, _query: &SearchQuery) -> Result<SearchPage> {
+        Err(crate::Error::Source {
+            source_id: self.id().to_owned(),
+            message: "can't be searched".to_owned(),
+        })
     }
 }
 

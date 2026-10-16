@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use jiff::Timestamp;
 use patchwork_core::Result;
+use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext, url_parts,
 };
@@ -8,6 +9,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 const API: &str = "https://thunderstore.io/api/experimental";
+/// The API behind thunderstore.io's own pages, which is the only one that can
+/// search. It isn't documented, so it may change under us.
+const CYBERSTORM: &str = "https://thunderstore.io/api/cyberstorm";
 
 /// Mods from Thunderstore. Ids are `Namespace-Name`, the same form Thunderstore
 /// uses in dependency strings, e.g. `thunderstore:BepInEx-BepInExPack`.
@@ -67,6 +71,38 @@ pub enum ReviewStatus {
     Unreviewed,
     Approved,
     Rejected,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Listing {
+    count: u64,
+    next: Option<String>,
+    results: Vec<ListedPackage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListedPackage {
+    namespace: String,
+    name: String,
+    description: Option<String>,
+    icon_url: Option<String>,
+    download_count: Option<u64>,
+    rating_count: Option<u64>,
+    last_updated: Option<Timestamp>,
+    #[serde(default)]
+    categories: Vec<ListedCategory>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListedCategory {
+    id: String,
+    name: String,
+    slug: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CommunityFilters {
+    package_categories: Vec<ListedCategory>,
 }
 
 // --- End API Responses ---
@@ -173,6 +209,41 @@ fn parse_package_url(url: &str) -> Option<(Option<&str>, String, Option<String>)
     }
 }
 
+fn listed_to_summary(package: ListedPackage) -> ModSummary {
+    ModSummary {
+        source: "thunderstore".to_owned(),
+        id: format!("{}-{}", package.namespace, package.name),
+        name: package.name,
+        author: Some(package.namespace),
+        summary: package.description,
+        icon_url: package.icon_url,
+        downloads: package.download_count,
+        rating: package.rating_count,
+        updated: package.last_updated,
+        // the listing doesn't say; it's only needed once a mod's picked
+        latest_version: None,
+        categories: package
+            .categories
+            .into_iter()
+            .map(|c| Category {
+                id: c.slug,
+                name: c.name,
+            })
+            .collect(),
+    }
+}
+
+fn ordering(sort: SortBy) -> &'static str {
+    match sort {
+        SortBy::Downloads => "most-downloaded",
+        SortBy::Updated => "last-updated",
+        SortBy::Newest => "newest",
+        SortBy::Rating => "top-rated",
+        // not in search_sorts
+        SortBy::Relevance => "most-downloaded",
+    }
+}
+
 #[async_trait]
 impl Source for Thunderstore {
     fn id(&self) -> &str {
@@ -230,16 +301,100 @@ impl Source for Thunderstore {
             version,
         }))
     }
+
+    /// Thunderstore can't rank by relevance; text searches match names and
+    /// descriptions and are sorted like everything else.
+    fn search_sorts(&self) -> &[SortBy] {
+        &[
+            SortBy::Downloads,
+            SortBy::Updated,
+            SortBy::Newest,
+            SortBy::Rating,
+        ]
+    }
+
+    /// Category ids are their slugs, e.g. `tweaks-and-quality-of-life`.
+    async fn search_categories(&self, ctx: &SourceContext<'_>) -> Result<Vec<Category>> {
+        Ok(community_categories(&config(ctx)?.community)
+            .await?
+            .into_iter()
+            .map(|c| Category {
+                id: c.slug,
+                name: c.name,
+            })
+            .collect())
+    }
+
+    /// Pages are 20 mods. Without a sort, mods come most downloaded first.
+    /// Deprecated and NSFW mods are left out, as they are on the site.
+    async fn search(&self, ctx: &SourceContext<'_>, query: &SearchQuery) -> Result<SearchPage> {
+        let community = config(ctx)?.community;
+        let sort = query.sort.unwrap_or(SortBy::Downloads);
+        let mut params = vec![
+            ("ordering", ordering(sort).to_owned()),
+            ("page", (query.page + 1).to_string()),
+        ];
+        if let Some(text) = query.text() {
+            params.push(("q", text.to_owned()));
+        }
+        if !query.categories.is_empty() {
+            // the listing filters by numeric id, so look up the slugs
+            let known = community_categories(&community).await?;
+            for wanted in &query.categories {
+                let category = known
+                    .iter()
+                    .find(|c| c.slug == *wanted)
+                    .ok_or_else(|| error(format!("{community} has no category `{wanted}`")))?;
+                params.push(("included_categories", category.id.clone()));
+            }
+        }
+        let url =
+            reqwest::Url::parse_with_params(&format!("{CYBERSTORM}/listing/{community}/"), &params)
+                .map_err(|e| error(format!("bad search url: {e}")))?;
+        let response =
+            reqwest::get(url.clone())
+                .await
+                .map_err(|result| patchwork_core::Error::Reqwest {
+                    url: url.to_string(),
+                    result,
+                })?;
+        // asking for a page past the end is a 404
+        if query.page > 0 && response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(SearchPage::empty(sort));
+        }
+        let listing: Listing = read_json(url.as_str(), response).await?;
+        Ok(SearchPage {
+            total: Some(listing.count),
+            has_more: listing.next.is_some(),
+            items: listing.results.into_iter().map(listed_to_summary).collect(),
+            sort,
+        })
+    }
+}
+
+async fn community_categories(community: &str) -> Result<Vec<ListedCategory>> {
+    let filters: CommunityFilters =
+        get_json(format!("{CYBERSTORM}/community/{community}/filters/")).await?;
+    Ok(filters.package_categories)
 }
 
 async fn get_json<T: DeserializeOwned>(url: String) -> Result<T> {
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|result| patchwork_core::Error::Reqwest {
+            url: url.clone(),
+            result,
+        })?;
+    read_json(&url, response).await
+}
+
+async fn read_json<T: DeserializeOwned>(url: &str, response: reqwest::Response) -> Result<T> {
     let reqwest_error = |result| patchwork_core::Error::Reqwest {
-        url: url.clone(),
+        url: url.to_owned(),
         result,
     };
-    let bytes = reqwest::get(&url)
-        .await
-        .and_then(|r| r.error_for_status())
+    let bytes = response
+        .error_for_status()
         .map_err(reqwest_error)?
         .bytes()
         .await
@@ -404,6 +559,60 @@ mod thunderstore_test {
         assert!(err.to_string().contains("riskofrain2"), "{err}");
     }
 
+    // a trimmed /api/cyberstorm/listing/lethal-company/?q=morecompany
+    const LISTING: &str = r#"{
+        "count": 145,
+        "next": "https://thunderstore.io/api/cyberstorm/listing/lethal-company/?page=2&q=morecompany",
+        "previous": null,
+        "results": [{
+            "categories": [
+                {"id": "658", "name": "Mods", "slug": "mods"},
+                {"id": "872", "name": "Tweaks & Quality Of Life", "slug": "tweaks-and-quality-of-life"}
+            ],
+            "community_identifier": "lethal-company",
+            "description": "A stable lobby player count expansion mod. With cosmetics!",
+            "download_count": 26998136,
+            "icon_url": "https://ccdn.thunderstore.io/live/repository/icons/notnotnotswipez-MoreCompany-1.14.0.png",
+            "is_deprecated": false,
+            "is_nsfw": false,
+            "is_pinned": false,
+            "last_updated": "2026-04-25T01:28:42.076106Z",
+            "name": "MoreCompany",
+            "namespace": "notnotnotswipez",
+            "rating_count": 641,
+            "size": 10530391,
+            "datetime_created": "2023-11-16T04:46:28.298342Z"
+        }]
+    }"#;
+
+    #[test]
+    fn converts_listings() {
+        let listing: Listing = serde_json::from_str(LISTING).unwrap();
+        assert_eq!(listing.count, 145);
+        assert!(listing.next.is_some());
+        let summary = listed_to_summary(listing.results.into_iter().next().unwrap());
+        assert_eq!(summary.id, "notnotnotswipez-MoreCompany");
+        assert_eq!(summary.name, "MoreCompany");
+        assert_eq!(summary.author.as_deref(), Some("notnotnotswipez"));
+        assert_eq!(summary.downloads, Some(26998136));
+        assert_eq!(summary.rating, Some(641));
+        assert_eq!(
+            summary.categories[1],
+            Category {
+                id: "tweaks-and-quality-of-life".to_owned(),
+                name: "Tweaks & Quality Of Life".to_owned(),
+            }
+        );
+        assert_eq!(
+            summary.spec(),
+            ModSpec {
+                source: "thunderstore".to_owned(),
+                id: "notnotnotswipez-MoreCompany".to_owned(),
+                version: None,
+            }
+        );
+    }
+
     #[tokio::test]
     async fn needs_community_config() {
         let mut game = lethal_company();
@@ -455,6 +664,48 @@ mod thunderstore_test {
                 .iter()
                 .any(|d| d.id == "BepInEx-BepInExPack")
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs network"]
+    async fn searches() {
+        let game = lethal_company();
+        let ctx = SourceContext {
+            game: &game,
+            config: game.sources.get("thunderstore"),
+        };
+
+        let home = Thunderstore
+            .search(&ctx, &SearchQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(home.sort, SortBy::Downloads);
+        assert!(home.has_more);
+        assert!(home.items.iter().any(|m| m.id == "BepInEx-BepInExPack"));
+
+        let query = SearchQuery {
+            text: Some("morecompany".to_owned()),
+            categories: vec!["cosmetics".to_owned()],
+            ..Default::default()
+        };
+        let found = Thunderstore.search(&ctx, &query).await.unwrap();
+        assert!(!found.items.is_empty());
+        assert!(
+            found
+                .items
+                .iter()
+                .all(|m| { m.categories.iter().any(|c| c.id == "cosmetics") })
+        );
+
+        let past_end = SearchQuery {
+            page: 10_000,
+            ..query
+        };
+        let empty = Thunderstore.search(&ctx, &past_end).await.unwrap();
+        assert!(empty.items.is_empty() && !empty.has_more);
+
+        let categories = Thunderstore.search_categories(&ctx).await.unwrap();
+        assert!(categories.iter().any(|c| c.id == "moons"));
     }
 
     #[tokio::test]

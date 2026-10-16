@@ -1,5 +1,7 @@
+use super::search::{ModsPage, effective_sort, mods_filter, node_to_summary};
 use super::*;
 use patchwork_core::game::GameDef;
+use serde_json::json;
 
 // trimmed responses for SkyUI (skyrimspecialedition/12604)
 const MOD: &str = r#"{
@@ -206,4 +208,95 @@ async fn test_get_mod() {
     assert_eq!(resolved.id, "12604");
     assert_eq!(resolved.name, "SkyUI");
     assert!(resolved.version.is_some());
+}
+
+// a trimmed v2 GraphQL `mods` result
+const MODS_PAGE: &str = r#"{
+    "totalCount": 218,
+    "nodes": [{
+        "modId": 12604,
+        "name": "SkyUI",
+        "summary": "Elegant, PC-friendly interface mod",
+        "author": "SkyUI Team",
+        "updatedAt": "2026-05-05T22:41:21Z",
+        "downloads": 26132765,
+        "endorsements": 505574,
+        "thumbnailUrl": "https://staticdelivery.nexusmods.com/mods/1704/images/thumbnails/12604/12604.png",
+        "version": "6.9",
+        "modCategory": {"name": "User Interface"}
+    }, {
+        "modId": 1,
+        "name": "Uncategorized",
+        "summary": null,
+        "author": null,
+        "updatedAt": null,
+        "downloads": null,
+        "endorsements": null,
+        "thumbnailUrl": null,
+        "version": null,
+        "modCategory": null
+    }]
+}"#;
+
+#[test]
+fn converts_search_results() {
+    let page: ModsPage = serde_json::from_str(MODS_PAGE).unwrap();
+    assert_eq!(page.total_count, 218);
+    let mut nodes = page.nodes.into_iter();
+    let skyui = node_to_summary(nodes.next().unwrap());
+    assert_eq!(skyui.source, "nexus");
+    assert_eq!(skyui.id, "12604");
+    assert_eq!(skyui.rating, Some(505574));
+    assert_eq!(skyui.latest_version.as_deref(), Some("6.9"));
+    assert_eq!(skyui.categories[0].id, "User Interface");
+    assert!(node_to_summary(nodes.next().unwrap()).categories.is_empty());
+}
+
+#[test]
+fn builds_search_filters() {
+    let home = SearchQuery::default();
+    assert_eq!(
+        mods_filter("skyrimspecialedition", &home),
+        json!({
+            "gameDomainName": [{ "value": "skyrimspecialedition", "op": "EQUALS" }],
+            "adultContent": [{ "value": false, "op": "EQUALS" }],
+            "filter": [],
+        })
+    );
+    assert_eq!(effective_sort(&home), SortBy::Downloads);
+
+    let query = SearchQuery {
+        text: Some("skyui".to_owned()),
+        categories: vec!["User Interface".to_owned(), "Audio".to_owned()],
+        ..Default::default()
+    };
+    let filter = mods_filter("skyrimspecialedition", &query);
+    let groups = filter["filter"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["name"][0]["value"], "skyui");
+    assert_eq!(groups[1]["op"], "OR");
+    assert_eq!(groups[1]["categoryName"][1]["value"], "Audio");
+    assert_eq!(effective_sort(&query), SortBy::Relevance);
+}
+
+// Searching doesn't need an API key, but it does need the network.
+#[tokio::test]
+#[ignore = "needs network"]
+async fn searches() {
+    let game = skyrim();
+    let ctx = SourceContext {
+        game: &game,
+        config: game.sources.get("nexus"),
+    };
+    let nexus = Nexus::new(None);
+    let query = SearchQuery {
+        text: Some("skyui".to_owned()),
+        ..Default::default()
+    };
+    let found = nexus.search(&ctx, &query).await.unwrap();
+    assert_eq!(found.sort, SortBy::Relevance);
+    assert_eq!(found.items[0].id, "12604");
+
+    let categories = nexus.search_categories(&ctx).await.unwrap();
+    assert!(categories.iter().any(|c| c.id == "User Interface"));
 }

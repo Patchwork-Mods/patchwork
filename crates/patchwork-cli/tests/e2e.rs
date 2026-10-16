@@ -217,6 +217,50 @@ to = "Content/Paks/~mods/{file}"
 }
 
 #[test]
+fn search_needs_a_searchable_source() {
+    let env = Env::new();
+    env.run(&["profile", "new", "lethal-company/main"]);
+    // checked before anything goes over the network
+    let err = env.fails(&["search", "morecompany", "--sort", "relevance"]);
+    assert!(
+        err.contains("thunderstore can't sort by relevance"),
+        "{err}"
+    );
+    let err = env.fails(&["search", "x", "--source", "local"]);
+    assert!(err.contains("can't be searched"), "{err}");
+
+    let games = env.path("home/config/games");
+    fs::create_dir_all(&games).unwrap();
+    fs::write(
+        games.join("plain.toml"),
+        "schema = 1\nid = \"plain\"\nname = \"Plain\"\n\n[deployer]\nkind = \"rules\"\n",
+    )
+    .unwrap();
+    let err = env.fails(&["search", "--game", "plain"]);
+    assert!(
+        err.contains("none of plain's sources can be searched"),
+        "{err}"
+    );
+}
+
+#[test]
+#[ignore = "needs network"]
+fn searches_thunderstore() {
+    let env = Env::new();
+    env.run(&["profile", "new", "lethal-company/main"]);
+    assert!(
+        env.run(&["search"])
+            .contains("(thunderstore:BepInEx-BepInExPack)")
+    );
+    let found = env.run(&["search", "morecompany", "-c", "Mods", "--sort", "rating"]);
+    assert!(
+        found.contains("(thunderstore:notnotnotswipez-MoreCompany)"),
+        "{found}"
+    );
+    assert!(env.run(&["search", "--list-categories"]).contains("moons"));
+}
+
+#[test]
 fn profiles_are_found_by_name() {
     let env = Env::new();
     env.run(&["profile", "new", "lethal-company/main"]);

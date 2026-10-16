@@ -17,6 +17,7 @@ use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
 use crate::paths::Paths;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod, ProfileRef, validate_name};
 use crate::registry::Registry;
+use crate::search::{Category, SearchPage, SearchQuery, SortBy};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{ArtifactFormat, ArtifactLocation, ModSpec, Source, SourceContext};
 use crate::store::Store;
@@ -418,11 +419,15 @@ impl Patchwork {
         self.save_profile(profile, &loaded)
     }
 
+    fn source(&self, id: &str) -> Result<&dyn Source> {
+        self.sources
+            .get(id)
+            .map(|s| s.as_ref())
+            .ok_or_else(|| Error::UnknownSource(id.to_owned()))
+    }
+
     async fn resolve(&self, game: &str, spec: &ModSpec) -> Result<crate::source::ResolvedMod> {
-        let source = self
-            .sources
-            .get(&spec.source)
-            .ok_or_else(|| Error::UnknownSource(spec.source.clone()))?;
+        let source = self.source(&spec.source)?;
         let game = &self.registry.game(game)?.value;
         let ctx = SourceContext {
             game,
@@ -431,6 +436,102 @@ impl Patchwork {
         source
             .resolve(&ctx, &spec.id, spec.version.as_deref())
             .await
+    }
+
+    // Searching
+
+    /// The sources that can search for `game`'s mods: ones that support
+    /// searching and that the game's definition sets up.
+    pub fn search_sources(&self, game: &str) -> Result<Vec<&str>> {
+        let game = &self.registry.game(game)?.value;
+        Ok(self
+            .sources
+            .iter()
+            .filter(|(id, source)| {
+                !source.search_sorts().is_empty() && game.sources.contains_key(id.as_str())
+            })
+            .map(|(id, _)| id.as_str())
+            .collect())
+    }
+
+    /// The orders `source` can sort search results in.
+    pub fn search_sorts(&self, source: &str) -> Result<&[SortBy]> {
+        Ok(self.source(source)?.search_sorts())
+    }
+
+    pub async fn search_categories(&self, game: &str, source: &str) -> Result<Vec<Category>> {
+        let source = self.searchable(source)?;
+        let game = &self.registry.game(game)?.value;
+        let ctx = SourceContext {
+            game,
+            config: game.sources.get(source.id()),
+        };
+        source.search_categories(&ctx).await
+    }
+
+    /// Searches `source` for `game`'s mods. Leave `query.text` empty for the
+    /// source's home screen. Categories can be given by id or by name.
+    pub async fn search(
+        &self,
+        game: &str,
+        source: &str,
+        query: &SearchQuery,
+    ) -> Result<SearchPage> {
+        let source = self.searchable(source)?;
+        let sorts = source.search_sorts();
+        if let Some(sort) = query.sort
+            && !sorts.contains(&sort)
+        {
+            let sorts: Vec<_> = sorts.iter().map(|s| s.as_str()).collect();
+            return Err(Error::invalid(format!(
+                "{} can't sort by {sort}; it can sort by {}",
+                source.id(),
+                sorts.join(", ")
+            )));
+        }
+        let game = &self.registry.game(game)?.value;
+        let ctx = SourceContext {
+            game,
+            config: game.sources.get(source.id()),
+        };
+        if query.categories.is_empty() {
+            return source.search(&ctx, query).await;
+        }
+        let known = source.search_categories(&ctx).await?;
+        let categories = query
+            .categories
+            .iter()
+            .map(|wanted| {
+                known
+                    .iter()
+                    .find(|c| c.id == *wanted)
+                    .or_else(|| known.iter().find(|c| c.name.eq_ignore_ascii_case(wanted)))
+                    .map(|c| c.id.clone())
+                    .ok_or_else(|| {
+                        Error::invalid(format!(
+                            "{} has no category `{wanted}` for {}",
+                            source.id(),
+                            game.id
+                        ))
+                    })
+            })
+            .collect::<Result<_>>()?;
+        let query = SearchQuery {
+            categories,
+            ..query.clone()
+        };
+        source.search(&ctx, &query).await
+    }
+
+    fn searchable(&self, id: &str) -> Result<&dyn Source> {
+        let source = self.source(id)?;
+        if source.search_sorts().is_empty() {
+            return Err(Error::Source {
+                source_id: id.to_owned(),
+                message: "can't be searched".to_owned(),
+            });
+        }
+        Ok(source)
     }
 
     // Locking

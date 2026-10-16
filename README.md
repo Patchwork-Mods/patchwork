@@ -7,6 +7,7 @@ A universal mod manager. Mods come from **sources**, are organized into
 ```
 patchwork game set-path lethal-company ~/.steam/steam/steamapps/common/Lethal\ Company
 patchwork profile new lethal-company/main
+patchwork search more company        # or just `patchwork search` for the most popular
 patchwork add ~/Downloads/BepInEx-BepInExPack-5.4.2100.zip --name BepInExPack
 patchwork add local:~/Downloads/MoreCompany.zip
 patchwork deploy --dry-run

@@ -21,6 +21,7 @@ pub mod paths;
 pub mod profile;
 pub mod registry;
 pub mod relpath;
+pub mod search;
 pub mod share;
 pub mod source;
 pub mod store;

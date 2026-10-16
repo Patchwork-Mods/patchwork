@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use patchwork_core::Result;
+use patchwork_core::search::{Category, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext, url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+mod search;
 #[cfg(test)]
 mod tests;
 
@@ -16,8 +18,9 @@ const API_KEY_VAR: &str = "NEXUS_API_KEY";
 /// `nexus:266` for nexusmods.com/skyrimspecialedition/mods/266. Versions are
 /// matched against the version of the mod's files.
 ///
-/// Every Nexus API call needs a personal API key, which is read from
-/// `NEXUS_API_KEY` (get one from https://www.nexusmods.com/settings/api-keys).
+/// Downloading needs a personal API key, which is read from `NEXUS_API_KEY`
+/// (get one from https://www.nexusmods.com/settings/api-keys). Searching
+/// doesn't.
 pub struct Nexus {
     api_key: Option<String>,
     client: reqwest::Client,
@@ -232,6 +235,21 @@ impl Source for Nexus {
             id: id.to_string(),
             version: None,
         }))
+    }
+
+    fn search_sorts(&self) -> &[SortBy] {
+        &SortBy::ALL
+    }
+
+    /// Category ids are their names, e.g. `User Interface`.
+    async fn search_categories(&self, ctx: &SourceContext<'_>) -> Result<Vec<Category>> {
+        self.categories(&config(ctx)?.game_domain).await
+    }
+
+    /// Pages are 20 mods. Without a sort, text searches are by relevance
+    /// and everything else is most downloaded first.
+    async fn search(&self, ctx: &SourceContext<'_>, query: &SearchQuery) -> Result<SearchPage> {
+        self.search_mods(&config(ctx)?.game_domain, query).await
     }
 }
 

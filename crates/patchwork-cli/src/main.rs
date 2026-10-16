@@ -8,6 +8,7 @@ use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileRef};
+use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::{ImportOptions, Patchwork};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
@@ -43,6 +44,29 @@ enum Command {
         /// Add it without enabling it.
         #[arg(long)]
         disabled: bool,
+    },
+    /// Search a source for mods for the profile's game. With no text, lists
+    /// its most popular (or, with --sort, newest, ...) mods.
+    Search {
+        text: Vec<String>,
+        /// Which source to search. Needed if the game has more than one.
+        #[arg(short, long)]
+        source: Option<String>,
+        /// Search for this game instead of the profile's.
+        #[arg(long)]
+        game: Option<String>,
+        /// relevance, downloads, updated, newest or rating.
+        #[arg(long)]
+        sort: Option<SortBy>,
+        /// Only show mods in this category, by id or name; repeat for any of
+        /// several.
+        #[arg(short, long = "category")]
+        categories: Vec<String>,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        page: u32,
+        /// List the categories and sorts instead of searching.
+        #[arg(long)]
+        list_categories: bool,
     },
     /// Remove a mod from the profile.
     Remove { name: String },
@@ -177,6 +201,44 @@ async fn run(cli: Cli) -> Result<()> {
             let spec = pw.parse_spec(&spec, version)?;
             let added = pw.add_mod(&profile, spec, name, !disabled).await?;
             println!("added {} to {}", added.name, loaded.label());
+        }
+        Command::Search {
+            text,
+            source,
+            game,
+            sort,
+            categories,
+            page,
+            list_categories,
+        } => {
+            let game = match game {
+                Some(game) => game,
+                None => selected(&pw, &cli.profile)?.1.game,
+            };
+            let source = search_source(&pw, &game, source)?;
+            if list_categories {
+                let sorts: Vec<_> = pw
+                    .search_sorts(&source)?
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                println!("sorts: {}", sorts.join(", "));
+                for category in pw.search_categories(&game, &source).await? {
+                    if category.id == category.name {
+                        println!("  {}", category.name);
+                    } else {
+                        println!("  {:<32} {}", category.id, category.name);
+                    }
+                }
+                return Ok(());
+            }
+            let query = SearchQuery {
+                text: Some(text.join(" ")),
+                sort,
+                categories,
+                page: page - 1,
+            };
+            search(&pw, &game, &source, &query).await?;
         }
         Command::Remove { name } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
@@ -335,6 +397,77 @@ async fn profile(pw: &Patchwork, command: ProfileCommand, explicit: &Option<Stri
         }
     }
     Ok(())
+}
+
+/// `explicit`, or the only source that can search for `game`'s mods.
+fn search_source(pw: &Patchwork, game: &str, explicit: Option<String>) -> Result<String> {
+    if let Some(source) = explicit {
+        return Ok(source);
+    }
+    match pw.search_sources(game)?.as_slice() {
+        [] => bail!("none of {game}'s sources can be searched"),
+        [only] => Ok(only.to_string()),
+        several => bail!(
+            "{game} can be searched on {}; pick one with --source",
+            several.join(", ")
+        ),
+    }
+}
+
+async fn search(pw: &Patchwork, game: &str, source: &str, query: &SearchQuery) -> Result<()> {
+    let page = pw.search(game, source, query).await?;
+    if page.items.is_empty() {
+        println!("no mods found");
+        return Ok(());
+    }
+    for item in &page.items {
+        println!("{}  ({source}:{})", item.name, item.id);
+        let mut facts = Vec::new();
+        if let Some(author) = &item.author {
+            facts.push(format!("by {author}"));
+        }
+        if let Some(version) = &item.latest_version {
+            facts.push(format!("v{version}"));
+        }
+        if let Some(downloads) = item.downloads {
+            facts.push(format!("{} downloads", compact(downloads)));
+        }
+        if let Some(updated) = item.updated {
+            facts.push(format!("updated {}", updated.strftime("%Y-%m-%d")));
+        }
+        if !facts.is_empty() {
+            println!("    {}", facts.join(" · "));
+        }
+        if let Some(summary) = item
+            .summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            println!("    {summary}");
+        }
+    }
+    let shown = query.page + 1;
+    let total = page
+        .total
+        .map(|t| format!(", {t} mods"))
+        .unwrap_or_default();
+    let more = if page.has_more {
+        format!("; --page {} for more", shown + 1)
+    } else {
+        String::new()
+    };
+    eprintln!("page {shown}{total}, by {}{more}", page.sort);
+    Ok(())
+}
+
+/// `26998136` as `27.0M`.
+fn compact(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => format!("{:.1}k", n as f64 / 1e3),
+        _ => format!("{:.1}M", n as f64 / 1e6),
+    }
 }
 
 fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
