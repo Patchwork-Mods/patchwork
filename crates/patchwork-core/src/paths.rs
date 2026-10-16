@@ -11,22 +11,36 @@ pub struct Paths {
     pub config: PathBuf,
     pub data: PathBuf,
     pub cache: PathBuf,
+    /// Extra registry directories from `$PATCHWORK_REGISTRY_PATH`, loaded on
+    /// top of installed registries. Meant for working on definitions without
+    /// rebuilding, e.g. pointing at this repo's `registry/`.
+    pub extra_registries: Vec<PathBuf>,
 }
 
 impl Paths {
     /// Uses `$PATCHWORK_HOME` if set (handy for tests and portable installs),
-    /// otherwise the platform's standard directories.
+    /// otherwise the platform's standard directories. `$PATCHWORK_REGISTRY_PATH`
+    /// is a list of extra registry directories, separated like `$PATH`.
     pub fn from_env() -> Result<Self> {
-        if let Some(home) = std::env::var_os("PATCHWORK_HOME") {
-            return Ok(Self::rooted(Path::new(&home)));
+        let mut paths = match std::env::var_os("PATCHWORK_HOME") {
+            Some(home) => Self::rooted(Path::new(&home)),
+            None => {
+                let dirs = directories::ProjectDirs::from("", "", "patchwork")
+                    .ok_or_else(|| Error::invalid("could not determine the home directory"))?;
+                Self {
+                    config: dirs.config_dir().to_owned(),
+                    data: dirs.data_dir().to_owned(),
+                    cache: dirs.cache_dir().to_owned(),
+                    extra_registries: Vec::new(),
+                }
+            }
+        };
+        if let Some(list) = std::env::var_os("PATCHWORK_REGISTRY_PATH") {
+            paths.extra_registries = std::env::split_paths(&list)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect();
         }
-        let dirs = directories::ProjectDirs::from("", "", "patchwork")
-            .ok_or_else(|| Error::invalid("could not determine the home directory"))?;
-        Ok(Self {
-            config: dirs.config_dir().to_owned(),
-            data: dirs.data_dir().to_owned(),
-            cache: dirs.cache_dir().to_owned(),
-        })
+        Ok(paths)
     }
 
     pub fn rooted(root: &Path) -> Self {
@@ -34,6 +48,7 @@ impl Paths {
             config: root.join("config"),
             data: root.join("data"),
             cache: root.join("cache"),
+            extra_registries: Vec::new(),
         }
     }
 

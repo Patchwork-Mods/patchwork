@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::builtin;
 use crate::game::{GAME_SCHEMA, GameDef};
@@ -14,6 +14,8 @@ use crate::{Error, Result};
 pub enum Origin {
     Builtin,
     Registry(String),
+    /// A directory from `$PATCHWORK_REGISTRY_PATH`.
+    Dir(PathBuf),
     User,
 }
 
@@ -22,6 +24,7 @@ impl fmt::Display for Origin {
         match self {
             Origin::Builtin => f.write_str("builtin"),
             Origin::Registry(name) => write!(f, "registry:{name}"),
+            Origin::Dir(path) => write!(f, "dir:{}", path.display()),
             Origin::User => f.write_str("user"),
         }
     }
@@ -41,7 +44,8 @@ pub struct Entry<T> {
 ///
 /// 1. entries built into the binary
 /// 2. installed registries, `<data>/registries/<name>/`, in name order
-/// 3. the user's own files under `<config>/`
+/// 3. directories listed in `$PATCHWORK_REGISTRY_PATH`, in order
+/// 4. the user's own files under `<config>/`
 ///
 /// Each layer is laid out as `<kind>/<id>.toml`. `games` is understood by the
 /// core; any other kind (like `rulesets`) is kept as raw TOML for whichever
@@ -75,6 +79,17 @@ impl Registry {
         names.sort();
         for name in names {
             registry.load_layer(&registries.join(&name), Origin::Registry(name));
+        }
+
+        for dir in &paths.extra_registries {
+            if !dir.is_dir() {
+                registry.problems.push(Error::invalid(format!(
+                    "PATCHWORK_REGISTRY_PATH entry {} is not a directory",
+                    dir.display()
+                )));
+                continue;
+            }
+            registry.load_layer(dir, Origin::Dir(dir.clone()));
         }
 
         registry.load_layer(paths.user_registry(), Origin::User);
@@ -198,6 +213,36 @@ mod tests {
             Origin::Builtin
         );
         assert!(registry.data("rulesets", "bepinex").is_some());
+    }
+
+    #[test]
+    fn extra_registry_dirs_override_builtins_but_not_user() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut paths = Paths::rooted(tmp.path());
+        let dev = tmp.path().join("dev");
+        let missing = tmp.path().join("missing");
+        paths.extra_registries = vec![dev.clone(), missing];
+
+        let def = |name: &str, id: &str| {
+            format!("schema = 1\nid = \"{id}\"\nname = \"{name}\"\n[deployer]\nkind = \"rules\"\n")
+        };
+        fs::create_dir_all(dev.join("games")).unwrap();
+        fs::write(
+            dev.join("games/lethal-company.toml"),
+            def("Dev", "lethal-company"),
+        )
+        .unwrap();
+        fs::write(dev.join("games/new-game.toml"), def("New", "new-game")).unwrap();
+        let user_games = paths.user_registry().join("games");
+        fs::create_dir_all(&user_games).unwrap();
+        fs::write(user_games.join("new-game.toml"), def("Mine", "new-game")).unwrap();
+
+        let registry = Registry::load(&paths).unwrap();
+        let lc = registry.game("lethal-company").unwrap();
+        assert_eq!(lc.origin, Origin::Dir(dev));
+        assert_eq!(lc.value.name, "Dev");
+        assert_eq!(registry.game("new-game").unwrap().origin, Origin::User);
+        assert_eq!(registry.problems.len(), 1, "{:?}", registry.problems);
     }
 
     #[test]
