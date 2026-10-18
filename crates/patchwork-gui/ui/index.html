@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Patchwork</title>
+    <!-- <config>/themes/default.css, then the selected game's theme on top;
+         see theme() in main.rs. -->
+    <style id="theme-default"></style>
+    <style id="theme-game"></style>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <aside id="sidebar">
+      <h1 class="brand">Patchwork</h1>
+      <nav id="profiles" aria-label="Profiles"></nav>
+      <form id="new-profile" class="stack">
+        <h2>New profile</h2>
+        <select name="game" required></select>
+        <input name="name" placeholder="Name" required pattern="[A-Za-z0-9._\-]+" />
+        <button type="submit">Create</button>
+      </form>
+    </aside>
+
+    <main id="main">
+      <header id="profile-header">
+        <div>
+          <h2 id="profile-title">No profile selected</h2>
+          <p id="profile-meta" class="muted"></p>
+        </div>
+        <div class="tabs" role="tablist">
+          <button role="tab" data-tab="mods" aria-selected="true">Mods</button>
+          <button role="tab" data-tab="browse" aria-selected="false">Browse</button>
+        </div>
+        <button id="deploy" class="primary" disabled>Deploy</button>
+      </header>
+
+      <section id="tab-mods" class="tab">
+        <form id="game-path" class="row" hidden>
+          <span>Where is this game installed?</span>
+          <input name="path" placeholder="/path/to/game" required />
+          <button type="submit">Set</button>
+        </form>
+        <ul id="mods" class="mod-list"></ul>
+        <p id="mods-empty" class="empty" hidden>No mods yet. Find some under Browse.</p>
+      </section>
+
+      <section id="tab-browse" class="tab" hidden>
+        <form id="search" class="row">
+          <select name="source"></select>
+          <input name="text" type="search" placeholder="Search mods" />
+          <select name="sort">
+            <option value="">Default order</option>
+            <option value="relevance">Relevance</option>
+            <option value="downloads">Downloads</option>
+            <option value="updated">Updated</option>
+            <option value="newest">Newest</option>
+            <option value="rating">Rating</option>
+          </select>
+          <button type="submit">Search</button>
+        </form>
+        <ul id="results" class="result-grid"></ul>
+        <div id="pager" class="row" hidden>
+          <button id="prev">Previous</button>
+          <span id="page-info" class="muted"></span>
+          <button id="next">Next</button>
+        </div>
+      </section>
+    </main>
+
+    <footer id="statusbar">
+      <span id="status" class="muted">Ready</span>
+      <span class="spacer"></span>
+      <label class="muted">Perf test
+        <select id="stress-count">
+          <option>500</option>
+          <option selected>2000</option>
+          <option>10000</option>
+        </select>
+      </label>
+      <button id="stress">Render fake mods</button>
+      <span id="perf" class="muted"></span>
+    </footer>
+
+    <dialog id="plan-dialog">
+      <form method="dialog" class="stack">
+        <h2>Deploy</h2>
+        <p id="plan-summary"></p>
+        <ul id="plan-warnings" class="warnings"></ul>
+        <ul id="plan-ops" class="plan-ops"></ul>
+        <div class="row end">
+          <button value="cancel">Cancel</button>
+          <button value="apply" class="primary">Apply</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

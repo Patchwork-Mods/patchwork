@@ -24,6 +24,8 @@ jiff = { version = "0.2.38", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_norway = "0.9.42"
+tauri = "2.12.4"
+tauri-build = "2.7.3"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread"] }

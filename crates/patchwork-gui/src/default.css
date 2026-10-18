@@ -1,0 +1,351 @@
+/*
+ * Patchwork's look, used for every game. Edit it freely; delete it to get
+ * the built-in version back. A game's own theme (<game>.css, next to this
+ * file) loads after it, so it only needs the rules it changes. The
+ * variables below are the easy knobs; for more, target the ids and classes
+ * in index.html, or `body[data-game="<id>"]`.
+ */
+
+:root {
+  color-scheme: light dark;
+  --pw-font: system-ui, sans-serif;
+  --pw-radius: 6px;
+  --pw-gap: 12px;
+
+  --pw-bg: #f6f5f2;
+  --pw-surface: #ffffff;
+  --pw-sidebar: #ecebe6;
+  --pw-text: #1f1e1c;
+  --pw-muted: #6b6963;
+  --pw-border: #d8d6cf;
+  --pw-accent: #c4643f;
+  --pw-accent-text: #ffffff;
+  --pw-danger: #b3261e;
+  --pw-icon-size: 56px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pw-bg: #1b1b1a;
+    --pw-surface: #252523;
+    --pw-sidebar: #141413;
+    --pw-text: #ecebe6;
+    --pw-muted: #9c9a93;
+    --pw-border: #3a3936;
+    --pw-accent: #e07a52;
+    --pw-accent-text: #141413;
+    --pw-danger: #f2b8b5;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 1fr auto;
+  grid-template-areas:
+    "sidebar main"
+    "status status";
+  font: 14px/1.4 var(--pw-font);
+  background: var(--pw-bg);
+  color: var(--pw-text);
+}
+
+h1, h2 {
+  margin: 0;
+}
+
+h2 {
+  font-size: 15px;
+}
+
+.muted {
+  color: var(--pw-muted);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.row.end {
+  justify-content: flex-end;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+button, input, select {
+  font: inherit;
+  color: inherit;
+  background: var(--pw-surface);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  padding: 5px 10px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--pw-accent);
+  color: var(--pw-accent-text);
+  border-color: transparent;
+}
+
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--pw-accent);
+  outline-offset: 1px;
+}
+
+/* Sidebar */
+
+#sidebar {
+  grid-area: sidebar;
+  background: var(--pw-sidebar);
+  border-right: 1px solid var(--pw-border);
+  padding: var(--pw-gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-gap);
+  overflow-y: auto;
+}
+
+.brand {
+  font-size: 18px;
+}
+
+#profiles {
+  flex: 1;
+}
+
+#profiles h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pw-muted);
+  margin: 12px 0 4px;
+}
+
+#profiles button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  border: none;
+  background: none;
+  text-align: left;
+}
+
+#profiles button[aria-current="true"] {
+  background: var(--pw-surface);
+  font-weight: 600;
+}
+
+/* Main */
+
+#main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#profile-header {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-gap);
+  padding: var(--pw-gap) calc(var(--pw-gap) * 1.5);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+#profile-header > div:first-child {
+  flex: 1;
+}
+
+#profile-meta {
+  margin: 2px 0 0;
+}
+
+.tabs button {
+  border: none;
+  background: none;
+}
+
+.tabs button[aria-selected="true"] {
+  box-shadow: inset 0 -2px 0 var(--pw-accent);
+}
+
+.tab {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--pw-gap) calc(var(--pw-gap) * 1.5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-gap);
+}
+
+.empty {
+  color: var(--pw-muted);
+  text-align: center;
+  margin-top: 48px;
+}
+
+.mod-list, .result-grid, .plan-ops, .warnings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mod-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--pw-border);
+  /* Lets the engine skip laying out rows that are scrolled out of view. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 37px;
+}
+
+.mod-list li.disabled .mod-name {
+  color: var(--pw-muted);
+  text-decoration: line-through;
+}
+
+.mod-name {
+  flex: 1;
+}
+
+.mod-source {
+  font-size: 12px;
+}
+
+.mod-list .remove {
+  color: var(--pw-danger);
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--pw-gap);
+}
+
+.result {
+  display: grid;
+  grid-template-columns: var(--pw-icon-size) 1fr;
+  grid-template-rows: auto 1fr auto;
+  gap: 4px 10px;
+  padding: 10px;
+  background: var(--pw-surface);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+}
+
+.result img, .result .no-icon {
+  grid-row: 1 / 4;
+  width: var(--pw-icon-size);
+  height: var(--pw-icon-size);
+  border-radius: var(--pw-radius);
+  object-fit: cover;
+  background: var(--pw-border);
+}
+
+.result h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.result p {
+  margin: 0;
+  font-size: 13px;
+  max-height: calc(3 * 1.4em);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.result .facts {
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+#pager {
+  justify-content: center;
+}
+
+/* Status bar */
+
+#statusbar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px var(--pw-gap);
+  border-top: 1px solid var(--pw-border);
+  background: var(--pw-sidebar);
+  font-size: 12px;
+}
+
+#statusbar button, #statusbar select {
+  padding: 2px 8px;
+}
+
+#status.error {
+  color: var(--pw-danger);
+}
+
+/* Deploy dialog */
+
+dialog {
+  width: min(640px, 90vw);
+  max-height: 80vh;
+  background: var(--pw-surface);
+  color: var(--pw-text);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+.plan-ops {
+  max-height: 50vh;
+  overflow-y: auto;
+  font: 12px/1.6 ui-monospace, monospace;
+}
+
+.plan-ops .remove {
+  color: var(--pw-danger);
+}
+
+.warnings li {
+  color: var(--pw-danger);
+}

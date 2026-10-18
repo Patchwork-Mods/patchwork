@@ -53,20 +53,50 @@
         { pkgs, system }:
         {
           default = pkgs.mkShell {
-            packages = with pkgs; [
-              rustToolchain
-              openssl
-              pkg-config
-              cargo-deny
-              cargo-edit
-              cargo-watch
-              rust-analyzer
-              self.formatter.${system}
-            ];
+            packages =
+              with pkgs;
+              [
+                rustToolchain
+                openssl
+                pkg-config
+                cargo-deny
+                cargo-edit
+                cargo-watch
+                rust-analyzer
+                self.formatter.${system}
+              ]
+              # For the Tauri GUI (patchwork-gui).
+              ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+                webkitgtk_4_1
+                gtk3
+                libsoup_3
+                glib-networking
+                librsvg
+              ];
 
             env = {
               # Required by rust-analyzer
               RUST_SRC_PATH = "${pkgs.rustToolchain}/lib/rustlib/src/rust/library";
+            }
+            // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+              # So patchwork-gui can find GTK/WebKit at runtime, and TLS
+              # works inside the webview.
+              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
+                with pkgs;
+                [
+                  webkitgtk_4_1
+                  gtk3
+                  libsoup_3
+                  glib
+                  cairo
+                  pango
+                  gdk-pixbuf
+                  harfbuzz
+                  atk
+                  dbus
+                ]
+              );
+              GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules/";
             };
           };
         }

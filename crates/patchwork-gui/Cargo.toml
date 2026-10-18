@@ -1,0 +1,20 @@
+[package]
+name = "patchwork-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "patchwork-gui"
+path = "src/main.rs"
+
+[dependencies]
+patchwork-core.workspace = true
+patchwork-sources.workspace = true
+patchwork-deployers.workspace = true
+patchwork-formats.workspace = true
+serde.workspace = true
+tauri.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true

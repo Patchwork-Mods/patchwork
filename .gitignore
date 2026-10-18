@@ -1,2 +1,3 @@
 /.direnv
 /target
+/crates/patchwork-gui/gen
