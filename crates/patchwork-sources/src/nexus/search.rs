@@ -19,6 +19,7 @@ query Mods($filter: ModsFilter, $sort: [ModsSort!], $offset: Int, $count: Int) {
     nodes {
       modId name summary author version downloads endorsements updatedAt thumbnailUrl
       modCategory { name }
+      uploader { name }
     }
   }
 }";
@@ -66,6 +67,13 @@ pub(super) struct ModNode {
     pub updated_at: Option<Timestamp>,
     pub thumbnail_url: Option<String>,
     pub mod_category: Option<ModCategory>,
+    pub uploader: Option<Uploader>,
+}
+
+/// Who uploaded a mod, which isn't always who `author` credits.
+#[derive(Debug, Deserialize)]
+pub(super) struct Uploader {
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,10 +95,18 @@ struct FacetsData {
 }
 // --- End API Responses ---
 
-pub(super) fn node_to_summary(node: ModNode) -> ModSummary {
+pub(super) fn node_to_summary(game_domain: &str, node: ModNode) -> ModSummary {
     ModSummary {
         source: "nexus".to_owned(),
         id: node.mod_id.to_string(),
+        url: Some(format!(
+            "https://www.nexusmods.com/{game_domain}/mods/{}",
+            node.mod_id
+        )),
+        // `author` is free text, so link the uploader's mods instead
+        author_url: node
+            .uploader
+            .map(|u| format!("https://www.nexusmods.com/profile/{}/mods", u.name)),
         name: node.name,
         author: node.author,
         summary: node.summary,
@@ -179,7 +195,11 @@ impl Nexus {
         Ok(SearchPage {
             total: Some(page.total_count),
             has_more,
-            items: page.nodes.into_iter().map(node_to_summary).collect(),
+            items: page
+                .nodes
+                .into_iter()
+                .map(|node| node_to_summary(game_domain, node))
+                .collect(),
             sort,
         })
     }

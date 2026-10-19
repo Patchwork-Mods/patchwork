@@ -57,6 +57,42 @@ function compact(n) {
   return (n / 1e6).toFixed(1) + "M";
 }
 
+/** A link that opens in the browser rather than the app, or plain text when
+ * there's no URL. */
+function link(url, text) {
+  if (!url) return text;
+  return h(
+    "a",
+    {
+      href: url,
+      title: url,
+      onclick: (e) => {
+        e.preventDefault();
+        window.__TAURI__.opener.openUrl(url).catch((err) => status(String(err), true));
+      },
+    },
+    text,
+  );
+}
+
+const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+/** "3 days ago" and the like, for an ISO timestamp. */
+function ago(timestamp) {
+  let delta = (Date.parse(timestamp) - Date.now()) / 1000;
+  for (const [unit, size] of [
+    ["second", 60],
+    ["minute", 60],
+    ["hour", 24],
+    ["day", 30],
+    ["month", 12],
+    ["year", Infinity],
+  ]) {
+    if (Math.abs(delta) < size) return relativeTime.format(Math.round(delta), unit);
+    delta /= size;
+  }
+}
+
 /** Reloads everything, staying on whichever screen and profile is open. */
 async function refresh() {
   state.overview = await run("overview");
@@ -554,46 +590,59 @@ function renderResults(search) {
   const added = new Set(state.profile.mods.map((m) => `${m.source}:${m.id}`));
   $("#results").replaceChildren(
     ...results.items.map((item) => {
-      const facts = [
-        item.author && `by ${item.author}`,
-        item.downloads != null && `${compact(item.downloads)} downloads`,
-      ].filter(Boolean);
+      // Hovering a count shows it in full.
+      const count = (n, noun) =>
+        n != null && h("span", { title: `${n.toLocaleString()} ${noun}` }, `${compact(n)} ${noun}`);
+      const stats = [count(item.downloads, "downloads"), count(item.rating, "likes")].filter(Boolean);
       const isAdded = added.has(`${item.source}:${item.id}`);
+      const summary = item.summary?.trim();
       return h(
         "li",
         { class: "result" },
         item.icon_url
           ? h("img", { src: item.icon_url, alt: "", loading: "lazy", decoding: "async" })
           : h("div", { class: "no-icon" }),
-        h("h3", {}, item.name),
-        h("p", { class: "muted" }, item.summary?.trim() ?? ""),
         h(
           "div",
-          { class: "facts muted" },
-          h("span", {}, facts.join(" · ")),
+          { class: "result-body" },
+          h("h3", {}, link(item.url, item.name)),
+          item.author && h("div", { class: "author" }, link(item.author_url, item.author)),
+          summary && h("p", { class: "muted", title: summary }, summary),
           h(
-            "button",
-            {
-              disabled: isAdded,
-              onclick: async (e) => {
-                e.target.disabled = true;
-                status(`Adding ${item.name}…`);
-                const name = await run("add_mod", {
-                  id: state.profile.id,
-                  source: item.source,
-                  modId: item.id,
-                }).catch(() => (e.target.disabled = false));
-                if (typeof name === "string") {
-                  status(`Added ${name}`);
-                  e.target.textContent = "Added";
-                  state.profile = await run("profile", { id: state.profile.id });
-                  renderProfile();
-                  refreshVersions();
-                }
-              },
-            },
-            isAdded ? "Added" : "Add",
+            "div",
+            { class: "facts muted" },
+            stats.length > 0 ? h("div", {}, stats.flatMap((s, i) => (i ? [" · ", s] : [s]))) : null,
+            item.updated &&
+              h(
+                "div",
+                { title: new Date(item.updated).toLocaleString() },
+                `Updated ${ago(item.updated)}`,
+              ),
           ),
+        ),
+        h(
+          "button",
+          {
+            class: "add",
+            disabled: isAdded,
+            onclick: async (e) => {
+              e.target.disabled = true;
+              status(`Adding ${item.name}…`);
+              const name = await run("add_mod", {
+                id: state.profile.id,
+                source: item.source,
+                modId: item.id,
+              }).catch(() => (e.target.disabled = false));
+              if (typeof name === "string") {
+                status(`Added ${name}`);
+                e.target.textContent = "Added";
+                state.profile = await run("profile", { id: state.profile.id });
+                renderProfile();
+                refreshVersions();
+              }
+            },
+          },
+          isAdded ? "Added" : "Add",
         ),
       );
     }),

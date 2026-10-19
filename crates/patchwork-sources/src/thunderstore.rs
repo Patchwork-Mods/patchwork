@@ -218,10 +218,16 @@ fn parse_package_url(url: &str) -> Option<(Option<&str>, String, Option<String>)
     }
 }
 
-fn listed_to_summary(package: ListedPackage) -> ModSummary {
+fn listed_to_summary(community: &str, package: ListedPackage) -> ModSummary {
+    let author_url = format!(
+        "https://thunderstore.io/c/{community}/p/{}/",
+        package.namespace
+    );
     ModSummary {
         source: "thunderstore".to_owned(),
         id: format!("{}-{}", package.namespace, package.name),
+        url: Some(format!("{author_url}{}/", package.name)),
+        author_url: Some(author_url),
         name: package.name,
         author: Some(package.namespace),
         summary: package.description,
@@ -396,7 +402,11 @@ impl Source for Thunderstore {
         Ok(SearchPage {
             total: Some(listing.count),
             has_more: listing.next.is_some(),
-            items: listing.results.into_iter().map(listed_to_summary).collect(),
+            items: listing
+                .results
+                .into_iter()
+                .map(|package| listed_to_summary(&community, package))
+                .collect(),
             sort,
         })
     }
@@ -623,8 +633,19 @@ mod thunderstore_test {
         let listing: Listing = serde_json::from_str(LISTING).unwrap();
         assert_eq!(listing.count, 145);
         assert!(listing.next.is_some());
-        let summary = listed_to_summary(listing.results.into_iter().next().unwrap());
+        let summary = listed_to_summary(
+            "lethal-company",
+            listing.results.into_iter().next().unwrap(),
+        );
         assert_eq!(summary.id, "notnotnotswipez-MoreCompany");
+        assert_eq!(
+            summary.url.as_deref(),
+            Some("https://thunderstore.io/c/lethal-company/p/notnotnotswipez/MoreCompany/")
+        );
+        assert_eq!(
+            summary.author_url.as_deref(),
+            Some("https://thunderstore.io/c/lethal-company/p/notnotnotswipez/")
+        );
         assert_eq!(summary.name, "MoreCompany");
         assert_eq!(summary.author.as_deref(), Some("notnotnotswipez"));
         assert_eq!(summary.downloads, Some(26998136));
@@ -737,7 +758,19 @@ mod thunderstore_test {
             .unwrap();
         assert_eq!(home.sort, SortBy::Downloads);
         assert!(home.has_more);
-        assert!(home.items.iter().any(|m| m.id == "BepInEx-BepInExPack"));
+        let bepinex = home
+            .items
+            .iter()
+            .find(|m| m.id == "BepInEx-BepInExPack")
+            .unwrap();
+        assert_eq!(
+            bepinex.url.as_deref(),
+            Some("https://thunderstore.io/c/lethal-company/p/BepInEx/BepInExPack/")
+        );
+        assert_eq!(
+            bepinex.author_url.as_deref(),
+            Some("https://thunderstore.io/c/lethal-company/p/BepInEx/")
+        );
 
         let query = SearchQuery {
             text: Some("morecompany".to_owned()),

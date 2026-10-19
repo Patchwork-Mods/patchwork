@@ -223,7 +223,8 @@ const MODS_PAGE: &str = r#"{
         "endorsements": 505574,
         "thumbnailUrl": "https://staticdelivery.nexusmods.com/mods/1704/images/thumbnails/12604/12604.png",
         "version": "6.9",
-        "modCategory": {"name": "User Interface"}
+        "modCategory": {"name": "User Interface"},
+        "uploader": {"name": "schlangster"}
     }, {
         "modId": 1,
         "name": "Uncategorized",
@@ -234,7 +235,8 @@ const MODS_PAGE: &str = r#"{
         "endorsements": null,
         "thumbnailUrl": null,
         "version": null,
-        "modCategory": null
+        "modCategory": null,
+        "uploader": null
     }]
 }"#;
 
@@ -243,13 +245,23 @@ fn converts_search_results() {
     let page: ModsPage = serde_json::from_str(MODS_PAGE).unwrap();
     assert_eq!(page.total_count, 218);
     let mut nodes = page.nodes.into_iter();
-    let skyui = node_to_summary(nodes.next().unwrap());
+    let skyui = node_to_summary("skyrimspecialedition", nodes.next().unwrap());
     assert_eq!(skyui.source, "nexus");
     assert_eq!(skyui.id, "12604");
+    assert_eq!(
+        skyui.url.as_deref(),
+        Some("https://www.nexusmods.com/skyrimspecialedition/mods/12604")
+    );
+    assert_eq!(
+        skyui.author_url.as_deref(),
+        Some("https://www.nexusmods.com/profile/schlangster/mods")
+    );
     assert_eq!(skyui.rating, Some(505574));
     assert_eq!(skyui.latest_version.as_deref(), Some("6.9"));
     assert_eq!(skyui.categories[0].id, "User Interface");
-    assert!(node_to_summary(nodes.next().unwrap()).categories.is_empty());
+    let bare = node_to_summary("skyrimspecialedition", nodes.next().unwrap());
+    assert!(bare.categories.is_empty());
+    assert_eq!(bare.author_url, None);
 }
 
 #[test]

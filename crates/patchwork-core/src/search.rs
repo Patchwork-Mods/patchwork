@@ -105,7 +105,11 @@ pub struct ModSummary {
     /// The same id [`crate::source::Source::resolve`] takes.
     pub id: String,
     pub name: String,
+    /// The mod's page on the source's site.
+    pub url: Option<String>,
     pub author: Option<String>,
+    /// The author's page on the source's site, listing their mods.
+    pub author_url: Option<String>,
     pub summary: Option<String>,
     pub icon_url: Option<String>,
     pub downloads: Option<u64>,
