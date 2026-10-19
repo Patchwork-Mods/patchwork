@@ -4,9 +4,11 @@
 use std::fmt::Display;
 use std::sync::Mutex;
 
+use jiff::{SignedDuration, Timestamp};
 use patchwork_core::Patchwork;
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
+use patchwork_core::lock::mod_key;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchPage, SearchQuery, SortBy};
@@ -114,13 +116,35 @@ struct ProfileDetail {
     id: String,
     label: String,
     game: String,
-    mods: Vec<ProfileMod>,
+    mods: Vec<UiMod>,
+    /// Dependency requirements the locked versions don't meet.
+    problems: Vec<String>,
     install: Option<String>,
     /// Files patchwork has deployed for this profile's game, if it's this
     /// profile that's deployed.
     deployed_files: Option<usize>,
     search_sources: Vec<String>,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiMod {
+    #[serde(flatten)]
+    profile: ProfileMod,
+    /// The version in the lockfile, if it's been locked.
+    locked: Option<String>,
+    /// Whether the mod's source has versions to pick from.
+    versioned: bool,
+    /// Its versions as last fetched, newest first, if they ever have been.
+    versions: Option<Vec<String>>,
+    /// Whether `versions` is old enough (or missing) that the UI should
+    /// fetch it again.
+    versions_stale: bool,
+}
+
+/// How long a mod's fetched versions are trusted before the UI refreshes
+/// them in the background.
+const VERSIONS_TTL: SignedDuration = SignedDuration::from_hours(1);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -195,10 +219,47 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
         .into_iter()
         .map(str::to_owned)
         .collect();
+    let lock = pw.load_lock(&r).map_err(msg)?;
+    let problems = lock
+        .as_ref()
+        .map(|l| {
+            pw.unmet_requirements(l)
+                .iter()
+                .map(|u| u.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let label = loaded.label();
+    let mods = loaded
+        .mods
+        .into_iter()
+        .map(|m| {
+            let key = mod_key(&m.source, &m.id);
+            let versioned = pw.lists_versions(&m.source).unwrap_or(false);
+            let known = versioned
+                .then(|| pw.known_versions(&loaded.game, &m.source, &m.id))
+                .flatten();
+            UiMod {
+                versions_stale: versioned
+                    && known
+                        .as_ref()
+                        .is_none_or(|k| Timestamp::now().duration_since(k.fetched) > VERSIONS_TTL),
+                versions: known.map(|k| k.versions),
+                versioned,
+                locked: lock
+                    .iter()
+                    .flat_map(|l| &l.mods)
+                    .find(|l| l.key() == key)
+                    .and_then(|l| l.version.clone()),
+                profile: m,
+            }
+        })
+        .collect();
     Ok(ProfileDetail {
-        label: loaded.label(),
+        label,
         game: loaded.game,
-        mods: loaded.mods,
+        mods,
+        problems,
         id,
         install,
         deployed_files,
@@ -236,6 +297,66 @@ fn set_enabled(app: State<'_, App>, id: String, name: String, enabled: bool) -> 
 #[tauri::command]
 fn remove_mod(app: State<'_, App>, id: String, name: String) -> CmdResult<()> {
     app.pw.remove_mod(&profile_ref(&id)?, &name).map_err(msg)
+}
+
+/// The versions a mod can be pinned to, newest first.
+#[tauri::command]
+async fn versions(
+    app: State<'_, App>,
+    game: String,
+    source: String,
+    mod_id: String,
+) -> CmdResult<Vec<String>> {
+    app.pw.versions(&game, &source, &mod_id).await.map_err(msg)
+}
+
+/// Pins a mod to `version` (or unpins it with none) and locks the profile,
+/// so the new version is fetched and any conflicts show up straight away.
+#[tauri::command]
+async fn set_version(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    version: Option<String>,
+) -> CmdResult<()> {
+    let r = profile_ref(&id)?;
+    app.pw.set_version(&r, &name, version).map_err(msg)?;
+    app.pw.lock(&r, false).await.map(drop).map_err(msg)
+}
+
+/// A mod whose locked version changed when the lock was updated.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LockChange {
+    name: String,
+    /// `None` if it wasn't in the lockfile before, e.g. a new dependency.
+    from: Option<String>,
+    to: Option<String>,
+}
+
+/// Relocks the profile at the newest versions, like `patchwork lock
+/// --update`, and returns what changed. Pinned mods stay where they are.
+#[tauri::command]
+async fn update_lock(app: State<'_, App>, id: String) -> CmdResult<Vec<LockChange>> {
+    let r = profile_ref(&id)?;
+    let before = app.pw.load_lock(&r).map_err(msg)?;
+    let after = app.pw.lock(&r, true).await.map_err(msg)?;
+    Ok(after
+        .mods
+        .into_iter()
+        .filter_map(|m| {
+            let key = m.key();
+            let old = before.iter().flat_map(|l| &l.mods).find(|l| l.key() == key);
+            match old {
+                Some(old) if old.version == m.version && old.hash == m.hash => None,
+                _ => Some(LockChange {
+                    name: m.name,
+                    from: old.and_then(|o| o.version.clone()),
+                    to: m.version,
+                }),
+            }
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -367,6 +488,9 @@ fn main() {
             set_game_path,
             set_enabled,
             remove_mod,
+            versions,
+            set_version,
+            update_lock,
             add_mod,
             search,
             plan_deploy,

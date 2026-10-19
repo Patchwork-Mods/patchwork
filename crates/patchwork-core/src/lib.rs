@@ -30,4 +30,4 @@ mod builtin;
 mod patchwork;
 
 pub use error::{Error, Result};
-pub use patchwork::{Builder, GameInstall, ImportOptions, Imported, Patchwork};
+pub use patchwork::{Builder, GameInstall, ImportOptions, Imported, KnownVersions, Patchwork};

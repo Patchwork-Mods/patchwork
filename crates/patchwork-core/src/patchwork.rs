@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -13,7 +14,7 @@ use crate::event::{Event, Reporter, Silent};
 use crate::fsutil::{self, StateLock};
 use crate::game::GameDef;
 use crate::hash::ContentHash;
-use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
+use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
 use crate::paths::Paths;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod, ProfileRef, validate_name};
 use crate::registry::Registry;
@@ -27,6 +28,15 @@ use crate::{Error, Result};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameInstall {
     pub path: PathBuf,
+}
+
+/// A mod's versions as of when they were last fetched.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnownVersions {
+    pub id: String,
+    pub fetched: Timestamp,
+    /// Newest first.
+    pub versions: Vec<String>,
 }
 
 /// How to import a profile; see [`Patchwork::import_profile`].
@@ -419,6 +429,73 @@ impl Patchwork {
         self.save_profile(profile, &loaded)
     }
 
+    /// Pins a mod to `version`, or with `None` lets it follow the newest
+    /// version again. Takes effect the next time the profile's locked.
+    pub fn set_version(
+        &self,
+        profile: &ProfileRef,
+        name: &str,
+        version: Option<String>,
+    ) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let m = loaded
+            .find_mut(name)
+            .ok_or_else(|| no_such_mod(&label, name))?;
+        if version.is_some() && !self.source(&m.source)?.lists_versions() {
+            return Err(Error::invalid(format!(
+                "`{name}` comes from {}, which doesn't have versions to pick from",
+                m.source
+            )));
+        }
+        m.version = version;
+        self.save_profile(profile, &loaded)
+    }
+
+    /// Whether `source`'s mods have versions that can be listed and picked.
+    pub fn lists_versions(&self, source: &str) -> Result<bool> {
+        Ok(self.source(source)?.lists_versions())
+    }
+
+    /// Every version of a mod that can be pinned, newest first, fetched from
+    /// its source. The list is remembered for [`Patchwork::known_versions`].
+    pub async fn versions(&self, game: &str, source: &str, id: &str) -> Result<Vec<String>> {
+        let def = &self.registry.game(game)?.value;
+        let ctx = SourceContext {
+            game: def,
+            config: def.sources.get(source),
+        };
+        let versions = self.source(source)?.versions(&ctx, id).await?;
+        let known = KnownVersions {
+            id: id.to_owned(),
+            fetched: Timestamp::now(),
+            versions,
+        };
+        fsutil::write_json(&self.known_versions_file(game, source, id), &known)?;
+        Ok(known.versions)
+    }
+
+    /// The versions [`Patchwork::versions`] last fetched for a mod, without
+    /// going to the network. `None` if they never have been (or the cache
+    /// was cleared).
+    pub fn known_versions(&self, game: &str, source: &str, id: &str) -> Option<KnownVersions> {
+        // it's only a cache, so a file that can't be read is as good as none
+        fsutil::read_json::<KnownVersions>(&self.known_versions_file(game, source, id))
+            .ok()
+            .flatten()
+            .filter(|k| k.id == id)
+    }
+
+    /// Ids can be paths or have characters that don't belong in file names,
+    /// so the file is named by a hash of the id.
+    fn known_versions_file(&self, game: &str, source: &str, id: &str) -> PathBuf {
+        self.paths
+            .known_versions()
+            .join(game)
+            .join(source)
+            .join(format!("{}.json", ContentHash::of(id.as_bytes())))
+    }
+
     fn source(&self, id: &str) -> Result<&dyn Source> {
         self.sources
             .get(id)
@@ -556,15 +633,68 @@ impl Patchwork {
     /// dependencies, and makes sure they're all in the store.
     ///
     /// Mods already in the lockfile are kept at their locked version unless
-    /// `update` is set, like `cargo update`.
+    /// `update` is set, like `cargo update`, or unless a mod now needs a newer
+    /// version of them than is locked. Requirements that still aren't met,
+    /// because of a pin or because nothing new enough exists, are warnings.
     pub async fn lock(&self, profile: &ProfileRef, update: bool) -> Result<Lockfile> {
         let loaded = self.load_profile(profile)?;
         let game = self.registry.game(&loaded.game)?;
-        let previous: HashMap<String, LockedMod> = match (update, self.load_lock(profile)?) {
+        let mut previous: HashMap<String, LockedMod> = match (update, self.load_lock(profile)?) {
             (false, Some(lock)) => lock.mods.into_iter().map(|m| (m.key(), m)).collect(),
             _ => HashMap::new(),
         };
 
+        let (lock, unmet) = loop {
+            let (mods, resolved) = self.resolve_mods(&loaded, &previous).await?;
+            let lock = Lockfile {
+                schema: LOCK_SCHEMA,
+                game: LockedGame {
+                    id: loaded.game.clone(),
+                    definition: game.hash,
+                },
+                mods,
+            };
+            let unmet = self.unmet_requirements(&lock);
+            // Unpinned mods kept from the old lockfile might just be stale,
+            // so resolve those again. Each pass drops at least one, so this
+            // ends.
+            let stale: Vec<String> = lock
+                .mods
+                .iter()
+                .filter(|m| {
+                    m.requested.is_none()
+                        && !resolved.contains(&m.key())
+                        && unmet.iter().any(|u| u.dependency_key == m.key())
+                })
+                .map(|m| m.key())
+                .collect();
+            if stale.is_empty() {
+                break (lock, unmet);
+            }
+            for key in stale {
+                previous.remove(&key);
+            }
+        };
+        for u in unmet {
+            self.reporter.report(Event::Warning(u.to_string()));
+        }
+        fsutil::write_toml(&self.lock_file(profile), &lock)?;
+        Ok(lock)
+    }
+
+    /// Requirements in `lock` that the locked versions don't meet.
+    pub fn unmet_requirements(&self, lock: &Lockfile) -> Vec<UnmetRequirement> {
+        lock.unmet_requirements(|source, a, b| self.source(source).ok()?.compare_versions(a, b))
+    }
+
+    /// One pass of [`Patchwork::lock`]: walks the profile's mods and their
+    /// dependencies, reusing entries from `previous` where it can. Also
+    /// returns the keys of the mods it had to resolve.
+    async fn resolve_mods(
+        &self,
+        loaded: &Profile,
+        previous: &HashMap<String, LockedMod>,
+    ) -> Result<(Vec<LockedMod>, HashSet<String>)> {
         let mut queue: VecDeque<(ModSpec, Option<String>)> = loaded
             .mods
             .iter()
@@ -578,6 +708,7 @@ impl Patchwork {
             })
             .collect();
         let mut seen = HashSet::new();
+        let mut resolved_keys = HashSet::new();
         let mut mods = Vec::new();
 
         while let Some((spec, name)) = queue.pop_front() {
@@ -615,6 +746,7 @@ impl Patchwork {
                     let name = name.unwrap_or_else(|| resolved.name.clone());
                     self.reporter.report(Event::Fetching { name: name.clone() });
                     let hash = self.fetch(&resolved.artifact, resolved.format).await?;
+                    resolved_keys.insert(key.clone());
                     LockedMod {
                         name,
                         source: spec.source.clone(),
@@ -628,6 +760,12 @@ impl Patchwork {
                             .dependencies
                             .iter()
                             .map(|d| mod_key(&d.source, &d.id))
+                            .collect(),
+                        requires: resolved
+                            .dependencies
+                            .into_iter()
+                            .filter(|d| !d.req.is_any())
+                            .map(|d| (mod_key(&d.source, &d.id), d.req))
                             .collect(),
                     }
                 }
@@ -644,17 +782,7 @@ impl Patchwork {
             }
             mods.push(locked);
         }
-
-        let lock = Lockfile {
-            schema: LOCK_SCHEMA,
-            game: LockedGame {
-                id: loaded.game.clone(),
-                definition: game.hash,
-            },
-            mods,
-        };
-        fsutil::write_toml(&self.lock_file(profile), &lock)?;
-        Ok(lock)
+        Ok((mods, resolved_keys))
     }
 
     async fn fetch(

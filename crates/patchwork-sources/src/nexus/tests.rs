@@ -300,3 +300,9 @@ async fn searches() {
     let categories = nexus.search_categories(&ctx).await.unwrap();
     assert!(categories.iter().any(|c| c.id == "User Interface"));
 }
+
+#[test]
+fn lists_file_versions_newest_first() {
+    let files: NexusFiles = serde_json::from_str(FILES).unwrap();
+    assert_eq!(file_versions(files.files), ["6.0", "5.2SE", "5.1SE"]);
+}

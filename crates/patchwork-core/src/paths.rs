@@ -70,6 +70,12 @@ impl Paths {
         self.cache.join("downloads")
     }
 
+    /// The last version lists fetched for mods, so UIs can show them
+    /// without going to the network.
+    pub fn known_versions(&self) -> PathBuf {
+        self.cache.join("versions")
+    }
+
     pub fn profiles(&self) -> PathBuf {
         self.data.join("profiles")
     }

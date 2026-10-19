@@ -74,6 +74,12 @@ enum Command {
     Enable { name: String },
     /// Disable a mod without removing it.
     Disable { name: String },
+    /// Freeze a mod at a version, so updates leave it alone.
+    Pin { name: String, version: String },
+    /// Let a pinned mod follow the newest version again.
+    Unpin { name: String },
+    /// List the versions a mod can be pinned to, newest first.
+    Versions { name: String },
     /// List the mods in the profile.
     List,
     /// Resolve and fetch every mod in the profile.
@@ -252,6 +258,42 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Disable { name } => {
             pw.set_enabled(&selected(&pw, &cli.profile)?.0, &name, false)?;
             println!("disabled {name}");
+        }
+        Command::Pin { name, version } => {
+            let (profile, _) = selected(&pw, &cli.profile)?;
+            pw.set_version(&profile, &name, Some(version.clone()))?;
+            let lock = pw.lock(&profile, false).await?;
+            println!(
+                "pinned {name} to {version} ({} mods locked)",
+                lock.mods.len()
+            );
+        }
+        Command::Unpin { name } => {
+            let (profile, _) = selected(&pw, &cli.profile)?;
+            pw.set_version(&profile, &name, None)?;
+            let lock = pw.lock(&profile, false).await?;
+            let version = lock
+                .mods
+                .iter()
+                .find(|m| m.name == name)
+                .and_then(|m| m.version.as_deref())
+                .unwrap_or("its newest version");
+            println!("unpinned {name}; it's now at {version}");
+        }
+        Command::Versions { name } => {
+            let (_, loaded) = selected(&pw, &cli.profile)?;
+            let m =
+                loaded.mods.iter().find(|m| m.name == name).ok_or_else(|| {
+                    anyhow::anyhow!("{} has no mod named `{name}`", loaded.label())
+                })?;
+            for v in pw.versions(&loaded.game, &m.source, &m.id).await? {
+                let mark = if m.version.as_ref() == Some(&v) {
+                    " (pinned)"
+                } else {
+                    ""
+                };
+                println!("{v}{mark}");
+            }
         }
         Command::List => {
             let (_, loaded) = selected(&pw, &cli.profile)?;

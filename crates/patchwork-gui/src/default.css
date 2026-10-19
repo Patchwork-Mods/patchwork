@@ -243,6 +243,18 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   font-size: 12px;
 }
 
+/* A select is as wide as its widest option, and the options only arrive
+   once it's hovered, so a fixed width keeps it from jumping. */
+.mod-version {
+  font-size: 12px;
+  padding: 2px 6px;
+  width: 150px;
+}
+
+#mod-problems li {
+  padding: 6px 8px;
+}
+
 .mod-list .remove {
   color: var(--pw-danger);
 }

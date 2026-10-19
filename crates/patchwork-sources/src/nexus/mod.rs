@@ -142,6 +142,19 @@ fn pick_file<'a>(files: &'a [NexusFile], version: Option<&str>) -> Option<&'a Ne
         .max_by_key(|f| (f.is_primary.unwrap_or(false), rank(f), f.uploaded_timestamp))
 }
 
+/// The distinct versions among `files`, newest upload first. Nexus versions
+/// are free text, so upload time is the only reliable order.
+fn file_versions(mut files: Vec<NexusFile>) -> Vec<String> {
+    files.sort_by_key(|f| std::cmp::Reverse(f.uploaded_timestamp));
+    let mut versions: Vec<String> = Vec::new();
+    for v in files.into_iter().filter_map(|f| f.version) {
+        if !v.is_empty() && !versions.contains(&v) {
+            versions.push(v);
+        }
+    }
+    versions
+}
+
 // converts a nexus mod file to our internal version of a mod
 fn nexus_to_resolved_mod(mod_: &NexusMod, file: &NexusFile, url: String) -> ResolvedMod {
     let id = mod_.mod_id.to_string();
@@ -168,17 +181,7 @@ impl Source for Nexus {
         id: &str,
         version: Option<&str>,
     ) -> Result<ResolvedMod> {
-        let config = config(ctx)?;
-        let mod_id: u64 = id
-            .parse()
-            .map_err(|_| error(format!("`{id}` should be a numeric Nexus mod id")))?;
-        let api_key = self.api_key.as_deref().ok_or_else(|| {
-            error(format!(
-                "Nexus needs an API key; set {API_KEY_VAR} (get one from https://www.nexusmods.com/settings/api-keys)"
-            ))
-        })?;
-
-        let base = format!("{API}/games/{}/mods/{mod_id}", config.game_domain);
+        let (base, api_key) = self.mod_api(ctx, id)?;
         let mod_: NexusMod = self.get_json(&format!("{base}.json"), api_key).await?;
         let files: NexusFiles = self
             .get_json(&format!("{base}/files.json"), api_key)
@@ -206,6 +209,19 @@ impl Source for Nexus {
             .ok_or_else(|| error(format!("Nexus gave no download links for {id}")))?
             .uri;
         Ok(nexus_to_resolved_mod(&mod_, file, url))
+    }
+
+    fn lists_versions(&self) -> bool {
+        true
+    }
+
+    /// The versions of the mod's files, newest upload first.
+    async fn versions(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Vec<String>> {
+        let (base, api_key) = self.mod_api(ctx, id)?;
+        let files: NexusFiles = self
+            .get_json(&format!("{base}/files.json"), api_key)
+            .await?;
+        Ok(file_versions(files.files))
     }
 
     /// Mod pages don't pin a version, so it's dropped.
@@ -254,6 +270,24 @@ impl Source for Nexus {
 }
 
 impl Nexus {
+    /// The API URL for mod `id` in the game's domain, and the API key that
+    /// requests for it need.
+    fn mod_api(&self, ctx: &SourceContext<'_>, id: &str) -> Result<(String, &str)> {
+        let config = config(ctx)?;
+        let mod_id: u64 = id
+            .parse()
+            .map_err(|_| error(format!("`{id}` should be a numeric Nexus mod id")))?;
+        let api_key = self.api_key.as_deref().ok_or_else(|| {
+            error(format!(
+                "Nexus needs an API key; set {API_KEY_VAR} (get one from https://www.nexusmods.com/settings/api-keys)"
+            ))
+        })?;
+        Ok((
+            format!("{API}/games/{}/mods/{mod_id}", config.game_domain),
+            api_key,
+        ))
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, url: &str, api_key: &str) -> Result<T> {
         let reqwest_error = |result| patchwork_core::Error::Reqwest {
             url: url.to_owned(),

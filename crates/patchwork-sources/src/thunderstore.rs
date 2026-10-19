@@ -3,7 +3,8 @@ use jiff::Timestamp;
 use patchwork_core::Result;
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext, url_parts,
+    ArtifactFormat, ArtifactLocation, Dependency, ModSpec, ResolvedMod, Source, SourceContext,
+    VersionReq, compare_dotted, url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -101,6 +102,12 @@ struct ListedCategory {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct ListedVersion {
+    version_number: String,
+    datetime_created: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct CommunityFilters {
     package_categories: Vec<ListedCategory>,
 }
@@ -126,10 +133,12 @@ fn thunderstore_to_resolved_mod(mod_: PackageVersion) -> Option<ResolvedMod> {
         .iter()
         .map(|dep| {
             let ModNameVersion { name, version } = decode_mod_version_name(dep)?;
-            Some(ModSpec {
+            // these are the versions a mod was built against, and mod
+            // managers treat them as minimums
+            Some(Dependency {
                 source: "thunderstore".to_string(),
                 id: name,
-                version: Some(version),
+                req: VersionReq::AtLeast(version),
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -233,6 +242,16 @@ fn listed_to_summary(package: ListedPackage) -> ModSummary {
     }
 }
 
+/// Version numbers, newest first. Thunderstore doesn't return them in any
+/// particular order, and requires them to be `major.minor.patch`.
+fn sort_versions(mut versions: Vec<ListedVersion>) -> Vec<String> {
+    versions.sort_by(|a, b| {
+        compare_dotted(&b.version_number, &a.version_number)
+            .unwrap_or_else(|| b.datetime_created.cmp(&a.datetime_created))
+    });
+    versions.into_iter().map(|v| v.version_number).collect()
+}
+
 fn ordering(sort: SortBy) -> &'static str {
     match sort {
         SortBy::Downloads => "most-downloaded",
@@ -271,6 +290,17 @@ impl Source for Thunderstore {
         }
         thunderstore_to_resolved_mod(response.clone())
             .ok_or_else(|| error(format!("could not resolve thunderstore mod: {response:?}")))
+    }
+
+    fn lists_versions(&self) -> bool {
+        true
+    }
+
+    async fn versions(&self, _ctx: &SourceContext<'_>, id: &str) -> Result<Vec<String>> {
+        let (namespace, name) = split_id(id)?;
+        let versions: Vec<ListedVersion> =
+            get_json(format!("{CYBERSTORM}/package/{namespace}/{name}/versions/")).await?;
+        Ok(sort_versions(versions))
     }
 
     fn mod_url(&self, ctx: &SourceContext<'_>, id: &str, version: Option<&str>) -> Option<String> {
@@ -402,10 +432,13 @@ async fn read_json<T: DeserializeOwned>(url: &str, response: reqwest::Response) 
     Ok(serde_json::from_slice(&bytes)?)
 }
 
+fn split_id(id: &str) -> Result<(&str, &str)> {
+    id.split_once('-')
+        .ok_or_else(|| error(format!("`{id}` should look like `Namespace-Name`")))
+}
+
 async fn get_thunderstore_package(id: &str, version: Option<&str>) -> Result<PackageVersion> {
-    let (namespace, name) = id
-        .split_once('-')
-        .ok_or_else(|| error(format!("`{id}` should look like `Namespace-Name`")))?;
+    let (namespace, name) = split_id(id)?;
     // the trailing slashes matter, thunderstore 502s without them
     let url = format!("{API}/package/{namespace}/{name}/");
     // we need the package either way for its community listings
@@ -493,10 +526,10 @@ mod thunderstore_test {
         );
         assert_eq!(
             resolved.dependencies,
-            vec![ModSpec {
+            vec![Dependency {
                 source: "thunderstore".to_owned(),
                 id: "BepInEx-BepInExPack".to_owned(),
-                version: Some("5.4.2100".to_owned()),
+                req: VersionReq::AtLeast("5.4.2100".to_owned()),
             }]
         );
     }
@@ -613,6 +646,22 @@ mod thunderstore_test {
         );
     }
 
+    #[test]
+    fn sorts_versions_newest_first() {
+        let versions: Vec<ListedVersion> = serde_json::from_str(
+            r#"[
+                {"version_number": "5.4.2304", "datetime_created": "2025-11-05T17:14:09Z"},
+                {"version_number": "5.4.2305", "datetime_created": "2026-03-17T05:05:21Z"},
+                {"version_number": "5.4.2100", "datetime_created": "2023-01-01T00:00:00Z"}
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            sort_versions(versions),
+            ["5.4.2305", "5.4.2304", "5.4.2100"]
+        );
+    }
+
     #[tokio::test]
     async fn needs_community_config() {
         let mut game = lethal_company();
@@ -664,6 +713,13 @@ mod thunderstore_test {
                 .iter()
                 .any(|d| d.id == "BepInEx-BepInExPack")
         );
+
+        let versions = Thunderstore
+            .versions(&ctx, "notnotnotswipez-MoreCompany")
+            .await
+            .unwrap();
+        assert_eq!(versions.first(), latest.version.as_ref());
+        assert!(versions.iter().any(|v| v == "1.11.0"));
     }
 
     #[tokio::test]

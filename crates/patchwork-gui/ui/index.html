@@ -32,6 +32,7 @@
           <button role="tab" data-tab="mods" aria-selected="true">Mods</button>
           <button role="tab" data-tab="browse" aria-selected="false">Browse</button>
         </div>
+        <button id="update" title="Update every mod that isn't pinned to its newest version" disabled>Update</button>
         <button id="deploy" class="primary" disabled>Deploy</button>
       </header>
 
@@ -41,6 +42,7 @@
           <input name="path" placeholder="/path/to/game" required />
           <button type="submit">Set</button>
         </form>
+        <ul id="mod-problems" class="warnings"></ul>
         <ul id="mods" class="mod-list"></ul>
         <p id="mods-empty" class="empty" hidden>No mods yet. Find some under Browse.</p>
       </section>
@@ -91,6 +93,17 @@
         <div class="row end">
           <button value="cancel">Cancel</button>
           <button value="apply" class="primary">Apply</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="update-dialog">
+      <form method="dialog" class="stack">
+        <h2>Updated</h2>
+        <p id="update-summary"></p>
+        <ul id="update-list" class="plan-ops"></ul>
+        <div class="row end">
+          <button value="close">Close</button>
         </div>
       </form>
     </dialog>

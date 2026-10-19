@@ -106,6 +106,7 @@ async function openProfile(id) {
   $("#pager").hidden = true;
   await applyTheme(state.profile.game);
   renderProfile();
+  refreshVersions();
 }
 
 async function applyTheme(game) {
@@ -118,10 +119,12 @@ async function applyTheme(game) {
 function renderProfile() {
   const p = state.profile;
   $("#deploy").disabled = !p?.install;
+  $("#update").disabled = !p?.mods.length;
   if (!p) {
     $("#profile-title").textContent = "No profile selected";
     $("#profile-meta").textContent = "Create one in the sidebar to get started.";
     $("#mods").replaceChildren();
+    $("#mod-problems").replaceChildren();
     $("#mods-empty").hidden = true;
     $("#game-path").hidden = true;
     return;
@@ -136,13 +139,14 @@ function renderProfile() {
   $("#game-path").hidden = !!p.install;
 
   renderMods(p.mods);
+  $("#mod-problems").replaceChildren(...p.problems.map((w) => h("li", {}, w)));
 
   $("#search [name=source]").replaceChildren(
     ...p.searchSources.map((s) => h("option", { value: s }, s)),
   );
 }
 
-function modRow(m, { onToggle, onRemove } = {}) {
+function modRow(m, { onToggle, onRemove, onVersion } = {}) {
   return h(
     "li",
     { class: m.enabled ? null : "disabled" },
@@ -153,13 +157,118 @@ function modRow(m, { onToggle, onRemove } = {}) {
       onchange: onToggle,
     }),
     h("span", { class: "mod-name" }, m.name),
-    h("span", { class: "mod-source muted" }, `${m.source}:${m.id}${m.version ? " @ " + m.version : ""}`),
+    h("span", { class: "mod-source muted" }, `${m.source}:${m.id}`),
+    m.versioned
+      ? versionSelect(m, onVersion)
+      : h("span", { class: "mod-source muted" }, m.version ?? m.locked ?? ""),
     h("button", { class: "remove", onclick: onRemove }, "Remove"),
   );
 }
 
+// Versions. The profile comes with each mod's versions as last fetched, so
+// the dropdowns are complete straight away; lists older than an hour (see
+// VERSIONS_TTL in main.rs) are then refreshed in the background.
+
+/** The version dropdown of each mod on screen, by versionKey(). */
+const versionSelects = new Map();
+/** Refreshes in flight, by versionKey(), so re-renders don't repeat them. */
+const versionFetches = new Map();
+/** Mods whose versions couldn't be fetched; not retried until a restart. */
+const versionFailures = new Set();
+
+const versionKey = (m) => `${state.profile.game}/${m.source}:${m.id}`;
+
+/**
+ * Picks a mod's version: "Auto" follows the latest one, anything else
+ * freezes the mod at it.
+ */
+function versionSelect(m, onVersion) {
+  const select = h("select", {
+    class: "mod-version",
+    "aria-label": `Version of ${m.name}`,
+    title: "Auto follows the latest version; pick one to freeze the mod at it",
+    onchange: async () => {
+      select.disabled = true;
+      try {
+        await onVersion?.(select.value || null);
+      } finally {
+        select.disabled = false;
+      }
+    },
+  });
+  fillVersions(select, m);
+  if (state.profile) versionSelects.set(versionKey(m), select);
+  return select;
+}
+
+function fillVersions(select, m) {
+  // keep whatever's showing, which may be a choice that's still being saved
+  const current = select.options.length ? select.value : (m.version ?? "");
+  const versions = m.versions ?? [];
+  const auto = !m.version && m.locked ? `Auto (${m.locked})` : "Auto";
+  const options = [
+    h("option", { value: "" }, auto),
+    ...versions.map((v) => h("option", { value: v }, v)),
+  ];
+  // a pinned version that's since been taken down still shows
+  if (current && !versions.includes(current)) {
+    options.push(h("option", { value: current }, m.versions ? `${current} (unavailable)` : current));
+  }
+  select.replaceChildren(...options);
+  select.value = current;
+}
+
+/** Puts freshly fetched versions into a mod's dropdown. */
+function showVersions(key, versions) {
+  const m = state.profile?.mods.find((m) => versionKey(m) === key);
+  if (!m) return;
+  m.versions = versions;
+  m.versionsStale = false;
+  const select = versionSelects.get(key);
+  if (!select?.isConnected) return;
+  // Replacing the options of an open dropdown closes it (or leaves the old
+  // list showing), so wait until it's no longer in use.
+  if (document.activeElement === select) {
+    select.addEventListener("blur", () => fillVersions(select, m), { once: true });
+  } else {
+    fillVersions(select, m);
+  }
+}
+
+/** Refreshes the profile's stale version lists, a few at a time. */
+async function refreshVersions() {
+  const p = state.profile;
+  const queue = p.mods.filter(
+    (m) => m.versioned && m.versionsStale && !versionFailures.has(versionKey(m)),
+  );
+  const failed = [];
+  const worker = async () => {
+    while (queue.length && state.profile?.id === p.id) {
+      const m = queue.shift();
+      const key = versionKey(m);
+      if (!versionFetches.has(key)) {
+        const fetch = invoke("versions", { game: p.game, source: m.source, modId: m.id });
+        versionFetches.set(key, fetch);
+        fetch.finally(() => versionFetches.delete(key)).catch(() => {});
+      }
+      try {
+        showVersions(key, await versionFetches.get(key));
+      } catch (e) {
+        versionFailures.add(key);
+        failed.push(`${m.name}: ${e}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+  if (failed.length) {
+    for (const f of failed) console.warn(f);
+    status(`Couldn't check for new versions of ${failed.length} mod(s); ${failed[0]}`, true);
+  }
+}
+
 function renderMods(mods) {
   const id = state.profile.id;
+  versionSelects.clear();
   $("#mods").replaceChildren(
     ...mods.map((m) =>
       modRow(m, {
@@ -171,6 +280,15 @@ function renderMods(mods) {
           await run("remove_mod", { id, name: m.name });
           status(`Removed ${m.name}`);
           await refresh();
+        },
+        onVersion: async (version) => {
+          status(version ? `Pinning ${m.name} to ${version}…` : `Unpinning ${m.name}…`);
+          try {
+            await run("set_version", { id, name: m.name, version });
+            status(version ? `Pinned ${m.name} to ${version}` : `${m.name} follows the latest version`);
+          } finally {
+            await openProfile(id);
+          }
         },
       }),
     ),
@@ -273,6 +391,7 @@ function renderResults(results) {
                   e.target.textContent = "Added";
                   state.profile = await run("profile", { id: state.profile.id });
                   renderProfile();
+                  refreshVersions();
                 }
               },
             },
@@ -341,6 +460,35 @@ function opRow(op) {
   }
 }
 
+// Update. Relocks the profile at the newest versions, like `patchwork lock
+// --update`; pinned mods stay where they are. Nothing changes in the game
+// until the next deploy.
+
+$("#update").addEventListener("click", async () => {
+  const id = state.profile.id;
+  $("#update").disabled = true;
+  status("Checking for updates…");
+  try {
+    const changes = await run("update_lock", { id });
+    if (!changes.length) {
+      status("Everything's up to date");
+      return;
+    }
+    const count = changes.length;
+    const summary = `${count} mod${count === 1 ? "" : "s"} changed; deploy to apply`;
+    $("#update-summary").textContent = summary;
+    $("#update-list").replaceChildren(
+      ...changes.map((c) =>
+        h("li", {}, `${c.name}  ${c.from ?? "(new)"} → ${c.to ?? "(no version)"}`),
+      ),
+    );
+    status(summary);
+    $("#update-dialog").showModal();
+  } finally {
+    await openProfile(id);
+  }
+});
+
 // Progress from long-running commands (adding, locking, deploying).
 
 listen("patchwork://event", ({ payload: e }) => {
@@ -369,7 +517,8 @@ $("#stress").addEventListener("click", async () => {
     name: `Fake Mod ${i + 1} with a reasonably long name`,
     source: i % 2 ? "thunderstore" : "nexus",
     id: `author-${i}/mod-${i}`,
-    version: `1.${i % 10}.${i % 7}`,
+    locked: `1.${i % 10}.${i % 7}`,
+    versioned: true,
     enabled: i % 5 !== 0,
   }));
   document.querySelector("[data-tab=mods]").click();

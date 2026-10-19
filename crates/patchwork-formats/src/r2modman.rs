@@ -385,6 +385,7 @@ mod tests {
                 url: format!("https://example.com/{id}.zip"),
             },
             dependencies: dependencies.iter().map(|d| d.to_string()).collect(),
+            requires: Default::default(),
         }
     }
 
