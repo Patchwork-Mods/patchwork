@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
+use axoupdater::AxoUpdater;
 use clap::{Parser, Subcommand};
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
@@ -125,6 +126,12 @@ enum Command {
     },
     /// Show the current profile and what's deployed.
     Status,
+    /// Update patchwork to the newest release.
+    SelfUpdate {
+        /// Only say whether there's a newer release.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(clap::Args)]
@@ -234,6 +241,12 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    // Doesn't need the registry or profiles, so don't let problems there get
+    // in the way of fixing them with an update.
+    if let Command::SelfUpdate { check } = cli.command {
+        return self_update(check).await;
+    }
+
     let pw = Patchwork::builder(Paths::from_env()?)
         .source(LocalSource)
         .source(Thunderstore)
@@ -391,6 +404,7 @@ async fn run(cli: Cli) -> Result<()> {
             finish(&pw, &plan, dry_run)?;
         }
         Command::Status => status(&pw, &cli.profile)?,
+        Command::SelfUpdate { .. } => unreachable!("handled before opening"),
     }
     Ok(())
 }
@@ -609,6 +623,38 @@ fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
             println!("deployed: {deployed} ({} files)", state.files.len())
         }
         _ => println!("deployed: nothing"),
+    }
+    Ok(())
+}
+
+/// What dist calls this app: the package name, not the binary's.
+const DIST_APP: &str = "patchwork-cli";
+
+async fn self_update(check: bool) -> Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    let mut updater = AxoUpdater::new_for(DIST_APP);
+    // Without a receipt from our installer we didn't put this binary here
+    // (Nix, cargo install, a dev build, ...), so replacing it isn't ours to do.
+    let ours = updater.load_receipt().is_ok() && updater.check_receipt_is_for_this_executable()?;
+    if !ours {
+        bail!(
+            "this copy of patchwork ({current}) wasn't installed by its installer; \
+             update it the way you installed it"
+        );
+    }
+    if check {
+        if !updater.is_update_needed().await? {
+            println!("patchwork {current} is up to date");
+        } else if let Some(new) = updater.query_new_version().await? {
+            println!(
+                "patchwork {new} is available (you have {current}); run `patchwork self-update`"
+            );
+        }
+        return Ok(());
+    }
+    match updater.run().await? {
+        Some(result) => println!("updated patchwork {current} -> {}", result.new_version),
+        None => println!("patchwork {current} is up to date"),
     }
     Ok(())
 }

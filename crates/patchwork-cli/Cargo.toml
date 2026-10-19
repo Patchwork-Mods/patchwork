@@ -3,6 +3,7 @@ name = "patchwork-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+repository = "https://github.com/michaelgoldenn/patchwork-new"
 
 [[bin]]
 name = "patchwork"
@@ -14,6 +15,7 @@ patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
 patchwork-formats.workspace = true
 anyhow.workspace = true
+axoupdater.workspace = true
 clap.workspace = true
 tokio.workspace = true
 toml.workspace = true

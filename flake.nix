@@ -63,6 +63,7 @@
                 cargo-edit
                 cargo-watch
                 rust-analyzer
+                cargo-dist
                 self.formatter.${system}
               ]
               # For the Tauri GUI (patchwork-gui).

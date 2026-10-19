@@ -3,6 +3,11 @@ name = "patchwork-gui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+repository = "https://github.com/michaelgoldenn/patchwork-new"
+
+# Tauri apps are bundled by Tauri, not dist.
+[package.metadata.dist]
+dist = false
 
 [[bin]]
 name = "patchwork-gui"
