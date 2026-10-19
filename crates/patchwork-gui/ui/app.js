@@ -29,7 +29,10 @@ const state = {
   /** The game being looked at, or null on the game picker. */
   game: null,
   profile: null,
-  search: { page: 0, query: null },
+  /** The source whose tab is open, or null on the Mods tab. */
+  source: null,
+  /** Each source's last search, as `{ page, query, results }`. */
+  searches: {},
 };
 
 function status(text, isError = false) {
@@ -139,7 +142,7 @@ async function openGame(id) {
   state.game = id;
   state.profile = null;
   showScreen("game");
-  document.querySelector("[data-tab=mods]").click();
+  selectTab("mods");
   await applyTheme(id);
   renderSidebar();
   const current = state.overview.current;
@@ -181,9 +184,7 @@ async function switchProfile(id) {
 
 async function openProfile(id) {
   state.profile = await run("profile", { id });
-  state.search = { page: 0, query: null };
-  $("#results").replaceChildren();
-  $("#pager").hidden = true;
+  state.searches = {};
   renderSidebar();
   renderProfile();
   refreshVersions();
@@ -208,7 +209,7 @@ function renderProfile() {
     $("#mod-problems").replaceChildren();
     $("#mods-empty").hidden = true;
     $("#game-path").hidden = !!game.install;
-    $("#search [name=source]").replaceChildren();
+    renderSourceTabs([]);
     return;
   }
 
@@ -222,10 +223,7 @@ function renderProfile() {
 
   renderMods(p.mods);
   $("#mod-problems").replaceChildren(...p.problems.map((w) => h("li", {}, w)));
-
-  $("#search [name=source]").replaceChildren(
-    ...p.searchSources.map((s) => h("option", { value: s }, s)),
-  );
+  renderSourceTabs(p.searchSources);
 }
 
 function modRow(m, { onToggle, onRemove, onVersion } = {}) {
@@ -477,39 +475,55 @@ gameForm.addEventListener("submit", async (e) => {
 
 // Tabs
 
-for (const tab of document.querySelectorAll("[role=tab]")) {
-  tab.addEventListener("click", () => {
-    for (const other of document.querySelectorAll("[role=tab]")) {
-      const selected = other === tab;
-      other.setAttribute("aria-selected", String(selected));
-      $(`#tab-${other.dataset.tab}`).hidden = !selected;
-    }
-  });
+const SOURCE_NAMES = { thunderstore: "Thunderstore", nexus: "Nexus Mods" };
+const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Opens the Mods tab ("mods") or a source's tab; source tabs all share #tab-browse. */
+function selectTab(key) {
+  state.source = key === "mods" ? null : key;
+  for (const tab of document.querySelectorAll("#tabs [role=tab]")) {
+    tab.setAttribute("aria-selected", String((tab.dataset.source ?? "mods") === key));
+  }
+  $("#tab-mods").hidden = key !== "mods";
+  $("#tab-browse").hidden = key === "mods";
+  if (state.source) {
+    $("#search [name=text]").placeholder = `Search ${sourceName(key)}`;
+    renderResults(state.searches[key]);
+  }
+}
+
+/** Replaces the source tabs, staying on the open one if it's still there. */
+function renderSourceTabs(sources) {
+  $("#tabs").replaceChildren(
+    h("button", { role: "tab", onclick: () => selectTab("mods") }, "Mods"),
+    ...sources.map((s) =>
+      h("button", { role: "tab", "data-source": s, onclick: () => selectTab(s) }, sourceName(s)),
+    ),
+  );
+  selectTab(sources.includes(state.source) ? state.source : "mods");
 }
 
 // Browse
 
 async function search(page) {
   const p = state.profile;
-  if (!p) return;
+  const source = state.source;
+  if (!p || !source) return;
   const form = new FormData($("#search"));
   const query = {
     game: p.game,
-    source: form.get("source"),
+    source,
     text: form.get("text"),
     sort: form.get("sort") || null,
     page,
   };
-  if (!query.source) {
-    status(`None of ${p.game}'s sources can be searched`, true);
-    return;
-  }
   status("Searching…");
   const started = performance.now();
   const results = await run("search", query);
   const fetched = performance.now();
-  state.search = { page, query };
-  renderResults(results);
+  state.searches[source] = { page, query, results };
+  // The user may have switched tabs while this was in flight.
+  if (state.source === source) renderResults(state.searches[source]);
   await nextFrame();
   status(
     `${results.total ?? results.items.length} mods · fetched in ${ms(fetched - started)}, ` +
@@ -517,7 +531,14 @@ async function search(page) {
   );
 }
 
-function renderResults(results) {
+/** Shows a source's last search, or nothing if it hasn't been searched. */
+function renderResults(search) {
+  if (!search) {
+    $("#results").replaceChildren();
+    $("#pager").hidden = true;
+    return;
+  }
+  const { page, results } = search;
   const added = new Set(state.profile.mods.map((m) => `${m.source}:${m.id}`));
   $("#results").replaceChildren(
     ...results.items.map((item) => {
@@ -568,7 +589,6 @@ function renderResults(results) {
   if (!results.items.length) {
     $("#results").append(h("p", { class: "empty" }, "No mods found."));
   }
-  const page = state.search.page;
   $("#pager").hidden = page === 0 && !results.has_more;
   $("#prev").disabled = page === 0;
   $("#next").disabled = !results.has_more;
@@ -580,8 +600,8 @@ $("#search").addEventListener("submit", (e) => {
   e.preventDefault();
   search(0);
 });
-$("#prev").addEventListener("click", () => search(state.search.page - 1));
-$("#next").addEventListener("click", () => search(state.search.page + 1));
+$("#prev").addEventListener("click", () => search(state.searches[state.source].page - 1));
+$("#next").addEventListener("click", () => search(state.searches[state.source].page + 1));
 
 // Deploy
 

@@ -38,9 +38,10 @@
           <h2 id="profile-title">No profile yet</h2>
           <p id="profile-meta" class="muted"></p>
         </div>
-        <div class="tabs" role="tablist">
+        <!-- Mods, then one tab per source the game can be searched on; see
+             renderSourceTabs() in app.js. -->
+        <div id="tabs" class="tabs" role="tablist">
           <button role="tab" data-tab="mods" aria-selected="true">Mods</button>
-          <button role="tab" data-tab="browse" aria-selected="false">Browse</button>
         </div>
         <button id="update" title="Update every mod that isn't pinned to its newest version" disabled>Update</button>
         <button id="deploy" class="primary" disabled>Deploy</button>
@@ -54,12 +55,11 @@
         </form>
         <ul id="mod-problems" class="warnings"></ul>
         <ul id="mods" class="mod-list"></ul>
-        <p id="mods-empty" class="empty" hidden>No mods yet. Find some under Browse.</p>
+        <p id="mods-empty" class="empty" hidden>No mods yet. Find some in the tabs above.</p>
       </section>
 
       <section id="tab-browse" class="tab" hidden>
         <form id="search" class="row">
-          <select name="source"></select>
           <input name="text" type="search" placeholder="Search mods" />
           <select name="sort">
             <option value="">Default order</option>
