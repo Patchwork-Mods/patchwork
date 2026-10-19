@@ -8,6 +8,8 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (sel) => document.querySelector(sel);
+const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const ms = (t) => `${Math.round(t)}ms`;
 
 /** Makes an element. `attrs` keys starting with "on" are event listeners. */
 function h(tag, attrs = {}, ...children) {
@@ -665,59 +667,5 @@ listen("patchwork://event", ({ payload: e }) => {
       return status(e.message, true);
   }
 });
-
-// Perf test: fills the mod list with fake mods, then measures how long that
-// took and how smooth scrolling it is. Switch profiles to get the real list
-// back.
-
-const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
-const ms = (t) => `${Math.round(t)}ms`;
-
-$("#stress").addEventListener("click", async () => {
-  const count = Number($("#stress-count").value);
-  const mods = Array.from({ length: count }, (_, i) => ({
-    name: `Fake Mod ${i + 1} with a reasonably long name`,
-    source: i % 2 ? "thunderstore" : "nexus",
-    id: `author-${i}/mod-${i}`,
-    locked: `1.${i % 10}.${i % 7}`,
-    versioned: true,
-    enabled: i % 5 !== 0,
-  }));
-  document.querySelector("[data-tab=mods]").click();
-  const started = performance.now();
-  $("#mods").replaceChildren(...mods.map((m) => modRow(m)));
-  $("#mods-empty").hidden = true;
-  await nextFrame();
-  await nextFrame();
-  $("#perf").textContent = `${count} rows rendered in ${ms(performance.now() - started)}; scroll to measure frames`;
-  measureScroll($("#tab-mods"), count);
-});
-
-/** Reports the average and worst frame times while `el` is scrolled. */
-function measureScroll(el, count) {
-  let frames = [];
-  let last = 0;
-  let idle;
-  const tick = (t) => {
-    if (last) frames.push(t - last);
-    last = t;
-    if (idle !== undefined) requestAnimationFrame(tick);
-  };
-  const report = () => {
-    idle = undefined;
-    last = 0;
-    if (frames.length < 5) return;
-    const avg = frames.reduce((a, b) => a + b, 0) / frames.length;
-    const worst = Math.max(...frames);
-    $("#perf").textContent =
-      `${count} rows · scrolling: avg ${avg.toFixed(1)}ms/frame (${Math.round(1000 / avg)} fps), worst ${ms(worst)}`;
-    frames = [];
-  };
-  el.onscroll = () => {
-    if (idle === undefined) requestAnimationFrame(tick);
-    clearTimeout(idle);
-    idle = setTimeout(report, 300);
-  };
-}
 
 refresh().catch(() => {});
