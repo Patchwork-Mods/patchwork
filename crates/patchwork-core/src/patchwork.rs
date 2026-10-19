@@ -18,7 +18,7 @@ use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement
 use crate::paths::Paths;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod, ProfileRef, validate_name};
 use crate::registry::Registry;
-use crate::search::{Category, SearchPage, SearchQuery, SortBy};
+use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{ArtifactFormat, ArtifactLocation, ModSpec, Source, SourceContext};
 use crate::store::Store;
@@ -37,6 +37,24 @@ pub struct KnownVersions {
     pub fetched: Timestamp,
     /// Newest first.
     pub versions: Vec<String>,
+}
+
+/// Where a cache under `dir` keeps what it knows about a mod. Ids can be
+/// paths or have characters that don't belong in file names, so the file is
+/// named by a hash of the id.
+fn cache_file(dir: &Path, game: &str, source: &str, id: &str) -> PathBuf {
+    dir.join(game)
+        .join(source)
+        .join(format!("{}.json", ContentHash::of(id.as_bytes())))
+}
+
+/// A mod's summary as of when it was last fetched.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnownSummary {
+    pub id: String,
+    pub fetched: Timestamp,
+    /// `None` if the source has nothing to show for the mod.
+    pub summary: Option<ModSummary>,
 }
 
 /// How to import a profile; see [`Patchwork::import_profile`].
@@ -530,14 +548,41 @@ impl Patchwork {
             .filter(|k| k.id == id)
     }
 
-    /// Ids can be paths or have characters that don't belong in file names,
-    /// so the file is named by a hash of the id.
     fn known_versions_file(&self, game: &str, source: &str, id: &str) -> PathBuf {
-        self.paths
-            .known_versions()
-            .join(game)
-            .join(source)
-            .join(format!("{}.json", ContentHash::of(id.as_bytes())))
+        cache_file(&self.paths.known_versions(), game, source, id)
+    }
+
+    /// What a search would show for a mod, fetched from its source. It's
+    /// remembered for [`Patchwork::known_summary`].
+    pub async fn summary(&self, game: &str, source: &str, id: &str) -> Result<Option<ModSummary>> {
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
+        let ctx = SourceContext {
+            game: def,
+            config: def.sources.get(source),
+        };
+        let summary = self.source(source)?.summary(&ctx, id).await?;
+        let known = KnownSummary {
+            id: id.to_owned(),
+            fetched: Timestamp::now(),
+            summary,
+        };
+        fsutil::write_json(&self.known_summary_file(game, source, id), &known)?;
+        Ok(known.summary)
+    }
+
+    /// The summary [`Patchwork::summary`] last fetched for a mod, without
+    /// going to the network. `None` if it never has been (or the cache was
+    /// cleared).
+    pub fn known_summary(&self, game: &str, source: &str, id: &str) -> Option<KnownSummary> {
+        fsutil::read_json::<KnownSummary>(&self.known_summary_file(game, source, id))
+            .ok()
+            .flatten()
+            .filter(|k| k.id == id)
+    }
+
+    fn known_summary_file(&self, game: &str, source: &str, id: &str) -> PathBuf {
+        cache_file(&self.paths.known_summaries(), game, source, id)
     }
 
     fn source(&self, id: &str) -> Result<&dyn Source> {

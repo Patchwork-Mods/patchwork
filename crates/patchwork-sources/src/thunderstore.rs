@@ -94,6 +94,18 @@ struct ListedPackage {
     categories: Vec<ListedCategory>,
 }
 
+/// One package's page in the listing, which has a bit more than a search
+/// result.
+#[derive(Debug, Clone, Deserialize)]
+struct ListedPackageDetail {
+    #[serde(flatten)]
+    package: ListedPackage,
+    latest_version_number: Option<String>,
+    /// When the latest version was uploaded, which is when it was last
+    /// updated.
+    version_created: Option<Timestamp>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ListedCategory {
     id: String,
@@ -248,6 +260,14 @@ fn listed_to_summary(community: &str, package: ListedPackage) -> ModSummary {
     }
 }
 
+fn detail_to_summary(community: &str, mut detail: ListedPackageDetail) -> ModSummary {
+    detail.package.last_updated = detail.package.last_updated.or(detail.version_created);
+    ModSummary {
+        latest_version: detail.latest_version_number,
+        ..listed_to_summary(community, detail.package)
+    }
+}
+
 /// Version numbers, newest first. Thunderstore doesn't return them in any
 /// particular order, and requires them to be `major.minor.patch`.
 fn sort_versions(mut versions: Vec<ListedVersion>) -> Vec<String> {
@@ -307,6 +327,14 @@ impl Source for Thunderstore {
         let versions: Vec<ListedVersion> =
             get_json(format!("{CYBERSTORM}/package/{namespace}/{name}/versions/")).await?;
         Ok(sort_versions(versions))
+    }
+
+    async fn summary(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Option<ModSummary>> {
+        let community = config(ctx)?.community;
+        let (namespace, name) = split_id(id)?;
+        let detail: ListedPackageDetail =
+            get_json(format!("{CYBERSTORM}/listing/{community}/{namespace}/{name}/")).await?;
+        Ok(Some(detail_to_summary(&community, detail)))
     }
 
     fn mod_url(&self, ctx: &SourceContext<'_>, id: &str, version: Option<&str>) -> Option<String> {
@@ -628,6 +656,35 @@ mod thunderstore_test {
         }]
     }"#;
 
+    // a trimmed /api/cyberstorm/listing/lethal-company/notnotnotswipez/MoreCompany/
+    const DETAIL: &str = r#"{
+        "categories": [{"id": "658", "name": "Mods", "slug": "mods"}],
+        "community_identifier": "lethal-company",
+        "description": "A stable lobby player count expansion mod. With cosmetics!",
+        "download_count": 27016598,
+        "icon_url": "https://ccdn.thunderstore.io/live/repository/icons/notnotnotswipez-MoreCompany-1.14.0.png",
+        "is_deprecated": false,
+        "latest_version_number": "1.14.0",
+        "name": "MoreCompany",
+        "namespace": "notnotnotswipez",
+        "rating_count": 641,
+        "version_created": "2026-04-25T01:28:40.943994Z"
+    }"#;
+
+    #[test]
+    fn converts_package_details() {
+        let detail: ListedPackageDetail = serde_json::from_str(DETAIL).unwrap();
+        let summary = detail_to_summary("lethal-company", detail);
+        assert_eq!(summary.id, "notnotnotswipez-MoreCompany");
+        assert_eq!(summary.latest_version.as_deref(), Some("1.14.0"));
+        assert_eq!(summary.downloads, Some(27016598));
+        assert_eq!(
+            summary.updated,
+            Some("2026-04-25T01:28:40.943994Z".parse().unwrap())
+        );
+        assert_eq!(summary.categories[0].id, "mods");
+    }
+
     #[test]
     fn converts_listings() {
         let listing: Listing = serde_json::from_str(LISTING).unwrap();
@@ -741,6 +798,24 @@ mod thunderstore_test {
             .unwrap();
         assert_eq!(versions.first(), latest.version.as_ref());
         assert!(versions.iter().any(|v| v == "1.11.0"));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs network"]
+    async fn summarizes_one_mod() {
+        let game = lethal_company();
+        let ctx = SourceContext {
+            game: &game,
+            config: game.sources.get("thunderstore"),
+        };
+        let summary = Thunderstore
+            .summary(&ctx, "notnotnotswipez-MoreCompany")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(summary.name, "MoreCompany");
+        assert!(summary.downloads.unwrap() > 0);
+        assert!(summary.icon_url.is_some());
     }
 
     #[tokio::test]

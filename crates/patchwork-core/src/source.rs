@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Result;
 use crate::game::GameDef;
-use crate::search::{Category, SearchPage, SearchQuery, SortBy};
+use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 
 /// Where the host should fetch an artifact from. Sources only describe this;
 /// the host does the fetching, hashing and storing.
@@ -212,6 +212,13 @@ pub trait Source: Send + Sync {
             source_id: self.id().to_owned(),
             message: "can't list versions".to_owned(),
         })
+    }
+
+    /// What a search would show for `id` (its name, picture, summary, ...),
+    /// so UIs can show mods that have already been added the same way.
+    /// `Ok(None)` means the source has nothing to show beyond the id.
+    async fn summary(&self, _ctx: &SourceContext<'_>, _id: &str) -> Result<Option<ModSummary>> {
+        Ok(None)
     }
 
     /// A link to `id`'s page, used when sharing a profile as a list of URLs.

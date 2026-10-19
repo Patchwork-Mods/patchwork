@@ -76,6 +76,12 @@ impl Paths {
         self.cache.join("versions")
     }
 
+    /// The last summaries fetched for mods (name, picture, ...), so UIs can
+    /// show added mods without going to the network.
+    pub fn known_summaries(&self) -> PathBuf {
+        self.cache.join("summaries")
+    }
+
     pub fn profiles(&self) -> PathBuf {
         self.data.join("profiles")
     }

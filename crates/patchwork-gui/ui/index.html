@@ -54,7 +54,15 @@
           <button type="submit">Set</button>
         </form>
         <ul id="mod-problems" class="warnings"></ul>
-        <ul id="mods" class="mod-list"></ul>
+        <div id="mods-toolbar" class="row">
+          <!-- Cards look like a source's search results; the list is denser
+               and has no pictures. See setModsView() in app.js. -->
+          <div id="mods-view" class="segmented" role="group" aria-label="Layout">
+            <button type="button" data-view="cards" aria-pressed="true">Cards</button>
+            <button type="button" data-view="list" aria-pressed="false">List</button>
+          </div>
+        </div>
+        <ul id="mods" class="result-grid"></ul>
         <p id="mods-empty" class="empty" hidden>No mods yet. Find some in the tabs above.</p>
       </section>
 
@@ -140,6 +148,17 @@
         <div class="row end">
           <button type="button" value="cancel" formnovalidate>Cancel</button>
           <button type="submit" value="create" class="primary">Add game</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="remove-dialog">
+      <form method="dialog" class="stack">
+        <h2>Remove mod</h2>
+        <p id="remove-summary"></p>
+        <div class="row end">
+          <button value="cancel">Cancel</button>
+          <button value="remove" class="danger">Remove</button>
         </div>
       </form>
     </dialog>

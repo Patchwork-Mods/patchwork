@@ -318,3 +318,18 @@ fn lists_file_versions_newest_first() {
     let files: NexusFiles = serde_json::from_str(FILES).unwrap();
     assert_eq!(file_versions(files.files), ["6.0", "5.2SE", "5.1SE"]);
 }
+
+#[tokio::test]
+#[ignore = "needs network"]
+async fn summarizes_one_mod() {
+    let game = skyrim();
+    let ctx = SourceContext {
+        game: &game,
+        config: game.sources.get("nexus"),
+    };
+    let nexus = Nexus::new(None);
+    let skyui = nexus.summary(&ctx, "12604").await.unwrap().unwrap();
+    assert_eq!(skyui.name, "SkyUI");
+    assert!(skyui.icon_url.is_some());
+    assert!(nexus.summary(&ctx, "999999999").await.unwrap().is_none());
+}

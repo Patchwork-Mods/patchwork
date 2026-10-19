@@ -24,6 +24,18 @@ query Mods($filter: ModsFilter, $sort: [ModsSort!], $offset: Int, $count: Int) {
   }
 }";
 
+/// Mods by id; unlike `mods`, it doesn't need the game's numeric id.
+const MODS_BY_ID_QUERY: &str = "
+query ModsById($ids: [CompositeDomainWithIdInput!]!) {
+  legacyModsByDomain(ids: $ids) {
+    nodes {
+      modId name summary author version downloads endorsements updatedAt thumbnailUrl
+      modCategory { name }
+      uploader { name }
+    }
+  }
+}";
+
 const CATEGORIES_QUERY: &str = "
 query Categories($filter: ModsFilter, $facets: ModsFacet) {
   mods(filter: $filter, facets: $facets, count: 0) { facetsData }
@@ -45,6 +57,17 @@ struct GraphqlError {
 #[derive(Debug, Deserialize)]
 struct ModsData<T> {
     mods: T,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModsByIdData {
+    legacy_mods_by_domain: ModNodes,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModNodes {
+    nodes: Vec<ModNode>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,7 +213,10 @@ impl Nexus {
             "offset": offset,
             "count": PAGE_SIZE,
         });
-        let page: ModsPage = self.graphql(MODS_QUERY, variables).await?;
+        let page = self
+            .graphql::<ModsData<ModsPage>>(MODS_QUERY, variables)
+            .await?
+            .mods;
         let has_more = u64::from(offset) + (page.nodes.len() as u64) < page.total_count;
         Ok(SearchPage {
             total: Some(page.total_count),
@@ -211,7 +237,10 @@ impl Nexus {
             "filter": { "gameDomainName": [{ "value": game_domain, "op": "EQUALS" }] },
             "facets": { "categoryName": [] },
         });
-        let facets: Facets = self.graphql(CATEGORIES_QUERY, variables).await?;
+        let facets = self
+            .graphql::<ModsData<Facets>>(CATEGORIES_QUERY, variables)
+            .await?
+            .mods;
         let mut counted: Vec<_> = facets
             .facets_data
             .category_name
@@ -226,6 +255,23 @@ impl Nexus {
                 name,
             })
             .collect())
+    }
+
+    /// Mod `mod_id` as a search would show it, or `None` if there's no such
+    /// mod.
+    pub(super) async fn mod_summary(
+        &self,
+        game_domain: &str,
+        mod_id: u64,
+    ) -> Result<Option<ModSummary>> {
+        let variables = json!({ "ids": [{ "gameDomain": game_domain, "modId": mod_id }] });
+        let data: ModsByIdData = self.graphql(MODS_BY_ID_QUERY, variables).await?;
+        Ok(data
+            .legacy_mods_by_domain
+            .nodes
+            .into_iter()
+            .find(|node| node.mod_id == mod_id)
+            .map(|node| node_to_summary(game_domain, node)))
     }
 
     async fn graphql<T: DeserializeOwned>(&self, query: &str, variables: Value) -> Result<T> {
@@ -244,13 +290,12 @@ impl Nexus {
             .bytes()
             .await
             .map_err(reqwest_error)?;
-        let response: GraphqlResponse<ModsData<T>> = serde_json::from_slice(&bytes)?;
+        let response: GraphqlResponse<T> = serde_json::from_slice(&bytes)?;
         if let Some(e) = response.errors.first() {
             return Err(error(format!("search failed: {}", e.message)));
         }
-        Ok(response
+        response
             .data
-            .ok_or_else(|| error("search returned nothing"))?
-            .mods)
+            .ok_or_else(|| error("search returned nothing"))
     }
 }

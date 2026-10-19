@@ -224,6 +224,7 @@ async function openProfile(id) {
   renderSidebar();
   renderProfile();
   refreshVersions();
+  refreshSummaries();
 }
 
 async function applyTheme(game) {
@@ -244,6 +245,7 @@ function renderProfile() {
     $("#mods").replaceChildren();
     $("#mod-problems").replaceChildren();
     $("#mods-empty").hidden = true;
+    $("#mods-toolbar").hidden = true;
     $("#game-path").hidden = !!game.install;
     renderSourceTabs([]);
     return;
@@ -258,11 +260,39 @@ function renderProfile() {
   $("#game-path").hidden = !!p.install;
 
   renderMods(p.mods);
+  $("#mods-toolbar").hidden = !p.mods.length;
   $("#mod-problems").replaceChildren(...p.problems.map((w) => h("li", {}, w)));
   renderSourceTabs(p.searchSources);
 }
 
-function modRow(m, { onToggle, onRemove, onVersion } = {}) {
+// The Mods tab shows mods either as cards, like a source's search results,
+// or as a denser list without pictures.
+
+/** "cards" or "list"; remembered between runs. */
+let modsView = "cards";
+try {
+  if (localStorage.getItem("modsView") === "list") modsView = "list";
+} catch {}
+
+function setModsView(view) {
+  modsView = view;
+  try {
+    localStorage.setItem("modsView", view);
+  } catch {}
+  for (const button of document.querySelectorAll("#mods-view button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.view === view));
+  }
+  if (state.profile) {
+    renderMods(state.profile.mods);
+    refreshSummaries();
+  }
+}
+
+for (const button of document.querySelectorAll("#mods-view button")) {
+  button.addEventListener("click", () => setModsView(button.dataset.view));
+}
+
+function modRow(m, { onToggle, onRemove, onVersion }) {
   return h(
     "li",
     { class: m.enabled ? null : "disabled" },
@@ -281,18 +311,164 @@ function modRow(m, { onToggle, onRemove, onVersion } = {}) {
   );
 }
 
-// Versions. The profile comes with each mod's versions as last fetched, so
-// the dropdowns are complete straight away; lists older than an hour (see
-// VERSIONS_TTL in main.rs) are then refreshed in the background.
+/** A mod's picture and details, from a search result (a ModSummary). */
+function cardMain(item) {
+  // Hovering a count shows it in full.
+  const count = (n, noun) =>
+    n != null && h("span", { title: `${n.toLocaleString()} ${noun}` }, `${compact(n)} ${noun}`);
+  const stats = [count(item.downloads, "downloads"), count(item.rating, "likes")].filter(Boolean);
+  const summary = item.summary?.trim();
+  return h(
+    "div",
+    { class: "card-main" },
+    item.icon_url
+      ? h("img", { src: item.icon_url, alt: "", loading: "lazy", decoding: "async" })
+      : h("div", { class: "no-icon", "aria-hidden": "true" }, initials(item.name)),
+    h(
+      "div",
+      { class: "result-body" },
+      h("h3", {}, link(item.url, item.name)),
+      item.author && h("div", { class: "author" }, link(item.author_url, item.author)),
+      summary && h("p", { class: "muted", title: summary }, summary),
+      h(
+        "div",
+        { class: "facts muted" },
+        stats.length > 0 ? h("div", {}, stats.flatMap((s, i) => (i ? [" · ", s] : [s]))) : null,
+        item.updated &&
+          h(
+            "div",
+            { title: new Date(item.updated).toLocaleString() },
+            `Updated ${ago(item.updated)}`,
+          ),
+      ),
+    ),
+  );
+}
 
-/** The version dropdown of each mod on screen, by versionKey(). */
+/** What a profile's mod shows on its card: its summary, once that's been fetched. */
+const cardItem = (m) => m.summary ?? { name: m.name, summary: `${m.source}:${m.id}` };
+
+// An added mod's card: an on/off switch and its version along the bottom,
+// a note when there's a newer version, and a remove button that only shows
+// while the card is hovered or focused.
+function modCard(m, { onToggle, onRemove, onVersion }) {
+  const main = cardMain(cardItem(m));
+  const update = h("div", { class: "card-update" });
+  if (state.profile) {
+    cardMains.set(modKey(m), main);
+    updateNotes.set(modKey(m), { el: update, onVersion });
+  }
+  fillUpdate(update, m, onVersion);
+  return h(
+    "li",
+    { class: m.enabled ? "result" : "result disabled" },
+    main,
+    h(
+      "button",
+      {
+        class: "remove",
+        title: `Remove ${m.name}`,
+        "aria-label": `Remove ${m.name}`,
+        onclick: onRemove,
+      },
+      trashIcon(),
+    ),
+    update,
+    h(
+      "div",
+      { class: "card-footer" },
+      h(
+        "label",
+        { class: "switch", title: "Disabled mods are left out when deploying" },
+        h("input", {
+          type: "checkbox",
+          role: "switch",
+          checked: m.enabled,
+          "aria-label": `Enable ${m.name}`,
+          onchange: onToggle,
+        }),
+        h("span", { "aria-hidden": "true" }, m.enabled ? "On" : "Off"),
+      ),
+      m.versioned
+        ? versionSelect(m, onVersion)
+        : h("span", { class: "mod-version muted" }, m.version ?? m.locked ?? "No versions"),
+    ),
+  );
+}
+
+/**
+ * Says when a newer version than the one in use is out. A pinned mod can be
+ * moved to it straight away; one that follows the latest version gets it
+ * from Update.
+ */
+function fillUpdate(el, m, onVersion) {
+  const newest = m.versions?.[0];
+  const current = m.version ?? m.locked;
+  if (!m.versioned || !newest || !current || newest === current) {
+    el.replaceChildren();
+    return;
+  }
+  el.replaceChildren(
+    m.version
+      ? h(
+          "button",
+          {
+            title: `Pinned to ${current}; click to pin to ${newest} instead`,
+            onclick: () => onVersion?.(newest),
+          },
+          `↑ ${newest}`,
+        )
+      : h("span", { title: `Update locks the newest versions of every mod` }, `↑ ${newest}`),
+  );
+}
+
+function trashIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute(
+    "d",
+    "M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3",
+  );
+  svg.append(path);
+  return svg;
+}
+
+/** Asks before taking a mod out of the profile; resolves to whether to go ahead. */
+function confirmRemove(m) {
+  const dialog = $("#remove-dialog");
+  $("#remove-summary").textContent =
+    `Remove ${m.name} from ${state.profile.label}? Its files leave the game on the next deploy.`;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) =>
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "remove"), {
+      once: true,
+    }),
+  );
+}
+
+// Versions and summaries. The profile comes with each mod's versions and
+// summary as last fetched, so the dropdowns and cards are complete straight
+// away; ones older than VERSIONS_TTL or SUMMARY_TTL (see main.rs) are then
+// refreshed in the background.
+
+/** The version dropdown of each mod on screen, by modKey(). */
 const versionSelects = new Map();
-/** Refreshes in flight, by versionKey(), so re-renders don't repeat them. */
+/** The picture and details of each mod card on screen, by modKey(). */
+const cardMains = new Map();
+/** The newer-version note of each mod card on screen, by modKey(). */
+const updateNotes = new Map();
+/** Fetches in flight, by modKey(), so re-renders don't repeat them. */
 const versionFetches = new Map();
-/** Mods whose versions couldn't be fetched; not retried until a restart. */
+const summaryFetches = new Map();
+/** Mods whose versions or summary couldn't be fetched; not retried until a restart. */
 const versionFailures = new Set();
+const summaryFailures = new Set();
 
-const versionKey = (m) => `${state.profile.game}/${m.source}:${m.id}`;
+const modKey = (m) => `${state.profile.game}/${m.source}:${m.id}`;
 
 /**
  * Picks a mod's version: "Auto" follows the latest one, anything else
@@ -313,7 +489,7 @@ function versionSelect(m, onVersion) {
     },
   });
   fillVersions(select, m);
-  if (state.profile) versionSelects.set(versionKey(m), select);
+  if (state.profile) versionSelects.set(modKey(m), select);
   return select;
 }
 
@@ -336,10 +512,12 @@ function fillVersions(select, m) {
 
 /** Puts freshly fetched versions into a mod's dropdown. */
 function showVersions(key, versions) {
-  const m = state.profile?.mods.find((m) => versionKey(m) === key);
+  const m = state.profile?.mods.find((m) => modKey(m) === key);
   if (!m) return;
   m.versions = versions;
   m.versionsStale = false;
+  const note = updateNotes.get(key);
+  if (note?.el.isConnected) fillUpdate(note.el, m, note.onVersion);
   const select = versionSelects.get(key);
   if (!select?.isConnected) return;
   // Replacing the options of an open dropdown closes it (or leaves the old
@@ -351,26 +529,41 @@ function showVersions(key, versions) {
   }
 }
 
-/** Refreshes the profile's stale version lists, a few at a time. */
-async function refreshVersions() {
+/** Puts a freshly fetched summary on a mod's card. */
+function showSummary(key, summary) {
+  const m = state.profile?.mods.find((m) => modKey(m) === key);
+  if (!m) return;
+  m.summary = summary;
+  m.summaryStale = false;
+  const main = cardMains.get(key);
+  if (!main?.isConnected) return;
+  const fresh = cardMain(cardItem(m));
+  main.replaceWith(fresh);
+  cardMains.set(key, fresh);
+}
+
+/**
+ * Fetches something for each of `mods`, a few at a time, sharing fetches
+ * that are already in flight. Stops if another profile is opened, and says
+ * in the status bar if any failed.
+ */
+async function refreshEach(what, mods, { fetches, failures, fetch, show }) {
   const p = state.profile;
-  const queue = p.mods.filter(
-    (m) => m.versioned && m.versionsStale && !versionFailures.has(versionKey(m)),
-  );
+  const queue = mods.filter((m) => !failures.has(modKey(m)));
   const failed = [];
   const worker = async () => {
     while (queue.length && state.profile?.id === p.id) {
       const m = queue.shift();
-      const key = versionKey(m);
-      if (!versionFetches.has(key)) {
-        const fetch = invoke("versions", { game: p.game, source: m.source, modId: m.id });
-        versionFetches.set(key, fetch);
-        fetch.finally(() => versionFetches.delete(key)).catch(() => {});
+      const key = modKey(m);
+      if (!fetches.has(key)) {
+        const pending = fetch(p, m);
+        fetches.set(key, pending);
+        pending.finally(() => fetches.delete(key)).catch(() => {});
       }
       try {
-        showVersions(key, await versionFetches.get(key));
+        show(key, await fetches.get(key));
       } catch (e) {
-        versionFailures.add(key);
+        failures.add(key);
         failed.push(`${m.name}: ${e}`);
       }
     }
@@ -378,21 +571,55 @@ async function refreshVersions() {
   await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
   if (failed.length) {
     for (const f of failed) console.warn(f);
-    status(`Couldn't check for new versions of ${failed.length} mod(s); ${failed[0]}`, true);
+    status(`Couldn't ${what} ${failed.length} mod(s); ${failed[0]}`, true);
   }
+}
+
+/** Refreshes the profile's stale version lists. */
+function refreshVersions() {
+  return refreshEach(
+    "check for new versions of",
+    state.profile.mods.filter((m) => m.versioned && m.versionsStale),
+    {
+      fetches: versionFetches,
+      failures: versionFailures,
+      fetch: (p, m) => invoke("versions", { game: p.game, source: m.source, modId: m.id }),
+      show: showVersions,
+    },
+  );
+}
+
+/** Refreshes the profile's stale summaries, which only the cards show. */
+function refreshSummaries() {
+  if (modsView !== "cards") return;
+  return refreshEach(
+    "get the details of",
+    state.profile.mods.filter((m) => m.summaryStale),
+    {
+      fetches: summaryFetches,
+      failures: summaryFailures,
+      fetch: (p, m) => invoke("summary", { game: p.game, source: m.source, modId: m.id }),
+      show: showSummary,
+    },
+  );
 }
 
 function renderMods(mods) {
   const id = state.profile.id;
   versionSelects.clear();
+  cardMains.clear();
+  updateNotes.clear();
+  const render = modsView === "cards" ? modCard : modRow;
+  $("#mods").className = modsView === "cards" ? "result-grid" : "mod-list";
   $("#mods").replaceChildren(
     ...mods.map((m) =>
-      modRow(m, {
+      render(m, {
         onToggle: async (e) => {
           await run("set_enabled", { id, name: m.name, enabled: e.target.checked });
           await openProfile(id);
         },
         onRemove: async () => {
+          if (!(await confirmRemove(m))) return;
           await run("remove_mod", { id, name: m.name });
           status(`Removed ${m.name}`);
           await refresh();
@@ -590,36 +817,11 @@ function renderResults(search) {
   const added = new Set(state.profile.mods.map((m) => `${m.source}:${m.id}`));
   $("#results").replaceChildren(
     ...results.items.map((item) => {
-      // Hovering a count shows it in full.
-      const count = (n, noun) =>
-        n != null && h("span", { title: `${n.toLocaleString()} ${noun}` }, `${compact(n)} ${noun}`);
-      const stats = [count(item.downloads, "downloads"), count(item.rating, "likes")].filter(Boolean);
       const isAdded = added.has(`${item.source}:${item.id}`);
-      const summary = item.summary?.trim();
       return h(
         "li",
         { class: "result" },
-        item.icon_url
-          ? h("img", { src: item.icon_url, alt: "", loading: "lazy", decoding: "async" })
-          : h("div", { class: "no-icon" }),
-        h(
-          "div",
-          { class: "result-body" },
-          h("h3", {}, link(item.url, item.name)),
-          item.author && h("div", { class: "author" }, link(item.author_url, item.author)),
-          summary && h("p", { class: "muted", title: summary }, summary),
-          h(
-            "div",
-            { class: "facts muted" },
-            stats.length > 0 ? h("div", {}, stats.flatMap((s, i) => (i ? [" · ", s] : [s]))) : null,
-            item.updated &&
-              h(
-                "div",
-                { title: new Date(item.updated).toLocaleString() },
-                `Updated ${ago(item.updated)}`,
-              ),
-          ),
-        ),
+        cardMain(item),
         h(
           "button",
           {
@@ -639,6 +841,7 @@ function renderResults(search) {
                 state.profile = await run("profile", { id: state.profile.id });
                 renderProfile();
                 refreshVersions();
+                refreshSummaries();
               }
             },
           },
@@ -755,4 +958,5 @@ listen("patchwork://event", ({ payload: e }) => {
   }
 });
 
+setModsView(modsView);
 refresh().catch(() => {});

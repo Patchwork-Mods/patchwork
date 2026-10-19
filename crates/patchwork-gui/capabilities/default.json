@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the main window may do: patchwork's own commands, listening for its events and opening https links in the browser.",
+  "description": "What the main window may do: patchwork's own commands, listening for its events, opening https links in the browser and zooming with Ctrl+/Ctrl-.",
   "windows": ["main"],
   "permissions": [
     "core:event:default",
+    "core:webview:allow-set-webview-zoom",
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "https://*" }]

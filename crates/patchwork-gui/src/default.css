@@ -68,7 +68,8 @@ body[data-screen="games"] {
     "status";
 }
 
-h1, h2 {
+h1,
+h2 {
   margin: 0;
 }
 
@@ -96,7 +97,9 @@ h2 {
   gap: 8px;
 }
 
-button, input, select {
+button,
+input,
+select {
   font: inherit;
   color: inherit;
   background: var(--pw-surface);
@@ -120,7 +123,15 @@ button.primary {
   border-color: transparent;
 }
 
-input:focus-visible, select:focus-visible, button:focus-visible {
+button.danger {
+  background: var(--pw-danger);
+  color: var(--pw-bg);
+  border-color: transparent;
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible {
   outline: 2px solid var(--pw-accent);
   outline-offset: 1px;
 }
@@ -166,7 +177,7 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   text-align: left;
 }
 
-.game-card > :not(.game-art) {
+.game-card> :not(.game-art) {
   margin: 0 10px;
 }
 
@@ -278,7 +289,7 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   border-bottom: 1px solid var(--pw-border);
 }
 
-#profile-header > div:first-child {
+#profile-header>div:first-child {
   flex: 1;
 }
 
@@ -310,10 +321,46 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   margin-top: 48px;
 }
 
-.mod-list, .result-grid, .plan-ops, .warnings {
+.mod-list,
+.result-grid,
+.plan-ops,
+.warnings {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* Cards or list, above the Mods tab. */
+#mods-toolbar {
+  justify-content: flex-end;
+}
+
+.segmented {
+  display: inline-flex;
+}
+
+.segmented button {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 0;
+}
+
+.segmented button+button {
+  border-left: none;
+}
+
+.segmented button:first-child {
+  border-radius: var(--pw-radius) 0 0 var(--pw-radius);
+}
+
+.segmented button:last-child {
+  border-radius: 0 var(--pw-radius) var(--pw-radius) 0;
+}
+
+.segmented button[aria-pressed="true"] {
+  background: var(--pw-accent);
+  color: var(--pw-accent-text);
+  border-color: var(--pw-accent);
 }
 
 .mod-list li {
@@ -329,7 +376,6 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 
 .mod-list li.disabled .mod-name {
   color: var(--pw-muted);
-  text-decoration: line-through;
 }
 
 .mod-name {
@@ -358,7 +404,7 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 
 .result-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: var(--pw-gap);
 }
 
@@ -371,7 +417,13 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   border-radius: var(--pw-radius);
 }
 
-.result img, .result .no-icon {
+/* A card's picture and details, without its buttons. */
+.card-main {
+  display: contents;
+}
+
+.result img,
+.result .no-icon {
   display: block;
   width: 100%;
   aspect-ratio: var(--pw-cover-ratio);
@@ -425,8 +477,192 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   font-size: 12px;
 }
 
+.result .no-icon {
+  display: grid;
+  place-items: center;
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--pw-muted);
+}
+
 .result .add {
   margin: 0 10px 10px;
+}
+
+/* An added mod's card: an on/off switch and the version along the bottom,
+   and a remove button over the picture that shows on hover. */
+.result {
+  position: relative;
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 10px 10px;
+}
+
+/* The on/off switch, drawn from a checkbox. */
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.switch input {
+  appearance: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--pw-border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.switch input::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--pw-surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  transition: transform 0.15s;
+}
+
+.switch input:checked {
+  background: var(--pw-accent);
+}
+
+.switch input:checked::before {
+  transform: translateX(14px);
+}
+
+.switch input:focus-visible {
+  outline-offset: 2px;
+}
+
+/* The version reads as text until it's hovered or focused. */
+/* It fills the rest of the row rather than sizing to its options, which
+   only arrive once it's hovered. */
+.card-footer .mod-version {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding: 3px 4px;
+  font-size: 12px;
+  color: var(--pw-muted);
+  background: transparent;
+  border-color: transparent;
+  text-align: right;
+  text-align-last: right;
+  cursor: pointer;
+}
+
+.card-footer select.mod-version:hover {
+  color: var(--pw-text);
+  border-color: var(--pw-border);
+}
+
+.card-footer select.mod-version option {
+  color: var(--pw-text);
+  background: var(--pw-surface);
+}
+
+span.mod-version {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A newer version than the one in use, just above the version so the
+   switches line up along the bottom of a row. */
+.card-update {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pw-accent);
+}
+
+.card-update:empty {
+  display: none;
+}
+
+.card-update button {
+  padding: 1px 6px;
+  color: inherit;
+  background: transparent;
+  border-color: var(--pw-accent);
+  border-radius: 999px;
+}
+
+.card-update button:hover {
+  color: var(--pw-accent-text);
+  background: var(--pw-accent);
+}
+
+.result .remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--pw-muted);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.result:hover .remove,
+.result .remove:focus-visible {
+  opacity: 1;
+}
+
+.result .remove:hover {
+  color: var(--pw-danger);
+  border-color: var(--pw-danger);
+}
+
+.result .remove svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* A disabled mod fades out, all but its switch so it's easy to turn back on. */
+.result.disabled .card-main>*,
+.result.disabled .mod-version,
+.result.disabled .card-update {
+  opacity: 0.5;
+}
+
+.result.disabled img,
+.result.disabled .no-icon {
+  filter: grayscale(1);
+}
+
+.result.disabled .switch {
+  color: var(--pw-muted);
 }
 
 #pager {
@@ -446,7 +682,8 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   font-size: 12px;
 }
 
-#statusbar button, #statusbar select {
+#statusbar button,
+#statusbar select {
   padding: 2px 8px;
 }
 
@@ -491,7 +728,8 @@ dialog::backdrop {
   gap: 4px;
 }
 
-.field small, .hint {
+.field small,
+.hint {
   font-size: 12px;
 }
 

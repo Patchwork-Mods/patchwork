@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use patchwork_core::Result;
-use patchwork_core::search::{Category, SearchPage, SearchQuery, SortBy};
+use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext, url_parts,
 };
@@ -222,6 +222,14 @@ impl Source for Nexus {
             .get_json(&format!("{base}/files.json"), api_key)
             .await?;
         Ok(file_versions(files.files))
+    }
+
+    /// Doesn't need an API key.
+    async fn summary(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Option<ModSummary>> {
+        let mod_id: u64 = id
+            .parse()
+            .map_err(|_| error(format!("`{id}` should be a numeric Nexus mod id")))?;
+        self.mod_summary(&config(ctx)?.game_domain, mod_id).await
     }
 
     /// Mod pages don't pin a version, so it's dropped.

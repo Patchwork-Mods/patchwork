@@ -12,7 +12,7 @@ use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::lock::mod_key;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
-use patchwork_core::search::{SearchPage, SearchQuery, SortBy};
+use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::ModSpec;
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
@@ -145,11 +145,23 @@ struct UiMod {
     /// Whether `versions` is old enough (or missing) that the UI should
     /// fetch it again.
     versions_stale: bool,
+    /// What a search would show for it (picture, summary, ...), as last
+    /// fetched.
+    summary: Option<ModSummary>,
+    /// Like `versions_stale`, for `summary`.
+    summary_stale: bool,
 }
 
 /// How long a mod's fetched versions are trusted before the UI refreshes
 /// them in the background.
 const VERSIONS_TTL: SignedDuration = SignedDuration::from_hours(1);
+
+/// The same for summaries, which matter less and change less.
+const SUMMARY_TTL: SignedDuration = SignedDuration::from_hours(24);
+
+fn is_stale(fetched: Option<Timestamp>, ttl: SignedDuration) -> bool {
+    fetched.is_none_or(|f| Timestamp::now().duration_since(f) > ttl)
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -247,12 +259,13 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
             let known = versioned
                 .then(|| pw.known_versions(&loaded.game, &m.source, &m.id))
                 .flatten();
+            let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
             UiMod {
                 versions_stale: versioned
-                    && known
-                        .as_ref()
-                        .is_none_or(|k| Timestamp::now().duration_since(k.fetched) > VERSIONS_TTL),
+                    && is_stale(known.as_ref().map(|k| k.fetched), VERSIONS_TTL),
                 versions: known.map(|k| k.versions),
+                summary_stale: is_stale(summary.as_ref().map(|k| k.fetched), SUMMARY_TTL),
+                summary: summary.and_then(|k| k.summary),
                 versioned,
                 locked: lock
                     .iter()
@@ -376,6 +389,17 @@ async fn versions(
     mod_id: String,
 ) -> CmdResult<Vec<String>> {
     app.pw.versions(&game, &source, &mod_id).await.map_err(msg)
+}
+
+/// What a search would show for a mod, if its source has anything to show.
+#[tauri::command]
+async fn summary(
+    app: State<'_, App>,
+    game: String,
+    source: String,
+    mod_id: String,
+) -> CmdResult<Option<ModSummary>> {
+    app.pw.summary(&game, &source, &mod_id).await.map_err(msg)
 }
 
 /// Pins a mod to `version` (or unpins it with none) and locks the profile,
@@ -559,6 +583,7 @@ fn main() {
             set_enabled,
             remove_mod,
             versions,
+            summary,
             set_version,
             update_lock,
             add_mod,
