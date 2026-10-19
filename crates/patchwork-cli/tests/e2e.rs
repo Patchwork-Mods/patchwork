@@ -389,6 +389,28 @@ fn profiles_move_between_machines_as_zips() {
 }
 
 #[test]
+fn hidden_tags_travel_with_zips() {
+    let alice = Env::new();
+    alice.run(&["profile", "new", "lethal-company/main"]);
+    let file = alice.profile_dir().join("profile.toml");
+    let text = read(file.clone()).replace(
+        "name = \"main\"\n",
+        "name = \"main\"\nhidden_tags = [\"Libraries\"]\n",
+    );
+    fs::write(&file, text).unwrap();
+    let export = alice.path("main.zip");
+    alice.run(&["profile", "export", "-o", export.to_str().unwrap()]);
+
+    let bob = Env::new();
+    bob.run(&["profile", "import", export.to_str().unwrap()]);
+    let imported = read(bob.profile_dir().join("profile.toml"));
+    assert!(
+        imported.contains("hidden_tags = [\"Libraries\"]"),
+        "{imported}"
+    );
+}
+
+#[test]
 fn profiles_can_be_shared_as_links() {
     let alice = Env::new();
     alice.run(&["profile", "new", "lethal-company/main"]);
@@ -461,4 +483,42 @@ fn r2modman_profiles_are_imported() {
         env.run(&["profile", "formats"])
             .contains("thunderstore-code")
     );
+}
+
+#[test]
+fn mods_can_be_moved_and_sorted() {
+    let env = Env::new();
+    env.run(&["profile", "new", "lethal-company/main"]);
+    for name in ["beta", "Alpha", "gamma"] {
+        let zip = env.path(&format!("{name}.zip"));
+        write_zip(&zip, &[("plugins/x.dll", name)]);
+        env.run(&["add", zip.to_str().unwrap(), "--name", name]);
+    }
+    let order = |env: &Env| -> Vec<String> {
+        env.run(&["list"])
+            .lines()
+            .map(|l| l.split_whitespace().nth(2).unwrap().to_owned())
+            .collect()
+    };
+
+    assert!(env.run(&["move", "gamma", "--top"]).contains("to 1 of 3"));
+    assert_eq!(order(&env), ["gamma", "beta", "Alpha"]);
+    env.run(&["move", "gamma", "--after", "beta"]);
+    assert_eq!(order(&env), ["beta", "gamma", "Alpha"]);
+    env.run(&["move", "Alpha", "--to", "2"]);
+    assert_eq!(order(&env), ["beta", "Alpha", "gamma"]);
+    assert!(env.fails(&["move", "nope", "--top"]).contains("`nope`"));
+    env.fails(&["move", "beta"]);
+
+    let preview = env.run(&["sort", "--by", "name:desc", "--dry-run"]);
+    assert!(preview.starts_with("1. [x] gamma"), "{preview}");
+    assert_eq!(order(&env), ["beta", "Alpha", "gamma"]);
+    env.run(&["sort", "--by", "name"]);
+    assert_eq!(order(&env), ["Alpha", "beta", "gamma"]);
+
+    // local mods have no tags or dependencies, so these keep the order
+    env.run(&["move", "gamma", "--top"]);
+    env.run(&["sort", "--by", "tags", "--by", "dependents:desc"]);
+    assert_eq!(order(&env), ["gamma", "Alpha", "beta"]);
+    assert!(env.fails(&["sort", "--by", "size"]).contains("unknown sort"));
 }

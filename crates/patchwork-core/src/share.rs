@@ -28,6 +28,10 @@ pub struct SharedProfile {
     /// The profile's id, so a re-import can be matched up with the original.
     pub id: Option<Uuid>,
     pub mods: Vec<ProfileMod>,
+    /// The profile's [`Profile::hidden_tags`](crate::profile::Profile::hidden_tags),
+    /// or `None` if the format can't carry them, in which case an import
+    /// leaves the existing profile's alone.
+    pub hidden_tags: Option<Vec<String>>,
     /// Only present on export when the format asks for it with
     /// [`ProfileFormat::needs_lock`].
     pub lock: Option<Lockfile>,

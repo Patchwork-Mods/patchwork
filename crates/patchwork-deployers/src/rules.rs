@@ -215,7 +215,17 @@ mod tests {
                 "assets/thing.bundle",
                 Some("BepInEx/plugins/Cool/assets/thing.bundle"),
             ),
-            ("BepInEx/plugins/X/x.dll", Some("BepInEx/plugins/X/x.dll")),
+            (
+                "BepInEx/plugins/X/x.dll",
+                Some("BepInEx/plugins/Cool/X/x.dll"),
+            ),
+            (
+                "BepInEx/patchers/X/x.dll",
+                Some("BepInEx/patchers/Cool/X/x.dll"),
+            ),
+            ("core/x.dll", Some("BepInEx/core/Cool/x.dll")),
+            ("monomod/x.mm.dll", Some("BepInEx/monomod/Cool/x.mm.dll")),
+            ("BepInEx/config/x.cfg", Some("BepInEx/config/x.cfg")),
         ];
         for (path, expected) in cases {
             assert_eq!(dst(&rules, "Cool", path).as_deref(), expected, "{path}");

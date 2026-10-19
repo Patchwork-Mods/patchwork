@@ -6,8 +6,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
+use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
-use patchwork_core::profile::{Profile, ProfileRef};
+use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::{ImportOptions, Patchwork};
 use patchwork_deployers::RulesDeployer;
@@ -80,8 +81,29 @@ enum Command {
     Unpin { name: String },
     /// List the versions a mod can be pinned to, newest first.
     Versions { name: String },
-    /// List the mods in the profile.
+    /// List the mods in the profile, in load order.
     List,
+    /// Move a mod in the load order. Later mods win when two provide the
+    /// same file; a mod's dependencies always load before it regardless.
+    Move {
+        name: String,
+        #[command(flatten)]
+        to: MoveTo,
+    },
+    /// Sort the profile's mods. Mods that tie keep their order.
+    Sort {
+        /// name, source, tags, dependencies or dependents, optionally with
+        /// `:desc`. Repeat to break ties with the next key.
+        #[arg(short, long = "by", required = true)]
+        by: Vec<SortKey>,
+        /// With `--by tags`, the tags to put first, most important first.
+        /// Repeat or separate with commas.
+        #[arg(short, long = "tag", value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Show the new order without saving it.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Resolve and fetch every mod in the profile.
     Lock {
         /// Re-resolve mods that are already locked.
@@ -103,6 +125,40 @@ enum Command {
     },
     /// Show the current profile and what's deployed.
     Status,
+}
+
+#[derive(clap::Args)]
+#[group(required = true, multiple = false)]
+struct MoveTo {
+    #[arg(long)]
+    top: bool,
+    #[arg(long)]
+    bottom: bool,
+    /// The position to move it to, counting from 1 as `list` does.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    to: Option<u32>,
+    #[arg(long)]
+    before: Option<String>,
+    #[arg(long)]
+    after: Option<String>,
+}
+
+impl MoveTo {
+    fn position(self) -> Position {
+        if self.top {
+            Position::Top
+        } else if self.bottom {
+            Position::Bottom
+        } else if let Some(n) = self.to {
+            Position::Index(n as usize - 1)
+        } else if let Some(name) = self.before {
+            Position::Before(name)
+        } else if let Some(name) = self.after {
+            Position::After(name)
+        } else {
+            unreachable!("clap requires one of them")
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -300,14 +356,20 @@ async fn run(cli: Cli) -> Result<()> {
             if loaded.mods.is_empty() {
                 println!("{} has no mods", loaded.label());
             }
-            for m in &loaded.mods {
-                let mark = if m.enabled { 'x' } else { ' ' };
-                let version = m
-                    .version
-                    .as_deref()
-                    .map(|v| format!(" @ {v}"))
-                    .unwrap_or_default();
-                println!("[{mark}] {}  ({}:{}{version})", m.name, m.source, m.id);
+            print_mods(&loaded.mods);
+        }
+        Command::Move { name, to } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let index = pw.move_mod(&profile, &name, &to.position())?;
+            println!("moved {name} to {} of {}", index + 1, loaded.mods.len());
+        }
+        Command::Sort { by, tags, dry_run } => {
+            let (profile, _) = selected(&pw, &cli.profile)?;
+            let sorted = pw.sorted_mods(&profile, &by, &tags).await?;
+            print_mods(&sorted);
+            if !dry_run {
+                let names: Vec<String> = sorted.into_iter().map(|m| m.name).collect();
+                pw.reorder_mods(&profile, &names)?;
             }
         }
         Command::Lock { update } => {
@@ -591,6 +653,26 @@ fn print_op(op: &DeployOp) {
         DeployOp::Remove { dst } => println!("  - {dst}"),
         DeployOp::Backup { dst } => println!("  ~ {dst} (backing up original)"),
         DeployOp::Place { dst, mod_name, .. } => println!("  + {dst}  [{mod_name}]"),
+    }
+}
+
+/// Numbered, so positions can be given to `move --to`.
+fn print_mods(mods: &[ProfileMod]) {
+    let width = mods.len().to_string().len();
+    for (i, m) in mods.iter().enumerate() {
+        let mark = if m.enabled { 'x' } else { ' ' };
+        let version = m
+            .version
+            .as_deref()
+            .map(|v| format!(" @ {v}"))
+            .unwrap_or_default();
+        println!(
+            "{:>width$}. [{mark}] {}  ({}:{}{version})",
+            i + 1,
+            m.name,
+            m.source,
+            m.id
+        );
     }
 }
 

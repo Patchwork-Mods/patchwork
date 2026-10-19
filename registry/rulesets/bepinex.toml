@@ -19,7 +19,31 @@ strip = 1
 files = "{manifest.json,icon.png,README.md,CHANGELOG.md,LICENSE,LICENSE.md,LICENSE.txt}"
 skip = true
 
-# Mods that already ship a BepInEx/ folder go in as-is.
+# Like r2modman, each mod gets its own folder under plugins, patchers, core
+# and monomod, even if it ships a BepInEx/ folder of its own. Some mods rely on
+# this: RoR2's BepInExPack refuses to load FixPluginTypesSerialization unless
+# its path contains `RiskofThunder-FixPluginTypesSerialization`.
+[[rules]]
+files = "BepInEx/plugins/**"
+strip = 2
+to = "BepInEx/plugins/{mod}/{path}"
+
+[[rules]]
+files = "BepInEx/patchers/**"
+strip = 2
+to = "BepInEx/patchers/{mod}/{path}"
+
+[[rules]]
+files = "BepInEx/core/**"
+strip = 2
+to = "BepInEx/core/{mod}/{path}"
+
+[[rules]]
+files = "BepInEx/monomod/**"
+strip = 2
+to = "BepInEx/monomod/{mod}/{path}"
+
+# Anything else under BepInEx/ (config and so on) goes in as-is.
 [[rules]]
 files = "BepInEx/**"
 
@@ -34,14 +58,19 @@ strip = 1
 to = "BepInEx/patchers/{mod}/{path}"
 
 [[rules]]
+files = "core/**"
+strip = 1
+to = "BepInEx/core/{mod}/{path}"
+
+[[rules]]
+files = "monomod/**"
+strip = 1
+to = "BepInEx/monomod/{mod}/{path}"
+
+[[rules]]
 files = "config/**"
 strip = 1
 to = "BepInEx/config/{path}"
-
-[[rules]]
-files = "core/**"
-strip = 1
-to = "BepInEx/core/{path}"
 
 # Anything else is treated as plugin content.
 [[rules]]

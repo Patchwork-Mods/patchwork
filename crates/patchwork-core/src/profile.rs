@@ -20,6 +20,11 @@ pub struct Profile {
     pub id: Uuid,
     pub game: String,
     pub name: String,
+    /// Mods with any of these tags (matched ignoring case) are tucked away
+    /// at the bottom of a frontend's mod list. It's only about how the list
+    /// is shown: hidden mods are still installed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_tags: Vec<String>,
     /// In load order: later mods win when two provide the same file.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
@@ -32,6 +37,7 @@ impl Profile {
             id: Uuid::new_v4(),
             game: game.to_owned(),
             name: name.to_owned(),
+            hidden_tags: Vec::new(),
             mods: Vec::new(),
         }
     }
@@ -102,4 +108,8 @@ pub fn validate_name(name: &str) -> Result<(), Error> {
             "`{name}` isn't a valid profile name; use letters, digits, `-`, `_` or `.`"
         )))
     }
+}
+
+pub(crate) fn no_such_mod(profile: &str, name: &str) -> Error {
+    Error::invalid(format!("{profile} has no mod named `{name}`"))
 }

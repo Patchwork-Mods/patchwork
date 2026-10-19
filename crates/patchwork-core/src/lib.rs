@@ -17,6 +17,7 @@ pub mod fsutil;
 pub mod game;
 pub mod hash;
 pub mod lock;
+pub mod order;
 pub mod paths;
 pub mod profile;
 pub mod registry;
@@ -30,4 +31,6 @@ mod builtin;
 mod patchwork;
 
 pub use error::{Error, Result};
-pub use patchwork::{Builder, GameInstall, ImportOptions, Imported, KnownSummary, KnownVersions, Patchwork};
+pub use patchwork::{
+    Builder, GameInstall, ImportOptions, Imported, KnownSummary, KnownVersions, Patchwork,
+};

@@ -15,8 +15,9 @@ use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, validate_game_id};
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
+use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
-use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod, ProfileRef, validate_name};
+use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
 use crate::registry::Registry;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
@@ -490,6 +491,20 @@ impl Patchwork {
         self.save_profile(profile, &loaded)
     }
 
+    /// Sets which tags hide a mod from the main list; see
+    /// [`Profile::hidden_tags`]. Blank and repeated tags are dropped.
+    pub fn set_hidden_tags(&self, profile: &ProfileRef, tags: &[String]) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let mut kept: Vec<String> = Vec::new();
+        for tag in tags.iter().map(|t| t.trim()) {
+            if !tag.is_empty() && !kept.iter().any(|k| k.to_lowercase() == tag.to_lowercase()) {
+                kept.push(tag.to_owned());
+            }
+        }
+        loaded.hidden_tags = kept;
+        self.save_profile(profile, &loaded)
+    }
+
     /// Pins a mod to `version`, or with `None` lets it follow the newest
     /// version again. Takes effect the next time the profile's locked.
     pub fn set_version(
@@ -511,6 +526,85 @@ impl Patchwork {
         }
         m.version = version;
         self.save_profile(profile, &loaded)
+    }
+
+    /// Moves a mod within the profile's load order, returning its new
+    /// (zero-based) position.
+    pub fn move_mod(&self, profile: &ProfileRef, name: &str, to: &Position) -> Result<usize> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let index = order::move_mod(&mut loaded.mods, &label, name, to)?;
+        self.save_profile(profile, &loaded)?;
+        Ok(index)
+    }
+
+    /// Puts the profile's mods in the order of `names`, which has to name
+    /// each of them exactly once. This is how a frontend saves a list the
+    /// user has rearranged by hand.
+    pub fn reorder_mods(&self, profile: &ProfileRef, names: &[String]) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let mut by_name: HashMap<String, ProfileMod> =
+            loaded.mods.drain(..).map(|m| (m.name.clone(), m)).collect();
+        for name in names {
+            let m = by_name.remove(name).ok_or_else(|| {
+                Error::invalid(format!(
+                    "`{name}` is listed twice or isn't in {}",
+                    loaded.label()
+                ))
+            })?;
+            loaded.mods.push(m);
+        }
+        if let Some(name) = by_name.keys().next() {
+            return Err(Error::invalid(format!(
+                "the new order for {} leaves out `{name}`",
+                loaded.label()
+            )));
+        }
+        self.save_profile(profile, &loaded)
+    }
+
+    /// The profile's mods sorted by `keys` (see [`order::sort_mods`]),
+    /// without saving anything; pass the result's names to
+    /// [`Patchwork::reorder_mods`] to keep it.
+    ///
+    /// Sorting by tags uses each mod's [`Patchwork::known_summary`], fetching
+    /// the ones that haven't been; a mod whose summary can't be fetched is
+    /// warned about and treated as untagged. Sorting by dependencies locks
+    /// the profile first.
+    pub async fn sorted_mods(
+        &self,
+        profile: &ProfileRef,
+        keys: &[SortKey],
+        tag_order: &[String],
+    ) -> Result<Vec<ProfileMod>> {
+        let mut loaded = self.load_profile(profile)?;
+        let mut facts: HashMap<String, ModFacts> = if SortKey::needs_dependencies(keys) {
+            order::dependency_facts(&self.lock(profile, false).await?)
+        } else {
+            HashMap::new()
+        };
+        if SortKey::needs_tags(keys) {
+            for m in &loaded.mods {
+                let summary = match self.known_summary(&loaded.game, &m.source, &m.id) {
+                    Some(known) => known.summary,
+                    None => match self.summary(&loaded.game, &m.source, &m.id).await {
+                        Ok(summary) => summary,
+                        Err(e) => {
+                            self.reporter.report(Event::Warning(format!(
+                                "couldn't get `{}`'s tags: {e}",
+                                m.name
+                            )));
+                            None
+                        }
+                    },
+                };
+                facts.entry(mod_key(&m.source, &m.id)).or_default().tags = summary
+                    .map(|s| s.categories.into_iter().map(|c| c.name).collect())
+                    .unwrap_or_default();
+            }
+        }
+        order::sort_mods(&mut loaded.mods, keys, tag_order, &facts);
+        Ok(loaded.mods)
     }
 
     /// Whether `source`'s mods have versions that can be listed and picked.
@@ -737,7 +831,11 @@ impl Patchwork {
             .load_lock(profile)?
             .map(|lock| lock.mods.into_iter().map(|m| (m.key(), m)).collect())
             .unwrap_or_default();
-        let mut previous = if update { HashMap::new() } else { known.clone() };
+        let mut previous = if update {
+            HashMap::new()
+        } else {
+            known.clone()
+        };
 
         let (lock, unmet) = loop {
             let (mods, resolved) = self.resolve_mods(&loaded, &previous, &known).await?;
@@ -966,6 +1064,7 @@ impl Patchwork {
             name: Some(loaded.name.clone()),
             id: Some(loaded.id),
             mods: loaded.mods,
+            hidden_tags: Some(loaded.hidden_tags),
             ..Default::default()
         };
         if format.needs_lock() {
@@ -1166,6 +1265,9 @@ impl Patchwork {
         }
 
         profile.mods = dedupe_names(shared.mods);
+        if let Some(tags) = shared.hidden_tags {
+            profile.hidden_tags = tags;
+        }
         self.save_profile(&profile_ref, &profile)?;
         if let Some(lock) = &shared.lock {
             fsutil::write_toml(&self.lock_file(&profile_ref), lock)?;
@@ -1347,10 +1449,6 @@ fn dedupe_names(mods: Vec<ProfileMod>) -> Vec<ProfileMod> {
             m
         })
         .collect()
-}
-
-fn no_such_mod(profile: &str, name: &str) -> Error {
-    Error::invalid(format!("{profile} has no mod named `{name}`"))
 }
 
 #[cfg(test)]

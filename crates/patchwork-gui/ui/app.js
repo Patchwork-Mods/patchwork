@@ -39,6 +39,8 @@ function status(text, isError = false) {
   const el = $("#status");
   el.textContent = text;
   el.classList.toggle("error", isError);
+  // An undo only makes sense next to the message about what it undoes.
+  $("#undo").hidden = true;
 }
 
 /** Runs a command, showing its error in the status bar if it fails. */
@@ -243,6 +245,7 @@ function renderProfile() {
     $("#profile-title").textContent = `No ${game.name} profiles yet`;
     $("#profile-meta").textContent = "Create one in the sidebar to start adding mods.";
     $("#mods").replaceChildren();
+    $("#hidden-mods").hidden = true;
     $("#mod-problems").replaceChildren();
     $("#mods-empty").hidden = true;
     $("#mods-toolbar").hidden = true;
@@ -529,12 +532,20 @@ function showVersions(key, versions) {
   }
 }
 
-/** Puts a freshly fetched summary on a mod's card. */
+/**
+ * Puts a freshly fetched summary on a mod's card, or moves the mod to the
+ * other section if its new tags change whether it's hidden.
+ */
 function showSummary(key, summary) {
   const m = state.profile?.mods.find((m) => modKey(m) === key);
   if (!m) return;
+  const wasHidden = isHidden(m);
   m.summary = summary;
   m.summaryStale = false;
+  if (isHidden(m) !== wasHidden) {
+    renderMods(state.profile.mods);
+    return;
+  }
   const main = cardMains.get(key);
   if (!main?.isConnected) return;
   const fresh = cardMain(cardItem(m));
@@ -589,9 +600,12 @@ function refreshVersions() {
   );
 }
 
-/** Refreshes the profile's stale summaries, which only the cards show. */
+/**
+ * Refreshes the profile's stale summaries, which only the cards show, and
+ * which have the tags the filter goes by.
+ */
 function refreshSummaries() {
-  if (modsView !== "cards") return;
+  if (modsView !== "cards" && !state.profile.hiddenTags.length) return;
   return refreshEach(
     "get the details of",
     state.profile.mods.filter((m) => m.summaryStale),
@@ -610,33 +624,174 @@ function renderMods(mods) {
   cardMains.clear();
   updateNotes.clear();
   const render = modsView === "cards" ? modCard : modRow;
-  $("#mods").className = modsView === "cards" ? "result-grid" : "mod-list";
-  $("#mods").replaceChildren(
-    ...mods.map((m) =>
-      render(m, {
-        onToggle: async (e) => {
-          await run("set_enabled", { id, name: m.name, enabled: e.target.checked });
+  const item = (m) =>
+    render(m, {
+      onToggle: async (e) => {
+        await run("set_enabled", { id, name: m.name, enabled: e.target.checked });
+        await openProfile(id);
+      },
+      onRemove: async () => {
+        if (!(await confirmRemove(m))) return;
+        await run("remove_mod", { id, name: m.name });
+        status(`Removed ${m.name}`);
+        await refresh();
+      },
+      onVersion: async (version) => {
+        status(version ? `Pinning ${m.name} to ${version}…` : `Unpinning ${m.name}…`);
+        try {
+          await run("set_version", { id, name: m.name, version });
+          status(version ? `Pinned ${m.name} to ${version}` : `${m.name} follows the latest version`);
+        } finally {
           await openProfile(id);
-        },
-        onRemove: async () => {
-          if (!(await confirmRemove(m))) return;
-          await run("remove_mod", { id, name: m.name });
-          status(`Removed ${m.name}`);
-          await refresh();
-        },
-        onVersion: async (version) => {
-          status(version ? `Pinning ${m.name} to ${version}…` : `Unpinning ${m.name}…`);
-          try {
-            await run("set_version", { id, name: m.name, version });
-            status(version ? `Pinned ${m.name} to ${version}` : `${m.name} follows the latest version`);
-          } finally {
-            await openProfile(id);
-          }
-        },
-      }),
+        }
+      },
+    });
+  const hidden = mods.filter(isHidden);
+  const layout = modsView === "cards" ? "result-grid" : "mod-list";
+  $("#mods").className = layout;
+  $("#mods").replaceChildren(...mods.filter((m) => !isHidden(m)).map(item));
+  $("#hidden-mods-list").className = layout;
+  $("#hidden-mods-list").replaceChildren(...hidden.map(item));
+  $("#hidden-mods").hidden = !hidden.length;
+  const off = hidden.filter((m) => !m.enabled).length;
+  $("#hidden-mods > summary").textContent =
+    `Hidden (${hidden.length})` + (off ? ` · ${off} disabled` : "");
+  $("#mods-empty").hidden = mods.length > 0;
+  $("#filter-menu > summary").textContent = state.profile.hiddenTags.length
+    ? `Filter (${state.profile.hiddenTags.length})`
+    : "Filter";
+}
+
+// Filtering. Mods with any of the profile's hiddenTags go in a collapsed
+// section under the rest, which keeps things like libraries out of the way
+// without changing the load order. Tags come from each mod's summary, so a
+// mod whose summary hasn't been fetched yet stays in the main list until it
+// has.
+
+const filterMenu = $("#filter-menu");
+
+const lower = (tags) => tags.map((t) => t.toLowerCase());
+const modTags = (m) => m.summary?.categories?.map((c) => c.name) ?? [];
+
+function isHidden(m) {
+  const hidden = lower(state.profile.hiddenTags);
+  return hidden.length > 0 && lower(modTags(m)).some((t) => hidden.includes(t));
+}
+
+/**
+ * Lists every tag the profile's mods have, with how many have it, plus any
+ * hidden tag none of them have any more so it can still be unticked.
+ */
+function renderFilterMenu() {
+  const p = state.profile;
+  const counts = new Map();
+  for (const m of p.mods) {
+    // the same tag can be spelled differently by different sources
+    for (const tag of new Set(lower(modTags(m)))) {
+      const entry = counts.get(tag) ?? {
+        name: modTags(m).find((t) => t.toLowerCase() === tag),
+        n: 0,
+      };
+      entry.n++;
+      counts.set(tag, entry);
+    }
+  }
+  for (const tag of p.hiddenTags) {
+    if (!counts.has(tag.toLowerCase())) counts.set(tag.toLowerCase(), { name: tag, n: 0 });
+  }
+  const tags = [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const hidden = lower(p.hiddenTags);
+  const items = filterMenu.querySelector(".menu-items");
+  if (!tags.length) {
+    items.replaceChildren(
+      h("p", { class: "muted menu-note" }, "No tags yet. They show up once the mods' details have loaded."),
+    );
+    return;
+  }
+  items.replaceChildren(
+    h("p", { class: "muted menu-note" }, "Hide mods tagged:"),
+    ...tags.map((tag) =>
+      h(
+        "label",
+        {},
+        h("input", {
+          type: "checkbox",
+          checked: hidden.includes(tag.name.toLowerCase()),
+          onchange: (e) => setHidden(tag.name, e.target.checked).catch(() => {}),
+        }),
+        h("span", {}, tag.name),
+        h("span", { class: "muted" }, String(tag.n)),
+      ),
     ),
   );
-  $("#mods-empty").hidden = mods.length > 0;
+}
+
+async function setHidden(tag, hide) {
+  const p = state.profile;
+  const tags = p.hiddenTags.filter((t) => t.toLowerCase() !== tag.toLowerCase());
+  if (hide) tags.push(tag);
+  await run("set_hidden_tags", { id: p.id, tags });
+  if (state.profile !== p) return;
+  p.hiddenTags = tags;
+  renderMods(p.mods);
+  // list view only fetches summaries while there's something to filter by
+  refreshSummaries();
+}
+
+filterMenu.addEventListener("toggle", () => {
+  if (filterMenu.open && state.profile) renderFilterMenu();
+});
+
+// Sorting. It rearranges the mods once rather than keeping them sorted, so
+// they can be moved around by hand afterwards. Since that throws away the
+// old order, the status bar offers to put it back.
+
+const sortMenu = $("#sort-menu");
+
+async function sortMods(keys, label) {
+  const id = state.profile.id;
+  sortMenu.open = false;
+  sortMenu.setAttribute("aria-busy", "true");
+  status(`Sorting by ${label}…`);
+  try {
+    const before = await run("sort_mods", { id, keys });
+    await openProfile(id);
+    if (!before) {
+      status(`Already sorted by ${label}`);
+      return;
+    }
+    status(`Sorted by ${label}`);
+    const undo = $("#undo");
+    undo.hidden = false;
+    undo.onclick = async () => {
+      undo.hidden = true;
+      await run("reorder_mods", { id, names: before });
+      status("Put the mods back in their old order");
+      if (state.profile?.id === id) await openProfile(id);
+    };
+  } finally {
+    sortMenu.removeAttribute("aria-busy");
+  }
+}
+
+for (const item of sortMenu.querySelectorAll("[data-keys]")) {
+  const label = item.firstChild.textContent.trim().toLowerCase();
+  item.addEventListener("click", () =>
+    sortMods(item.dataset.keys.split(" "), label).catch(() => {}),
+  );
+}
+
+// <details> doesn't close by itself when you click elsewhere or press Escape.
+for (const menu of [sortMenu, filterMenu]) {
+  document.addEventListener("click", (e) => {
+    if (!menu.contains(e.target)) menu.open = false;
+  });
+  menu.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && menu.open) {
+      menu.open = false;
+      menu.querySelector("summary").focus();
+    }
+  });
 }
 
 $("#new-profile").addEventListener("submit", async (e) => {

@@ -58,6 +58,7 @@ impl ProfileFormat for Archive {
             id: shared.id.unwrap_or_else(Uuid::new_v4),
             game: shared.game.clone().unwrap_or_default(),
             name: shared.name.clone().unwrap_or_default(),
+            hidden_tags: shared.hidden_tags.clone().unwrap_or_default(),
             mods: shared.mods.clone(),
         };
         let zip_error = |e: zip::result::ZipError| error(e.to_string());
@@ -126,6 +127,7 @@ impl ProfileFormat for Archive {
             name: Some(profile.name),
             id: Some(profile.id),
             mods: profile.mods,
+            hidden_tags: Some(profile.hidden_tags),
             lock,
             ..Default::default()
         };

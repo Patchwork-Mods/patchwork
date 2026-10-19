@@ -10,6 +10,7 @@ use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::lock::mod_key;
+use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
@@ -122,6 +123,8 @@ struct ProfileDetail {
     label: String,
     game: String,
     mods: Vec<UiMod>,
+    /// Mods with any of these tags go in the Mods tab's hidden section.
+    hidden_tags: Vec<String>,
     /// Dependency requirements the locked versions don't meet.
     problems: Vec<String>,
     install: Option<String>,
@@ -225,7 +228,7 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
 fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
     let pw = &app.pw;
     let r = profile_ref(&id)?;
-    let loaded = pw.load_profile(&r).map_err(msg)?;
+    let mut loaded = pw.load_profile(&r).map_err(msg)?;
     let install = pw
         .game_install(&loaded.game)
         .map_err(msg)?
@@ -250,6 +253,7 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
         })
         .unwrap_or_default();
     let label = loaded.label();
+    let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
     let mods = loaded
         .mods
         .into_iter()
@@ -280,6 +284,7 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
         label,
         game: loaded.game,
         mods,
+        hidden_tags,
         problems,
         id,
         install,
@@ -378,6 +383,61 @@ fn set_enabled(app: State<'_, App>, id: String, name: String, enabled: bool) -> 
 #[tauri::command]
 fn remove_mod(app: State<'_, App>, id: String, name: String) -> CmdResult<()> {
     app.pw.remove_mod(&profile_ref(&id)?, &name).map_err(msg)
+}
+
+#[tauri::command]
+fn set_hidden_tags(app: State<'_, App>, id: String, tags: Vec<String>) -> CmdResult<()> {
+    app.pw
+        .set_hidden_tags(&profile_ref(&id)?, &tags)
+        .map_err(msg)
+}
+
+/// Sorts the profile's mods once by `keys` (written as `patchwork sort --by`
+/// takes them, e.g. `dependents:desc`) and saves the new order. Returns the
+/// order the mods were in before, for undoing it with `reorder_mods`, or
+/// none if sorting didn't move anything.
+#[tauri::command]
+async fn sort_mods(
+    app: State<'_, App>,
+    id: String,
+    keys: Vec<String>,
+) -> CmdResult<Option<Vec<String>>> {
+    let r = profile_ref(&id)?;
+    let keys = keys
+        .iter()
+        .map(|k| k.parse::<SortKey>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(msg)?;
+    let before: Vec<String> = app
+        .pw
+        .load_profile(&r)
+        .map_err(msg)?
+        .mods
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    let after: Vec<String> = app
+        .pw
+        .sorted_mods(&r, &keys, &[])
+        .await
+        .map_err(msg)?
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    if after == before {
+        return Ok(None);
+    }
+    app.pw.reorder_mods(&r, &after).map_err(msg)?;
+    Ok(Some(before))
+}
+
+/// Puts the profile's mods in the order of `names`, which has to name each
+/// of them once.
+#[tauri::command]
+fn reorder_mods(app: State<'_, App>, id: String, names: Vec<String>) -> CmdResult<()> {
+    app.pw
+        .reorder_mods(&profile_ref(&id)?, &names)
+        .map_err(msg)
 }
 
 /// The versions a mod can be pinned to, newest first.
@@ -582,6 +642,9 @@ fn main() {
             set_game_path,
             set_enabled,
             remove_mod,
+            set_hidden_tags,
+            sort_mods,
+            reorder_mods,
             versions,
             summary,
             set_version,

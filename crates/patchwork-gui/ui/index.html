@@ -55,6 +55,39 @@
         </form>
         <ul id="mod-problems" class="warnings"></ul>
         <div id="mods-toolbar" class="row">
+          <div class="row">
+            <!-- Sorting rearranges the mods once; it doesn't keep them sorted.
+                 Each item's data-keys go to sort_mods in main.rs. -->
+            <details id="sort-menu" class="menu">
+              <summary title="Rearrange the load order. Mods further down win when two change the same file.">Sort</summary>
+              <div class="menu-items" role="menu">
+                <button type="button" role="menuitem" data-keys="name">
+                  Name <span class="muted">A to Z</span>
+                </button>
+                <button type="button" role="menuitem" data-keys="name:desc">
+                  Name <span class="muted">Z to A</span>
+                </button>
+                <button type="button" role="menuitem" data-keys="tags name">
+                  Category <span class="muted">grouped by their tags</span>
+                </button>
+                <button type="button" role="menuitem" data-keys="source name">
+                  Source <span class="muted">grouped by where they're from</span>
+                </button>
+                <button type="button" role="menuitem" data-keys="dependents:desc name">
+                  Libraries first <span class="muted">mods that others need on top</span>
+                </button>
+                <button type="button" role="menuitem" data-keys="dependencies:desc name">
+                  Most dependencies first <span class="muted">mods that need the most on top</span>
+                </button>
+              </div>
+            </details>
+            <!-- Mods with a ticked tag move to #hidden-mods below. The tags
+                 are filled in each time it opens; see renderFilterMenu(). -->
+            <details id="filter-menu" class="menu">
+              <summary title="Move mods with some tags, like libraries, out of the way">Filter</summary>
+              <div class="menu-items"></div>
+            </details>
+          </div>
           <!-- Cards look like a source's search results; the list is denser
                and has no pictures. See setModsView() in app.js. -->
           <div id="mods-view" class="segmented" role="group" aria-label="Layout">
@@ -63,6 +96,11 @@
           </div>
         </div>
         <ul id="mods" class="result-grid"></ul>
+        <details id="hidden-mods" hidden>
+          <summary></summary>
+          <p class="muted">These are only out of the way here; they're still deployed while they're enabled.</p>
+          <ul id="hidden-mods-list" class="result-grid"></ul>
+        </details>
         <p id="mods-empty" class="empty" hidden>No mods yet. Find some in the tabs above.</p>
       </section>
 
@@ -90,6 +128,8 @@
 
     <footer id="statusbar">
       <span id="status" class="muted">Ready</span>
+      <!-- Shown after a sort; see sortMods() in app.js. -->
+      <button id="undo" hidden>Undo</button>
     </footer>
 
     <dialog id="plan-dialog">
