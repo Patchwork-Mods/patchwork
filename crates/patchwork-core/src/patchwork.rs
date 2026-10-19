@@ -688,13 +688,14 @@ impl Patchwork {
         let loaded = self.load_profile(profile)?;
         let registry = self.registry();
         let game = registry.game(&loaded.game)?;
-        let mut previous: HashMap<String, LockedMod> = match (update, self.load_lock(profile)?) {
-            (false, Some(lock)) => lock.mods.into_iter().map(|m| (m.key(), m)).collect(),
-            _ => HashMap::new(),
-        };
+        let known: HashMap<String, LockedMod> = self
+            .load_lock(profile)?
+            .map(|lock| lock.mods.into_iter().map(|m| (m.key(), m)).collect())
+            .unwrap_or_default();
+        let mut previous = if update { HashMap::new() } else { known.clone() };
 
         let (lock, unmet) = loop {
-            let (mods, resolved) = self.resolve_mods(&loaded, &previous).await?;
+            let (mods, resolved) = self.resolve_mods(&loaded, &previous, &known).await?;
             let lock = Lockfile {
                 schema: LOCK_SCHEMA,
                 game: LockedGame {
@@ -739,10 +740,14 @@ impl Patchwork {
     /// One pass of [`Patchwork::lock`]: walks the profile's mods and their
     /// dependencies, reusing entries from `previous` where it can. Also
     /// returns the keys of the mods it had to resolve.
+    ///
+    /// `known` is the whole old lockfile, even when updating: a mod that
+    /// resolves to the same download it was locked to isn't downloaded again.
     async fn resolve_mods(
         &self,
         loaded: &Profile,
         previous: &HashMap<String, LockedMod>,
+        known: &HashMap<String, LockedMod>,
     ) -> Result<(Vec<LockedMod>, HashSet<String>)> {
         let mut queue: VecDeque<(ModSpec, Option<String>)> = loaded
             .mods
@@ -793,8 +798,23 @@ impl Patchwork {
                     self.reporter.report(Event::Resolving { name: label });
                     let resolved = self.resolve(&loaded.game, &spec).await?;
                     let name = name.unwrap_or_else(|| resolved.name.clone());
-                    self.reporter.report(Event::Fetching { name: name.clone() });
-                    let hash = self.fetch(&resolved.artifact, resolved.format).await?;
+                    // a URL is taken to always serve the same file, which
+                    // holds for versioned download links; paths can change
+                    // under us, and are cheap to ingest again anyway
+                    let hash = match known.get(&key) {
+                        Some(old)
+                            if matches!(old.artifact, ArtifactLocation::Url { .. })
+                                && old.artifact == resolved.artifact
+                                && old.format == resolved.format
+                                && self.store.contains(&old.hash, old.format) =>
+                        {
+                            old.hash
+                        }
+                        _ => {
+                            self.reporter.report(Event::Fetching { name: name.clone() });
+                            self.fetch(&resolved.artifact, resolved.format).await?
+                        }
+                    };
                     resolved_keys.insert(key.clone());
                     LockedMod {
                         name,
@@ -1380,5 +1400,56 @@ mod tests {
         assert!(builtin.to_string().contains("already"), "{builtin}");
         assert!(pw.add_game(new_game("My Game", "none")).is_err());
         assert!(pw.add_game(new_game("other", "missing")).is_err());
+    }
+
+    /// Resolves every mod to the same URL.
+    struct FixedUrl(String);
+
+    #[async_trait::async_trait]
+    impl Source for FixedUrl {
+        fn id(&self) -> &str {
+            "fixed"
+        }
+
+        async fn resolve(
+            &self,
+            _: &SourceContext<'_>,
+            id: &str,
+            _: Option<&str>,
+        ) -> Result<crate::source::ResolvedMod> {
+            Ok(crate::source::ResolvedMod {
+                id: id.to_owned(),
+                name: id.to_owned(),
+                version: Some("1.0".to_owned()),
+                artifact: ArtifactLocation::Url {
+                    url: self.0.clone(),
+                },
+                format: ArtifactFormat::File,
+                dependencies: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn updating_skips_downloads_that_havent_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        // the server answers once, so a second download would fail
+        let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+            .source(FixedUrl(serve_once("200 OK", b"mod bytes")))
+            .deployer(NoDeployer)
+            .open()
+            .unwrap();
+        pw.add_game(new_game("my-game", "none")).unwrap();
+        let profile = pw.create_profile("my-game", "default").unwrap();
+        let spec = ModSpec {
+            source: "fixed".to_owned(),
+            id: "a".to_owned(),
+            version: None,
+        };
+        pw.add_mod(&profile, spec, None, true).await.unwrap();
+
+        let first = pw.lock(&profile, true).await.unwrap();
+        let second = pw.lock(&profile, true).await.unwrap();
+        assert_eq!(first.mods[0].hash, second.mods[0].hash);
     }
 }

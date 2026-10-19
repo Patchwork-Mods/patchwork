@@ -487,8 +487,15 @@ function selectTab(key) {
   $("#tab-mods").hidden = key !== "mods";
   $("#tab-browse").hidden = key === "mods";
   if (state.source) {
-    $("#search [name=text]").placeholder = `Search ${sourceName(key)}`;
-    renderResults(state.searches[key]);
+    // the search form is shared, so put back what this tab last searched for
+    const last = state.searches[key];
+    const form = $("#search");
+    form.elements.text.placeholder = `Search ${sourceName(key)}`;
+    form.elements.text.value = last?.query.text ?? "";
+    form.elements.sort.value = last?.query.sort ?? "";
+    renderResults(last);
+    // a source opens on its home page, which is a search with no text
+    if (!last) search(0).catch(() => {});
   }
 }
 
@@ -505,6 +512,9 @@ function renderSourceTabs(sources) {
 
 // Browse
 
+/** Each source's latest search, so an older one finishing late is ignored. */
+const searchSeq = {};
+
 async function search(page) {
   const p = state.profile;
   const source = state.source;
@@ -517,10 +527,12 @@ async function search(page) {
     sort: form.get("sort") || null,
     page,
   };
+  const seq = (searchSeq[source] = (searchSeq[source] ?? 0) + 1);
   status("Searching…");
   const started = performance.now();
   const results = await run("search", query);
   const fetched = performance.now();
+  if (seq !== searchSeq[source] || state.profile?.id !== p.id) return;
   state.searches[source] = { page, query, results };
   // The user may have switched tabs while this was in flight.
   if (state.source === source) renderResults(state.searches[source]);
@@ -599,6 +611,12 @@ function renderResults(search) {
 $("#search").addEventListener("submit", (e) => {
   e.preventDefault();
   search(0);
+});
+// Emptying the search bar goes back to the source's home page.
+$("#search [name=text]").addEventListener("input", (e) => {
+  if (!e.target.value.trim() && state.searches[state.source]?.query.text?.trim()) {
+    search(0).catch(() => {});
+  }
 });
 $("#prev").addEventListener("click", () => search(state.searches[state.source].page - 1));
 $("#next").addEventListener("click", () => search(state.searches[state.source].page + 1));
