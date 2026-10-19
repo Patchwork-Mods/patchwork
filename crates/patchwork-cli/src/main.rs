@@ -346,7 +346,8 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
             }
         }
         GameCommand::Show { id } => {
-            let entry = pw.registry().game(&id)?;
+            let registry = pw.registry();
+            let entry = registry.game(&id)?;
             println!("# origin: {}, hash: {}", entry.origin, entry.hash.short());
             print!("{}", toml::to_string_pretty(&entry.value)?);
         }

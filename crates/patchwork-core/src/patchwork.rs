@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use crate::deploy::{self, DeployContext, DeployPlan, DeployState, Deployer, Inst
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
 use crate::fsutil::{self, StateLock};
-use crate::game::GameDef;
+use crate::game::{GAME_SCHEMA, GameDef, validate_game_id};
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
 use crate::paths::Paths;
@@ -108,7 +108,7 @@ impl Builder {
         let registry = Registry::load(&self.paths)?;
         let patchwork = Patchwork {
             store: Store::new(self.paths.store()),
-            registry,
+            registry: RwLock::new(Arc::new(registry)),
             paths: self.paths,
             sources: self.sources,
             deployers: self.deployers,
@@ -125,7 +125,9 @@ impl Builder {
 /// should be able to be one too.
 pub struct Patchwork {
     paths: Paths,
-    registry: Registry,
+    /// Swapped out whole when game definitions change, so anything already
+    /// working from the old one carries on undisturbed.
+    registry: RwLock<Arc<Registry>>,
     store: Store,
     sources: BTreeMap<String, Arc<dyn Source>>,
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
@@ -149,8 +151,18 @@ impl Patchwork {
         &self.paths
     }
 
-    pub fn registry(&self) -> &Registry {
-        &self.registry
+    /// The registry as it is now. Hold on to it for as long as you need a
+    /// consistent view; [`Patchwork::reload_registry`] won't change it.
+    pub fn registry(&self) -> Arc<Registry> {
+        self.registry.read().unwrap().clone()
+    }
+
+    /// Loads the registry again, picking up definitions added or changed on
+    /// disk since patchwork was opened.
+    pub fn reload_registry(&self) -> Result<()> {
+        let registry = Registry::load(&self.paths)?;
+        *self.registry.write().unwrap() = Arc::new(registry);
+        Ok(())
     }
 
     pub fn has_source(&self, id: &str) -> bool {
@@ -164,7 +176,7 @@ impl Patchwork {
     }
 
     pub fn set_game_path(&self, game: &str, path: &Path) -> Result<GameInstall> {
-        self.registry.game(game)?;
+        self.registry().game(game)?;
         let path = path.canonicalize().at(path)?;
         if !path.is_dir() {
             return Err(Error::invalid(format!(
@@ -188,6 +200,37 @@ impl Patchwork {
         self.paths.game_installs().join(format!("{game}.toml"))
     }
 
+    /// Saves a new game definition to the user's registry (`<config>/games/`)
+    /// and reloads the registry so it can be used straight away. Refuses ids
+    /// that are already defined anywhere, so this never shadows a builtin or
+    /// registry game by accident.
+    pub fn add_game(&self, mut def: GameDef) -> Result<()> {
+        validate_game_id(&def.id)?;
+        if def.name.trim().is_empty() {
+            return Err(Error::invalid("the game needs a name"));
+        }
+        if self.registry().game(&def.id).is_ok() {
+            return Err(Error::invalid(format!(
+                "there's already a game with the id `{}`",
+                def.id
+            )));
+        }
+        if !self.deployers.contains_key(&def.deployer.kind) {
+            return Err(Error::UnknownDeployer(def.deployer.kind.clone()));
+        }
+        if let Some(source) = def.sources.keys().find(|s| !self.has_source(s)) {
+            return Err(Error::UnknownSource(source.clone()));
+        }
+        def.schema = GAME_SCHEMA;
+        let path = self
+            .paths
+            .user_registry()
+            .join("games")
+            .join(format!("{}.toml", def.id));
+        fsutil::write_toml(&path, &def)?;
+        self.reload_registry()
+    }
+
     // Profiles
 
     pub fn current_profile(&self) -> Result<Option<ProfileRef>> {
@@ -205,7 +248,7 @@ impl Patchwork {
 
     /// Creates `<game>/<name>`, which must not already exist.
     pub fn create_profile(&self, game: &str, name: &str) -> Result<ProfileRef> {
-        self.registry.game(game)?;
+        self.registry().game(game)?;
         validate_name(name)?;
         let profile = Profile::new(game, name);
         if self
@@ -460,7 +503,8 @@ impl Patchwork {
     /// Every version of a mod that can be pinned, newest first, fetched from
     /// its source. The list is remembered for [`Patchwork::known_versions`].
     pub async fn versions(&self, game: &str, source: &str, id: &str) -> Result<Vec<String>> {
-        let def = &self.registry.game(game)?.value;
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
@@ -505,7 +549,8 @@ impl Patchwork {
 
     async fn resolve(&self, game: &str, spec: &ModSpec) -> Result<crate::source::ResolvedMod> {
         let source = self.source(&spec.source)?;
-        let game = &self.registry.game(game)?.value;
+        let registry = self.registry();
+        let game = &registry.game(game)?.value;
         let ctx = SourceContext {
             game,
             config: game.sources.get(&spec.source),
@@ -520,7 +565,8 @@ impl Patchwork {
     /// The sources that can search for `game`'s mods: ones that support
     /// searching and that the game's definition sets up.
     pub fn search_sources(&self, game: &str) -> Result<Vec<&str>> {
-        let game = &self.registry.game(game)?.value;
+        let registry = self.registry();
+        let game = &registry.game(game)?.value;
         Ok(self
             .sources
             .iter()
@@ -538,7 +584,8 @@ impl Patchwork {
 
     pub async fn search_categories(&self, game: &str, source: &str) -> Result<Vec<Category>> {
         let source = self.searchable(source)?;
-        let game = &self.registry.game(game)?.value;
+        let registry = self.registry();
+        let game = &registry.game(game)?.value;
         let ctx = SourceContext {
             game,
             config: game.sources.get(source.id()),
@@ -566,7 +613,8 @@ impl Patchwork {
                 sorts.join(", ")
             )));
         }
-        let game = &self.registry.game(game)?.value;
+        let registry = self.registry();
+        let game = &registry.game(game)?.value;
         let ctx = SourceContext {
             game,
             config: game.sources.get(source.id()),
@@ -638,7 +686,8 @@ impl Patchwork {
     /// because of a pin or because nothing new enough exists, are warnings.
     pub async fn lock(&self, profile: &ProfileRef, update: bool) -> Result<Lockfile> {
         let loaded = self.load_profile(profile)?;
-        let game = self.registry.game(&loaded.game)?;
+        let registry = self.registry();
+        let game = registry.game(&loaded.game)?;
         let mut previous: HashMap<String, LockedMod> = match (update, self.load_lock(profile)?) {
             (false, Some(lock)) => lock.mods.into_iter().map(|m| (m.key(), m)).collect(),
             _ => HashMap::new(),
@@ -838,7 +887,8 @@ impl Patchwork {
     pub async fn export_profile(&self, profile: &ProfileRef, format: &str) -> Result<Vec<u8>> {
         let format = self.format(format)?;
         let loaded = self.load_profile(profile)?;
-        let game = &self.registry.game(&loaded.game)?.value;
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
         if !format.supports(game) {
             return Err(Error::invalid(format!(
                 "{} profiles can't be exported as {}",
@@ -887,9 +937,10 @@ impl Patchwork {
                 )
             })?,
         };
+        let registry = self.registry();
         let explicit = match options.game {
             Some(id) => {
-                let game = &self.registry.game(id)?.value;
+                let game = &registry.game(id)?.value;
                 if !format.supports(game) {
                     return Err(Error::invalid(format!(
                         "{} profiles can't be imported from {}",
@@ -902,8 +953,7 @@ impl Patchwork {
             None => None,
         };
         let game = explicit.or_else(|| {
-            let mut supported = self
-                .registry
+            let mut supported = registry
                 .games()
                 .map(|e| &e.value)
                 .filter(|g| format.supports(g));
@@ -950,7 +1000,7 @@ impl Patchwork {
                 ));
             }
         };
-        self.registry.game(&game)?;
+        self.registry().game(&game)?;
         if let Some(m) = shared.mods.iter().find(|m| !self.has_source(&m.source)) {
             return Err(Error::UnknownSource(m.source.clone()));
         }
@@ -1090,7 +1140,8 @@ impl Patchwork {
     pub async fn plan_deploy(&self, profile: &ProfileRef) -> Result<DeployPlan> {
         let lock = self.lock(profile, false).await?;
         let loaded = self.load_profile(profile)?;
-        let game = &self.registry.game(&loaded.game)?.value;
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
         let install = self.game_install(&loaded.game)?.ok_or_else(|| {
             Error::invalid(format!(
                 "patchwork doesn't know where {} is installed; run `patchwork game set-path {} <dir>`",
@@ -1131,7 +1182,7 @@ impl Patchwork {
         let ctx = DeployContext {
             game,
             config: &game.deployer.config,
-            registry: &self.registry,
+            registry: &registry,
         };
         let desired = deployer.plan(&ctx, &mods)?;
         let prev = self.deploy_state(&loaded.game)?;
@@ -1158,7 +1209,7 @@ impl Patchwork {
 
     /// Works out how to remove everything patchwork deployed for a game.
     pub fn plan_undeploy(&self, game: &str) -> Result<DeployPlan> {
-        let link = self.registry.game(game)?.value.link;
+        let link = self.registry().game(game)?.value.link;
         let prev = self.deploy_state(game)?;
         Ok(deploy::plan(&prev, Default::default(), None, link))
     }
@@ -1281,5 +1332,53 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("404"), "{err}");
+    }
+
+    struct NoDeployer;
+
+    impl Deployer for NoDeployer {
+        fn kind(&self) -> &str {
+            "none"
+        }
+
+        fn plan(&self, _: &DeployContext<'_>, _: &[InstalledMod]) -> Result<deploy::DesiredState> {
+            Ok(Default::default())
+        }
+    }
+
+    fn new_game(id: &str, kind: &str) -> GameDef {
+        GameDef {
+            schema: 0,
+            id: id.to_owned(),
+            name: "My Game".to_owned(),
+            sources: BTreeMap::new(),
+            deployer: crate::game::DeployerSpec {
+                kind: kind.to_owned(),
+                config: toml::Table::new(),
+            },
+            link: Default::default(),
+        }
+    }
+
+    #[test]
+    fn added_games_are_saved_and_usable_straight_away() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+            .deployer(NoDeployer)
+            .open()
+            .unwrap();
+
+        pw.add_game(new_game("my-game", "none")).unwrap();
+        let entry = pw.registry().game("my-game").unwrap().clone();
+        assert_eq!(entry.origin, crate::registry::Origin::User);
+        assert_eq!(entry.value.schema, GAME_SCHEMA);
+        pw.create_profile("my-game", "default").unwrap();
+
+        let duplicate = pw.add_game(new_game("my-game", "none")).unwrap_err();
+        assert!(duplicate.to_string().contains("already"), "{duplicate}");
+        let builtin = pw.add_game(new_game("lethal-company", "none")).unwrap_err();
+        assert!(builtin.to_string().contains("already"), "{builtin}");
+        assert!(pw.add_game(new_game("My Game", "none")).is_err());
+        assert!(pw.add_game(new_game("other", "missing")).is_err());
     }
 }

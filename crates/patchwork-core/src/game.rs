@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::Error;
+
 pub const GAME_SCHEMA: u32 = 1;
 
 /// A game definition: which sources a game's mods come from and how they're
@@ -41,4 +43,21 @@ pub enum LinkMethod {
     /// filesystems.
     Hardlink,
     Symlink,
+}
+
+/// Game ids name files and appear in profile references (`<game>/<name>`),
+/// so they're kept to lowercase letters, digits and `-`.
+pub fn validate_game_id(id: &str) -> Result<(), Error> {
+    let valid = !id.is_empty()
+        && !id.starts_with('-')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::invalid(format!(
+            "`{id}` isn't a valid game id; use lowercase letters, digits and `-`"
+        )))
+    }
 }

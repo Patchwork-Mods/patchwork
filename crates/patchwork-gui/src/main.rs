@@ -8,6 +8,7 @@ use jiff::{SignedDuration, Timestamp};
 use patchwork_core::Patchwork;
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
+use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::lock::mod_key;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
@@ -16,7 +17,7 @@ use patchwork_core::source::ModSpec;
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Commands fail with a message for the UI to show.
@@ -89,6 +90,8 @@ struct Overview {
     games: Vec<GameInfo>,
     profiles: Vec<ProfileInfo>,
     current: Option<String>,
+    /// Shared rule sets a new game's deployer can use.
+    rulesets: Vec<String>,
     warnings: Vec<String>,
 }
 
@@ -98,6 +101,8 @@ struct GameInfo {
     id: String,
     name: String,
     install: Option<String>,
+    /// Where the definition came from, e.g. `builtin` or `user`.
+    origin: String,
 }
 
 #[derive(Serialize)]
@@ -161,8 +166,10 @@ fn profile_ref(id: &str) -> CmdResult<ProfileRef> {
 #[tauri::command]
 fn overview(app: State<'_, App>) -> CmdResult<Overview> {
     let pw = &app.pw;
-    let games = pw
-        .registry()
+    // Picks up definitions dropped into the registry folders by hand.
+    pw.reload_registry().map_err(msg)?;
+    let registry = pw.registry();
+    let games = registry
         .games()
         .map(|entry| {
             let game = &entry.value;
@@ -173,6 +180,7 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
                     .game_install(&game.id)
                     .map_err(msg)?
                     .map(|i| i.path.display().to_string()),
+                origin: entry.origin.to_string(),
             })
         })
         .collect::<CmdResult<_>>()?;
@@ -192,8 +200,8 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
         games,
         profiles,
         current: pw.current_profile().map_err(msg)?.map(|r| r.to_string()),
-        warnings: pw
-            .registry()
+        rulesets: registry.data_ids("rulesets").map(str::to_owned).collect(),
+        warnings: registry
             .problems
             .iter()
             .map(|p| format!("skipped registry entry: {p}"))
@@ -265,6 +273,66 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
         deployed_files,
         search_sources,
     })
+}
+
+/// What the "Add game" form collects.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NewGame {
+    id: String,
+    name: String,
+    install: Option<String>,
+    /// Thunderstore community slug, e.g. `lethal-company`.
+    thunderstore: Option<String>,
+    /// Nexus game domain, e.g. `skyrimspecialedition`.
+    nexus: Option<String>,
+    rulesets: Vec<String>,
+    link: LinkMethod,
+}
+
+/// Saves a new game definition, then points it at its install folder if one
+/// was given.
+#[tauri::command]
+fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
+    let filled = |s: Option<String>| s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+    let mut sources = std::collections::BTreeMap::new();
+    if let Some(community) = filled(game.thunderstore) {
+        sources.insert(
+            "thunderstore".to_owned(),
+            toml::Table::from_iter([("community".to_owned(), community.into())]),
+        );
+    }
+    if let Some(domain) = filled(game.nexus) {
+        sources.insert(
+            "nexus".to_owned(),
+            toml::Table::from_iter([("game_domain".to_owned(), domain.into())]),
+        );
+    }
+    let mut config = toml::Table::new();
+    if !game.rulesets.is_empty() {
+        config.insert("rulesets".to_owned(), game.rulesets.into());
+    }
+    let def = GameDef {
+        schema: 0,
+        id: game.id.trim().to_owned(),
+        name: game.name.trim().to_owned(),
+        sources,
+        deployer: DeployerSpec {
+            kind: "rules".to_owned(),
+            config,
+        },
+        link: game.link,
+    };
+    app.pw.add_game(def.clone()).map_err(msg)?;
+    if let Some(path) = filled(game.install) {
+        app.pw.set_game_path(&def.id, path.as_ref()).map_err(|e| {
+            format!(
+                "{} was added, but its install folder couldn't be set: {e}",
+                def.name
+            )
+        })?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -483,6 +551,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             overview,
             profile,
+            create_game,
             create_profile,
             use_profile,
             set_game_path,

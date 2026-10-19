@@ -190,6 +190,14 @@ impl Registry {
     pub fn data(&self, kind: &str, id: &str) -> Option<&Entry<toml::Table>> {
         self.data.get(&(kind.to_owned(), id.to_owned()))
     }
+
+    /// The ids of every entry of `kind`, e.g. the `rulesets` a game can use.
+    pub fn data_ids<'a>(&'a self, kind: &'a str) -> impl Iterator<Item = &'a str> {
+        self.data
+            .keys()
+            .filter(move |(k, _)| k == kind)
+            .map(|(_, id)| id.as_str())
+    }
 }
 
 /// Checked before the full parse, so a newer file gets a clear "update

@@ -16,6 +16,7 @@ patchwork-formats.workspace = true
 jiff.workspace = true
 serde.workspace = true
 tauri.workspace = true
+toml.workspace = true
 
 [build-dependencies]
 tauri-build.workspace = true

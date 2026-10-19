@@ -24,6 +24,8 @@ function h(tag, attrs = {}, ...children) {
 
 const state = {
   overview: null,
+  /** The game being looked at, or null on the game picker. */
+  game: null,
   profile: null,
   search: { page: 0, query: null },
 };
@@ -50,52 +52,128 @@ function compact(n) {
   return (n / 1e6).toFixed(1) + "M";
 }
 
-// Profiles
-
+/** Reloads everything, staying on whichever screen and profile is open. */
 async function refresh() {
   state.overview = await run("overview");
   for (const warning of state.overview.warnings) console.warn(warning);
-  renderSidebar();
-  const current = state.overview.current;
-  if (current) await openProfile(current);
-  else {
-    await applyTheme(null);
-    renderProfile();
+  if (state.game && gameInfo(state.game)) {
+    renderSidebar();
+    if (state.profile) await openProfile(state.profile.id);
+    else renderProfile();
+  } else {
+    await showGames();
   }
 }
 
-function renderSidebar() {
-  const { games, profiles, current } = state.overview;
-  const names = Object.fromEntries(games.map((g) => [g.id, g.name]));
-  const byGame = new Map();
-  for (const p of profiles) byGame.set(p.game, [...(byGame.get(p.game) ?? []), p]);
+const gameInfo = (id) => state.overview.games.find((g) => g.id === id);
+const profilesOf = (game) => state.overview.profiles.filter((p) => p.game === game);
 
-  $("#profiles").replaceChildren(
-    ...[...byGame].map(([game, ps]) => [
-      h("h3", {}, names[game] ?? game),
-      ...ps.map((p) =>
+// Games
+
+function showScreen(screen) {
+  document.body.dataset.screen = screen;
+  $("#games-screen").hidden = screen !== "games";
+  $("#sidebar").hidden = screen !== "game";
+  $("#main").hidden = screen !== "game";
+}
+
+async function showGames() {
+  state.game = null;
+  state.profile = null;
+  showScreen("games");
+  await applyTheme(null);
+  renderGames();
+}
+
+/** Up to two letters standing in for a game's picture. */
+function initials(name) {
+  const words = name
+    .split(/[\s\-_:]+/)
+    .filter((w) => w && !/^(a|an|and|of|the)$/i.test(w));
+  return words.slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
+}
+
+function renderGames() {
+  const { games } = state.overview;
+  $("#game-grid").replaceChildren(
+    ...games.map((g) => {
+      const count = profilesOf(g.id).length;
+      const facts = [
+        `${count} profile${count === 1 ? "" : "s"}`,
+        g.install ? "installed" : "not set up",
+      ];
+      return h(
+        "li",
+        {},
         h(
           "button",
-          { "aria-current": String(p.id === current), onclick: () => switchProfile(p.id) },
-          h("span", {}, p.name),
-          h("span", { class: "muted" }, String(p.mods)),
+          { class: "game-card", "data-game": g.id, onclick: () => openGame(g.id) },
+          h("div", { class: "game-art", "aria-hidden": "true" }, initials(g.name)),
+          h("span", { class: "game-name" }, g.name),
+          h("span", { class: "muted" }, facts.join(" · ")),
+          g.origin === "user" ? h("span", { class: "badge" }, "Added by you") : null,
         ),
+      );
+    }),
+    h(
+      "li",
+      {},
+      h(
+        "button",
+        { class: "game-card add", onclick: openGameDialog },
+        h("div", { class: "game-art", "aria-hidden": "true" }, "+"),
+        h("span", { class: "game-name" }, "Add a game"),
+        h("span", { class: "muted" }, "Set up one patchwork doesn't know yet"),
       ),
-    ]).flat(),
+    ),
   );
-  if (!profiles.length) {
+}
+
+/**
+ * Shows a game's profiles, opening the current profile if it's for this
+ * game, or else its first one.
+ */
+async function openGame(id) {
+  state.game = id;
+  state.profile = null;
+  showScreen("game");
+  document.querySelector("[data-tab=mods]").click();
+  await applyTheme(id);
+  renderSidebar();
+  const current = state.overview.current;
+  const ps = profilesOf(id);
+  const pick = ps.find((p) => p.id === current) ?? ps[0];
+  if (pick) await switchProfile(pick.id);
+  else renderProfile();
+}
+
+$("#back").addEventListener("click", () => showGames());
+
+// Profiles
+
+function renderSidebar() {
+  const game = gameInfo(state.game);
+  const current = state.profile?.id;
+  $("#game-title").textContent = game.name;
+  const ps = profilesOf(game.id);
+  $("#profiles").replaceChildren(
+    ...ps.map((p) =>
+      h(
+        "button",
+        { "aria-current": String(p.id === current), onclick: () => switchProfile(p.id) },
+        h("span", {}, p.name),
+        h("span", { class: "muted" }, String(p.mods)),
+      ),
+    ),
+  );
+  if (!ps.length) {
     $("#profiles").append(h("p", { class: "muted" }, "No profiles yet."));
   }
-
-  $("#new-profile [name=game]").replaceChildren(
-    ...games.map((g) => h("option", { value: g.id }, g.name)),
-  );
 }
 
 async function switchProfile(id) {
   await run("use_profile", { id });
   state.overview.current = id;
-  renderSidebar();
   await openProfile(id);
 }
 
@@ -104,7 +182,7 @@ async function openProfile(id) {
   state.search = { page: 0, query: null };
   $("#results").replaceChildren();
   $("#pager").hidden = true;
-  await applyTheme(state.profile.game);
+  renderSidebar();
   renderProfile();
   refreshVersions();
 }
@@ -121,12 +199,14 @@ function renderProfile() {
   $("#deploy").disabled = !p?.install;
   $("#update").disabled = !p?.mods.length;
   if (!p) {
-    $("#profile-title").textContent = "No profile selected";
-    $("#profile-meta").textContent = "Create one in the sidebar to get started.";
+    const game = gameInfo(state.game);
+    $("#profile-title").textContent = `No ${game.name} profiles yet`;
+    $("#profile-meta").textContent = "Create one in the sidebar to start adding mods.";
     $("#mods").replaceChildren();
     $("#mod-problems").replaceChildren();
     $("#mods-empty").hidden = true;
-    $("#game-path").hidden = true;
+    $("#game-path").hidden = !!game.install;
+    $("#search [name=source]").replaceChildren();
     return;
   }
 
@@ -298,17 +378,99 @@ function renderMods(mods) {
 
 $("#new-profile").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const form = new FormData(e.target);
-  await run("create_profile", { game: form.get("game"), name: form.get("name") });
+  const name = new FormData(e.target).get("name");
+  const id = await run("create_profile", { game: state.game, name });
   e.target.reset();
-  await refresh();
+  state.overview = await run("overview");
+  await openProfile(id);
 });
 
 $("#game-path").addEventListener("submit", async (e) => {
   e.preventDefault();
   const path = new FormData(e.target).get("path");
-  await run("set_game_path", { game: state.profile.game, path });
-  await openProfile(state.profile.id);
+  await run("set_game_path", { game: state.game, path });
+  await refresh();
+});
+
+// Adding a game. Writes <config>/games/<id>.toml through create_game in
+// main.rs; anything the form doesn't cover can be added to that file later.
+
+const gameForm = $("#new-game");
+/** Whether the id has been typed in, rather than filled in from the name. */
+let idEdited = false;
+
+const slug = (name) =>
+  name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+function openGameDialog() {
+  gameForm.reset();
+  idEdited = false;
+  $("#new-game-error").hidden = true;
+  $("#new-game-rulesets").replaceChildren(
+    h("span", {}, "Install rules"),
+    ...state.overview.rulesets.map((r) =>
+      h(
+        "label",
+        { class: "row" },
+        h("input", { type: "checkbox", name: "rulesets", value: r }),
+        h("span", {}, r),
+        r === "bepinex"
+          ? h("small", { class: "muted" }, "most Thunderstore games")
+          : null,
+      ),
+    ),
+  );
+  if (!state.overview.rulesets.length) {
+    $("#new-game-rulesets").append(
+      h("p", { class: "muted hint" }, "No shared rules are installed; files go in as they are."),
+    );
+  }
+  $("#game-dialog").showModal();
+}
+
+gameForm.elements.name.addEventListener("input", (e) => {
+  if (!idEdited) gameForm.elements.id.value = slug(e.target.value);
+});
+gameForm.elements.id.addEventListener("input", () => (idEdited = true));
+gameForm.querySelector("[value=cancel]").addEventListener("click", () => {
+  $("#game-dialog").close();
+});
+
+gameForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = new FormData(gameForm);
+  const game = {
+    id: form.get("id"),
+    name: form.get("name"),
+    install: form.get("install") || null,
+    thunderstore: form.get("thunderstore") || null,
+    nexus: form.get("nexus") || null,
+    rulesets: form.getAll("rulesets"),
+    link: form.get("link"),
+  };
+  const submit = gameForm.querySelector("[type=submit]");
+  const existed = !!gameInfo(game.id);
+  submit.disabled = true;
+  let error = null;
+  try {
+    await invoke("create_game", { game });
+  } catch (err) {
+    error = String(err);
+  } finally {
+    submit.disabled = false;
+  }
+  state.overview = await run("overview");
+  // The game can be saved even if its install folder couldn't be set, so
+  // carry on to it with the error showing rather than leaving the dialog up.
+  if (error && (existed || !gameInfo(game.id))) {
+    $("#new-game-error").textContent = error;
+    $("#new-game-error").hidden = false;
+    $("#new-game-error").scrollIntoView({ block: "nearest" });
+    return;
+  }
+  $("#game-dialog").close();
+  await openGame(game.id);
+  status(error ?? `Added ${game.name}`, !!error);
 });
 
 // Tabs

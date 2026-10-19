@@ -60,6 +60,13 @@ body {
   color: var(--pw-text);
 }
 
+body[data-screen="games"] {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "games"
+    "status";
+}
+
 h1, h2 {
   margin: 0;
 }
@@ -121,6 +128,95 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   outline-offset: 1px;
 }
 
+/* Game picker */
+
+#games-screen {
+  grid-area: games;
+  overflow-y: auto;
+  padding: calc(var(--pw-gap) * 2) calc(var(--pw-gap) * 3);
+}
+
+.games-header {
+  margin-bottom: calc(var(--pw-gap) * 2);
+}
+
+.games-header .brand {
+  font-size: 24px;
+}
+
+.games-header p {
+  margin: 4px 0 0;
+}
+
+.game-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: calc(var(--pw-gap) * 1.5);
+}
+
+.game-card {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0 0 10px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.game-card > :not(.game-art) {
+  margin: 0 10px;
+}
+
+.game-card:hover {
+  border-color: var(--pw-accent);
+}
+
+/* Stands in for a game's picture until games can have one. */
+.game-art {
+  width: 100%;
+  aspect-ratio: 460 / 215;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--pw-accent-text);
+  background: var(--pw-accent);
+}
+
+.game-card.add {
+  border-style: dashed;
+}
+
+.game-card.add .game-art {
+  color: var(--pw-muted);
+  background: none;
+  font-weight: 400;
+}
+
+.game-name {
+  font-weight: 600;
+}
+
+.game-card .muted {
+  font-size: 12px;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--pw-border);
+  color: var(--pw-muted);
+}
+
 /* Sidebar */
 
 #sidebar {
@@ -138,16 +234,20 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   font-size: 18px;
 }
 
-#profiles {
-  flex: 1;
+.back {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 2px 0;
+  color: var(--pw-muted);
 }
 
-#profiles h3 {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--pw-muted);
-  margin: 12px 0 4px;
+.back:hover {
+  color: var(--pw-text);
+}
+
+#profiles {
+  flex: 1;
 }
 
 #profiles button {
@@ -360,4 +460,37 @@ dialog::backdrop {
 
 .warnings li {
   color: var(--pw-danger);
+}
+
+/* Add game dialog */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field small, .hint {
+  font-size: 12px;
+}
+
+.hint {
+  margin: 0;
+}
+
+fieldset {
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  padding: 8px var(--pw-gap) var(--pw-gap);
+  margin: 0;
+}
+
+legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.error {
+  color: var(--pw-danger);
+  margin: 0;
 }

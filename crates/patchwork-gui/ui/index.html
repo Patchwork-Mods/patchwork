@@ -10,22 +10,32 @@
     <style id="theme-game"></style>
     <script src="app.js" defer></script>
   </head>
-  <body>
-    <aside id="sidebar">
-      <h1 class="brand">Patchwork</h1>
+  <body data-screen="games">
+    <!-- The first screen: every known game, plus a way to add one. -->
+    <section id="games-screen">
+      <header class="games-header">
+        <h1 class="brand">Patchwork</h1>
+        <p class="muted">Pick a game to manage its profiles and mods.</p>
+      </header>
+      <ul id="game-grid" class="game-grid"></ul>
+    </section>
+
+    <!-- One game: its profiles on the left, the selected one on the right. -->
+    <aside id="sidebar" hidden>
+      <button id="back" class="back">← All games</button>
+      <h1 id="game-title" class="brand"></h1>
       <nav id="profiles" aria-label="Profiles"></nav>
       <form id="new-profile" class="stack">
         <h2>New profile</h2>
-        <select name="game" required></select>
         <input name="name" placeholder="Name" required pattern="[A-Za-z0-9._\-]+" />
         <button type="submit">Create</button>
       </form>
     </aside>
 
-    <main id="main">
+    <main id="main" hidden>
       <header id="profile-header">
         <div>
-          <h2 id="profile-title">No profile selected</h2>
+          <h2 id="profile-title">No profile yet</h2>
           <p id="profile-meta" class="muted"></p>
         </div>
         <div class="tabs" role="tablist">
@@ -93,6 +103,53 @@
         <div class="row end">
           <button value="cancel">Cancel</button>
           <button value="apply" class="primary">Apply</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="game-dialog">
+      <form id="new-game" method="dialog" class="stack">
+        <h2>Add a game</h2>
+        <label class="field">
+          <span>Name</span>
+          <input name="name" required placeholder="Lethal Company" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Id <small class="muted">used in profile names and file names</small></span>
+          <input name="id" required pattern="[a-z0-9][a-z0-9\-]*" placeholder="lethal-company" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Install folder <small class="muted">optional; can be set later</small></span>
+          <input name="install" placeholder="/path/to/game" autocomplete="off" />
+        </label>
+        <fieldset class="stack">
+          <legend>Where its mods come from</legend>
+          <label class="field">
+            <span>Thunderstore community <small class="muted">from thunderstore.io/c/<b>community</b>/</small></span>
+            <input name="thunderstore" placeholder="lethal-company" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Nexus Mods game <small class="muted">from nexusmods.com/<b>game</b>/</small></span>
+            <input name="nexus" placeholder="skyrimspecialedition" autocomplete="off" />
+          </label>
+          <p class="muted hint">Local files and URLs work for every game.</p>
+        </fieldset>
+        <fieldset class="stack">
+          <legend>How mods are installed</legend>
+          <div id="new-game-rulesets" class="stack"></div>
+          <label class="field">
+            <span>Put files in the game folder by</span>
+            <select name="link">
+              <option value="copy">Copying (safest)</option>
+              <option value="hardlink">Hard linking (saves space)</option>
+              <option value="symlink">Symlinking</option>
+            </select>
+          </label>
+        </fieldset>
+        <p id="new-game-error" class="error" hidden></p>
+        <div class="row end">
+          <button type="button" value="cancel" formnovalidate>Cancel</button>
+          <button type="submit" value="create" class="primary">Add game</button>
         </div>
       </form>
     </dialog>
