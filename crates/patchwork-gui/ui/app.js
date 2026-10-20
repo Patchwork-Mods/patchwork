@@ -215,6 +215,7 @@ function renderSidebar() {
 }
 
 async function switchProfile(id) {
+  modSearch.value = "";
   await run("use_profile", { id });
   state.overview.current = id;
   await openProfile(id);
@@ -549,8 +550,9 @@ function showSummary(key, summary) {
   const wasHidden = isHidden(m);
   m.summary = summary;
   m.summaryStale = false;
-  if (isHidden(m) !== wasHidden) {
-    renderMods(state.profile.mods);
+  // its author and description may change where a search puts it
+  if (isHidden(m) !== wasHidden || modQuery()) {
+    renderModsSoon();
     return;
   }
   const main = cardMains.get(key);
@@ -609,14 +611,16 @@ function refreshVersions() {
 
 /**
  * Refreshes the profile's stale summaries, which only the cards show, and
- * which have the tags the filter goes by.
+ * which have the tags the filter goes by and the authors and descriptions
+ * a search looks through.
  */
 function refreshSummaries() {
   if (!wantsSummaries()) return;
   return fetchSummaries(state.profile.mods.filter((m) => m.summaryStale));
 }
 
-const wantsSummaries = () => modsView === "cards" || state.profile.hiddenTags.length > 0;
+const wantsSummaries = () =>
+  modsView === "cards" || state.profile.hiddenTags.length > 0 || !!modQuery();
 
 function fetchSummaries(mods) {
   return refreshEach("get the details of", mods, {
@@ -655,17 +659,22 @@ function renderMods(mods) {
         }
       },
     });
-  const hidden = mods.filter(isHidden);
+  const query = modQuery();
+  const shown = rankMods(mods, query);
+  const hidden = shown.filter(isHidden);
   const layout = modsView === "cards" ? "result-grid" : "mod-list";
   $("#mods").className = layout;
-  $("#mods").replaceChildren(...mods.filter((m) => !isHidden(m)).map(item));
+  $("#mods").replaceChildren(...shown.filter((m) => !isHidden(m)).map(item));
   $("#hidden-mods-list").className = layout;
   $("#hidden-mods-list").replaceChildren(...hidden.map(item));
   $("#hidden-mods").hidden = !hidden.length;
   const off = hidden.filter((m) => !m.enabled).length;
   $("#hidden-mods > summary").textContent =
     `Hidden (${hidden.length})` + (off ? ` · ${off} disabled` : "");
-  $("#mods-empty").hidden = mods.length > 0;
+  $("#mods-empty").hidden = shown.length > 0;
+  $("#mods-empty").textContent = mods.length
+    ? `No mods match “${query}”.`
+    : "No mods yet. Find some in the tabs above.";
   $("#filter-menu > summary").textContent = state.profile.hiddenTags.length
     ? `Filter (${state.profile.hiddenTags.length})`
     : "Filter";
@@ -750,6 +759,143 @@ async function setHidden(tag, hide) {
 filterMenu.addEventListener("toggle", () => {
   if (filterMenu.open && state.profile) renderFilterMenu();
 });
+
+// Searching. Only narrows down and reorders what's shown; the load order
+// stays the same. Each word typed has to match one of a mod's fields, and
+// counts for more in its name than its author, and more in its author than
+// its description, so searching an author puts their own mods above ones
+// that only mention them. Close misspellings still match, for less.
+
+const modSearch = $("#mod-search");
+const modQuery = () => modSearch.value.trim();
+
+/** Lowercase words, also splitting camelCase ("RiskOfOptions"). */
+const searchWords = (text) =>
+  (text ?? "")
+    .replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+/** Edits (including swapping two letters) to turn `a` into `b`. */
+function editDistance(a, b) {
+  let prev2 = [];
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        row[j] = Math.min(row[j], prev2[j - 2] + 1);
+      }
+    }
+    [prev2, prev] = [prev, row];
+  }
+  return prev[b.length];
+}
+
+/** How well one typed word matches a field, from 0 to 1. */
+function wordMatch(term, field) {
+  let best = 0;
+  // short words only match the start of a word, or "a" would match everything
+  if (term.length >= 3 && field.joined.includes(term)) best = 0.6;
+  const typos = term.length < 4 ? 0 : term.length < 8 ? 1 : 2;
+  for (const word of field.words) {
+    if (word === term) return 1;
+    if (word.startsWith(term)) best = Math.max(best, 0.8);
+    else if (typos && best < 0.5) {
+      const whole = editDistance(term, word);
+      // or the start of the word, for one that's still being typed
+      const start =
+        word.length > term.length ? editDistance(term, word.slice(0, term.length)) : Infinity;
+      if (whole <= typos) best = Math.max(best, 0.5 - 0.15 * (whole - 1));
+      else if (start <= typos) best = Math.max(best, 0.4 - 0.15 * (start - 1));
+    }
+  }
+  return best;
+}
+
+const searchFields = [
+  { weight: 3, text: (m) => m.summary?.name ?? m.name },
+  { weight: 2, text: (m) => m.summary?.author },
+  { weight: 1, text: (m) => m.summary?.summary },
+];
+
+/**
+ * The mods matching `query`, best first, with ties kept in load order. A
+ * mod's author and description are only searched once its summary is in.
+ */
+function rankMods(mods, query) {
+  const terms = searchWords(query);
+  if (!terms.length) return mods;
+  const phrase = terms.join("");
+  const scored = [];
+  for (const m of mods) {
+    const fields = searchFields.map(({ weight, text }) => {
+      const words = searchWords(text(m));
+      return { weight, words, joined: words.join("") };
+    });
+    let score = 0;
+    for (const term of terms) {
+      const best = Math.max(...fields.map((f) => f.weight * wordMatch(term, f)));
+      if (!best) {
+        score = 0;
+        break;
+      }
+      score += best;
+    }
+    if (!score) continue;
+    // all of it together in the name, as in "lethalthings" for LethalThings
+    if (terms.length > 1 && fields[0].joined.includes(phrase)) score += 2;
+    if (fields[0].joined === phrase) score += 2;
+    scored.push({ m, score });
+  }
+  return scored.sort((a, b) => b.score - a.score).map((s) => s.m);
+}
+
+modSearch.addEventListener("input", () => {
+  if (!state.profile) return;
+  renderMods(state.profile.mods);
+  // list view doesn't otherwise have the authors and descriptions
+  refreshSummaries();
+});
+
+modSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && modSearch.value) {
+    e.stopPropagation();
+    modSearch.value = "";
+    modSearch.dispatchEvent(new Event("input"));
+  }
+});
+
+// Ctrl+F or / goes to the search box of whichever tab is open. / only does
+// while nothing else is being typed in, so it can still be typed itself.
+document.addEventListener("keydown", (e) => {
+  const find = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f";
+  const slash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey;
+  if (!find && !slash) return;
+  if (slash && e.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  if (document.querySelector("dialog[open]") || $("#main").hidden) return;
+  const box = !$("#tab-mods").hidden
+    ? !$("#mods-toolbar").hidden && modSearch
+    : $("#search").elements.text;
+  if (!box) return;
+  e.preventDefault();
+  box.focus();
+  box.select();
+});
+
+/** Renders the mods again on the next frame, once for any number of calls. */
+let rerender = null;
+function renderModsSoon() {
+  rerender ??= requestAnimationFrame(() => {
+    rerender = null;
+    if (state.profile) renderMods(state.profile.mods);
+  });
+}
 
 // Sorting. It rearranges the mods once rather than keeping them sorted, so
 // they can be moved around by hand afterwards. Since that throws away the

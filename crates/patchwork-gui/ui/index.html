@@ -90,6 +90,17 @@
               <summary title="Move mods with some tags, like libraries, out of the way">Filter</summary>
               <div class="menu-items"></div>
             </details>
+            <!-- Narrows the mods down to the ones matching, best first; see
+                 rankMods() in app.js. -->
+            <input
+              id="mod-search"
+              type="search"
+              placeholder="Search mods"
+              aria-label="Search this profile's mods"
+              title="Searches names, authors and descriptions. Best matches go first; the load order stays the same."
+              autocomplete="off"
+              spellcheck="false"
+            />
           </div>
           <!-- Cards look like a source's search results; the list is denser
                and has no pictures. See setModsView() in app.js. -->
