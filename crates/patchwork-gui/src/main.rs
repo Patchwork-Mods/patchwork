@@ -20,6 +20,7 @@ use patchwork_core::{DeployStatus, GameInstall, Patchwork};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
+use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -107,6 +108,9 @@ struct GameInfo {
     install: Option<String>,
     /// Where the definition came from, e.g. `builtin` or `builtin + user`.
     origin: String,
+    /// Something an `<img>` can load: the definition's URL, or a local
+    /// image file inlined as a data URL, since the webview can't read paths.
+    image: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -193,6 +197,7 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
                     .map_err(msg)?
                     .map(|i| i.path.display().to_string()),
                 origin: entry.origins(),
+                image: game.image.as_deref().and_then(image_src),
             })
         })
         .collect::<CmdResult<_>>()?;
@@ -219,6 +224,26 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
             .map(|p| format!("skipped registry entry: {p}"))
             .collect(),
     })
+}
+
+/// Turns a game's `image` into something the webview can show, or `None` if
+/// it's a file that can't be read, so the card falls back to initials.
+fn image_src(image: &str) -> Option<String> {
+    if image.contains("://") || image.starts_with("data:") {
+        return Some(image.to_owned());
+    }
+    let path = std::path::Path::new(image);
+    let mime = match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        _ => return None,
+    };
+    let bytes = std::fs::read(path).ok()?;
+    Some(format!("data:{mime};base64,{}", BASE64_STANDARD.encode(bytes)))
 }
 
 #[tauri::command]

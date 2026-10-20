@@ -241,10 +241,13 @@ button.link {
   border-color: var(--pw-accent);
 }
 
-/* Stands in for a game's picture until games can have one. */
+/* A game's picture, over its initials so they show while it loads or if it
+   can't. Sized for Thunderstore's portrait covers. */
 .game-art {
+  position: relative;
   width: 100%;
-  aspect-ratio: 460 / 215;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
   display: grid;
   place-items: center;
   margin-bottom: 4px;
@@ -253,6 +256,14 @@ button.link {
   letter-spacing: 0.04em;
   color: var(--pw-accent-text);
   background: var(--pw-accent);
+}
+
+.game-art img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .game-card.add {

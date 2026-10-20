@@ -3042,6 +3042,7 @@ dependencies = [
 name = "patchwork-gui"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "patchwork-core",
  "patchwork-deployers",
  "patchwork-formats",

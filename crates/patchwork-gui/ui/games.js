@@ -71,7 +71,7 @@ function gameCard(g) {
     h(
       "button",
       { class: "game-card", "data-game": g.id, onclick: () => openGame(g.id) },
-      h("div", { class: "game-art", "aria-hidden": "true" }, initials(g.name)),
+      gameArt(g),
       h("span", { class: "game-name" }, g.name),
       h("span", { class: "muted" }, `${count} profile${count === 1 ? "" : "s"}`),
       g.origin === "user"
@@ -81,6 +81,22 @@ function gameCard(g) {
           : null,
     ),
   );
+}
+
+/** The game's picture, or its initials if it has none or it won't load. */
+function gameArt(g) {
+  const art = h("div", { class: "game-art", "aria-hidden": "true" }, initials(g.name));
+  if (g.image) {
+    const img = h("img", {
+      src: g.image,
+      alt: "",
+      loading: "lazy",
+      decoding: "async",
+      onerror: () => img.remove(),
+    });
+    art.append(img);
+  }
+  return art;
 }
 
 function addGameCard() {
