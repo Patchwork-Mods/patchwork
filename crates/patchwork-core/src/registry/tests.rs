@@ -36,9 +36,12 @@ fn extra_registry_dirs_override_builtins_but_not_user() {
 
     let registry = Registry::load(&paths).unwrap();
     let lc = registry.game("lethal-company").unwrap();
-    assert_eq!(lc.origin, Origin::Dir(dev));
+    assert_eq!(lc.origin, Origin::Builtin);
+    assert_eq!(lc.overlays, [Origin::Dir(dev)]);
     assert_eq!(lc.value.name, "Dev");
-    assert_eq!(registry.game("new-game").unwrap().origin, Origin::User);
+    let new_game = registry.game("new-game").unwrap();
+    assert_eq!(new_game.overlays, [Origin::User]);
+    assert_eq!(new_game.value.name, "Mine");
     assert_eq!(registry.problems.len(), 1, "{:?}", registry.problems);
 }
 
@@ -58,11 +61,92 @@ fn layers_override_and_problems_are_collected() {
 
     let registry = Registry::load(&paths).unwrap();
     let lc = registry.game("lethal-company").unwrap();
-    assert_eq!(lc.origin, Origin::User);
+    assert_eq!(lc.origins(), "builtin + user");
     assert_eq!(lc.value.name, "Mine");
     assert_eq!(registry.problems.len(), 2);
     assert!(matches!(
         registry.problems[0],
         Error::Schema { found: 99, .. }
     ));
+}
+
+fn user_file(paths: &Paths, kind: &str, id: &str, text: &str) -> std::path::PathBuf {
+    let dir = paths.user_registry().join(kind);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{id}.toml"));
+    fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn overlays_change_only_what_they_set() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::rooted(tmp.path());
+    let builtin = Registry::load(&paths).unwrap();
+    let original = builtin.game("lethal-company").unwrap();
+
+    user_file(
+        &paths,
+        "games",
+        "lethal-company",
+        "description = \"Mine\"\nimage = \"art/lc.png\"\n",
+    );
+    let registry = Registry::load(&paths).unwrap();
+    assert!(registry.problems.is_empty(), "{:?}", registry.problems);
+    let lc = registry.game("lethal-company").unwrap();
+    assert_eq!(lc.value.description.as_deref(), Some("Mine"));
+    assert_eq!(lc.value.name, original.value.name);
+    assert_eq!(lc.value.sources, original.value.sources);
+    assert_eq!(lc.value.deployer.config, original.value.deployer.config);
+    let image = paths.user_registry().join("games/art/lc.png");
+    assert_eq!(lc.value.image.as_deref(), image.to_str());
+    // Display-only changes don't make locked profiles look out of date.
+    assert_eq!(lc.hash, original.hash);
+
+    user_file(
+        &paths,
+        "games",
+        "lethal-company",
+        "[sources.thunderstore]\ncommunity = \"elsewhere\"\n",
+    );
+    let registry = Registry::load(&paths).unwrap();
+    let lc = registry.game("lethal-company").unwrap();
+    assert_eq!(
+        lc.value.sources["thunderstore"]["community"].as_str(),
+        Some("elsewhere")
+    );
+    assert_eq!(lc.value.deployer.kind, original.value.deployer.kind);
+    assert_ne!(lc.hash, original.hash);
+}
+
+#[test]
+fn broken_overlays_are_reported_and_ignored() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::rooted(tmp.path());
+    user_file(&paths, "games", "lethal-company", "link = \"teleport\"\n");
+    // Not an overlay: nothing defines this game, so it has to be complete.
+    user_file(&paths, "games", "partial", "description = \"?\"\n");
+
+    let registry = Registry::load(&paths).unwrap();
+    assert_eq!(registry.problems.len(), 2, "{:?}", registry.problems);
+    let lc = registry.game("lethal-company").unwrap();
+    assert_eq!(lc.origin, Origin::Builtin);
+    assert!(lc.overlays.is_empty());
+    assert!(registry.game("partial").is_err());
+}
+
+#[test]
+fn data_entries_merge_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::rooted(tmp.path());
+    let before = Registry::load(&paths).unwrap();
+    let before = before.data("rulesets", "bepinex").unwrap();
+
+    user_file(&paths, "rulesets", "bepinex", "note = \"mine\"\n");
+    let registry = Registry::load(&paths).unwrap();
+    let after = registry.data("rulesets", "bepinex").unwrap();
+    assert_eq!(after.value["rules"], before.value["rules"]);
+    assert_eq!(after.value["note"].as_str(), Some("mine"));
+    assert_eq!(after.overlays, [Origin::User]);
+    assert_ne!(after.hash, before.hash);
 }

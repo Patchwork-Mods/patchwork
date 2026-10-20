@@ -15,6 +15,15 @@ pub struct GameDef {
     pub schema: u32,
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// A URL, or a path to an image file. Relative paths are resolved against
+    /// the definition file's directory when the registry is loaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// Left out of game lists, for builtin games a user doesn't play.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
     /// Per-source settings, e.g. `[sources.thunderstore] community = "..."`.
     #[serde(default)]
     pub sources: BTreeMap<String, toml::Table>,

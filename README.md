@@ -31,7 +31,7 @@ patchwork undeploy
 
 All state is files (set `PATCHWORK_HOME` to put it all in one place):
 
-- `<config>/games/*.toml`, `<config>/rulesets/*.toml`: your own definitions, which override everything else
+- `<config>/games/*.toml`, `<config>/rulesets/*.toml`: your own definitions. A file for an id that's already defined is merged over it, so it only needs the fields you want to change (e.g. `description = "..."`, or `hidden = true` to hide a game)
 - `<data>/registries/<name>/`: installed registries
 - `$PATCHWORK_REGISTRY_PATH`: extra registry directories (`:`-separated, like `$PATH`), loaded above installed registries; set it to this repo's `registry/` to try definition changes without rebuilding
 - `<data>/profiles/<id>/profile.toml`: what you want

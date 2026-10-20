@@ -104,7 +104,7 @@ struct GameInfo {
     id: String,
     name: String,
     install: Option<String>,
-    /// Where the definition came from, e.g. `builtin` or `user`.
+    /// Where the definition came from, e.g. `builtin` or `builtin + user`.
     origin: String,
 }
 
@@ -181,6 +181,7 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
     let registry = pw.registry();
     let games = registry
         .games()
+        .filter(|entry| !entry.value.hidden)
         .map(|entry| {
             let game = &entry.value;
             Ok(GameInfo {
@@ -190,7 +191,7 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
                     .game_install(&game.id)
                     .map_err(msg)?
                     .map(|i| i.path.display().to_string()),
-                origin: entry.origin.to_string(),
+                origin: entry.origins(),
             })
         })
         .collect::<CmdResult<_>>()?;
@@ -339,6 +340,9 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         schema: 0,
         id: game.id.trim().to_owned(),
         name: game.name.trim().to_owned(),
+        description: None,
+        image: None,
+        hidden: false,
         sources,
         deployer: DeployerSpec {
             kind: "rules".to_owned(),

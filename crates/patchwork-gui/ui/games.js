@@ -38,7 +38,11 @@ function renderGames() {
           h("div", { class: "game-art", "aria-hidden": "true" }, initials(g.name)),
           h("span", { class: "game-name" }, g.name),
           h("span", { class: "muted" }, facts.join(" · ")),
-          g.origin === "user" ? h("span", { class: "badge" }, "Added by you") : null,
+          g.origin === "user"
+            ? h("span", { class: "badge" }, "Added by you")
+            : g.origin.endsWith("+ user")
+              ? h("span", { class: "badge" }, "Customized")
+              : null,
         ),
       );
     }),

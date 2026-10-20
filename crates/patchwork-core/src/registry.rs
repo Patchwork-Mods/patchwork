@@ -33,14 +33,29 @@ impl fmt::Display for Origin {
 #[derive(Debug, Clone)]
 pub struct Entry<T> {
     pub value: T,
+    /// The layer the entry was first defined in.
     pub origin: Origin,
-    /// Hash of the file's text, recorded in lockfiles so a shared profile can
-    /// tell when it's being used with a different definition.
+    /// Later layers merged on top, in order.
+    pub overlays: Vec<Origin>,
+    /// Hash of the merged entry, recorded in lockfiles so a shared profile
+    /// can tell when it's being used with a different definition. For games
+    /// it leaves out fields that don't affect what gets deployed.
     pub hash: ContentHash,
 }
 
+impl<T> Entry<T> {
+    /// Every layer that contributed to the entry, e.g. `builtin + user`.
+    pub fn origins(&self) -> String {
+        std::iter::once(&self.origin)
+            .chain(&self.overlays)
+            .map(|o| o.to_string())
+            .collect::<Vec<_>>()
+            .join(" + ")
+    }
+}
+
 /// Game definitions and other shared data, merged from several layers. Later
-/// layers override earlier ones:
+/// layers are merged over earlier ones:
 ///
 /// 1. entries built into the binary
 /// 2. installed registries, `<data>/registries/<name>/`, in name order
@@ -50,9 +65,18 @@ pub struct Entry<T> {
 /// Each layer is laid out as `<kind>/<id>.toml`. `games` is understood by the
 /// core; any other kind (like `rulesets`) is kept as raw TOML for whichever
 /// deployer or source wants it.
+///
+/// A file for an id that an earlier layer already defines is an overlay: its
+/// tables are merged key by key into the earlier entry, and anything else
+/// (strings, numbers, arrays) replaces what was there. So a user can change
+/// one field of a builtin game without copying the rest, and still get
+/// upstream fixes to everything else. An overlay that would leave the entry
+/// invalid is reported and ignored.
 #[derive(Debug, Default)]
 pub struct Registry {
     games: BTreeMap<String, Entry<GameDef>>,
+    /// Each game's merged TOML, which the next overlay is merged into.
+    game_tables: BTreeMap<String, toml::Table>,
     data: BTreeMap<(String, String), Entry<toml::Table>>,
     /// Files that failed to load. One broken file shouldn't make every other
     /// game unusable, so these are reported rather than fatal.
@@ -135,45 +159,92 @@ impl Registry {
         text: &str,
         path: &Path,
     ) -> Result<()> {
-        let hash = ContentHash::of(text.as_bytes());
+        let table: toml::Table = toml::from_str(text).map_err(|e| Error::parse(path, e))?;
         if kind == "games" {
-            let schema = toml::from_str::<SchemaOnly>(text)
-                .map_err(|e| Error::parse(path, e))?
-                .schema;
-            if schema > GAME_SCHEMA {
+            return self.insert_game(origin, id, table, path);
+        }
+        let key = (kind.to_owned(), id.to_owned());
+        let (value, origin, overlays) = match self.data.remove(&key) {
+            Some(mut base) => {
+                merge(&mut base.value, table);
+                base.overlays.push(origin);
+                (base.value, base.origin, base.overlays)
+            }
+            None => (table, origin, Vec::new()),
+        };
+        let hash = hash_table(&value, &[]);
+        self.data.insert(
+            key,
+            Entry {
+                value,
+                origin,
+                overlays,
+                hash,
+            },
+        );
+        Ok(())
+    }
+
+    fn insert_game(
+        &mut self,
+        origin: Origin,
+        id: &str,
+        mut table: toml::Table,
+        path: &Path,
+    ) -> Result<()> {
+        // Checked before the full parse, so a newer file gets a clear "update
+        // patchwork" error instead of a confusing field error. Overlays don't
+        // need a schema, but are held to it if they have one.
+        if let Some(schema) = table.get("schema") {
+            let found = schema
+                .as_integer()
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or_else(|| Error::parse(path, "`schema` must be a whole number"))?;
+            if found > GAME_SCHEMA {
                 return Err(Error::Schema {
                     kind: "game",
                     path: path.to_owned(),
-                    found: schema,
+                    found,
                     supported: GAME_SCHEMA,
                 });
             }
-            let value: GameDef = toml::from_str(text).map_err(|e| Error::parse(path, e))?;
-            if value.id != id {
-                return Err(Error::parse(
-                    path,
-                    format!("id `{}` doesn't match the file name", value.id),
-                ));
-            }
-            self.games.insert(
-                id.to_owned(),
-                Entry {
-                    value,
-                    origin,
-                    hash,
-                },
-            );
-        } else {
-            let value: toml::Table = toml::from_str(text).map_err(|e| Error::parse(path, e))?;
-            self.data.insert(
-                (kind.to_owned(), id.to_owned()),
-                Entry {
-                    value,
-                    origin,
-                    hash,
-                },
-            );
         }
+        if let Some(found) = table.get("id")
+            && found.as_str() != Some(id)
+        {
+            return Err(Error::parse(
+                path,
+                format!("id {found} doesn't match the file name"),
+            ));
+        }
+        if origin != Origin::Builtin {
+            resolve_image(&mut table, path);
+        }
+
+        let (merged, origin, overlays) = match self.games.get(id) {
+            Some(base) => {
+                let mut merged = self.game_tables[id].clone();
+                merge(&mut merged, table);
+                let mut overlays = base.overlays.clone();
+                overlays.push(origin);
+                (merged, base.origin.clone(), overlays)
+            }
+            None => (table, origin, Vec::new()),
+        };
+        let value: GameDef = toml::Value::Table(merged.clone())
+            .try_into()
+            .map_err(|e| Error::parse(path, e))?;
+        let hash = hash_table(&merged, COSMETIC_GAME_FIELDS);
+        self.games.insert(
+            id.to_owned(),
+            Entry {
+                value,
+                origin,
+                overlays,
+                hash,
+            },
+        );
+        self.game_tables.insert(id.to_owned(), merged);
         Ok(())
     }
 
@@ -207,11 +278,91 @@ impl Registry {
     }
 }
 
-/// Checked before the full parse, so a newer file gets a clear "update
-/// patchwork" error instead of a confusing field error.
-#[derive(serde::Deserialize)]
-struct SchemaOnly {
-    schema: u32,
+/// Game fields that are only for display, so changing them doesn't make a
+/// profile look like it was locked against a different definition.
+const COSMETIC_GAME_FIELDS: &[&str] = &["name", "description", "image", "hidden"];
+
+/// Merges `overlay` into `base`: tables merge key by key, and any other value
+/// replaces the old one.
+fn merge(base: &mut toml::Table, overlay: toml::Table) {
+    for (key, value) in overlay {
+        match (base.get_mut(&key), value) {
+            (Some(toml::Value::Table(base)), toml::Value::Table(overlay)) => merge(base, overlay),
+            (_, value) => {
+                base.insert(key, value);
+            }
+        }
+    }
+}
+
+/// Makes a relative `image` path absolute, so it still points at the right
+/// file once merged with entries from other directories.
+fn resolve_image(table: &mut toml::Table, path: &Path) {
+    let Some(toml::Value::String(image)) = table.get_mut("image") else {
+        return;
+    };
+    if image.contains("://") || Path::new(image.as_str()).is_absolute() {
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        *image = dir.join(image.as_str()).to_string_lossy().into_owned();
+    }
+}
+
+/// Hashes a table independently of key order and formatting, so the hash only
+/// changes when the content does.
+fn hash_table(root: &toml::Table, skip: &[&str]) -> ContentHash {
+    fn str(h: &mut blake3::Hasher, s: &str) {
+        h.update(&(s.len() as u64).to_le_bytes());
+        h.update(s.as_bytes());
+    }
+    fn table(h: &mut blake3::Hasher, t: &toml::Table, skip: &[&str]) {
+        let mut entries: Vec<_> = t
+            .iter()
+            .filter(|(k, _)| !skip.contains(&k.as_str()))
+            .collect();
+        entries.sort_by_key(|(k, _)| k.as_str());
+        h.update(b"t");
+        h.update(&(entries.len() as u64).to_le_bytes());
+        for (k, v) in entries {
+            str(h, k);
+            value(h, v);
+        }
+    }
+    fn value(h: &mut blake3::Hasher, v: &toml::Value) {
+        match v {
+            toml::Value::String(s) => {
+                h.update(b"s");
+                str(h, s);
+            }
+            toml::Value::Integer(n) => {
+                h.update(b"i");
+                h.update(&n.to_le_bytes());
+            }
+            toml::Value::Float(f) => {
+                h.update(b"f");
+                h.update(&f.to_bits().to_le_bytes());
+            }
+            toml::Value::Boolean(b) => {
+                h.update(&[b'b', u8::from(*b)]);
+            }
+            toml::Value::Datetime(d) => {
+                h.update(b"d");
+                str(h, &d.to_string());
+            }
+            toml::Value::Array(items) => {
+                h.update(b"a");
+                h.update(&(items.len() as u64).to_le_bytes());
+                for item in items {
+                    value(h, item);
+                }
+            }
+            toml::Value::Table(t) => table(h, t, &[]),
+        }
+    }
+    let mut h = blake3::Hasher::new();
+    table(&mut h, root, skip);
+    h.finalize().into()
 }
 
 #[cfg(test)]

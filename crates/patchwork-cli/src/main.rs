@@ -434,13 +434,23 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
                     Some(install) => install.path.display().to_string(),
                     None => "not set up".to_owned(),
                 };
-                println!("{}  {} [{}]  {installed}", game.id, game.name, entry.origin);
+                let hidden = if game.hidden { " (hidden)" } else { "" };
+                println!(
+                    "{}  {}{hidden} [{}]  {installed}",
+                    game.id,
+                    game.name,
+                    entry.origins()
+                );
             }
         }
         GameCommand::Show { id } => {
             let registry = pw.registry();
             let entry = registry.game(&id)?;
-            println!("# origin: {}, hash: {}", entry.origin, entry.hash.short());
+            println!(
+                "# origin: {}, hash: {}",
+                entry.origins(),
+                entry.hash.short()
+            );
             print!("{}", toml::to_string_pretty(&entry.value)?);
         }
         GameCommand::SetPath { id, path } => {

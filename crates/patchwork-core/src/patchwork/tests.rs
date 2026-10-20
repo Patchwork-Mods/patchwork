@@ -100,6 +100,9 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         schema: 0,
         id: id.to_owned(),
         name: "My Game".to_owned(),
+        description: None,
+        image: None,
+        hidden: false,
         sources: BTreeMap::new(),
         deployer: crate::game::DeployerSpec {
             kind: kind.to_owned(),
