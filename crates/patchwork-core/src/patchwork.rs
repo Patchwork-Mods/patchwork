@@ -26,9 +26,11 @@ use crate::source::{ArtifactFormat, ArtifactLocation, ModSpec, Source, SourceCon
 use crate::store::Store;
 use crate::{Error, Result};
 
-/// Where a game is installed on this machine.
+/// A game's settings on this machine, as opposed to its [`GameDef`], which is
+/// the same everywhere. Saved to `<data>/games/<id>.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameInstall {
+    /// Where the game is installed.
     pub path: PathBuf,
 }
 
@@ -232,8 +234,20 @@ impl Patchwork {
     }
 
     pub fn set_game_path(&self, game: &str, path: &Path) -> Result<GameInstall> {
+        self.set_game_install(
+            game,
+            GameInstall {
+                path: path.to_owned(),
+            },
+        )
+    }
+
+    /// Replaces a game's settings, after checking them. Returns them as
+    /// saved, with the path made absolute.
+    pub fn set_game_install(&self, game: &str, install: GameInstall) -> Result<GameInstall> {
         self.registry().game(game)?;
-        let path = path.canonicalize().at(path)?;
+        let GameInstall { path } = install;
+        let path = path.canonicalize().at(&path)?;
         if !path.is_dir() {
             return Err(Error::invalid(format!(
                 "{} isn't a directory",

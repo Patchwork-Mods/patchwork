@@ -23,7 +23,15 @@
     <!-- One game: its profiles on the left, the selected one on the right. -->
     <aside id="sidebar" hidden>
       <button id="back" class="back">← All games</button>
-      <h1 id="game-title" class="brand"></h1>
+      <div class="game-heading">
+        <h1 id="game-title" class="brand"></h1>
+        <button id="game-settings" title="Game settings" aria-label="Game settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+          </svg>
+        </button>
+      </div>
       <nav id="profiles" aria-label="Profiles"></nav>
       <form id="new-profile" class="stack">
         <h2>New profile</h2>
@@ -211,6 +219,28 @@
         <div class="row end">
           <button type="button" value="cancel" formnovalidate>Cancel</button>
           <button type="submit" value="create" class="primary">Add game</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- This machine's settings for a game. Each input is named after a field
+         of GameInstall in patchwork-core, and the form is sent as one; see
+         set_game_settings in main.rs. -->
+    <dialog id="game-settings-dialog">
+      <form id="game-settings-form" method="dialog" class="stack">
+        <h2 id="game-settings-title">Game settings</h2>
+        <div class="field">
+          <label for="game-settings-path">Install folder</label>
+          <div class="row">
+            <input id="game-settings-path" name="path" required placeholder="/path/to/game" autocomplete="off" />
+            <button type="button" data-browse="path">Browse…</button>
+          </div>
+          <small class="muted">Undeploy first to move a game that has mods deployed.</small>
+        </div>
+        <p id="game-settings-error" class="error" hidden></p>
+        <div class="row end">
+          <button type="button" value="cancel" formnovalidate>Cancel</button>
+          <button type="submit" value="save" class="primary">Save</button>
         </div>
       </form>
     </dialog>

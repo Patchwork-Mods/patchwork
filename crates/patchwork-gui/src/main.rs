@@ -15,7 +15,7 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::ModSpec;
-use patchwork_core::{DeployStatus, Patchwork};
+use patchwork_core::{DeployStatus, GameInstall, Patchwork};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
@@ -379,6 +379,21 @@ fn set_game_path(app: State<'_, App>, game: String, path: String) -> CmdResult<(
         .map_err(msg)
 }
 
+/// A game's settings on this machine, for the game settings dialog. `None`
+/// until it's been set up.
+#[tauri::command]
+fn game_settings(app: State<'_, App>, game: String) -> CmdResult<Option<GameInstall>> {
+    app.pw.game_install(&game).map_err(msg)
+}
+
+#[tauri::command]
+fn set_game_settings(app: State<'_, App>, game: String, settings: GameInstall) -> CmdResult<()> {
+    app.pw
+        .set_game_install(&game, settings)
+        .map(drop)
+        .map_err(msg)
+}
+
 #[tauri::command]
 fn set_enabled(
     app: State<'_, App>,
@@ -691,6 +706,8 @@ fn main() {
             use_profile,
             remove_profile,
             set_game_path,
+            game_settings,
+            set_game_settings,
             set_enabled,
             remove_mod,
             revert_profile,
