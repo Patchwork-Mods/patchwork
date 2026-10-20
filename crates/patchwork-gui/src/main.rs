@@ -5,7 +5,6 @@ use std::fmt::Display;
 use std::sync::Mutex;
 
 use jiff::{SignedDuration, Timestamp};
-use patchwork_core::Patchwork;
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -15,6 +14,7 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::ModSpec;
+use patchwork_core::{KnownSummary, KnownVersions, Patchwork};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
@@ -166,6 +166,25 @@ fn is_stale(fetched: Option<Timestamp>, ttl: SignedDuration) -> bool {
     fetched.is_none_or(|f| Timestamp::now().duration_since(f) > ttl)
 }
 
+/// Whether versions fetched after `summary` have a newer version than the
+/// one it knew about, so its details (when the mod was updated, say) are
+/// out of date. Sources whose summaries name versions differently from
+/// their version lists just get their summary fetched again each time the
+/// versions are.
+fn summary_behind(summary: Option<&KnownSummary>, versions: Option<&KnownVersions>) -> bool {
+    let (Some(summary), Some(versions)) = (summary, versions) else {
+        return false;
+    };
+    let latest = summary
+        .summary
+        .as_ref()
+        .and_then(|s| s.latest_version.as_ref());
+    match (latest, versions.versions.first()) {
+        (Some(latest), Some(newest)) => versions.fetched > summary.fetched && latest != newest,
+        _ => false,
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlanSummary {
@@ -264,11 +283,13 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
                 .then(|| pw.known_versions(&loaded.game, &m.source, &m.id))
                 .flatten();
             let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
+            let summary_stale = is_stale(summary.as_ref().map(|k| k.fetched), SUMMARY_TTL)
+                || summary_behind(summary.as_ref(), known.as_ref());
             UiMod {
                 versions_stale: versioned
                     && is_stale(known.as_ref().map(|k| k.fetched), VERSIONS_TTL),
                 versions: known.map(|k| k.versions),
-                summary_stale: is_stale(summary.as_ref().map(|k| k.fetched), SUMMARY_TTL),
+                summary_stale,
                 summary: summary.and_then(|k| k.summary),
                 versioned,
                 locked: lock
@@ -657,4 +678,51 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running patchwork");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn summary(latest: &str, fetched: &str) -> KnownSummary {
+        KnownSummary {
+            id: "a-b".to_owned(),
+            fetched: fetched.parse().unwrap(),
+            summary: Some(ModSummary {
+                source: "thunderstore".to_owned(),
+                id: "a-b".to_owned(),
+                name: "b".to_owned(),
+                url: None,
+                author: None,
+                author_url: None,
+                summary: None,
+                icon_url: None,
+                downloads: None,
+                rating: None,
+                updated: None,
+                latest_version: Some(latest.to_owned()),
+                categories: Vec::new(),
+            }),
+        }
+    }
+
+    fn versions(newest: &str, fetched: &str) -> KnownVersions {
+        KnownVersions {
+            id: "a-b".to_owned(),
+            fetched: fetched.parse().unwrap(),
+            versions: vec![newest.to_owned(), "1.0.0".to_owned()],
+        }
+    }
+
+    #[test]
+    fn summary_is_behind_once_later_versions_have_a_newer_one() {
+        let s = summary("1.1.0", "2026-10-01T00:00:00Z");
+        let later = "2026-10-02T00:00:00Z";
+        assert!(summary_behind(Some(&s), Some(&versions("1.2.0", later))));
+        assert!(!summary_behind(Some(&s), Some(&versions("1.1.0", later))));
+        // versions from before the summary was fetched don't count
+        let earlier = "2026-09-30T00:00:00Z";
+        assert!(!summary_behind(Some(&s), Some(&versions("1.2.0", earlier))));
+        assert!(!summary_behind(Some(&s), None));
+    }
 }

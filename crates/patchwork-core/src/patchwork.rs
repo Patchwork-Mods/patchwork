@@ -583,7 +583,7 @@ impl Patchwork {
         } else {
             HashMap::new()
         };
-        if SortKey::needs_tags(keys) {
+        if SortKey::needs_summaries(keys) {
             for m in &loaded.mods {
                 let summary = match self.known_summary(&loaded.game, &m.source, &m.id) {
                     Some(known) => known.summary,
@@ -591,16 +591,18 @@ impl Patchwork {
                         Ok(summary) => summary,
                         Err(e) => {
                             self.reporter.report(Event::Warning(format!(
-                                "couldn't get `{}`'s tags: {e}",
+                                "couldn't get `{}`'s details: {e}",
                                 m.name
                             )));
                             None
                         }
                     },
                 };
-                facts.entry(mod_key(&m.source, &m.id)).or_default().tags = summary
-                    .map(|s| s.categories.into_iter().map(|c| c.name).collect())
-                    .unwrap_or_default();
+                let facts = facts.entry(mod_key(&m.source, &m.id)).or_default();
+                if let Some(summary) = summary {
+                    facts.tags = summary.categories.into_iter().map(|c| c.name).collect();
+                    facts.updated = summary.updated;
+                }
             }
         }
         order::sort_mods(&mut loaded.mods, keys, tag_order, &facts);

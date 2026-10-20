@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
+use jiff::Timestamp;
+
 use crate::Error;
 use crate::lock::Lockfile;
 use crate::profile::{ProfileMod, no_such_mod};
@@ -67,15 +69,19 @@ pub enum SortField {
     Dependencies,
     /// How many mods need each one, directly or through other mods.
     Dependents,
+    /// When their source last saw a new version, oldest first. Mods it
+    /// doesn't know that for go first, or last with `:desc`.
+    Updated,
 }
 
 impl SortField {
-    pub const ALL: [SortField; 5] = [
+    pub const ALL: [SortField; 6] = [
         SortField::Name,
         SortField::Source,
         SortField::Tags,
         SortField::Dependencies,
         SortField::Dependents,
+        SortField::Updated,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -85,6 +91,7 @@ impl SortField {
             SortField::Tags => "tags",
             SortField::Dependencies => "dependencies",
             SortField::Dependents => "dependents",
+            SortField::Updated => "updated",
         }
     }
 }
@@ -97,8 +104,11 @@ pub struct SortKey {
 }
 
 impl SortKey {
-    pub fn needs_tags(keys: &[SortKey]) -> bool {
-        keys.iter().any(|k| k.field == SortField::Tags)
+    /// Whether sorting by `keys` needs each mod's summary from its source,
+    /// for [`ModFacts::tags`] or [`ModFacts::updated`].
+    pub fn needs_summaries(keys: &[SortKey]) -> bool {
+        keys.iter()
+            .any(|k| matches!(k.field, SortField::Tags | SortField::Updated))
     }
 
     pub fn needs_dependencies(keys: &[SortKey]) -> bool {
@@ -151,6 +161,7 @@ pub struct ModFacts {
     pub tags: Vec<String>,
     pub dependencies: usize,
     pub dependents: usize,
+    pub updated: Option<Timestamp>,
 }
 
 /// Counts every mod in `lock`'s dependencies and dependents, keyed by
@@ -222,6 +233,7 @@ pub fn sort_mods(
                         facts_of(a).dependencies.cmp(&facts_of(b).dependencies)
                     }
                     SortField::Dependents => facts_of(a).dependents.cmp(&facts_of(b).dependents),
+                    SortField::Updated => facts_of(a).updated.cmp(&facts_of(b).updated),
                 };
                 if key.descending { ord.reverse() } else { ord }
             })
@@ -369,6 +381,24 @@ mod tests {
             names(&list),
             ["suit", "moon", "hat", "lib", "tweak", "plain"]
         );
+    }
+
+    #[test]
+    fn sorts_by_when_mods_were_updated_with_unknown_last_when_descending() {
+        let at = |s: &str| ModFacts {
+            updated: Some(s.parse().unwrap()),
+            ..Default::default()
+        };
+        let facts = HashMap::from([
+            ("ts:old".to_owned(), at("2025-01-01T00:00:00Z")),
+            ("ts:new".to_owned(), at("2026-06-01T00:00:00Z")),
+            ("ts:mid".to_owned(), at("2026-01-01T00:00:00Z")),
+        ]);
+        let mut list = mods(&["unknown", "old", "new", "mid"]);
+        sort_mods(&mut list, &keys(&["updated:desc"]), &[], &facts);
+        assert_eq!(names(&list), ["new", "mid", "old", "unknown"]);
+        sort_mods(&mut list, &keys(&["updated"]), &[], &facts);
+        assert_eq!(names(&list), ["unknown", "old", "mid", "new"]);
     }
 
     fn lock(entries: &[(&str, &[&str])]) -> Lockfile {

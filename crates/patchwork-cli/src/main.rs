@@ -93,7 +93,7 @@ enum Command {
     },
     /// Sort the profile's mods. Mods that tie keep their order.
     Sort {
-        /// name, source, tags, dependencies or dependents, optionally with
+        /// name, source, tags, dependencies, dependents or updated, optionally with
         /// `:desc`. Repeat to break ties with the next key.
         #[arg(short, long = "by", required = true)]
         by: Vec<SortKey>,

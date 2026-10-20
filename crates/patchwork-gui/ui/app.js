@@ -519,6 +519,13 @@ function showVersions(key, versions) {
   if (!m) return;
   m.versions = versions;
   m.versionsStale = false;
+  // a newer version than the summary knows of means the card's details
+  // (when it was updated, say) are out of date too
+  const latest = m.summary?.latest_version;
+  if (latest && versions[0] && latest !== versions[0] && !summaryFetches.has(key)) {
+    m.summaryStale = true;
+    if (wantsSummaries()) fetchSummaries([m]);
+  }
   const note = updateNotes.get(key);
   if (note?.el.isConnected) fillUpdate(note.el, m, note.onVersion);
   const select = versionSelects.get(key);
@@ -605,17 +612,19 @@ function refreshVersions() {
  * which have the tags the filter goes by.
  */
 function refreshSummaries() {
-  if (modsView !== "cards" && !state.profile.hiddenTags.length) return;
-  return refreshEach(
-    "get the details of",
-    state.profile.mods.filter((m) => m.summaryStale),
-    {
-      fetches: summaryFetches,
-      failures: summaryFailures,
-      fetch: (p, m) => invoke("summary", { game: p.game, source: m.source, modId: m.id }),
-      show: showSummary,
-    },
-  );
+  if (!wantsSummaries()) return;
+  return fetchSummaries(state.profile.mods.filter((m) => m.summaryStale));
+}
+
+const wantsSummaries = () => modsView === "cards" || state.profile.hiddenTags.length > 0;
+
+function fetchSummaries(mods) {
+  return refreshEach("get the details of", mods, {
+    fetches: summaryFetches,
+    failures: summaryFailures,
+    fetch: (p, m) => invoke("summary", { game: p.game, source: m.source, modId: m.id }),
+    show: showSummary,
+  });
 }
 
 function renderMods(mods) {
@@ -1077,8 +1086,9 @@ $("#update").addEventListener("click", async () => {
   const id = state.profile.id;
   $("#update").disabled = true;
   status("Checking for updates…");
+  let changes = [];
   try {
-    const changes = await run("update_lock", { id });
+    changes = await run("update_lock", { id });
     if (!changes.length) {
       status("Everything's up to date");
       return;
@@ -1096,6 +1106,14 @@ $("#update").addEventListener("click", async () => {
   } finally {
     await openProfile(id);
   }
+  // mods that moved to a new version have new details too; fetch them even
+  // if the cards aren't showing, so the cache doesn't keep the old ones
+  const changed = new Set(changes.map((c) => c.name));
+  const mods = state.profile.mods.filter(
+    (m) => changed.has(m.name) && !summaryFetches.has(modKey(m)),
+  );
+  for (const m of mods) m.summaryStale = true;
+  fetchSummaries(mods);
 });
 
 // Progress from long-running commands (adding, locking, deploying).
