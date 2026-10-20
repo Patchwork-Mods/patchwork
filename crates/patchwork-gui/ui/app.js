@@ -59,6 +59,11 @@ function compact(n) {
   return (n / 1e6).toFixed(1) + "M";
 }
 
+/** Opens a URL in the browser rather than the app. */
+function openExternal(url) {
+  window.__TAURI__.opener.openUrl(url).catch((err) => status(String(err), true));
+}
+
 /** A link that opens in the browser rather than the app, or plain text when
  * there's no URL. */
 function link(url, text) {
@@ -70,7 +75,7 @@ function link(url, text) {
       title: url,
       onclick: (e) => {
         e.preventDefault();
-        window.__TAURI__.opener.openUrl(url).catch((err) => status(String(err), true));
+        openExternal(url);
       },
     },
     text,
@@ -270,7 +275,7 @@ function renderProfile() {
 }
 
 // The Mods tab shows mods either as cards, like a source's search results,
-// or as a denser list without pictures.
+// or as a denser list of rows that each expand to show the rest.
 
 /** "cards" or "list"; remembered between runs. */
 let modsView = "cards";
@@ -286,33 +291,132 @@ function setModsView(view) {
   for (const button of document.querySelectorAll("#mods-view button")) {
     button.setAttribute("aria-pressed", String(button.dataset.view === view));
   }
-  if (state.profile) {
-    renderMods(state.profile.mods);
-    refreshSummaries();
-  }
+  if (state.profile) renderMods(state.profile.mods);
 }
 
 for (const button of document.querySelectorAll("#mods-view button")) {
   button.addEventListener("click", () => setModsView(button.dataset.view));
 }
 
+/** The mods whose list rows are expanded, by modKey(), so re-renders keep them open. */
+const expandedRows = new Set();
+
+// An added mod's list row: its picture, name and author, an on/off switch
+// and its version, and an arrow that expands it to show its description,
+// when it was updated, links to its pages and a remove button.
 function modRow(m, { onToggle, onRemove, onVersion }) {
-  return h(
-    "li",
-    { class: m.enabled ? null : "disabled" },
-    h("input", {
-      type: "checkbox",
-      checked: m.enabled,
-      "aria-label": `Enable ${m.name}`,
-      onchange: onToggle,
-    }),
-    h("span", { class: "mod-name" }, m.name),
-    h("span", { class: "mod-source muted" }, `${m.source}:${m.id}`),
+  const key = modKey(m);
+  const update = h("div", { class: "card-update" });
+  fillUpdate(update, m, onVersion);
+  const details = h("div", { class: "row-details" });
+  const head = h("div", { class: "row-head" });
+  const fill = () => {
+    const item = cardItem(m);
+    head.replaceChildren(
+      modIcon(item),
+      h(
+        "div",
+        { class: "row-title" },
+        h("span", { class: "mod-name" }, item.name),
+        item.author && h("span", { class: "author" }, item.author),
+      ),
+    );
+    details.replaceChildren(...rowDetails(m, item, onRemove));
+  };
+  fill();
+  summaryViews.set(key, fill);
+  updateNotes.set(key, { el: update, onVersion });
+
+  const row = h("li", { class: m.enabled ? "mod-row" : "mod-row disabled" });
+  const arrow = h(
+    "button",
+    {
+      class: "expand",
+      title: "More about this mod",
+      "aria-label": `More about ${m.name}`,
+      onclick: () => setExpanded(!expandedRows.has(key)),
+    },
+    chevronIcon(),
+  );
+  const setExpanded = (open) => {
+    if (open) expandedRows.add(key);
+    else expandedRows.delete(key);
+    row.classList.toggle("expanded", open);
+    arrow.setAttribute("aria-expanded", String(open));
+    details.hidden = !open;
+  };
+  // clicking anywhere on the picture or name expands it too
+  head.addEventListener("click", () => setExpanded(!expandedRows.has(key)));
+  setExpanded(expandedRows.has(key));
+
+  row.append(
+    head,
+    update,
+    h(
+      "label",
+      { class: "switch", title: "Disabled mods are left out when deploying" },
+      h("input", {
+        type: "checkbox",
+        role: "switch",
+        checked: m.enabled,
+        "aria-label": `Enable ${m.name}`,
+        onchange: onToggle,
+      }),
+    ),
     m.versioned
       ? versionSelect(m, onVersion)
-      : h("span", { class: "mod-source muted" }, m.version ?? m.locked ?? ""),
-    h("button", { class: "remove", onclick: onRemove }, "Remove"),
+      : h("span", { class: "mod-version muted" }, m.version ?? m.locked ?? "No versions"),
+    arrow,
+    details,
   );
+  return row;
+}
+
+/** What an expanded list row shows below its first line. */
+function rowDetails(m, item, onRemove) {
+  const summary = m.summary?.summary?.trim();
+  const tags = modTags(m);
+  const count = (n, noun) =>
+    n != null && h("span", { title: n.toLocaleString() }, `${compact(n)} ${noun}`);
+  const facts = [
+    item.updated &&
+      h("span", { title: new Date(item.updated).toLocaleString() }, `Updated ${ago(item.updated)}`),
+    count(item.downloads, "downloads"),
+    count(item.rating, "likes"),
+    h("span", {}, `${m.source}:${m.id}`),
+  ].filter(Boolean);
+  const urlButton = (url, text) =>
+    url && h("button", { type: "button", title: url, onclick: () => openExternal(url) }, text);
+  return [
+    summary && h("p", {}, summary),
+    h("div", { class: "facts muted" }, facts.flatMap((f, i) => (i ? [" · ", f] : [f]))),
+    tags.length > 0 && h("div", { class: "tags" }, tags.map((t) => h("span", { class: "tag" }, t))),
+    h(
+      "div",
+      { class: "row-actions" },
+      urlButton(item.url, "Website"),
+      urlButton(item.author_url, "Author's mods"),
+      h("button", { type: "button", class: "danger", onclick: onRemove }, "Remove"),
+    ),
+  ];
+}
+
+function chevronIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M6 9l6 6 6-6");
+  svg.append(path);
+  return svg;
+}
+
+/** A mod's picture, or its initials when it hasn't got one. */
+function modIcon(item) {
+  return item.icon_url
+    ? h("img", { src: item.icon_url, alt: "", loading: "lazy", decoding: "async" })
+    : h("div", { class: "no-icon", "aria-hidden": "true" }, initials(item.name));
 }
 
 /** A mod's picture and details, from a search result (a ModSummary). */
@@ -325,9 +429,7 @@ function cardMain(item) {
   return h(
     "div",
     { class: "card-main" },
-    item.icon_url
-      ? h("img", { src: item.icon_url, alt: "", loading: "lazy", decoding: "async" })
-      : h("div", { class: "no-icon", "aria-hidden": "true" }, initials(item.name)),
+    modIcon(item),
     h(
       "div",
       { class: "result-body" },
@@ -356,12 +458,14 @@ const cardItem = (m) => m.summary ?? { name: m.name, summary: `${m.source}:${m.i
 // a note when there's a newer version, and a remove button that only shows
 // while the card is hovered or focused.
 function modCard(m, { onToggle, onRemove, onVersion }) {
-  const main = cardMain(cardItem(m));
+  let main = cardMain(cardItem(m));
   const update = h("div", { class: "card-update" });
-  if (state.profile) {
-    cardMains.set(modKey(m), main);
-    updateNotes.set(modKey(m), { el: update, onVersion });
-  }
+  summaryViews.set(modKey(m), () => {
+    const fresh = cardMain(cardItem(m));
+    main.replaceWith(fresh);
+    main = fresh;
+  });
+  updateNotes.set(modKey(m), { el: update, onVersion });
   fillUpdate(update, m, onVersion);
   return h(
     "li",
@@ -455,15 +559,18 @@ function confirmRemove(m) {
 }
 
 // Versions and summaries. The profile comes with each mod's versions and
-// summary as last fetched, so the dropdowns and cards are complete straight
+// summary as last fetched, so the dropdowns, cards and rows are complete straight
 // away; ones older than VERSIONS_TTL or SUMMARY_TTL (see main.rs) are then
 // refreshed in the background.
 
 /** The version dropdown of each mod on screen, by modKey(). */
 const versionSelects = new Map();
-/** The picture and details of each mod card on screen, by modKey(). */
-const cardMains = new Map();
-/** The newer-version note of each mod card on screen, by modKey(). */
+/**
+ * Redraws the picture and details of each mod on screen from its summary,
+ * by modKey().
+ */
+const summaryViews = new Map();
+/** The newer-version note of each mod on screen, by modKey(). */
 const updateNotes = new Map();
 /** Fetches in flight, by modKey(), so re-renders don't repeat them. */
 const versionFetches = new Map();
@@ -520,12 +627,12 @@ function showVersions(key, versions) {
   if (!m) return;
   m.versions = versions;
   m.versionsStale = false;
-  // a newer version than the summary knows of means the card's details
+  // a newer version than the summary knows of means the mod's details
   // (when it was updated, say) are out of date too
   const latest = m.summary?.latest_version;
   if (latest && versions[0] && latest !== versions[0] && !summaryFetches.has(key)) {
     m.summaryStale = true;
-    if (wantsSummaries()) fetchSummaries([m]);
+    fetchSummaries([m]);
   }
   const note = updateNotes.get(key);
   if (note?.el.isConnected) fillUpdate(note.el, m, note.onVersion);
@@ -541,7 +648,7 @@ function showVersions(key, versions) {
 }
 
 /**
- * Puts a freshly fetched summary on a mod's card, or moves the mod to the
+ * Puts a freshly fetched summary on a mod's card or row, or moves the mod to the
  * other section if its new tags change whether it's hidden.
  */
 function showSummary(key, summary) {
@@ -555,11 +662,7 @@ function showSummary(key, summary) {
     renderModsSoon();
     return;
   }
-  const main = cardMains.get(key);
-  if (!main?.isConnected) return;
-  const fresh = cardMain(cardItem(m));
-  main.replaceWith(fresh);
-  cardMains.set(key, fresh);
+  summaryViews.get(key)?.();
 }
 
 /**
@@ -610,17 +713,13 @@ function refreshVersions() {
 }
 
 /**
- * Refreshes the profile's stale summaries, which only the cards show, and
- * which have the tags the filter goes by and the authors and descriptions
- * a search looks through.
+ * Refreshes the profile's stale summaries, which have the pictures and
+ * details the cards and rows show, the tags the filter goes by and the
+ * authors and descriptions a search looks through.
  */
 function refreshSummaries() {
-  if (!wantsSummaries()) return;
   return fetchSummaries(state.profile.mods.filter((m) => m.summaryStale));
 }
-
-const wantsSummaries = () =>
-  modsView === "cards" || state.profile.hiddenTags.length > 0 || !!modQuery();
 
 function fetchSummaries(mods) {
   return refreshEach("get the details of", mods, {
@@ -634,7 +733,7 @@ function fetchSummaries(mods) {
 function renderMods(mods) {
   const id = state.profile.id;
   versionSelects.clear();
-  cardMains.clear();
+  summaryViews.clear();
   updateNotes.clear();
   const render = modsView === "cards" ? modCard : modRow;
   const item = (m) =>
@@ -752,8 +851,6 @@ async function setHidden(tag, hide) {
   if (state.profile !== p) return;
   p.hiddenTags = tags;
   renderMods(p.mods);
-  // list view only fetches summaries while there's something to filter by
-  refreshSummaries();
 }
 
 filterMenu.addEventListener("toggle", () => {
@@ -859,8 +956,6 @@ function rankMods(mods, query) {
 modSearch.addEventListener("input", () => {
   if (!state.profile) return;
   renderMods(state.profile.mods);
-  // list view doesn't otherwise have the authors and descriptions
-  refreshSummaries();
 });
 
 modSearch.addEventListener("keydown", (e) => {
@@ -1252,8 +1347,7 @@ $("#update").addEventListener("click", async () => {
   } finally {
     await openProfile(id);
   }
-  // mods that moved to a new version have new details too; fetch them even
-  // if the cards aren't showing, so the cache doesn't keep the old ones
+  // mods that moved to a new version have new details too
   const changed = new Set(changes.map((c) => c.name));
   const mods = state.profile.mods.filter(
     (m) => changed.has(m.name) && !summaryFetches.has(modKey(m)),
