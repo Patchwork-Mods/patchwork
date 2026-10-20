@@ -136,6 +136,23 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
+/* Revert: just its icon, sized to sit level with Update and Deploy. */
+#revert {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 7px;
+}
+
+#revert svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* Update, while mods set to Auto have a newer version: outlined in the
    accent colour, with how many in a pill. */
 #update.has-updates {

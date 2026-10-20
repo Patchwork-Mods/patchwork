@@ -86,6 +86,11 @@ pub struct DeployState {
     /// Directories patchwork created, removed again once they're empty.
     #[serde(default)]
     pub created_dirs: BTreeSet<RelPath>,
+    /// [`DeployPlan::inputs`] of the last deploy that finished, so it's
+    /// possible to tell whether deploying again would change anything
+    /// without working out a whole plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<ContentHash>,
 }
 
 impl DeployState {
@@ -97,6 +102,7 @@ impl DeployState {
             root: root.to_owned(),
             files: BTreeMap::new(),
             created_dirs: BTreeSet::new(),
+            inputs: None,
         }
     }
 }
@@ -135,6 +141,9 @@ pub struct DeployPlan {
     /// Files that are already in place.
     pub unchanged: usize,
     pub warnings: Vec<String>,
+    /// A hash of everything that went into the plan, recorded in the
+    /// [`DeployState`] once it's applied. `None` for undeploying.
+    pub inputs: Option<ContentHash>,
 }
 
 impl DeployPlan {
@@ -201,6 +210,7 @@ pub fn plan(
         ops,
         unchanged,
         warnings,
+        inputs: None,
     }
 }
 
@@ -221,6 +231,9 @@ pub fn apply(
     }
     let root = plan.root.clone();
     state.profile = plan.profile.clone();
+    // Only set again once everything's done, so a deploy that failed
+    // partway is never mistaken for a current one.
+    state.inputs = None;
 
     for op in &plan.ops {
         reporter.report(Event::Applying(op.clone()));
@@ -276,6 +289,7 @@ pub fn apply(
     }
 
     remove_empty_dirs(&root, &mut state.created_dirs);
+    state.inputs = plan.inputs;
     Ok(())
 }
 

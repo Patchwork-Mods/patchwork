@@ -446,6 +446,12 @@ impl Patchwork {
         self.profile_dir(profile).join("profile.lock")
     }
 
+    /// The profile's mods and lockfile as they were at its last deploy, for
+    /// [`Patchwork::revert`].
+    fn deployed_file(&self, profile: &ProfileRef) -> PathBuf {
+        self.profile_dir(profile).join("deployed.toml")
+    }
+
     // Mods
 
     /// Turns what the user typed into a mod spec: `source:id`, or a bare path
@@ -1432,7 +1438,8 @@ impl Patchwork {
         let lock = self.lock(profile, false).await?;
         let loaded = self.load_profile(profile)?;
         let registry = self.registry();
-        let game = &registry.game(&loaded.game)?.value;
+        let entry = registry.game(&loaded.game)?;
+        let game = &entry.value;
         let install = self.game_install(&loaded.game)?.ok_or_else(|| {
             Error::invalid(format!(
                 "patchwork doesn't know where {} is installed; run `patchwork game set-path {} <dir>`",
@@ -1444,17 +1451,8 @@ impl Patchwork {
             .get(&game.deployer.kind)
             .ok_or_else(|| Error::UnknownDeployer(game.deployer.kind.clone()))?;
 
-        let by_key: HashMap<String, &LockedMod> = lock.mods.iter().map(|m| (m.key(), m)).collect();
-        let mut order = Vec::new();
-        let mut visited = HashSet::new();
-        for m in loaded.mods.iter().filter(|m| m.enabled) {
-            visit(
-                &mod_key(&m.source, &m.id),
-                &by_key,
-                &mut visited,
-                &mut order,
-            );
-        }
+        let order = deploy_order(&loaded, &lock);
+        let inputs = deploy_inputs(profile, &registry, entry.hash, &install.path, &order);
         let mut mods = Vec::new();
         for locked in order {
             let files =
@@ -1490,12 +1488,54 @@ impl Patchwork {
         } else {
             prev
         };
-        Ok(deploy::plan(
-            &prev,
-            desired,
-            Some(profile.to_string()),
-            game.link,
-        ))
+        let mut plan = deploy::plan(&prev, desired, Some(profile.to_string()), game.link);
+        plan.inputs = Some(inputs);
+        Ok(plan)
+    }
+
+    /// Whether deploying `profile` would change anything, worked out from
+    /// what was recorded at the last deploy rather than a whole plan, so
+    /// it's cheap and never touches the network.
+    ///
+    /// Anything that might change what's deployed (enabling, reordering or
+    /// updating mods, or a changed game definition or ruleset) makes it
+    /// [`DeployStatus::Stale`], even when the files would come out the same.
+    /// Changes made to the game directory by hand aren't noticed.
+    pub fn deploy_status(&self, profile: &ProfileRef) -> Result<DeployStatus> {
+        let loaded = self.load_profile(profile)?;
+        let state = self.deploy_state(&loaded.game)?;
+        match state.profile.as_deref() {
+            None => return Ok(DeployStatus::NotDeployed),
+            Some(p) if p != profile.to_string() => return Ok(DeployStatus::OtherProfile),
+            Some(_) => {}
+        }
+        let (Some(recorded), Some(lock), Some(install)) = (
+            state.inputs,
+            self.load_lock(profile)?,
+            self.game_install(&loaded.game)?,
+        ) else {
+            return Ok(DeployStatus::Stale);
+        };
+        // Deploying would lock again first, so a mod that isn't locked the
+        // way the profile asks could deploy as something else.
+        let locked = loaded.mods.iter().filter(|m| m.enabled).all(|m| {
+            let key = mod_key(&m.source, &m.id);
+            lock.mods
+                .iter()
+                .any(|l| l.key() == key && l.requested == m.version)
+        });
+        if !locked {
+            return Ok(DeployStatus::Stale);
+        }
+        let registry = self.registry();
+        let game = registry.game(&loaded.game)?;
+        let order = deploy_order(&loaded, &lock);
+        let inputs = deploy_inputs(profile, &registry, game.hash, &install.path, &order);
+        Ok(if inputs == recorded {
+            DeployStatus::Deployed
+        } else {
+            DeployStatus::Stale
+        })
     }
 
     /// Works out how to remove everything patchwork deployed for a game.
@@ -1514,7 +1554,58 @@ impl Patchwork {
         let result = deploy::apply(plan, &mut state, &backups, self.reporter.as_ref());
         // Saved even on failure, so whatever did get deployed can be undone.
         fsutil::write_json(&self.deploy_state_file(&plan.game), &state)?;
-        result.map(|()| state)
+        result?;
+        if let Some(profile) = plan.profile.as_deref() {
+            self.save_deployed(&profile.parse()?)?;
+        }
+        Ok(state)
+    }
+
+    /// Remembers the profile as it is now, as what was last deployed.
+    fn save_deployed(&self, profile: &ProfileRef) -> Result<()> {
+        let Some(lock) = self.load_lock(profile)? else {
+            return Ok(());
+        };
+        let deployed = Deployed {
+            mods: self.load_profile(profile)?.mods,
+            lock,
+        };
+        fsutil::write_toml(&self.deployed_file(profile), &deployed)
+    }
+
+    fn load_deployed(&self, profile: &ProfileRef) -> Result<Option<Deployed>> {
+        fsutil::read_toml(&self.deployed_file(profile))
+    }
+
+    /// Whether the profile's mods or their locked versions have changed
+    /// since it was last deployed, so [`Patchwork::revert`] would do
+    /// anything. Always false for a profile that's never been deployed.
+    ///
+    /// Hidden tags don't count, since they don't change what's deployed.
+    pub fn has_changes(&self, profile: &ProfileRef) -> Result<bool> {
+        let Some(deployed) = self.load_deployed(profile)? else {
+            return Ok(false);
+        };
+        if self.load_profile(profile)?.mods != deployed.mods {
+            return Ok(true);
+        }
+        let lock = self.load_lock(profile)?;
+        Ok(lock.map(|l| toml_eq(&l, &deployed.lock)) != Some(true))
+    }
+
+    /// Puts the profile's mods and lockfile back how they were when it was
+    /// last deployed, undoing everything done to it since. Nothing in the
+    /// game changes; the profile just matches what's deployed again.
+    pub fn revert(&self, profile: &ProfileRef) -> Result<()> {
+        let deployed = self.load_deployed(profile)?.ok_or_else(|| {
+            Error::invalid(format!(
+                "{profile} hasn't been deployed, so there's nothing to revert to"
+            ))
+        })?;
+        let mut loaded = self.load_profile(profile)?;
+        loaded.mods = deployed.mods;
+        fsutil::write_toml(&self.lock_file(profile), &deployed.lock)?;
+        self.save_profile(profile, &loaded)
     }
 }
 
@@ -1536,6 +1627,90 @@ async fn download(url: &str, dest: &Path) -> Result<()> {
         file.write_all(&chunk).at(dest)?;
     }
     Ok(())
+}
+
+/// A profile's mods and lockfile at its last deploy.
+#[derive(Debug, Serialize, Deserialize)]
+struct Deployed {
+    #[serde(default, rename = "mod")]
+    mods: Vec<ProfileMod>,
+    lock: Lockfile,
+}
+
+/// Whether two values serialize the same, for types that can't be compared
+/// directly.
+fn toml_eq<T: Serialize>(a: &T, b: &T) -> bool {
+    match (toml::to_string(a), toml::to_string(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Where a profile stands against what's deployed for its game, from
+/// [`Patchwork::deploy_status`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeployStatus {
+    /// Nothing's deployed for the game.
+    NotDeployed,
+    /// A different profile of the same game is deployed.
+    OtherProfile,
+    /// This profile is deployed, but deploying again would change something.
+    Stale,
+    /// This profile is deployed as it is now.
+    Deployed,
+}
+
+/// The locked mods deploying `loaded` places, in load order.
+fn deploy_order<'a>(loaded: &Profile, lock: &'a Lockfile) -> Vec<&'a LockedMod> {
+    let by_key: HashMap<String, &LockedMod> = lock.mods.iter().map(|m| (m.key(), m)).collect();
+    let mut order = Vec::new();
+    let mut visited = HashSet::new();
+    for m in loaded.mods.iter().filter(|m| m.enabled) {
+        visit(
+            &mod_key(&m.source, &m.id),
+            &by_key,
+            &mut visited,
+            &mut order,
+        );
+    }
+    order
+}
+
+/// Hashes everything a deploy depends on, for [`DeployPlan::inputs`].
+///
+/// Deployers can read any registry data, so all of it is included rather
+/// than only what this game uses. Patchwork's version stands in for changes
+/// to the deployers themselves.
+fn deploy_inputs(
+    profile: &ProfileRef,
+    registry: &Registry,
+    game: ContentHash,
+    root: &Path,
+    order: &[&LockedMod],
+) -> ContentHash {
+    let mut hasher = blake3::Hasher::new();
+    let mut field = |bytes: &[u8]| {
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    field(env!("CARGO_PKG_VERSION").as_bytes());
+    field(profile.to_string().as_bytes());
+    field(game.to_string().as_bytes());
+    field(root.as_os_str().as_encoded_bytes());
+    for (kind, id, hash) in registry.data_hashes() {
+        field(kind.as_bytes());
+        field(id.as_bytes());
+        field(hash.to_string().as_bytes());
+    }
+    for m in order {
+        field(m.key().as_bytes());
+        field(m.name.as_bytes());
+        field(m.hash.to_string().as_bytes());
+        field(format!("{:?}", m.format).as_bytes());
+        field(m.artifact.file_name().as_bytes());
+    }
+    hasher.finalize().into()
 }
 
 /// Depth-first, so dependencies come before the mods that need them.
@@ -1831,6 +2006,54 @@ mod tests {
         };
         assert_eq!(version("a"), "2.0");
         assert_eq!(version("b"), "1.0");
+    }
+
+    #[tokio::test]
+    async fn reverting_undoes_changes_since_the_last_deploy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("mods");
+        fs::create_dir_all(&dir).unwrap();
+        let source = std::sync::Arc::new(Versioned {
+            dir,
+            version: std::sync::Mutex::new("1.0".to_owned()),
+        });
+        let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+            .source(SharedSource(source.clone()))
+            .deployer(NoDeployer)
+            .open()
+            .unwrap();
+        pw.add_game(new_game("my-game", "none")).unwrap();
+        let game = tmp.path().join("game");
+        fs::create_dir_all(&game).unwrap();
+        pw.set_game_path("my-game", &game).unwrap();
+        let profile = pw.create_profile("my-game", "default").unwrap();
+        let spec = |id: &str| ModSpec {
+            source: "versioned".to_owned(),
+            id: id.to_owned(),
+            version: None,
+        };
+        pw.add_mod(&profile, spec("a"), None, true).await.unwrap();
+        // nothing to go back to before the first deploy
+        assert!(!pw.has_changes(&profile).unwrap());
+        assert!(pw.revert(&profile).is_err());
+
+        pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+        assert!(!pw.has_changes(&profile).unwrap());
+
+        pw.add_mod(&profile, spec("b"), None, true).await.unwrap();
+        pw.set_enabled(&profile, "a", false).unwrap();
+        *source.version.lock().unwrap() = "2.0".to_owned();
+        pw.lock(&profile, true).await.unwrap();
+        assert!(pw.has_changes(&profile).unwrap());
+
+        pw.revert(&profile).unwrap();
+        assert!(!pw.has_changes(&profile).unwrap());
+        let loaded = pw.load_profile(&profile).unwrap();
+        assert_eq!(loaded.mods.len(), 1);
+        assert!(loaded.mods[0].enabled);
+        let lock = pw.load_lock(&profile).unwrap().unwrap();
+        assert_eq!(lock.mods.len(), 1);
+        assert_eq!(lock.mods[0].version.as_deref(), Some("1.0"));
     }
 
     /// Lets a test keep hold of a source it's handed to [`Patchwork`].

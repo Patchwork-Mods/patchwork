@@ -198,6 +198,13 @@ impl Registry {
             .filter(move |(k, _)| k == kind)
             .map(|(_, id)| id.as_str())
     }
+
+    /// The hash of every entry that isn't a game, keyed by kind and id.
+    pub fn data_hashes(&self) -> impl Iterator<Item = (&str, &str, ContentHash)> {
+        self.data
+            .iter()
+            .map(|((kind, id), entry)| (kind.as_str(), id.as_str(), entry.hash))
+    }
 }
 
 /// Checked before the full parse, so a newer file gets a clear "update

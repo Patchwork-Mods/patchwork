@@ -36,7 +36,8 @@ use std::time::Duration;
 
 pub use error::{Error, Result};
 pub use patchwork::{
-    Builder, GameInstall, ImportOptions, Imported, KnownSummary, KnownVersions, Patchwork,
+    Builder, DeployStatus, GameInstall, ImportOptions, Imported, KnownSummary, KnownVersions,
+    Patchwork,
 };
 
 /// The HTTP client every request shares, so connections to a host are kept

@@ -2,7 +2,7 @@
 
 import { listen, run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
-import { openProfile } from "./profile.js";
+import { openProfile, renderDeploy, showProfile } from "./profile.js";
 
 $("#deploy").addEventListener("click", async () => {
   const id = state.profile.id;
@@ -19,8 +19,14 @@ $("#deploy").addEventListener("click", async () => {
     $("#plan-dialog [value=apply]").disabled = !changes;
     status("Ready");
     $("#plan-dialog").showModal();
+    if (!changes) {
+      // Nothing to place, but applying records that this profile is
+      // deployed as it is now, which tones the button down again.
+      await run("apply_plan");
+      await openProfile(id);
+    }
   } finally {
-    $("#deploy").disabled = false;
+    renderDeploy(state.profile);
   }
 });
 
@@ -42,6 +48,23 @@ function opRow(op) {
       return h("li", {}, `+ ${op.dst}  [${op.modName}]`);
   }
 }
+
+// Revert. Puts the profile's mods and locked versions back how they were at
+// its last deploy; the game itself isn't touched.
+
+$("#revert").addEventListener("click", () => {
+  const dialog = $("#revert-dialog");
+  $("#revert-summary").textContent =
+    `Undo every change made to ${state.profile.label} since it was last deployed?`;
+  dialog.returnValue = "";
+  dialog.showModal();
+});
+
+$("#revert-dialog").addEventListener("close", async () => {
+  if ($("#revert-dialog").returnValue !== "revert") return;
+  showProfile(await run("revert_profile", { id: state.profile.id }));
+  status("Reverted to the last deploy");
+});
 
 // Update. Relocks the profile at the newest versions, like `patchwork lock
 // --update`; pinned mods stay where they are. Nothing changes in the game

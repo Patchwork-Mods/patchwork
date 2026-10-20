@@ -6,7 +6,7 @@ mod details;
 use std::fmt::Display;
 use std::sync::Mutex;
 
-use patchwork_core::Patchwork;
+use patchwork_core::{DeployStatus, Patchwork};
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -133,6 +133,11 @@ struct ProfileDetail {
     /// Files patchwork has deployed for this profile's game, if it's this
     /// profile that's deployed.
     deployed_files: Option<usize>,
+    /// Whether deploying would change anything, so the button can say so.
+    deploy_status: DeployStatus,
+    /// Whether the profile has changed since it was last deployed, so it
+    /// can be reverted.
+    has_changes: bool,
     search_sources: Vec<String>,
 }
 
@@ -230,6 +235,8 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let state = pw.deploy_state(&loaded.game).map_err(msg)?;
     let deployed_files =
         (state.profile.as_deref() == Some(id.as_str())).then_some(state.files.len());
+    let deploy_status = pw.deploy_status(&r).map_err(msg)?;
+    let has_changes = pw.has_changes(&r).map_err(msg)?;
     let search_sources = pw
         .search_sources(&loaded.game)
         .map_err(msg)?
@@ -281,6 +288,8 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         id,
         install,
         deployed_files,
+        deploy_status,
+        has_changes,
         search_sources,
     })
 }
@@ -375,6 +384,13 @@ fn set_enabled(
     app.pw
         .set_enabled(&profile_ref(&id)?, &name, enabled)
         .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Undoes every change made to the profile since it was last deployed.
+#[tauri::command]
+fn revert_profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
+    app.pw.revert(&profile_ref(&id)?).map_err(msg)?;
     profile_detail(&app.pw, id)
 }
 
@@ -670,6 +686,7 @@ fn main() {
             set_game_path,
             set_enabled,
             remove_mod,
+            revert_profile,
             set_hidden_tags,
             sort_mods,
             reorder_mods,

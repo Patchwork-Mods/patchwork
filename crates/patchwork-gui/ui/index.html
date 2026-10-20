@@ -43,8 +43,12 @@
         <div id="tabs" class="tabs" role="tablist">
           <button role="tab" data-tab="mods" aria-selected="true">Mods</button>
         </div>
+        <!-- Only shown while the profile differs from what was last deployed. -->
+        <button id="revert" title="Revert changes made since the last deploy" aria-label="Revert changes" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8M3 3v5h5" /></svg>
+        </button>
         <button id="update" title="Update all mods that are set to Auto" disabled>Update</button>
-        <button id="deploy" class="primary" disabled>Deploy</button>
+        <button id="deploy" disabled>Deploy</button>
       </header>
 
       <section id="tab-mods" class="tab">
@@ -214,6 +218,17 @@
         <div class="row end">
           <button value="cancel">Cancel</button>
           <button value="remove" class="danger">Remove</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="revert-dialog">
+      <form method="dialog" class="stack">
+        <h2>Revert changes</h2>
+        <p id="revert-summary"></p>
+        <div class="row end">
+          <button value="cancel">Cancel</button>
+          <button value="revert" class="danger">Revert</button>
         </div>
       </form>
     </dialog>

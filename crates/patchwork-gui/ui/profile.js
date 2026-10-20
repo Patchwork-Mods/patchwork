@@ -62,9 +62,19 @@ export function showProfile(profile) {
   refreshDetails();
 }
 
+/**
+ * Enables the deploy button if there's somewhere to deploy to, and makes it
+ * stand out when deploying would change anything.
+ */
+export function renderDeploy(p) {
+  $("#deploy").disabled = !p?.install;
+  $("#deploy").classList.toggle("primary", !!p?.install && p.deployStatus !== "deployed");
+}
+
 export function renderProfile() {
   const p = state.profile;
-  $("#deploy").disabled = !p?.install;
+  renderDeploy(p);
+  $("#revert").hidden = !p?.hasChanges;
   $("#update").disabled = !p?.mods.length;
   markUpdates();
   if (!p) {
@@ -83,8 +93,12 @@ export function renderProfile() {
 
   $("#profile-title").textContent = p.label;
   const enabled = p.mods.filter((m) => m.enabled).length;
-  const deployed =
-    p.deployedFiles != null ? `deployed (${p.deployedFiles} files)` : "not deployed";
+  const deployed = {
+    notDeployed: "not deployed",
+    otherProfile: "another profile is deployed",
+    stale: `deployed (${p.deployedFiles} files), out of date`,
+    deployed: `deployed (${p.deployedFiles} files)`,
+  }[p.deployStatus];
   $("#profile-meta").textContent =
     `${enabled}/${p.mods.length} mods enabled · ${p.install ?? "game not set up"} · ${deployed}`;
   $("#game-path").hidden = !!p.install;
