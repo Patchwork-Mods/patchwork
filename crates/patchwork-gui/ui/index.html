@@ -211,6 +211,22 @@
       </form>
     </dialog>
 
+    <!-- Opened by right-clicking a profile in the sidebar; see profile.js. -->
+    <div id="profile-menu" class="menu-items context-menu" role="menu" hidden>
+      <button type="button" role="menuitem" id="delete-profile" class="danger-text">Delete</button>
+    </div>
+
+    <dialog id="delete-profile-dialog">
+      <form method="dialog" class="stack">
+        <h2>Delete profile</h2>
+        <p id="delete-profile-summary"></p>
+        <div class="row end">
+          <button value="cancel">Cancel</button>
+          <button value="delete" class="danger">Delete</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="remove-dialog">
       <form method="dialog" class="stack">
         <h2>Remove mod</h2>

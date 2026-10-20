@@ -295,6 +295,14 @@ fn profiles_are_found_by_name() {
         env.fails(&["profile", "use", "lethal-company/nope"])
             .contains("no profile named")
     );
+
+    env.run(&["profile", "remove", "lethal-company/other"]);
+    let list = env.run(&["profile", "list"]);
+    assert!(!list.contains("lethal-company/other"), "{list}");
+    assert!(
+        env.fails(&["profile", "remove", "lethal-company/other"])
+            .contains("no profile named")
+    );
 }
 
 #[test]

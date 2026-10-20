@@ -1,6 +1,6 @@
 // A game's profiles: the sidebar, and the header and Mods tab of the open one.
 
-import { gameInfo, profilesOf, run, state } from "./state.js";
+import { gameInfo, profilesOf, run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { showGames } from "./games.js";
 import { renderMods } from "./mods.js";
@@ -31,7 +31,11 @@ export function renderSidebar() {
     ...ps.map((p) =>
       h(
         "button",
-        { "aria-current": String(p.id === current), onclick: () => switchProfile(p.id) },
+        {
+          "aria-current": String(p.id === current),
+          onclick: () => switchProfile(p.id),
+          oncontextmenu: (e) => openProfileMenu(e, p),
+        },
         h("span", {}, p.name),
         h("span", { class: "muted" }, String(p.mods)),
       ),
@@ -121,6 +125,75 @@ $("#new-profile").addEventListener("submit", async (e) => {
   state.overview = await run("overview");
   await openProfile(id);
 });
+
+// Right-clicking a profile in the sidebar. Its only item, Delete, asks again
+// in a dialog before anything is deleted.
+
+const profileMenu = $("#profile-menu");
+/** The profile the menu was opened on. */
+let menuProfile = null;
+
+function openProfileMenu(e, profile) {
+  e.preventDefault();
+  menuProfile = profile;
+  profileMenu.hidden = false;
+  // Kept inside the window when opened near its right or bottom edge.
+  const x = Math.min(e.clientX, innerWidth - profileMenu.offsetWidth - 4);
+  const y = Math.min(e.clientY, innerHeight - profileMenu.offsetHeight - 4);
+  profileMenu.style.left = `${Math.max(x, 0)}px`;
+  profileMenu.style.top = `${Math.max(y, 0)}px`;
+  profileMenu.querySelector("button").focus();
+}
+
+function closeProfileMenu() {
+  profileMenu.hidden = true;
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (!profileMenu.contains(e.target)) closeProfileMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeProfileMenu();
+});
+addEventListener("blur", closeProfileMenu);
+addEventListener("resize", closeProfileMenu);
+$("#profiles").addEventListener("scroll", closeProfileMenu);
+
+$("#delete-profile").addEventListener("click", async () => {
+  closeProfileMenu();
+  const profile = menuProfile;
+  if (!(await confirmDelete(profile))) return;
+  await run("remove_profile", { id: profile.id });
+  state.overview = await run("overview");
+  status(`Deleted ${profile.label}`);
+  if (state.profile?.id !== profile.id) {
+    renderSidebar();
+    return;
+  }
+  const next = profilesOf(state.game)[0];
+  if (next) {
+    await switchProfile(next.id);
+  } else {
+    state.profile = null;
+    renderSidebar();
+    renderProfile();
+  }
+});
+
+/** Asks before deleting a profile; resolves to whether to go ahead. */
+function confirmDelete(profile) {
+  const dialog = $("#delete-profile-dialog");
+  const mods = `${profile.mods} mod${profile.mods === 1 ? "" : "s"}`;
+  $("#delete-profile-summary").textContent =
+    `Delete ${profile.label} and its ${mods}? This can't be undone.`;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) =>
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete"), {
+      once: true,
+    }),
+  );
+}
 
 $("#game-path").addEventListener("submit", async (e) => {
   e.preventDefault();

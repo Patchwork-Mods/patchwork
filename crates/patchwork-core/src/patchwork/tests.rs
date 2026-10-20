@@ -303,6 +303,37 @@ async fn reverting_undoes_changes_since_the_last_deploy() {
     assert_eq!(lock.mods[0].version.as_deref(), Some("1.0"));
 }
 
+#[tokio::test]
+async fn removing_a_profile_needs_it_undeployed_first() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let other = pw.create_profile("my-game", "other").unwrap();
+    pw.use_profile(&profile).unwrap();
+
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    let err = pw.remove_profile(&profile).unwrap_err();
+    assert!(err.to_string().contains("undeploy"), "{err}");
+
+    pw.apply(&pw.plan_undeploy("my-game").unwrap()).unwrap();
+    pw.remove_profile(&profile).unwrap();
+    assert!(pw.load_profile(&profile).is_err());
+    assert!(pw.find_profile("my-game/default").is_err());
+    assert_eq!(pw.current_profile().unwrap(), None);
+    // only the current profile is forgotten
+    pw.use_profile(&other).unwrap();
+    pw.remove_profile(&pw.create_profile("my-game", "third").unwrap())
+        .unwrap();
+    assert_eq!(pw.current_profile().unwrap(), Some(other));
+}
+
 /// Lets a test keep hold of a source it's handed to [`Patchwork`].
 struct SharedSource(std::sync::Arc<Versioned>);
 

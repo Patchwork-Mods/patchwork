@@ -444,6 +444,18 @@ button:focus-visible {
   outline: none;
 }
 
+/* A menu that opens where something was right-clicked, placed by script. */
+.context-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  min-width: 160px;
+}
+
+.menu-items button.danger-text {
+  color: var(--pw-danger);
+}
+
 /* The filter menu's tags: a checkbox, the tag, and how many mods have it. */
 .menu-items label {
   display: flex;

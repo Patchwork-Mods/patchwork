@@ -367,6 +367,11 @@ fn use_profile(app: State<'_, App>, id: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
+fn remove_profile(app: State<'_, App>, id: String) -> CmdResult<()> {
+    app.pw.remove_profile(&profile_ref(&id)?).map_err(msg)
+}
+
+#[tauri::command]
 fn set_game_path(app: State<'_, App>, game: String, path: String) -> CmdResult<()> {
     app.pw
         .set_game_path(&game, path.as_ref())
@@ -683,6 +688,7 @@ fn main() {
             create_game,
             create_profile,
             use_profile,
+            remove_profile,
             set_game_path,
             set_enabled,
             remove_mod,

@@ -7,7 +7,6 @@ use std::sync::{Arc, RwLock};
 use futures_util::{StreamExt, TryStreamExt, stream};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::deploy::{self, DeployContext, DeployPlan, DeployState, Deployer, InstalledMod};
 use crate::error::IoContext;
@@ -19,7 +18,7 @@ use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement
 use crate::matching::{self, ModText};
 use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
-use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
+use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
 use crate::registry::Registry;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
@@ -125,12 +124,6 @@ pub struct Imported {
     pub format: String,
     pub mods: usize,
     pub replaced: bool,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct State {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    current_profile: Option<String>,
 }
 
 pub struct Builder {
@@ -292,164 +285,6 @@ impl Patchwork {
             .join(format!("{}.toml", def.id));
         fsutil::write_toml(&path, &def)?;
         self.reload_registry()
-    }
-
-    // Profiles
-
-    pub fn current_profile(&self) -> Result<Option<ProfileRef>> {
-        let state: State = fsutil::read_toml(&self.paths.state_file())?.unwrap_or_default();
-        state.current_profile.map(|p| p.parse()).transpose()
-    }
-
-    pub fn use_profile(&self, profile: &ProfileRef) -> Result<()> {
-        self.load_profile(profile)?;
-        let state = State {
-            current_profile: Some(profile.to_string()),
-        };
-        fsutil::write_toml(&self.paths.state_file(), &state)
-    }
-
-    /// Creates `<game>/<name>`, which must not already exist.
-    pub fn create_profile(&self, game: &str, name: &str) -> Result<ProfileRef> {
-        self.registry().game(game)?;
-        validate_name(name)?;
-        let profile = Profile::new(game, name);
-        if self
-            .profiles()?
-            .iter()
-            .any(|(_, p)| p.label() == profile.label())
-        {
-            return Err(Error::invalid(format!(
-                "profile {} already exists",
-                profile.label()
-            )));
-        }
-        let profile_ref = profile.reference();
-        fsutil::write_toml(&self.profile_file(&profile_ref), &profile)?;
-        Ok(profile_ref)
-    }
-
-    /// Every profile on this machine, sorted by game then name.
-    pub fn profiles(&self) -> Result<Vec<(ProfileRef, Profile)>> {
-        let mut profiles = Vec::new();
-        let Ok(entries) = fs::read_dir(self.paths.profiles()) else {
-            return Ok(profiles);
-        };
-        for entry in entries.filter_map(|e| e.ok()) {
-            let Ok(profile_ref) = entry.file_name().to_string_lossy().parse::<ProfileRef>() else {
-                continue;
-            };
-            if self.profile_file(&profile_ref).is_file() {
-                let loaded = self.load_profile(&profile_ref)?;
-                profiles.push((profile_ref, loaded));
-            }
-        }
-        profiles.sort_by(|(_, a), (_, b)| (&a.game, &a.name).cmp(&(&b.game, &b.name)));
-        Ok(profiles)
-    }
-
-    /// Looks up a profile by `<game>/<name>` or by its id.
-    pub fn find_profile(&self, query: &str) -> Result<ProfileRef> {
-        if let Ok(profile_ref) = query.parse::<ProfileRef>()
-            && self.profile_file(&profile_ref).is_file()
-        {
-            return Ok(profile_ref);
-        }
-        self.profiles()?
-            .into_iter()
-            .find(|(_, p)| p.label() == query)
-            .map(|(r, _)| r)
-            .ok_or_else(|| Error::invalid(format!("no profile named {query}")))
-    }
-
-    /// Moves profiles from `profiles/<game>/<name>/` (schema 1) to
-    /// `profiles/<id>/`, giving each one an id.
-    fn migrate_profiles(&self) -> Result<()> {
-        let Ok(games) = fs::read_dir(self.paths.profiles()) else {
-            return Ok(());
-        };
-        let mut state: State = fsutil::read_toml(&self.paths.state_file())?.unwrap_or_default();
-        let mut state_changed = false;
-        for game in games.filter_map(|e| e.ok()) {
-            let game_dir = game.path();
-            let game_id = game.file_name().to_string_lossy().into_owned();
-            if game_id.parse::<ProfileRef>().is_ok() || !game_dir.is_dir() {
-                continue;
-            }
-            for entry in fs::read_dir(&game_dir)
-                .at(&game_dir)?
-                .filter_map(|e| e.ok())
-            {
-                let old_dir = entry.path();
-                let old_file = old_dir.join("profile.toml");
-                let Some(mut table) = fsutil::read_toml::<toml::Table>(&old_file)? else {
-                    continue;
-                };
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let id = Uuid::new_v4();
-                table.insert("schema".into(), (PROFILE_SCHEMA as i64).into());
-                table.insert("id".into(), id.to_string().into());
-                table.insert("name".into(), name.clone().into());
-                let profile_ref = ProfileRef { uuid: id };
-                let new_dir = self.profile_dir(&profile_ref);
-                fs::rename(&old_dir, &new_dir).at(&old_dir)?;
-                fsutil::write_toml(&self.profile_file(&profile_ref), &table)?;
-
-                let label = format!("{game_id}/{name}");
-                if state.current_profile.as_deref() == Some(label.as_str()) {
-                    state.current_profile = Some(profile_ref.to_string());
-                    state_changed = true;
-                }
-                let mut deployed = self.deploy_state(&game_id)?;
-                if deployed.profile.as_deref() == Some(label.as_str()) {
-                    deployed.profile = Some(profile_ref.to_string());
-                    fsutil::write_json(&self.deploy_state_file(&game_id), &deployed)?;
-                }
-            }
-            // Only goes if it's now empty.
-            let _ = fs::remove_dir(&game_dir);
-        }
-        if state_changed {
-            fsutil::write_toml(&self.paths.state_file(), &state)?;
-        }
-        Ok(())
-    }
-
-    pub fn load_profile(&self, profile: &ProfileRef) -> Result<Profile> {
-        let path = self.profile_file(profile);
-        let loaded: Profile = fsutil::read_toml(&path)?
-            .ok_or_else(|| Error::invalid(format!("no profile with id {profile}")))?;
-        if loaded.schema > PROFILE_SCHEMA {
-            return Err(Error::Schema {
-                kind: "profile",
-                path,
-                found: loaded.schema,
-                supported: PROFILE_SCHEMA,
-            });
-        }
-        Ok(loaded)
-    }
-
-    fn save_profile(&self, profile: &ProfileRef, value: &Profile) -> Result<()> {
-        fsutil::write_toml(&self.profile_file(profile), value)
-    }
-
-    fn profile_dir(&self, profile: &ProfileRef) -> PathBuf {
-        self.paths.profiles().join(profile.uuid.to_string())
-    }
-
-    fn profile_file(&self, profile: &ProfileRef) -> PathBuf {
-        self.profile_dir(profile).join("profile.toml")
-    }
-
-    fn lock_file(&self, profile: &ProfileRef) -> PathBuf {
-        self.profile_dir(profile).join("profile.lock")
-    }
-
-    /// The profile's mods and lockfile as they were at its last deploy, for
-    /// [`Patchwork::revert`].
-    fn deployed_file(&self, profile: &ProfileRef) -> PathBuf {
-        self.profile_dir(profile).join("deployed.toml")
     }
 
     // Mods
@@ -1748,6 +1583,8 @@ fn dedupe_names(mods: Vec<ProfileMod>) -> Vec<ProfileMod> {
         })
         .collect()
 }
+
+mod profiles;
 
 #[cfg(test)]
 mod tests;
