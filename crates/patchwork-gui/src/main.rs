@@ -6,7 +6,6 @@ mod details;
 use std::fmt::Display;
 use std::sync::Mutex;
 
-use patchwork_core::{DeployStatus, Patchwork};
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -16,6 +15,7 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::ModSpec;
+use patchwork_core::{DeployStatus, Patchwork};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};

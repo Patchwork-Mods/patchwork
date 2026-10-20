@@ -524,5 +524,8 @@ fn mods_can_be_moved_and_sorted() {
     env.run(&["move", "gamma", "--top"]);
     env.run(&["sort", "--by", "tags", "--by", "dependents:desc"]);
     assert_eq!(order(&env), ["gamma", "Alpha", "beta"]);
-    assert!(env.fails(&["sort", "--by", "size"]).contains("unknown sort"));
+    assert!(
+        env.fails(&["sort", "--by", "size"])
+            .contains("unknown sort")
+    );
 }
