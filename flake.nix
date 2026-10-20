@@ -73,6 +73,7 @@
                 libsoup_3
                 glib-networking
                 librsvg
+                wayland
               ];
 
             env = {
@@ -95,6 +96,8 @@
                   harfbuzz
                   atk
                   dbus
+                  # The folder picker (rfd's xdg-portal backend) links it.
+                  wayland
                 ]
               );
               GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules/";

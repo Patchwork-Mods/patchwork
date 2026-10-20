@@ -1,7 +1,7 @@
 // The game picker, and adding a game.
 
 import { gameInfo, invoke, profilesOf, run, state, status } from "./state.js";
-import { $, h, initials } from "./dom.js";
+import { $, h, initials, pickFolder } from "./dom.js";
 import { renderProfile, renderSidebar, switchProfile } from "./profile.js";
 import { selectTab } from "./browse.js";
 
@@ -162,4 +162,10 @@ gameForm.addEventListener("submit", async (e) => {
   $("#game-dialog").close();
   await openGame(game.id);
   status(error ?? `Added ${game.name}`, !!error);
+});
+
+// "Browse…" next to a folder field fills in the input it names, in the same form.
+document.addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-browse]");
+  if (button) pickFolder(button.form.elements[button.dataset.browse]);
 });

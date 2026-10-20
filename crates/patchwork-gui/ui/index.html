@@ -55,6 +55,7 @@
         <form id="game-path" class="row" hidden>
           <span>Where is this game installed?</span>
           <input name="path" placeholder="/path/to/game" required />
+          <button type="button" data-browse="path">Browse…</button>
           <button type="submit">Set</button>
         </form>
         <ul id="mod-problems" class="warnings"></ul>
@@ -175,10 +176,13 @@
           <span>Id <small class="muted">used in profile names and file names</small></span>
           <input name="id" required pattern="[a-z0-9][a-z0-9\-]*" placeholder="lethal-company" autocomplete="off" />
         </label>
-        <label class="field">
-          <span>Install folder <small class="muted">optional; can be set later</small></span>
-          <input name="install" placeholder="/path/to/game" autocomplete="off" />
-        </label>
+        <div class="field">
+          <label for="new-game-install">Install folder <small class="muted">optional; can be set later</small></label>
+          <div class="row">
+            <input id="new-game-install" name="install" placeholder="/path/to/game" autocomplete="off" />
+            <button type="button" data-browse="install">Browse…</button>
+          </div>
+        </div>
         <fieldset class="stack">
           <legend>Where its mods come from</legend>
           <label class="field">

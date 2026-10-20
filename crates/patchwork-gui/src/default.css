@@ -1048,6 +1048,11 @@ dialog::backdrop {
   gap: 4px;
 }
 
+/* A folder input with "Browse…" beside it. */
+.field .row input {
+  flex: 1;
+}
+
 .field small,
 .hint {
   font-size: 12px;

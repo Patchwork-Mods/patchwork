@@ -98,3 +98,19 @@ export function trashIcon() {
   svg.append(path);
   return svg;
 }
+
+/**
+ * Asks for a folder with the system's own picker and puts it in `input`.
+ * Leaves `input` alone if the picker is cancelled.
+ */
+export async function pickFolder(input) {
+  try {
+    const path = await window.__TAURI__.dialog.open({
+      directory: true,
+      defaultPath: input.value || undefined,
+    });
+    if (path) input.value = path;
+  } catch (err) {
+    status(String(err), true);
+  }
+}
