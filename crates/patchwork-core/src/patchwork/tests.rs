@@ -322,7 +322,11 @@ async fn removing_a_profile_needs_it_undeployed_first() {
     let err = pw.remove_profile(&profile).unwrap_err();
     assert!(err.to_string().contains("undeploy"), "{err}");
 
-    pw.apply(&pw.plan_undeploy("my-game").unwrap()).unwrap();
+    pw.apply(
+        &pw.plan_undeploy(&DeployTarget::Game("my-game".into()))
+            .unwrap(),
+    )
+    .unwrap();
     pw.remove_profile(&profile).unwrap();
     assert!(pw.load_profile(&profile).is_err());
     assert!(pw.find_profile("my-game/default").is_err());

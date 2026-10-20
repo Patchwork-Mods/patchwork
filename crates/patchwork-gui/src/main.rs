@@ -233,7 +233,8 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .game_install(&loaded.game)
         .map_err(msg)?
         .map(|i| i.path.display().to_string());
-    let state = pw.deploy_state(&loaded.game).map_err(msg)?;
+    let target = pw.deploy_target(&loaded).map_err(msg)?;
+    let state = pw.deploy_state(&target).map_err(msg)?;
     let deployed_files =
         (state.profile.as_deref() == Some(id.as_str())).then_some(state.files.len());
     let deploy_status = pw.deploy_status(&r).map_err(msg)?;

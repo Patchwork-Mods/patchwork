@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use axoupdater::AxoUpdater;
 use clap::{Parser, Subcommand};
-use patchwork_core::deploy::{DeployOp, DeployPlan};
+use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
@@ -416,7 +416,7 @@ async fn run(cli: Cli) -> Result<()> {
                 Some(game) => game,
                 None => selected(&pw, &cli.profile)?.1.game,
             };
-            let plan = pw.plan_undeploy(&game)?;
+            let plan = pw.plan_undeploy(&DeployTarget::Game(game))?;
             finish(&pw, &plan, dry_run)?;
         }
         Command::Status => status(&pw, &cli.profile)?,
@@ -632,7 +632,7 @@ fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
             loaded.game
         ),
     }
-    let state = pw.deploy_state(&loaded.game)?;
+    let state = pw.deploy_state(&pw.deploy_target(&loaded)?)?;
     match &state.profile {
         Some(deployed) if !state.files.is_empty() => {
             // Recorded by id; fall back to that if the profile's gone.

@@ -40,7 +40,13 @@ fn deploy(env: &Env, state: &mut DeployState, placements: Vec<Placement>) -> Dep
         placements,
         warnings: Vec::new(),
     };
-    let plan = plan(state, desired, None, LinkMethod::Copy);
+    let plan = plan(
+        DeployTarget::Game("g".into()),
+        state,
+        desired,
+        None,
+        LinkMethod::Copy,
+    );
     apply(&plan, state, &env.backups, &Silent).unwrap();
     plan
 }

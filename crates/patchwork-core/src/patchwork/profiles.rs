@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::Patchwork;
+use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::fsutil;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileRef, validate_name};
@@ -60,7 +61,8 @@ impl Patchwork {
     /// there's no current profile afterwards.
     pub fn remove_profile(&self, profile: &ProfileRef) -> Result<()> {
         let loaded = self.load_profile(profile)?;
-        let deployed = self.deploy_state(&loaded.game)?.profile;
+        let target = self.deploy_target(&loaded)?;
+        let deployed = self.deploy_state(&target)?.profile;
         if deployed.as_deref() == Some(profile.to_string().as_str()) {
             return Err(Error::invalid(format!(
                 "{} is deployed; run `patchwork undeploy {}` first",
@@ -149,10 +151,12 @@ impl Patchwork {
                     state.current_profile = Some(profile_ref.to_string());
                     state_changed = true;
                 }
-                let mut deployed = self.deploy_state(&game_id)?;
+                // Profiles only shared their game's target back then.
+                let target = DeployTarget::Game(game_id.clone());
+                let mut deployed = self.deploy_state(&target)?;
                 if deployed.profile.as_deref() == Some(label.as_str()) {
                     deployed.profile = Some(profile_ref.to_string());
-                    fsutil::write_json(&self.deploy_state_file(&game_id), &deployed)?;
+                    fsutil::write_json(&self.deploy_state_file(&target), &deployed)?;
                 }
             }
             // Only goes if it's now empty.

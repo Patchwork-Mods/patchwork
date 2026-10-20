@@ -72,6 +72,31 @@ pub trait Deployer: Send + Sync {
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState>;
 }
 
+/// Somewhere mods are deployed to. Each target has its own [`DeployState`],
+/// so it can have a different profile deployed from any other target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeployTarget {
+    /// A game's install, shared by all of the game's profiles: deploying one
+    /// takes the place of whichever was deployed before.
+    Game(String),
+}
+
+impl DeployTarget {
+    pub fn game(&self) -> &str {
+        match self {
+            DeployTarget::Game(game) => game,
+        }
+    }
+
+    /// Unique among targets, and safe to name files with (the target's
+    /// deploy state and backups).
+    pub fn key(&self) -> &str {
+        match self {
+            DeployTarget::Game(game) => game,
+        }
+    }
+}
+
 pub const DEPLOY_STATE_SCHEMA: u32 = 1;
 
 /// What patchwork has put into a game directory.
@@ -133,7 +158,7 @@ pub enum DeployOp {
 
 #[derive(Debug)]
 pub struct DeployPlan {
-    pub game: String,
+    pub target: DeployTarget,
     pub profile: Option<String>,
     pub root: PathBuf,
     pub link: LinkMethod,
@@ -155,6 +180,7 @@ impl DeployPlan {
 /// Works out how to get from `prev` to `desired`. Reads the game directory to
 /// find files that would be overwritten, but doesn't change anything.
 pub fn plan(
+    target: DeployTarget,
     prev: &DeployState,
     desired: DesiredState,
     profile: Option<String>,
@@ -203,7 +229,7 @@ pub fn plan(
     }
 
     DeployPlan {
-        game: prev.game.clone(),
+        target,
         profile,
         root: prev.root.clone(),
         link,

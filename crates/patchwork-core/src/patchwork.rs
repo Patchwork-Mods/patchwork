@@ -8,7 +8,9 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::deploy::{self, DeployContext, DeployPlan, DeployState, Deployer, InstalledMod};
+use crate::deploy::{
+    self, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer, InstalledMod,
+};
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
 use crate::fsutil::{self, StateLock};
@@ -254,7 +256,7 @@ impl Patchwork {
                 path.display()
             )));
         }
-        let state = self.deploy_state(game)?;
+        let state = self.deploy_state(&DeployTarget::Game(game.to_owned()))?;
         if !state.files.is_empty() && state.root != path {
             return Err(Error::invalid(format!(
                 "mods are still deployed to {}; run `patchwork undeploy {game}` first",
@@ -1268,17 +1270,31 @@ impl Patchwork {
 
     // Deploying
 
-    pub fn deploy_state(&self, game: &str) -> Result<DeployState> {
-        let path = self.deploy_state_file(game);
+    /// Where `profile`'s mods are deployed to.
+    pub fn deploy_target(&self, profile: &Profile) -> Result<DeployTarget> {
+        Ok(DeployTarget::Game(profile.game.clone()))
+    }
+
+    /// The directory mods for `target` go in, if it's been set up.
+    pub fn target_root(&self, target: &DeployTarget) -> Result<Option<PathBuf>> {
+        match target {
+            DeployTarget::Game(game) => Ok(self.game_install(game)?.map(|i| i.path)),
+        }
+    }
+
+    pub fn deploy_state(&self, target: &DeployTarget) -> Result<DeployState> {
+        let path = self.deploy_state_file(target);
         if let Some(state) = fsutil::read_json(&path)? {
             return Ok(state);
         }
-        let root = self.game_install(game)?.map(|i| i.path).unwrap_or_default();
-        Ok(DeployState::empty(game, &root))
+        let root = self.target_root(target)?.unwrap_or_default();
+        Ok(DeployState::empty(target.game(), &root))
     }
 
-    fn deploy_state_file(&self, game: &str) -> PathBuf {
-        self.paths.deployments().join(format!("{game}.json"))
+    fn deploy_state_file(&self, target: &DeployTarget) -> PathBuf {
+        self.paths
+            .deployments()
+            .join(format!("{}.json", target.key()))
     }
 
     /// Locks the profile if needed and works out what deploying it would
@@ -1289,7 +1305,8 @@ impl Patchwork {
         let registry = self.registry();
         let entry = registry.game(&loaded.game)?;
         let game = &entry.value;
-        let install = self.game_install(&loaded.game)?.ok_or_else(|| {
+        let target = self.deploy_target(&loaded)?;
+        let root = self.target_root(&target)?.ok_or_else(|| {
             Error::invalid(format!(
                 "patchwork doesn't know where {} is installed; run `patchwork game set-path {} <dir>`",
                 game.name, game.id
@@ -1301,7 +1318,7 @@ impl Patchwork {
             .ok_or_else(|| Error::UnknownDeployer(game.deployer.kind.clone()))?;
 
         let order = deploy_order(&loaded, &lock);
-        let inputs = deploy_inputs(profile, &registry, entry.hash, &install.path, &order);
+        let inputs = deploy_inputs(profile, &registry, entry.hash, &root, &order);
         let mut mods = Vec::new();
         for locked in order {
             let files =
@@ -1323,21 +1340,21 @@ impl Patchwork {
             registry: &registry,
         };
         let desired = deployer.plan(&ctx, &mods)?;
-        let prev = self.deploy_state(&loaded.game)?;
+        let prev = self.deploy_state(&target)?;
         let prev = if prev.files.is_empty() {
-            DeployState::empty(&loaded.game, &install.path)
-        } else if prev.root != install.path {
+            DeployState::empty(&loaded.game, &root)
+        } else if prev.root != root {
             return Err(Error::invalid(format!(
                 "mods are deployed to {}, but {} is now set to {}; run `patchwork undeploy {}` first",
                 prev.root.display(),
                 game.name,
-                install.path.display(),
+                root.display(),
                 game.id
             )));
         } else {
             prev
         };
-        let mut plan = deploy::plan(&prev, desired, Some(profile.to_string()), game.link);
+        let mut plan = deploy::plan(target, &prev, desired, Some(profile.to_string()), game.link);
         plan.inputs = Some(inputs);
         Ok(plan)
     }
@@ -1352,16 +1369,17 @@ impl Patchwork {
     /// Changes made to the game directory by hand aren't noticed.
     pub fn deploy_status(&self, profile: &ProfileRef) -> Result<DeployStatus> {
         let loaded = self.load_profile(profile)?;
-        let state = self.deploy_state(&loaded.game)?;
+        let target = self.deploy_target(&loaded)?;
+        let state = self.deploy_state(&target)?;
         match state.profile.as_deref() {
             None => return Ok(DeployStatus::NotDeployed),
             Some(p) if p != profile.to_string() => return Ok(DeployStatus::OtherProfile),
             Some(_) => {}
         }
-        let (Some(recorded), Some(lock), Some(install)) = (
+        let (Some(recorded), Some(lock), Some(root)) = (
             state.inputs,
             self.load_lock(profile)?,
-            self.game_install(&loaded.game)?,
+            self.target_root(&target)?,
         ) else {
             return Ok(DeployStatus::Stale);
         };
@@ -1379,7 +1397,7 @@ impl Patchwork {
         let registry = self.registry();
         let game = registry.game(&loaded.game)?;
         let order = deploy_order(&loaded, &lock);
-        let inputs = deploy_inputs(profile, &registry, game.hash, &install.path, &order);
+        let inputs = deploy_inputs(profile, &registry, game.hash, &root, &order);
         Ok(if inputs == recorded {
             DeployStatus::Deployed
         } else {
@@ -1387,22 +1405,29 @@ impl Patchwork {
         })
     }
 
-    /// Works out how to remove everything patchwork deployed for a game.
-    pub fn plan_undeploy(&self, game: &str) -> Result<DeployPlan> {
-        let link = self.registry().game(game)?.value.link;
-        let prev = self.deploy_state(game)?;
-        Ok(deploy::plan(&prev, Default::default(), None, link))
+    /// Works out how to remove everything patchwork deployed to `target`.
+    pub fn plan_undeploy(&self, target: &DeployTarget) -> Result<DeployPlan> {
+        let link = self.registry().game(target.game())?.value.link;
+        let prev = self.deploy_state(target)?;
+        Ok(deploy::plan(
+            target.clone(),
+            &prev,
+            Default::default(),
+            None,
+            link,
+        ))
     }
 
     pub fn apply(&self, plan: &DeployPlan) -> Result<DeployState> {
-        let mut state = self.deploy_state(&plan.game)?;
+        let target = &plan.target;
+        let mut state = self.deploy_state(target)?;
         if state.files.is_empty() {
-            state = DeployState::empty(&plan.game, &plan.root);
+            state = DeployState::empty(target.game(), &plan.root);
         }
-        let backups = self.paths.backups().join(&plan.game);
+        let backups = self.paths.backups().join(target.key());
         let result = deploy::apply(plan, &mut state, &backups, self.reporter.as_ref());
         // Saved even on failure, so whatever did get deployed can be undone.
-        fsutil::write_json(&self.deploy_state_file(&plan.game), &state)?;
+        fsutil::write_json(&self.deploy_state_file(target), &state)?;
         result?;
         if let Some(profile) = plan.profile.as_deref() {
             self.save_deployed(&profile.parse()?)?;
@@ -1495,14 +1520,14 @@ fn toml_eq<T: Serialize>(a: &T, b: &T) -> bool {
     }
 }
 
-/// Where a profile stands against what's deployed for its game, from
-/// [`Patchwork::deploy_status`].
+/// Where a profile stands against what's deployed to its
+/// [`DeployTarget`], from [`Patchwork::deploy_status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DeployStatus {
-    /// Nothing's deployed for the game.
+    /// Nothing's deployed to the target.
     NotDeployed,
-    /// A different profile of the same game is deployed.
+    /// A different profile is deployed to the target.
     OtherProfile,
     /// This profile is deployed, but deploying again would change something.
     Stale,
