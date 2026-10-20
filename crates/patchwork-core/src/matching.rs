@@ -3,10 +3,15 @@
 //! down and reorders mods that are already known, by their names and (once
 //! they've been fetched) their summaries.
 //!
-//! Each word typed has to match one of a mod's fields, and counts for more in
-//! its name than its author, and more in its author than its description, so
+//! A word typed matches one of a mod's fields, and counts for more in its
+//! name than its author, and more in its author than its description, so
 //! searching an author puts their own mods above ones that only mention them.
 //! Close misspellings still match, for less.
+//!
+//! Every word but one has to match, so a mistake too small to count as a
+//! misspelling, like "risk on rain", or a word still being typed, like "risk
+//! of re", doesn't hide everything. Mods matching more of the words go first,
+//! as search engines do (Meilisearch's matching strategies, say).
 
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
@@ -34,14 +39,16 @@ impl<'a> ModText<'a> {
     }
 }
 
-/// The indices of the mods matching `query`, best first, with ties kept in
-/// the order given. A blank query matches every mod.
+/// The indices of the mods matching all of `query`'s words, or all but one,
+/// best first, with ties kept in the order given. A blank query matches every
+/// mod.
 pub fn rank(mods: &[ModText], query: &str) -> Vec<usize> {
     let terms = words(query);
     if terms.is_empty() {
         return (0..mods.len()).collect();
     }
     let phrase = terms.concat();
+    let needed = terms.len().saturating_sub(1).max(1);
     let mut scored = Vec::new();
     for (i, m) in mods.iter().enumerate() {
         let fields = [
@@ -50,18 +57,18 @@ pub fn rank(mods: &[ModText], query: &str) -> Vec<usize> {
             Field::new(1.0, m.summary),
         ];
         let mut score = 0.0;
+        let mut matched = 0;
         for term in &terms {
             let best = fields
                 .iter()
                 .map(|f| f.weight * word_match(term, f))
                 .fold(0.0, f64::max);
-            if best == 0.0 {
-                score = 0.0;
-                break;
+            if best > 0.0 {
+                matched += 1;
+                score += best;
             }
-            score += best;
         }
-        if score == 0.0 {
+        if matched < needed {
             continue;
         }
         // all of it together in the name, as in "lethalthings" for LethalThings
@@ -71,11 +78,11 @@ pub fn rank(mods: &[ModText], query: &str) -> Vec<usize> {
         if fields[0].joined == phrase {
             score += 2.0;
         }
-        scored.push((i, score));
+        scored.push((i, matched, score));
     }
     // stable, so ties keep their order
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-    scored.into_iter().map(|(i, _)| i).collect()
+    scored.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.total_cmp(&a.2)));
+    scored.into_iter().map(|(i, _, _)| i).collect()
 }
 
 /// One of a mod's fields, split up for matching.

@@ -11,13 +11,34 @@
     <script type="module" src="app.js"></script>
   </head>
   <body data-screen="games">
-    <!-- The first screen: every known game, plus a way to add one. -->
+    <!-- The first screen: every known game, installed ones first, plus a
+         way to add one. See renderGames() in games.js. -->
     <section id="games-screen">
       <header class="games-header">
-        <h1 class="brand">Patchwork</h1>
-        <p class="muted">Pick a game to manage its profiles and mods.</p>
+        <div>
+          <h1 class="brand">Patchwork</h1>
+          <p class="muted">Pick a game to manage its profiles and mods.</p>
+        </div>
+        <!-- Narrows the games down to the ones matching, best first; see
+             find_games in main.rs. -->
+        <input
+          id="game-search"
+          type="search"
+          placeholder="Search games"
+          aria-label="Search games"
+          autocomplete="off"
+          spellcheck="false"
+        />
       </header>
-      <ul id="game-grid" class="game-grid"></ul>
+      <section id="installed-games" class="game-section" aria-labelledby="installed-games-title">
+        <h2 id="installed-games-title">Installed <span class="count muted"></span></h2>
+        <ul class="game-grid"></ul>
+      </section>
+      <section id="other-games" class="game-section" aria-labelledby="other-games-title">
+        <h2 id="other-games-title">Not installed <span class="count muted"></span></h2>
+        <ul class="game-grid"></ul>
+      </section>
+      <p id="games-empty" class="empty" hidden></p>
     </section>
 
     <!-- One game: its profiles on the left, the selected one on the right. -->

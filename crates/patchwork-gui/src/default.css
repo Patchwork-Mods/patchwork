@@ -170,7 +170,38 @@ button:focus-visible {
 }
 
 .games-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--pw-gap);
   margin-bottom: calc(var(--pw-gap) * 2);
+}
+
+#game-search {
+  width: min(280px, 100%);
+}
+
+/* Installed games, then the rest. */
+.game-section + .game-section {
+  margin-top: calc(var(--pw-gap) * 2.5);
+}
+
+.game-section > h2 {
+  margin-bottom: var(--pw-gap);
+}
+
+.game-section .count {
+  font-weight: 400;
+}
+
+/* A button that reads as a link, as in "No games match … Add a game". */
+button.link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--pw-accent);
+  text-decoration: underline;
 }
 
 .games-header .brand {

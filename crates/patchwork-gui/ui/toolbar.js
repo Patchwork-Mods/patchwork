@@ -99,17 +99,22 @@ modSearch.addEventListener("keydown", (e) => {
   }
 });
 
-// Ctrl+F or / goes to the search box of whichever tab is open. / only does
-// while nothing else is being typed in, so it can still be typed itself.
+// Ctrl+F or / goes to the search box of the game picker or whichever tab is
+// open. / only does while nothing else is being typed in, so it can still be
+// typed itself.
 document.addEventListener("keydown", (e) => {
   const find = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f";
   const slash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey;
   if (!find && !slash) return;
   if (slash && e.target.closest?.("input, textarea, select, [contenteditable]")) return;
-  if (document.querySelector("dialog[open]") || $("#main").hidden) return;
-  const box = !$("#tab-mods").hidden
-    ? !$("#mods-toolbar").hidden && modSearch
-    : $("#search").elements.text;
+  if (document.querySelector("dialog[open]")) return;
+  const box = !$("#games-screen").hidden
+    ? $("#game-search")
+    : $("#main").hidden
+      ? null
+      : !$("#tab-mods").hidden
+        ? !$("#mods-toolbar").hidden && modSearch
+        : $("#search").elements.text;
   if (!box) return;
   e.preventDefault();
   box.focus();

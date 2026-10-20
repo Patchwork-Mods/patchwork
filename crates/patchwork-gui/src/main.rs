@@ -10,6 +10,7 @@ use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::lock::{Lockfile, mod_key};
+use patchwork_core::matching::{self, ModText};
 use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
@@ -488,6 +489,30 @@ fn refresh_details(handle: AppHandle, id: String) -> CmdResult<()> {
     details::refresh(&handle, &profile_ref(&id)?)
 }
 
+/// The ids of the games on the game picker whose names match `query`, best
+/// first, matched the same way as a profile's mods.
+#[tauri::command]
+fn find_games(app: State<'_, App>, query: String) -> Vec<String> {
+    let registry = app.pw.registry();
+    let games: Vec<&GameDef> = registry
+        .games()
+        .filter(|entry| !entry.value.hidden)
+        .map(|entry| &entry.value)
+        .collect();
+    let texts: Vec<ModText> = games
+        .iter()
+        .map(|g| ModText {
+            name: &g.name,
+            author: None,
+            summary: None,
+        })
+        .collect();
+    matching::rank(&texts, &query)
+        .into_iter()
+        .map(|i| games[i].id.clone())
+        .collect()
+}
+
 /// The keys of the profile's mods matching `query`, best first; see
 /// `patchwork_core::matching`.
 #[tauri::command]
@@ -724,6 +749,7 @@ fn main() {
             sort_mods,
             reorder_mods,
             refresh_details,
+            find_games,
             find_mods,
             set_version,
             update_lock,

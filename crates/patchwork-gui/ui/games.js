@@ -20,45 +20,94 @@ export async function showGames() {
   renderGames();
 }
 
-function renderGames() {
+const gameSearch = $("#game-search");
+const gameQuery = () => gameSearch.value.trim();
+let renders = 0;
+
+/**
+ * Lays out the games matching the search, best first: the ones with an
+ * install folder set, then the rest, with adding a game at the very end.
+ */
+async function renderGames() {
+  const render = ++renders;
   const { games } = state.overview;
-  $("#game-grid").replaceChildren(
-    ...games.map((g) => {
-      const count = profilesOf(g.id).length;
-      const facts = [
-        `${count} profile${count === 1 ? "" : "s"}`,
-        g.install ? "installed" : "not set up",
-      ];
-      return h(
-        "li",
-        {},
-        h(
-          "button",
-          { class: "game-card", "data-game": g.id, onclick: () => openGame(g.id) },
-          h("div", { class: "game-art", "aria-hidden": "true" }, initials(g.name)),
-          h("span", { class: "game-name" }, g.name),
-          h("span", { class: "muted" }, facts.join(" · ")),
-          g.origin === "user"
-            ? h("span", { class: "badge" }, "Added by you")
-            : g.origin.endsWith("+ user")
-              ? h("span", { class: "badge" }, "Customized")
-              : null,
-        ),
-      );
-    }),
+  const query = gameQuery();
+  const shown = query ? await findGames(games, query).catch(() => null) : games;
+  if (!shown || render !== renders) return;
+  const installed = shown.filter((g) => g.install);
+  const others = shown.filter((g) => !g.install);
+  // While searching, adding a game is only offered when nothing matches.
+  fillSection($("#installed-games"), installed);
+  fillSection($("#other-games"), others, query ? null : addGameCard());
+  $("#games-empty").hidden = shown.length > 0 || !query;
+  $("#games-empty").replaceChildren(
+    `No games match “${query}”. `,
+    h("button", { type: "button", class: "link", onclick: openGameDialog }, "Add a game"),
+  );
+}
+
+/** Fills in a section's cards and count, hiding it when it'd be empty. */
+function fillSection(section, games, extra = null) {
+  section.querySelector(".game-grid").replaceChildren(...games.map(gameCard), ...(extra ? [extra] : []));
+  section.querySelector(".count").textContent = games.length;
+  section.hidden = !games.length && !extra;
+}
+
+/**
+ * The games matching `query`, best first; see matching.rs. Only names are
+ * searched.
+ */
+async function findGames(games, query) {
+  const ids = await run("find_games", { query });
+  const byId = new Map(games.map((g) => [g.id, g]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+
+function gameCard(g) {
+  const count = profilesOf(g.id).length;
+  return h(
+    "li",
+    {},
     h(
-      "li",
-      {},
-      h(
-        "button",
-        { class: "game-card add", onclick: openGameDialog },
-        h("div", { class: "game-art", "aria-hidden": "true" }, "+"),
-        h("span", { class: "game-name" }, "Add a game"),
-        h("span", { class: "muted" }, "Set up one patchwork doesn't know yet"),
-      ),
+      "button",
+      { class: "game-card", "data-game": g.id, onclick: () => openGame(g.id) },
+      h("div", { class: "game-art", "aria-hidden": "true" }, initials(g.name)),
+      h("span", { class: "game-name" }, g.name),
+      h("span", { class: "muted" }, `${count} profile${count === 1 ? "" : "s"}`),
+      g.origin === "user"
+        ? h("span", { class: "badge" }, "Added by you")
+        : g.origin.endsWith("+ user")
+          ? h("span", { class: "badge" }, "Customized")
+          : null,
     ),
   );
 }
+
+function addGameCard() {
+  return h(
+    "li",
+    {},
+    h(
+      "button",
+      { class: "game-card add", onclick: openGameDialog },
+      h("div", { class: "game-art", "aria-hidden": "true" }, "+"),
+      h("span", { class: "game-name" }, "Add a game"),
+      h("span", { class: "muted" }, "Set up one patchwork doesn't know yet"),
+    ),
+  );
+}
+
+gameSearch.addEventListener("input", () => {
+  if (state.overview) renderGames();
+});
+
+gameSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && gameSearch.value) {
+    e.stopPropagation();
+    gameSearch.value = "";
+    gameSearch.dispatchEvent(new Event("input"));
+  }
+});
 
 /**
  * Shows a game's profiles, opening the current profile if it's for this
