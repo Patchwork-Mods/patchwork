@@ -10,7 +10,7 @@ use patchwork_core::Patchwork;
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
-use patchwork_core::lock::mod_key;
+use patchwork_core::lock::{Lockfile, mod_key};
 use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
@@ -488,6 +488,22 @@ async fn update_lock(app: State<'_, App>, id: String) -> CmdResult<Vec<LockChang
     let r = profile_ref(&id)?;
     let before = app.pw.load_lock(&r).map_err(msg)?;
     let after = app.pw.lock(&r, true).await.map_err(msg)?;
+    Ok(lock_changes(&app, before, after))
+}
+
+/// [`update_lock`] for just one mod (by key), along with anything its new
+/// version needs newer.
+#[tauri::command]
+async fn update_mod(app: State<'_, App>, id: String, key: String) -> CmdResult<Vec<LockChange>> {
+    let r = profile_ref(&id)?;
+    let before = app.pw.load_lock(&r).map_err(msg)?;
+    let after = app.pw.lock_updating(&r, &[key]).await.map_err(msg)?;
+    Ok(lock_changes(&app, before, after))
+}
+
+/// What moved between two lockfiles, marking the mods that did as needing
+/// their details again.
+fn lock_changes(app: &App, before: Option<Lockfile>, after: Lockfile) -> Vec<LockChange> {
     let mut changed = Vec::new();
     let changes = after
         .mods
@@ -509,7 +525,7 @@ async fn update_lock(app: State<'_, App>, id: String) -> CmdResult<Vec<LockChang
         })
         .collect();
     app.details.outdate(&after.game.id, changed);
-    Ok(changes)
+    changes
 }
 
 /// A mod that's been added, and the profile with it.
@@ -661,6 +677,7 @@ fn main() {
             find_mods,
             set_version,
             update_lock,
+            update_mod,
             add_mod,
             search,
             plan_deploy,

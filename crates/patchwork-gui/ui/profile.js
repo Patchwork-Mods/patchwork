@@ -7,6 +7,7 @@ import { renderMods } from "./mods.js";
 import { refreshDetails } from "./details.js";
 import { modSearch } from "./toolbar.js";
 import { renderSourceTabs } from "./browse.js";
+import { markUpdates } from "./deploy.js";
 
 /** Reloads everything, staying on whichever screen and profile is open. */
 export async function refresh() {
@@ -65,6 +66,7 @@ export function renderProfile() {
   const p = state.profile;
   $("#deploy").disabled = !p?.install;
   $("#update").disabled = !p?.mods.length;
+  markUpdates();
   if (!p) {
     const game = gameInfo(state.game);
     $("#profile-title").textContent = `No ${game.name} profiles yet`;

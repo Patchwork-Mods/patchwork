@@ -48,13 +48,34 @@ function opRow(op) {
 // until the next deploy.
 
 $("#update").addEventListener("click", async () => {
-  const id = state.profile.id;
   $("#update").disabled = true;
-  status("Checking for updates…");
+  await relock(run("update_lock", { id: state.profile.id }), "Checking for updates…");
+});
+
+/** Moves one mod that follows the latest version (and whatever it needs) to the newest one. */
+export function updateMod(m) {
+  return relock(
+    run("update_mod", { id: state.profile.id, key: m.key }),
+    `Updating ${m.name}…`,
+    m.name,
+  );
+}
+
+/**
+ * Waits on update_lock or update_mod and says what changed: in the status
+ * bar if it's nothing or just `name`, or in a dialog listing them otherwise.
+ */
+async function relock(changing, doing, name) {
+  const id = state.profile.id;
+  status(doing);
   try {
-    const changes = await run("update_lock", { id });
+    const changes = await changing;
     if (!changes.length) {
-      status("Everything's up to date");
+      status(name ? `${name} is already up to date` : "Everything's up to date");
+      return;
+    }
+    if (changes.length === 1 && changes[0].name === name) {
+      status(`Updated ${name} to ${changes[0].to ?? "(no version)"}; deploy to apply`);
       return;
     }
     const count = changes.length;
@@ -68,10 +89,30 @@ $("#update").addEventListener("click", async () => {
     status(summary);
     $("#update-dialog").showModal();
   } finally {
-    // update_lock has the mods that changed get their details again
+    // the mods that changed get their details again
     await openProfile(id);
   }
-});
+}
+
+/** Whether a mod follows the latest version and a newer one than it's locked at is out. */
+const canUpdate = (m) =>
+  m.versioned && !m.version && m.locked && m.versions?.[0] && m.versions[0] !== m.locked;
+
+/**
+ * Has the Update button stand out, with a count, while any mod that follows
+ * the latest version has a newer one it could move to.
+ */
+export function markUpdates() {
+  const count = state.profile?.mods.filter(canUpdate).length ?? 0;
+  const button = $("#update");
+  button.classList.toggle("has-updates", count > 0);
+  button.replaceChildren(
+    "Update",
+    ...(count
+      ? [h("span", { class: "update-count", "aria-label": `${count} available` }, String(count))]
+      : []),
+  );
+}
 
 // Progress from long-running commands (adding, locking, deploying).
 

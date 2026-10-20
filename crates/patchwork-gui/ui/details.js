@@ -8,6 +8,7 @@ import {
   versionSelects,
 } from "./mods.js";
 import { isHidden, modQuery } from "./toolbar.js";
+import { markUpdates } from "./deploy.js";
 
 // Versions and summaries. The profile comes with each mod's versions and
 // summary as last fetched, so the dropdowns, cards and rows are complete straight
@@ -19,6 +20,7 @@ function showVersions(key, versions) {
   const m = state.profile?.mods.find((m) => m.key === key);
   if (!m) return;
   m.versions = versions;
+  markUpdates();
   const note = updateNotes.get(key);
   if (note?.el.isConnected) fillUpdate(note.el, m, note.onVersion);
   const select = versionSelects.get(key);

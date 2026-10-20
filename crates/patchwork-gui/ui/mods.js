@@ -4,6 +4,7 @@ import { run, state, status } from "./state.js";
 import { $, ago, chevronIcon, compact, h, initials, link, openExternal, trashIcon } from "./dom.js";
 import { openProfile, refresh, showProfile } from "./profile.js";
 import { isHidden, modQuery, modTags } from "./toolbar.js";
+import { updateMod } from "./deploy.js";
 
 // The Mods tab shows mods either as cards, like a source's search results,
 // or as a denser list of rows that each expand to show the rest.
@@ -225,9 +226,9 @@ function modCard(m, { onToggle, onRemove, onVersion }) {
 }
 
 /**
- * Says when a newer version than the one in use is out. A pinned mod can be
- * moved to it straight away; one that follows the latest version gets it
- * from Update.
+ * Says when a newer version than the one in use is out, as a button that
+ * moves the mod to it: a pinned mod gets pinned to it, and one that follows
+ * the latest version is updated on its own, as Update would.
  */
 export function fillUpdate(el, m, onVersion) {
   const newest = m.versions?.[0];
@@ -236,18 +237,27 @@ export function fillUpdate(el, m, onVersion) {
     el.replaceChildren();
     return;
   }
-  el.replaceChildren(
+  const button = h(
+    "button",
     m.version
-      ? h(
-          "button",
-          {
-            title: `Pinned to ${current}; click to pin to ${newest} instead`,
-            onclick: () => onVersion?.(newest),
+      ? {
+          title: `Pinned to ${current}; click to pin to ${newest} instead`,
+          onclick: () => onVersion?.(newest),
+        }
+      : {
+          title: `Click to update to ${newest}`,
+          onclick: async () => {
+            button.disabled = true;
+            try {
+              await updateMod(m);
+            } finally {
+              button.disabled = false;
+            }
           },
-          `↑ ${newest}`,
-        )
-      : h("span", { title: `Update locks the newest versions of every mod` }, `↑ ${newest}`),
+        },
+    `↑ ${newest}`,
   );
+  el.replaceChildren(button);
 }
 
 /** Asks before taking a mod out of the profile; resolves to whether to go ahead. */

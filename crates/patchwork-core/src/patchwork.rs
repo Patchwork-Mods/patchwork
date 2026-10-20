@@ -898,6 +898,24 @@ impl Patchwork {
     /// version of them than is locked. Requirements that still aren't met,
     /// because of a pin or because nothing new enough exists, are warnings.
     pub async fn lock(&self, profile: &ProfileRef, update: bool) -> Result<Lockfile> {
+        self.relock(profile, |_| update).await
+    }
+
+    /// Like [`Patchwork::lock`] with `update`, but only the mods in `keys`
+    /// (as `<source>:<id>`) move to their newest versions; the rest stay
+    /// where they're locked unless one of those now needs them newer.
+    pub async fn lock_updating(&self, profile: &ProfileRef, keys: &[String]) -> Result<Lockfile> {
+        self.relock(profile, |key| keys.iter().any(|k| k == key))
+            .await
+    }
+
+    /// [`Patchwork::lock`], resolving again the locked mods `update` says
+    /// to.
+    async fn relock(
+        &self,
+        profile: &ProfileRef,
+        update: impl Fn(&str) -> bool,
+    ) -> Result<Lockfile> {
         let loaded = self.load_profile(profile)?;
         let registry = self.registry();
         let game = registry.game(&loaded.game)?;
@@ -905,11 +923,11 @@ impl Patchwork {
             .load_lock(profile)?
             .map(|lock| lock.mods.into_iter().map(|m| (m.key(), m)).collect())
             .unwrap_or_default();
-        let mut previous = if update {
-            HashMap::new()
-        } else {
-            known.clone()
-        };
+        let mut previous: HashMap<String, LockedMod> = known
+            .iter()
+            .filter(|(key, _)| !update(key))
+            .map(|(key, m)| (key.clone(), m.clone()))
+            .collect();
 
         let (lock, unmet) = loop {
             let (mods, resolved) = self.resolve_mods(&loaded, &previous, &known).await?;
@@ -1740,5 +1758,97 @@ mod tests {
         let first = pw.lock(&profile, true).await.unwrap();
         let second = pw.lock(&profile, true).await.unwrap();
         assert_eq!(first.mods[0].hash, second.mods[0].hash);
+    }
+
+    /// Resolves every mod to `<id>-<version>.txt` in a folder, at whichever
+    /// version is current.
+    struct Versioned {
+        dir: PathBuf,
+        version: std::sync::Mutex<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl Source for Versioned {
+        fn id(&self) -> &str {
+            "versioned"
+        }
+
+        async fn resolve(
+            &self,
+            _: &SourceContext<'_>,
+            id: &str,
+            requested: Option<&str>,
+        ) -> Result<crate::source::ResolvedMod> {
+            let current = self.version.lock().unwrap().clone();
+            let version = requested.unwrap_or(&current).to_owned();
+            let path = self.dir.join(format!("{id}-{version}.txt"));
+            fs::write(&path, format!("{id} {version}")).unwrap();
+            Ok(crate::source::ResolvedMod {
+                id: id.to_owned(),
+                name: id.to_owned(),
+                version: Some(version),
+                artifact: ArtifactLocation::Path { path },
+                format: ArtifactFormat::File,
+                dependencies: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn updating_some_mods_leaves_the_rest_locked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("mods");
+        fs::create_dir_all(&dir).unwrap();
+        let source = std::sync::Arc::new(Versioned {
+            dir,
+            version: std::sync::Mutex::new("1.0".to_owned()),
+        });
+        let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+            .source(SharedSource(source.clone()))
+            .deployer(NoDeployer)
+            .open()
+            .unwrap();
+        pw.add_game(new_game("my-game", "none")).unwrap();
+        let profile = pw.create_profile("my-game", "default").unwrap();
+        for id in ["a", "b"] {
+            let spec = ModSpec {
+                source: "versioned".to_owned(),
+                id: id.to_owned(),
+                version: None,
+            };
+            pw.add_mod(&profile, spec, None, true).await.unwrap();
+        }
+        pw.lock(&profile, false).await.unwrap();
+
+        *source.version.lock().unwrap() = "2.0".to_owned();
+        let lock = pw
+            .lock_updating(&profile, &["versioned:a".to_owned()])
+            .await
+            .unwrap();
+        let version = |id: &str| {
+            let m = lock.mods.iter().find(|m| m.id == id).unwrap();
+            m.version.clone().unwrap()
+        };
+        assert_eq!(version("a"), "2.0");
+        assert_eq!(version("b"), "1.0");
+    }
+
+    /// Lets a test keep hold of a source it's handed to [`Patchwork`].
+    struct SharedSource(std::sync::Arc<Versioned>);
+
+    #[async_trait::async_trait]
+    impl Source for SharedSource {
+        fn id(&self) -> &str {
+            self.0.id()
+        }
+
+        async fn resolve(
+            &self,
+            ctx: &SourceContext<'_>,
+            id: &str,
+            version: Option<&str>,
+        ) -> Result<crate::source::ResolvedMod> {
+            self.0.resolve(ctx, id, version).await
+        }
     }
 }
