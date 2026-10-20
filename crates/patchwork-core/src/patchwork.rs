@@ -1,9 +1,10 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+use futures_util::{StreamExt, TryStreamExt, stream};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -50,6 +51,9 @@ impl KnownVersions {
         Timestamp::now().duration_since(self.fetched) > Self::TTL
     }
 }
+
+/// How many mods locking resolves or downloads at once.
+const LOCK_CONCURRENCY: usize = 6;
 
 /// Where a cache under `dir` keeps what it knows about a mod. Ids can be
 /// paths or have characters that don't belong in file names, so the file is
@@ -956,13 +960,17 @@ impl Patchwork {
     ///
     /// `known` is the whole old lockfile, even when updating: a mod that
     /// resolves to the same download it was locked to isn't downloaded again.
+    ///
+    /// The walk goes a level at a time, breadth first, locking each level's
+    /// mods [`LOCK_CONCURRENCY`] at a time. Mods come out in the same order
+    /// as if they'd been locked one by one.
     async fn resolve_mods(
         &self,
         loaded: &Profile,
         previous: &HashMap<String, LockedMod>,
         known: &HashMap<String, LockedMod>,
     ) -> Result<(Vec<LockedMod>, HashSet<String>)> {
-        let mut queue: VecDeque<(ModSpec, Option<String>)> = loaded
+        let mut level: Vec<(ModSpec, Option<String>)> = loaded
             .mods
             .iter()
             .map(|m| {
@@ -978,93 +986,115 @@ impl Patchwork {
         let mut resolved_keys = HashSet::new();
         let mut mods = Vec::new();
 
-        while let Some((spec, name)) = queue.pop_front() {
-            let key = mod_key(&spec.source, &spec.id);
-            if !seen.insert(key.clone()) {
-                continue;
+        while !level.is_empty() {
+            let todo: Vec<_> = level
+                .into_iter()
+                .filter(|(spec, _)| seen.insert(mod_key(&spec.source, &spec.id)))
+                .collect();
+            let locked: Vec<(LockedMod, Option<String>)> = stream::iter(todo)
+                .map(|(spec, name)| self.lock_mod(loaded, spec, name, previous, known))
+                .buffered(LOCK_CONCURRENCY)
+                .try_collect()
+                .await?;
+            level = Vec::new();
+            for (locked, resolved) in locked {
+                resolved_keys.extend(resolved);
+                for dep in &locked.dependencies {
+                    if let Some((source, id)) = dep.split_once(':') {
+                        let spec = ModSpec {
+                            source: source.to_owned(),
+                            id: id.to_owned(),
+                            version: None,
+                        };
+                        level.push((spec, None));
+                    }
+                }
+                mods.push(locked);
             }
-            let locked = match previous.get(&key) {
-                Some(old) if old.requested == spec.version => {
-                    let mut old = old.clone();
-                    if let Some(name) = name {
-                        old.name = name;
-                    }
-                    if !self.store.contains(&old.hash, old.format) {
-                        self.reporter.report(Event::Fetching {
-                            name: old.name.clone(),
-                        });
-                        let hash = self.fetch(&old.artifact, old.format).await?;
-                        if hash != old.hash {
-                            return Err(Error::invalid(format!(
-                                "`{}` changed since it was locked (expected {}, got {}); \
-                                 run `patchwork lock --update` to accept the new version",
-                                old.name,
-                                old.hash.short(),
-                                hash.short()
-                            )));
-                        }
-                    }
-                    old
-                }
-                _ => {
-                    let label = name.clone().unwrap_or_else(|| key.clone());
-                    self.reporter.report(Event::Resolving { name: label });
-                    let resolved = self.resolve(&loaded.game, &spec).await?;
-                    let name = name.unwrap_or_else(|| resolved.name.clone());
-                    // a URL is taken to always serve the same file, which
-                    // holds for versioned download links; paths can change
-                    // under us, and are cheap to ingest again anyway
-                    let hash = match known.get(&key) {
-                        Some(old)
-                            if matches!(old.artifact, ArtifactLocation::Url { .. })
-                                && old.artifact == resolved.artifact
-                                && old.format == resolved.format
-                                && self.store.contains(&old.hash, old.format) =>
-                        {
-                            old.hash
-                        }
-                        _ => {
-                            self.reporter.report(Event::Fetching { name: name.clone() });
-                            self.fetch(&resolved.artifact, resolved.format).await?
-                        }
-                    };
-                    resolved_keys.insert(key.clone());
-                    LockedMod {
-                        name,
-                        source: spec.source.clone(),
-                        id: resolved.id,
-                        requested: spec.version.clone(),
-                        version: resolved.version,
-                        hash,
-                        format: resolved.format,
-                        artifact: resolved.artifact,
-                        dependencies: resolved
-                            .dependencies
-                            .iter()
-                            .map(|d| mod_key(&d.source, &d.id))
-                            .collect(),
-                        requires: resolved
-                            .dependencies
-                            .into_iter()
-                            .filter(|d| !d.req.is_any())
-                            .map(|d| (mod_key(&d.source, &d.id), d.req))
-                            .collect(),
-                    }
-                }
-            };
-            for dep in &locked.dependencies {
-                if let Some((source, id)) = dep.split_once(':') {
-                    let spec = ModSpec {
-                        source: source.to_owned(),
-                        id: id.to_owned(),
-                        version: None,
-                    };
-                    queue.push_back((spec, None));
-                }
-            }
-            mods.push(locked);
         }
         Ok((mods, resolved_keys))
+    }
+
+    /// Locks one mod for [`Patchwork::resolve_mods`]: keeps its entry from
+    /// `previous` if that still fits, or resolves it again. Also returns its
+    /// key if it had to be resolved.
+    async fn lock_mod(
+        &self,
+        loaded: &Profile,
+        spec: ModSpec,
+        name: Option<String>,
+        previous: &HashMap<String, LockedMod>,
+        known: &HashMap<String, LockedMod>,
+    ) -> Result<(LockedMod, Option<String>)> {
+        let key = mod_key(&spec.source, &spec.id);
+        if let Some(old) = previous.get(&key)
+            && old.requested == spec.version
+        {
+            let mut old = old.clone();
+            if let Some(name) = name {
+                old.name = name;
+            }
+            if !self.store.contains(&old.hash, old.format) {
+                self.reporter.report(Event::Fetching {
+                    name: old.name.clone(),
+                });
+                let hash = self.fetch(&old.artifact, old.format).await?;
+                if hash != old.hash {
+                    return Err(Error::invalid(format!(
+                        "`{}` changed since it was locked (expected {}, got {}); \
+                         run `patchwork lock --update` to accept the new version",
+                        old.name,
+                        old.hash.short(),
+                        hash.short()
+                    )));
+                }
+            }
+            return Ok((old, None));
+        }
+
+        let label = name.clone().unwrap_or_else(|| key.clone());
+        self.reporter.report(Event::Resolving { name: label });
+        let resolved = self.resolve(&loaded.game, &spec).await?;
+        let name = name.unwrap_or_else(|| resolved.name.clone());
+        // a URL is taken to always serve the same file, which
+        // holds for versioned download links; paths can change
+        // under us, and are cheap to ingest again anyway
+        let hash = match known.get(&key) {
+            Some(old)
+                if matches!(old.artifact, ArtifactLocation::Url { .. })
+                    && old.artifact == resolved.artifact
+                    && old.format == resolved.format
+                    && self.store.contains(&old.hash, old.format) =>
+            {
+                old.hash
+            }
+            _ => {
+                self.reporter.report(Event::Fetching { name: name.clone() });
+                self.fetch(&resolved.artifact, resolved.format).await?
+            }
+        };
+        let locked = LockedMod {
+            name,
+            source: spec.source,
+            id: resolved.id,
+            requested: spec.version,
+            version: resolved.version,
+            hash,
+            format: resolved.format,
+            artifact: resolved.artifact,
+            dependencies: resolved
+                .dependencies
+                .iter()
+                .map(|d| mod_key(&d.source, &d.id))
+                .collect(),
+            requires: resolved
+                .dependencies
+                .into_iter()
+                .filter(|d| !d.req.is_any())
+                .map(|d| (mod_key(&d.source, &d.id), d.req))
+                .collect(),
+        };
+        Ok((locked, Some(key)))
     }
 
     async fn fetch(
@@ -1080,11 +1110,17 @@ impl Patchwork {
                         "{url} can't be downloaded as a directory"
                     )));
                 }
-                let tmp = self.paths.downloads().join("download.tmp");
+                // downloads run side by side while locking, so each gets a
+                // file of its own, removed when it's dropped
+                let dir = self.paths.downloads();
+                fs::create_dir_all(&dir).at(&dir)?;
+                let tmp = tempfile::Builder::new()
+                    .suffix(".tmp")
+                    .tempfile_in(&dir)
+                    .at(&dir)?
+                    .into_temp_path();
                 download(url, &tmp).await?;
-                let hash = self.store.ingest_path(&tmp, format);
-                fs::remove_file(&tmp).at(&tmp)?;
-                hash
+                self.store.ingest_path(&tmp, format)
             }
         }
     }
@@ -1464,14 +1500,13 @@ impl Patchwork {
     }
 }
 
-/// Streams `url` into the file at `dest`. Holding the state lock means only
-/// one download happens at a time, so `dest` can be a fixed path.
+/// Streams `url` into the file at `dest`.
 async fn download(url: &str, dest: &Path) -> Result<()> {
     let reqwest_error = |result| Error::Reqwest {
         url: url.to_owned(),
         result,
     };
-    let mut response = reqwest::get(url)
+    let mut response = crate::http_get(url)
         .await
         .and_then(|r| r.error_for_status())
         .map_err(reqwest_error)?;

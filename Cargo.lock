@@ -2957,6 +2957,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "directories",
+ "futures-util",
  "jiff",
  "reqwest",
  "serde",

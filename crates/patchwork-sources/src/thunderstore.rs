@@ -332,8 +332,10 @@ impl Source for Thunderstore {
     async fn summary(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Option<ModSummary>> {
         let community = config(ctx)?.community;
         let (namespace, name) = split_id(id)?;
-        let detail: ListedPackageDetail =
-            get_json(format!("{CYBERSTORM}/listing/{community}/{namespace}/{name}/")).await?;
+        let detail: ListedPackageDetail = get_json(format!(
+            "{CYBERSTORM}/listing/{community}/{namespace}/{name}/"
+        ))
+        .await?;
         Ok(Some(detail_to_summary(&community, detail)))
     }
 
@@ -415,13 +417,12 @@ impl Source for Thunderstore {
         let url =
             reqwest::Url::parse_with_params(&format!("{CYBERSTORM}/listing/{community}/"), &params)
                 .map_err(|e| error(format!("bad search url: {e}")))?;
-        let response =
-            reqwest::get(url.clone())
-                .await
-                .map_err(|result| patchwork_core::Error::Reqwest {
-                    url: url.to_string(),
-                    result,
-                })?;
+        let response = patchwork_core::http_get(url.clone())
+            .await
+            .map_err(|result| patchwork_core::Error::Reqwest {
+                url: url.to_string(),
+                result,
+            })?;
         // asking for a page past the end is a 404
         if query.page > 0 && response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(SearchPage::empty(sort));
@@ -447,12 +448,13 @@ async fn community_categories(community: &str) -> Result<Vec<ListedCategory>> {
 }
 
 async fn get_json<T: DeserializeOwned>(url: String) -> Result<T> {
-    let response = reqwest::get(&url)
-        .await
-        .map_err(|result| patchwork_core::Error::Reqwest {
-            url: url.clone(),
-            result,
-        })?;
+    let response =
+        patchwork_core::http_get(&url)
+            .await
+            .map_err(|result| patchwork_core::Error::Reqwest {
+                url: url.clone(),
+                result,
+            })?;
     read_json(&url, response).await
 }
 
