@@ -83,7 +83,12 @@ enum Command {
     /// List the versions a mod can be pinned to, newest first.
     Versions { name: String },
     /// List the mods in the profile, in load order.
-    List,
+    List {
+        /// Only list mods matching this, best match first. Mods are found by
+        /// name, and by author and description once their details have been
+        /// fetched (by sorting by tags, say). Close misspellings still match.
+        query: Vec<String>,
+    },
     /// Move a mod in the load order. Later mods win when two provide the
     /// same file; a mod's dependencies always load before it regardless.
     Move {
@@ -364,12 +369,20 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("{v}{mark}");
             }
         }
-        Command::List => {
-            let (_, loaded) = selected(&pw, &cli.profile)?;
+        Command::List { query } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
             if loaded.mods.is_empty() {
                 println!("{} has no mods", loaded.label());
+            } else if query.is_empty() {
+                print_mods(loaded.mods.iter().enumerate());
+            } else {
+                let query = query.join(" ");
+                let found = pw.find_mods(&profile, &query)?;
+                if found.is_empty() {
+                    println!("no mods in {} match \"{query}\"", loaded.label());
+                }
+                print_mods(found.iter().map(|(i, m)| (*i, m)));
             }
-            print_mods(&loaded.mods);
         }
         Command::Move { name, to } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
@@ -379,7 +392,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Sort { by, tags, dry_run } => {
             let (profile, _) = selected(&pw, &cli.profile)?;
             let sorted = pw.sorted_mods(&profile, &by, &tags).await?;
-            print_mods(&sorted);
+            print_mods(sorted.iter().enumerate());
             if !dry_run {
                 let names: Vec<String> = sorted.into_iter().map(|m| m.name).collect();
                 pw.reorder_mods(&profile, &names)?;
@@ -703,9 +716,18 @@ fn print_op(op: &DeployOp) {
 }
 
 /// Numbered, so positions can be given to `move --to`.
-fn print_mods(mods: &[ProfileMod]) {
-    let width = mods.len().to_string().len();
-    for (i, m) in mods.iter().enumerate() {
+/// Prints mods numbered by their places in the load order, which are given
+/// as indices.
+fn print_mods<'a>(mods: impl IntoIterator<Item = (usize, &'a ProfileMod)>) {
+    let mods: Vec<_> = mods.into_iter().collect();
+    let width = mods
+        .iter()
+        .map(|(i, _)| i + 1)
+        .max()
+        .unwrap_or(0)
+        .to_string()
+        .len();
+    for (i, m) in mods {
         let mark = if m.enabled { 'x' } else { ' ' };
         let version = m
             .version

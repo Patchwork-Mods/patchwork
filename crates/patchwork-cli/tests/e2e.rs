@@ -128,6 +128,10 @@ fn thunderstore_style_mods_round_trip() {
     env.run(&["add", pack.to_str().unwrap(), "--name", "BepInExPack"]);
     env.run(&["add", &format!("local:{}", plugin.display())]);
     assert!(env.run(&["list"]).contains("[x] MoreCompany"));
+    // matches keep their numbers in the load order
+    let found = env.run(&["list", "more", "compny"]);
+    assert!(found.contains("2. [x] MoreCompany"), "{found}");
+    assert!(!found.contains("BepInExPack"), "{found}");
 
     let dry = env.run(&["deploy", "--dry-run"]);
     assert!(

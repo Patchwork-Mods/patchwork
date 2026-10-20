@@ -8,7 +8,7 @@
          see theme() in main.rs. -->
     <style id="theme-default"></style>
     <style id="theme-game"></style>
-    <script src="app.js" defer></script>
+    <script type="module" src="app.js"></script>
   </head>
   <body data-screen="games">
     <!-- The first screen: every known game, plus a way to add one. -->
@@ -39,7 +39,7 @@
           <p id="profile-meta" class="muted"></p>
         </div>
         <!-- Mods, then one tab per source the game can be searched on; see
-             renderSourceTabs() in app.js. -->
+             renderSourceTabs() in browse.js. -->
         <div id="tabs" class="tabs" role="tablist">
           <button role="tab" data-tab="mods" aria-selected="true">Mods</button>
         </div>
@@ -91,7 +91,7 @@
               <div class="menu-items"></div>
             </details>
             <!-- Narrows the mods down to the ones matching, best first; see
-                 rankMods() in app.js. -->
+                 find_mods in main.rs. -->
             <input
               id="mod-search"
               type="search"
@@ -104,7 +104,7 @@
           </div>
           <!-- Cards look like a source's search results; the list is denser,
                with rows that expand to show the rest. See setModsView() in
-               app.js. -->
+               mods.js. -->
           <div id="mods-view" class="segmented" role="group" aria-label="Layout">
             <button type="button" data-view="cards" aria-pressed="true">Cards</button>
             <button type="button" data-view="list" aria-pressed="false">List</button>
@@ -143,7 +143,7 @@
 
     <footer id="statusbar">
       <span id="status" class="muted">Ready</span>
-      <!-- Shown after a sort; see sortMods() in app.js. -->
+      <!-- Shown after a sort; see sortMods() in toolbar.js. -->
       <button id="undo" hidden>Undo</button>
     </footer>
 

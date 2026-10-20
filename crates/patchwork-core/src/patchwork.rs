@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use jiff::Timestamp;
+use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -15,6 +15,7 @@ use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, validate_game_id};
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
+use crate::matching::{self, ModText};
 use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
@@ -40,6 +41,16 @@ pub struct KnownVersions {
     pub versions: Vec<String>,
 }
 
+impl KnownVersions {
+    /// How long fetched versions are trusted before they're worth fetching
+    /// again.
+    pub const TTL: SignedDuration = SignedDuration::from_hours(1);
+
+    pub fn is_stale(&self) -> bool {
+        Timestamp::now().duration_since(self.fetched) > Self::TTL
+    }
+}
+
 /// Where a cache under `dir` keeps what it knows about a mod. Ids can be
 /// paths or have characters that don't belong in file names, so the file is
 /// named by a hash of the id.
@@ -56,6 +67,35 @@ pub struct KnownSummary {
     pub fetched: Timestamp,
     /// `None` if the source has nothing to show for the mod.
     pub summary: Option<ModSummary>,
+}
+
+impl KnownSummary {
+    /// The same as [`KnownVersions::TTL`], for summaries, which matter less
+    /// and change less.
+    pub const TTL: SignedDuration = SignedDuration::from_hours(24);
+
+    /// Whether it's old enough to fetch again, or is behind `versions` (see
+    /// [`KnownSummary::is_behind`]).
+    pub fn is_stale(&self, versions: Option<&KnownVersions>) -> bool {
+        Timestamp::now().duration_since(self.fetched) > Self::TTL
+            || versions.is_some_and(|v| self.is_behind(v))
+    }
+
+    /// Whether versions fetched after it have a newer version than the one
+    /// it knew about, so its details (when the mod was updated, say) are out
+    /// of date. Sources whose summaries name versions differently from
+    /// their version lists just get their summary fetched again each time
+    /// the versions are.
+    pub fn is_behind(&self, versions: &KnownVersions) -> bool {
+        let latest = self
+            .summary
+            .as_ref()
+            .and_then(|s| s.latest_version.as_ref());
+        match (latest, versions.versions.first()) {
+            (Some(latest), Some(newest)) => versions.fetched > self.fetched && latest != newest,
+            _ => false,
+        }
+    }
 }
 
 /// How to import a profile; see [`Patchwork::import_profile`].
@@ -607,6 +647,34 @@ impl Patchwork {
         }
         order::sort_mods(&mut loaded.mods, keys, tag_order, &facts);
         Ok(loaded.mods)
+    }
+
+    /// The profile's mods matching `query` (see [`matching::rank`]), best
+    /// first, each with its place in the load order. Nothing is fetched:
+    /// mods are found by their [`Patchwork::known_summary`] if they have
+    /// one, and otherwise just by name.
+    pub fn find_mods(&self, profile: &ProfileRef, query: &str) -> Result<Vec<(usize, ProfileMod)>> {
+        let loaded = self.load_profile(profile)?;
+        let summaries: Vec<Option<ModSummary>> = loaded
+            .mods
+            .iter()
+            .map(|m| {
+                self.known_summary(&loaded.game, &m.source, &m.id)
+                    .and_then(|k| k.summary)
+            })
+            .collect();
+        let texts: Vec<ModText> = loaded
+            .mods
+            .iter()
+            .zip(&summaries)
+            .map(|(m, s)| ModText::of(m, s.as_ref()))
+            .collect();
+        let found = matching::rank(&texts, query);
+        let mut mods: Vec<Option<ProfileMod>> = loaded.mods.into_iter().map(Some).collect();
+        Ok(found
+            .into_iter()
+            .map(|i| (i, mods[i].take().expect("rank gives each mod once")))
+            .collect())
     }
 
     /// Whether `source`'s mods have versions that can be listed and picked.
@@ -1459,6 +1527,47 @@ mod tests {
     use std::net::TcpListener;
 
     use super::*;
+
+    fn known_summary(latest: &str, fetched: &str) -> KnownSummary {
+        KnownSummary {
+            id: "a-b".to_owned(),
+            fetched: fetched.parse().unwrap(),
+            summary: Some(ModSummary {
+                source: "thunderstore".to_owned(),
+                id: "a-b".to_owned(),
+                name: "b".to_owned(),
+                url: None,
+                author: None,
+                author_url: None,
+                summary: None,
+                icon_url: None,
+                downloads: None,
+                rating: None,
+                updated: None,
+                latest_version: Some(latest.to_owned()),
+                categories: Vec::new(),
+            }),
+        }
+    }
+
+    fn known_versions(newest: &str, fetched: &str) -> KnownVersions {
+        KnownVersions {
+            id: "a-b".to_owned(),
+            fetched: fetched.parse().unwrap(),
+            versions: vec![newest.to_owned(), "1.0.0".to_owned()],
+        }
+    }
+
+    #[test]
+    fn summary_is_behind_once_later_versions_have_a_newer_one() {
+        let s = known_summary("1.1.0", "2026-10-01T00:00:00Z");
+        let later = "2026-10-02T00:00:00Z";
+        assert!(s.is_behind(&known_versions("1.2.0", later)));
+        assert!(!s.is_behind(&known_versions("1.1.0", later)));
+        // versions from before the summary was fetched don't count
+        let earlier = "2026-09-30T00:00:00Z";
+        assert!(!s.is_behind(&known_versions("1.2.0", earlier)));
+    }
 
     /// Answers one HTTP request with `status` and `body`, returning its URL.
     fn serve_once(status: &'static str, body: &'static [u8]) -> String {

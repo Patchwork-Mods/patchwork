@@ -17,6 +17,7 @@ pub mod fsutil;
 pub mod game;
 pub mod hash;
 pub mod lock;
+pub mod matching;
 pub mod order;
 pub mod paths;
 pub mod profile;

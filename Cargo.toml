@@ -32,6 +32,7 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread"] }
 toml = "1.1.6"
+unicode-normalization = "0.1.26"
 uuid = {version = "1.28.0", features = ["serde", "v4"]}
 walkdir = "2.5.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

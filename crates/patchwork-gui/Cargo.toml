@@ -18,7 +18,6 @@ patchwork-core.workspace = true
 patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
 patchwork-formats.workspace = true
-jiff.workspace = true
 serde.workspace = true
 tauri.workspace = true
 tauri-plugin-opener.workspace = true

@@ -1,10 +1,12 @@
 // Don't open a console window alongside the app on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod details;
+
 use std::fmt::Display;
 use std::sync::Mutex;
 
-use jiff::{SignedDuration, Timestamp};
+use patchwork_core::Patchwork;
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -14,7 +16,6 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::ModSpec;
-use patchwork_core::{KnownSummary, KnownVersions, Patchwork};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
@@ -33,6 +34,7 @@ struct App {
     /// The plan from the last `plan_deploy`, waiting for the user to confirm
     /// it with `apply_plan`.
     plan: Mutex<Option<DeployPlan>>,
+    details: details::Details,
 }
 
 /// Forwards core progress to the window as `patchwork://event`.
@@ -139,50 +141,18 @@ struct ProfileDetail {
 struct UiMod {
     #[serde(flatten)]
     profile: ProfileMod,
+    /// `<source>:<id>`, which events about the mod name it by.
+    key: String,
     /// The version in the lockfile, if it's been locked.
     locked: Option<String>,
     /// Whether the mod's source has versions to pick from.
     versioned: bool,
     /// Its versions as last fetched, newest first, if they ever have been.
+    /// `refresh_details` fetches them again once they're stale.
     versions: Option<Vec<String>>,
-    /// Whether `versions` is old enough (or missing) that the UI should
-    /// fetch it again.
-    versions_stale: bool,
     /// What a search would show for it (picture, summary, ...), as last
-    /// fetched.
+    /// fetched. The same goes for it as for `versions`.
     summary: Option<ModSummary>,
-    /// Like `versions_stale`, for `summary`.
-    summary_stale: bool,
-}
-
-/// How long a mod's fetched versions are trusted before the UI refreshes
-/// them in the background.
-const VERSIONS_TTL: SignedDuration = SignedDuration::from_hours(1);
-
-/// The same for summaries, which matter less and change less.
-const SUMMARY_TTL: SignedDuration = SignedDuration::from_hours(24);
-
-fn is_stale(fetched: Option<Timestamp>, ttl: SignedDuration) -> bool {
-    fetched.is_none_or(|f| Timestamp::now().duration_since(f) > ttl)
-}
-
-/// Whether versions fetched after `summary` have a newer version than the
-/// one it knew about, so its details (when the mod was updated, say) are
-/// out of date. Sources whose summaries name versions differently from
-/// their version lists just get their summary fetched again each time the
-/// versions are.
-fn summary_behind(summary: Option<&KnownSummary>, versions: Option<&KnownVersions>) -> bool {
-    let (Some(summary), Some(versions)) = (summary, versions) else {
-        return false;
-    };
-    let latest = summary
-        .summary
-        .as_ref()
-        .and_then(|s| s.latest_version.as_ref());
-    match (latest, versions.versions.first()) {
-        (Some(latest), Some(newest)) => versions.fetched > summary.fetched && latest != newest,
-        _ => false,
-    }
 }
 
 #[derive(Serialize)]
@@ -245,7 +215,12 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
 
 #[tauri::command]
 fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
-    let pw = &app.pw;
+    profile_detail(&app.pw, id)
+}
+
+/// Everything the UI shows about a profile. Commands that change one return
+/// this too, to save the UI asking again.
+fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let r = profile_ref(&id)?;
     let mut loaded = pw.load_profile(&r).map_err(msg)?;
     let install = pw
@@ -283,13 +258,8 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
                 .then(|| pw.known_versions(&loaded.game, &m.source, &m.id))
                 .flatten();
             let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
-            let summary_stale = is_stale(summary.as_ref().map(|k| k.fetched), SUMMARY_TTL)
-                || summary_behind(summary.as_ref(), known.as_ref());
             UiMod {
-                versions_stale: versioned
-                    && is_stale(known.as_ref().map(|k| k.fetched), VERSIONS_TTL),
                 versions: known.map(|k| k.versions),
-                summary_stale,
                 summary: summary.and_then(|k| k.summary),
                 versioned,
                 locked: lock
@@ -297,6 +267,7 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
                     .flat_map(|l| &l.mods)
                     .find(|l| l.key() == key)
                     .and_then(|l| l.version.clone()),
+                key,
                 profile: m,
             }
         })
@@ -395,10 +366,16 @@ fn set_game_path(app: State<'_, App>, game: String, path: String) -> CmdResult<(
 }
 
 #[tauri::command]
-fn set_enabled(app: State<'_, App>, id: String, name: String, enabled: bool) -> CmdResult<()> {
+fn set_enabled(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    enabled: bool,
+) -> CmdResult<ProfileDetail> {
     app.pw
         .set_enabled(&profile_ref(&id)?, &name, enabled)
-        .map_err(msg)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
 }
 
 #[tauri::command]
@@ -456,31 +433,25 @@ async fn sort_mods(
 /// of them once.
 #[tauri::command]
 fn reorder_mods(app: State<'_, App>, id: String, names: Vec<String>) -> CmdResult<()> {
-    app.pw
-        .reorder_mods(&profile_ref(&id)?, &names)
-        .map_err(msg)
+    app.pw.reorder_mods(&profile_ref(&id)?, &names).map_err(msg)
 }
 
-/// The versions a mod can be pinned to, newest first.
+/// Starts fetching whatever's out of date about the profile's mods' versions
+/// and summaries in the background; see details.rs.
 #[tauri::command]
-async fn versions(
-    app: State<'_, App>,
-    game: String,
-    source: String,
-    mod_id: String,
-) -> CmdResult<Vec<String>> {
-    app.pw.versions(&game, &source, &mod_id).await.map_err(msg)
+fn refresh_details(handle: AppHandle, id: String) -> CmdResult<()> {
+    details::refresh(&handle, &profile_ref(&id)?)
 }
 
-/// What a search would show for a mod, if its source has anything to show.
+/// The keys of the profile's mods matching `query`, best first; see
+/// `patchwork_core::matching`.
 #[tauri::command]
-async fn summary(
-    app: State<'_, App>,
-    game: String,
-    source: String,
-    mod_id: String,
-) -> CmdResult<Option<ModSummary>> {
-    app.pw.summary(&game, &source, &mod_id).await.map_err(msg)
+async fn find_mods(app: State<'_, App>, id: String, query: String) -> CmdResult<Vec<String>> {
+    let found = app.pw.find_mods(&profile_ref(&id)?, &query).map_err(msg)?;
+    Ok(found
+        .into_iter()
+        .map(|(_, m)| mod_key(&m.source, &m.id))
+        .collect())
 }
 
 /// Pins a mod to `version` (or unpins it with none) and locks the profile,
@@ -491,10 +462,11 @@ async fn set_version(
     id: String,
     name: String,
     version: Option<String>,
-) -> CmdResult<()> {
+) -> CmdResult<ProfileDetail> {
     let r = profile_ref(&id)?;
     app.pw.set_version(&r, &name, version).map_err(msg)?;
-    app.pw.lock(&r, false).await.map(drop).map_err(msg)
+    app.pw.lock(&r, false).await.map_err(msg)?;
+    profile_detail(&app.pw, id)
 }
 
 /// A mod whose locked version changed when the lock was updated.
@@ -509,12 +481,15 @@ struct LockChange {
 
 /// Relocks the profile at the newest versions, like `patchwork lock
 /// --update`, and returns what changed. Pinned mods stay where they are.
+/// Mods that moved to a new version have new details too, so the next
+/// `refresh_details` fetches them.
 #[tauri::command]
 async fn update_lock(app: State<'_, App>, id: String) -> CmdResult<Vec<LockChange>> {
     let r = profile_ref(&id)?;
     let before = app.pw.load_lock(&r).map_err(msg)?;
     let after = app.pw.lock(&r, true).await.map_err(msg)?;
-    Ok(after
+    let mut changed = Vec::new();
+    let changes = after
         .mods
         .into_iter()
         .filter_map(|m| {
@@ -522,14 +497,26 @@ async fn update_lock(app: State<'_, App>, id: String) -> CmdResult<Vec<LockChang
             let old = before.iter().flat_map(|l| &l.mods).find(|l| l.key() == key);
             match old {
                 Some(old) if old.version == m.version && old.hash == m.hash => None,
-                _ => Some(LockChange {
-                    name: m.name,
-                    from: old.and_then(|o| o.version.clone()),
-                    to: m.version,
-                }),
+                _ => {
+                    changed.push(key);
+                    Some(LockChange {
+                        name: m.name,
+                        from: old.and_then(|o| o.version.clone()),
+                        to: m.version,
+                    })
+                }
             }
         })
-        .collect())
+        .collect();
+    app.details.outdate(&after.game.id, changed);
+    Ok(changes)
+}
+
+/// A mod that's been added, and the profile with it.
+#[derive(Serialize)]
+struct Added {
+    name: String,
+    profile: ProfileDetail,
 }
 
 #[tauri::command]
@@ -538,7 +525,7 @@ async fn add_mod(
     id: String,
     source: String,
     mod_id: String,
-) -> CmdResult<String> {
+) -> CmdResult<Added> {
     let spec = ModSpec {
         source,
         id: mod_id,
@@ -549,7 +536,10 @@ async fn add_mod(
         .add_mod(&profile_ref(&id)?, spec, None, true)
         .await
         .map_err(msg)?;
-    Ok(added.name)
+    Ok(Added {
+        name: added.name,
+        profile: profile_detail(&app.pw, id)?,
+    })
 }
 
 #[tauri::command]
@@ -650,6 +640,7 @@ fn main() {
             app.manage(App {
                 pw,
                 plan: Mutex::new(None),
+                details: details::Details::default(),
             });
             Ok(())
         })
@@ -666,8 +657,8 @@ fn main() {
             set_hidden_tags,
             sort_mods,
             reorder_mods,
-            versions,
-            summary,
+            refresh_details,
+            find_mods,
             set_version,
             update_lock,
             add_mod,
@@ -678,51 +669,4 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running patchwork");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn summary(latest: &str, fetched: &str) -> KnownSummary {
-        KnownSummary {
-            id: "a-b".to_owned(),
-            fetched: fetched.parse().unwrap(),
-            summary: Some(ModSummary {
-                source: "thunderstore".to_owned(),
-                id: "a-b".to_owned(),
-                name: "b".to_owned(),
-                url: None,
-                author: None,
-                author_url: None,
-                summary: None,
-                icon_url: None,
-                downloads: None,
-                rating: None,
-                updated: None,
-                latest_version: Some(latest.to_owned()),
-                categories: Vec::new(),
-            }),
-        }
-    }
-
-    fn versions(newest: &str, fetched: &str) -> KnownVersions {
-        KnownVersions {
-            id: "a-b".to_owned(),
-            fetched: fetched.parse().unwrap(),
-            versions: vec![newest.to_owned(), "1.0.0".to_owned()],
-        }
-    }
-
-    #[test]
-    fn summary_is_behind_once_later_versions_have_a_newer_one() {
-        let s = summary("1.1.0", "2026-10-01T00:00:00Z");
-        let later = "2026-10-02T00:00:00Z";
-        assert!(summary_behind(Some(&s), Some(&versions("1.2.0", later))));
-        assert!(!summary_behind(Some(&s), Some(&versions("1.1.0", later))));
-        // versions from before the summary was fetched don't count
-        let earlier = "2026-09-30T00:00:00Z";
-        assert!(!summary_behind(Some(&s), Some(&versions("1.2.0", earlier))));
-        assert!(!summary_behind(Some(&s), None));
-    }
 }
