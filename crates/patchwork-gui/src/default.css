@@ -154,25 +154,11 @@ button:focus-visible {
 }
 
 /* Update, while mods set to Auto have a newer version: outlined in the
-   accent colour, with how many in a pill. */
+   accent colour, with how many after it. */
 #update.has-updates {
   border-color: var(--pw-accent);
   color: var(--pw-accent);
   font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.update-count {
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 18px;
-  text-align: center;
-  color: var(--pw-accent-text);
-  background: var(--pw-accent);
 }
 
 /* Game picker */

@@ -99,16 +99,11 @@ export function renderProfile({ keepMods = false } = {}) {
     return;
   }
 
-  $("#profile-title").textContent = p.label;
+  // The game is in the sidebar, its folder is in its settings, and whether
+  // it's deployed is on the Deploy button, so this is just the profile.
+  $("#profile-title").textContent = p.name;
   const enabled = p.mods.filter((m) => m.enabled).length;
-  const deployed = {
-    notDeployed: "not deployed",
-    otherProfile: "another profile is deployed",
-    stale: `deployed (${p.deployedFiles} files), out of date`,
-    deployed: `deployed (${p.deployedFiles} files)`,
-  }[p.deployStatus];
-  $("#profile-meta").textContent =
-    `${enabled}/${p.mods.length} mods enabled · ${p.install ?? "game not set up"} · ${deployed}`;
+  $("#profile-meta").textContent = `${enabled} of ${p.mods.length} mods enabled`;
   $("#game-path").hidden = !!p.install;
 
   if (!keepMods) renderMods(p.mods);

@@ -124,6 +124,7 @@ struct ProfileDetail {
     id: String,
     label: String,
     game: String,
+    name: String,
     mods: Vec<UiMod>,
     /// Mods with any of these tags go in the Mods tab's hidden section.
     hidden_tags: Vec<String>,
@@ -254,6 +255,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         })
         .unwrap_or_default();
     let label = loaded.label();
+    let name = loaded.name.clone();
     let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
     let mods = loaded
         .mods
@@ -281,6 +283,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .collect();
     Ok(ProfileDetail {
         label,
+        name,
         game: loaded.game,
         mods,
         hidden_tags,

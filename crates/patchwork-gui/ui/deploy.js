@@ -122,19 +122,14 @@ const canUpdate = (m) =>
   m.versioned && !m.version && m.locked && m.versions?.[0] && m.versions[0] !== m.locked;
 
 /**
- * Has the Update button stand out, with a count, while any mod that follows
- * the latest version has a newer one it could move to.
+ * Has the Update button stand out, as "Update (N)", while any mod that
+ * follows the latest version has a newer one it could move to.
  */
 export function markUpdates() {
   const count = state.profile?.mods.filter(canUpdate).length ?? 0;
   const button = $("#update");
   button.classList.toggle("has-updates", count > 0);
-  button.replaceChildren(
-    "Update",
-    ...(count
-      ? [h("span", { class: "update-count", "aria-label": `${count} available` }, String(count))]
-      : []),
-  );
+  button.textContent = count ? `Update (${count})` : "Update";
 }
 
 // Progress from long-running commands (adding, locking, deploying).
