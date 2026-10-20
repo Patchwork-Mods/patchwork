@@ -1,78 +1,166 @@
-# Install rules for BepInEx 5 games, following the layout r2modman uses for
-# Thunderstore packages. Rules are tried in order and the first match wins.
+# Install rules for BepInEx 5 and 6 games, following what r2modman does for
+# Thunderstore packages (its BepInExInstaller and InstallRulePluginInstaller).
+# Rules are tried in order and the first match wins; patterns ignore case.
 #
-#   files  glob matched against each file's path inside the mod
-#   mods   optional glob matched against the mod's name
-#   strip  leading path components to drop (the rule doesn't apply if there
-#          aren't enough)
-#   to     destination in the game directory; {mod}, {path} (after stripping)
-#          and {file} are filled in. Defaults to "{path}".
-#   skip   don't deploy matching files
+#   files   glob matched against each file's path inside the mod
+#   folder  only matches files under a folder with this name, at any depth;
+#           {path} is then what comes after it. If a file is under several
+#           named folders, the outermost one decides.
+#   mods    glob, or list of globs, matched against the mod's name
+#   strip   leading path components to drop (the rule doesn't apply if there
+#           aren't enough)
+#   to      destination in the game directory; {mod}, {path} (after stripping)
+#           and {file} are filled in. Defaults to "{path}".
+#   skip    don't deploy matching files
 
-# The loader itself: BepInExPack keeps everything under BepInExPack/.
+# --- The loader ---
+
+# Loader packs keep BepInEx under a root folder whose contents go in the game
+# directory. Matched by folder rather than by name, so a pack added from a
+# local zip works too.
 [[rules]]
-files = "BepInExPack/**"
+files = "{BepInExPack*,BepInEx_Valheim_Full}/**"
 strip = 1
 
-# Thunderstore package metadata isn't part of the mod.
+# The one pack without a root folder. Its metadata isn't part of the loader.
 [[rules]]
-files = "{manifest.json,icon.png,README.md,CHANGELOG.md,LICENSE,LICENSE.md,LICENSE.txt}"
+mods = "bbepis-BepInEx_Rogue_Tower"
+files = "{manifest.json,icon.png,README.md}"
 skip = true
 
-# Like r2modman, each mod gets its own folder under plugins, patchers, core
-# and monomod, even if it ships a BepInEx/ folder of its own. Some mods rely on
-# this: RoR2's BepInExPack refuses to load FixPluginTypesSerialization unless
-# its path contains `RiskofThunder-FixPluginTypesSerialization`.
 [[rules]]
-files = "BepInEx/plugins/**"
-strip = 2
-to = "BepInEx/plugins/{mod}/{path}"
+mods = "bbepis-BepInEx_Rogue_Tower"
+files = "**"
 
-[[rules]]
-files = "BepInEx/patchers/**"
-strip = 2
-to = "BepInEx/patchers/{mod}/{path}"
-
-[[rules]]
-files = "BepInEx/core/**"
-strip = 2
-to = "BepInEx/core/{mod}/{path}"
-
-[[rules]]
-files = "BepInEx/monomod/**"
-strip = 2
-to = "BepInEx/monomod/{mod}/{path}"
-
-# Anything else under BepInEx/ (config and so on) goes in as-is.
-[[rules]]
-files = "BepInEx/**"
-
-[[rules]]
-files = "plugins/**"
-strip = 1
-to = "BepInEx/plugins/{mod}/{path}"
-
-[[rules]]
-files = "patchers/**"
-strip = 1
-to = "BepInEx/patchers/{mod}/{path}"
-
-[[rules]]
-files = "core/**"
-strip = 1
-to = "BepInEx/core/{mod}/{path}"
-
-[[rules]]
-files = "monomod/**"
-strip = 1
-to = "BepInEx/monomod/{mod}/{path}"
-
-[[rules]]
-files = "config/**"
-strip = 1
-to = "BepInEx/config/{path}"
-
-# Anything else is treated as plugin content.
+# Everything else in a known loader pack (manifest, readme and so on) is left
+# out, as r2modman does. From `modloaderPackages` in Thunderstore's ecosystem
+# schema: https://thunderstore.io/api/experimental/schema/dev/latest/
 [[rules]]
 files = "**"
+skip = true
+mods = [
+    "1F31A-BepInEx_Valheim_Full",
+    "ApproximatelyUp_Modding-BepInExPack_ApproximatelyUp",
+    "bbepis-BepInEx_Rogue_Tower",
+    "bbepis-BepInExPack",
+    "bbepisTaleSpire-BepInExPack",
+    "BepInEx-BepInExPack",
+    "BepInEx-BepInExPack_AcrossTheObelisk",
+    "BepInEx-BepInExPack_Aeruta",
+    "BepInEx-BepInExPack_AGAINST",
+    "BepInEx-BepInExPack_Aloft",
+    "BepInEx-BepInExPack_AmongUs",
+    "BepInEx-BepInExPack_BadNorth",
+    "BepInEx-BepInExPack_CaLABP",
+    "BepInEx-BepInExPack_Chrono_Ark",
+    "BepInEx-BepInExPack_Core_Keeper",
+    "BepInEx-BepInExPack_CrabGame",
+    "BepInEx-BepInExPack_CultOfTheLamb",
+    "BepInEx-BepInExPack_EtG",
+    "BepInEx-BepInExPack_FootballManager26",
+    "BepInEx-BepInExPack_ForTheKing",
+    "BepInEx-BepInExPack_GTFO",
+    "BepInEx-BepInExPack_H3VR",
+    "BepInEx-BepInExPack_HOTDS",
+    "BepInEx-BepInExPack_HumanFallFlat",
+    "BepInEx-BepInExPack_IL2CPP",
+    "BepInEx-BepInExPack_Inscryption",
+    "BepInEx-BepInExPack_InSilence",
+    "BepInEx-BepInExPack_LensIsland",
+    "BepInEx-BepInExPack_LLBlaze",
+    "BepInEx-BepInExPack_LostSkies",
+    "BepInEx-BepInExPack_Magicite",
+    "BepInEx-BepInExPack_Muck",
+    "BepInEx-BepInExPack_Mycopunk",
+    "BepInEx-BepInExPack_NASB",
+    "BepInEx-BepInExPack_NearlyDead",
+    "BepInEx-BepInExPack_Necropolis",
+    "BepInEx-BepInExPack_Ostranauts",
+    "BepInEx-BepInExPack_Outward",
+    "BepInEx-BepInExPack_Patapon",
+    "BepInEx-BepInExPack_PEAK",
+    "BepInEx-BepInExPack_Peglin",
+    "BepInEx-BepInExPack_PotionCraft",
+    "BepInEx-BepInExPack_Ravenfield",
+    "BepInEx-BepInExPack_RogueGenesia",
+    "BepInEx-BepInExPack_ROUNDS",
+    "BepInEx-BepInExPack_Silksong",
+    "BepInEx-BepInExPack_Sineus",
+    "BepInEx-BepInExPack_Skul",
+    "BepInEx-BepInExPack_SlashersKeep",
+    "BepInEx-BepInExPack_Stacklands",
+    "BepInEx-BepInExPack_Starsand",
+    "BepInEx-BepInExPack_TABS",
+    "BepInEx-BepInExPack_Thronefall",
+    "BepInEx-BepInExPack_Timberborn",
+    "BepInEx-BepInExPack_TromboneChamp",
+    "BepInEx-BepInExPack_V_Rising",
+    "BepInEx-BepInExPack_VTOL_VR",
+    "BepInEx-BepInExPack_WizardWithAGun",
+    "BepInEx-BepInExPack_x86",
+    "BepInEx_Wormtown-BepInExPack",
+    "BepInExPackMTD-BepInExPack_20MTD",
+    "BOMBANANA_Modding-BepInExPack_BOMBANANA",
+    "Crawl_Modding-BepInExPack_Crawl",
+    "CultOfPiN_Modding-BepInExPack_CultOfPiN",
+    "denikson-BepInExPack_Valheim",
+    "GoblinCleanupModding-BepInExPack_GoblinCleanup",
+    "grime_modding-BepInExPack_Grime",
+    "HoldfastModding-BepInExPack_Holdfast",
+    "Modding_Council-BepInExPack_of_Legend",
+    "Nucleares_Modding-BepInExPack_Nucleares",
+    "PCVR_Modders-BepInExPack_GHVR",
+    "Romestead_Modding-BepInExPack_Romestead",
+    "SFTG_Modding-BepInExPack_SFTG",
+    "silksong_modding-BepInExPack_Silksong",
+    "SlipSkid_Modding-BepInExPack_SlipSkid",
+    "Subnautica_Modding-BepInExPack",
+    "Subnautica_Modding-BepInExPack_BelowZero",
+    "Subnautica_Modding-BepInExPack_Subnautica",
+    "Subnautica_Modding-BepInExPack_Subnautica_Experimental",
+    "SunkenlandModding-BepInExPack_Sunkenland",
+    "TheSexyBrutale_Modding-BepInExPack_TheSexyBrutale",
+    "WhisperOfTheHouse_Modding-BepInExPack_WhisperOfTheHouse",
+    "xiaoxiao921-BepInExPack",
+    "xiaoye97-BepInEx",
+    "Zinal001-BepInExPack_MECHANICA",
+]
+
+# --- Mods ---
+
+# r2modman sends a folder named after one of its routes, wherever it is in
+# the package, to that route. Each mod gets its own subfolder under plugins,
+# patchers, core and monomod. Some mods rely on this: RoR2's BepInExPack
+# refuses to load FixPluginTypesSerialization unless its path contains
+# `RiskofThunder-FixPluginTypesSerialization`.
+[[rules]]
+folder = "plugins"
 to = "BepInEx/plugins/{mod}/{path}"
+
+[[rules]]
+folder = "patchers"
+to = "BepInEx/patchers/{mod}/{path}"
+
+[[rules]]
+folder = "core"
+to = "BepInEx/core/{mod}/{path}"
+
+[[rules]]
+folder = "monomod"
+to = "BepInEx/monomod/{mod}/{path}"
+
+# Config is shared, so it isn't per mod.
+[[rules]]
+folder = "config"
+to = "BepInEx/config/{path}"
+
+# Any other file goes by its extension, and loses the folders it was in.
+# That includes the package's manifest.json, icon.png and README.md, which
+# some mods read, e.g. to show in an in-game mod list.
+[[rules]]
+files = "**/*.mm.dll"
+to = "BepInEx/monomod/{mod}/{file}"
+
+[[rules]]
+files = "**"
+to = "BepInEx/plugins/{mod}/{file}"

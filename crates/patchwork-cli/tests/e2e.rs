@@ -93,8 +93,11 @@ fn installs_from_thunderstore() {
     // BepInExPack comes in as a dependency
     assert!(game.join("winhttp.dll").is_file());
     assert!(game.join("BepInEx/core/BepInEx.dll").is_file());
-    // MoreCompany ships its own BepInEx/ folder, so it goes in as-is
-    assert!(game.join("BepInEx/plugins/MoreCompany.dll").is_file());
+    // MoreCompany ships its own BepInEx/plugins/, which gets a folder of its own
+    assert!(
+        game.join("BepInEx/plugins/notnotnotswipez-MoreCompany/MoreCompany.dll")
+            .is_file()
+    );
     let lock = read(env.profile_dir().join("profile.lock"));
     assert!(lock.contains("1.11.0"), "{lock}");
     assert!(env.run(&["deploy"]).contains("nothing to do"));
@@ -125,7 +128,12 @@ fn thunderstore_style_mods_round_trip() {
 
     env.run(&["game", "set-path", "lethal-company", game.to_str().unwrap()]);
     env.run(&["profile", "new", "lethal-company/main"]);
-    env.run(&["add", pack.to_str().unwrap(), "--name", "BepInExPack"]);
+    env.run(&[
+        "add",
+        pack.to_str().unwrap(),
+        "--name",
+        "BepInEx-BepInExPack",
+    ]);
     env.run(&["add", &format!("local:{}", plugin.display())]);
     assert!(env.run(&["list"]).contains("[x] MoreCompany"));
     // matches keep their numbers in the load order

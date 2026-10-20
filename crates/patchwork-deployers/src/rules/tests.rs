@@ -21,22 +21,15 @@ fn dst(rules: &[CompiledRule], mod_name: &str, path: &str) -> Option<String> {
 fn bepinex_layout() {
     let rules = bepinex();
     let cases = [
-        ("BepInExPack/winhttp.dll", Some("winhttp.dll")),
-        (
-            "BepInExPack/BepInEx/core/BepInEx.dll",
-            Some("BepInEx/core/BepInEx.dll"),
-        ),
-        ("manifest.json", None),
-        ("icon.png", None),
+        // Route folders keep their contents' layout, wherever they are and
+        // however they're capitalized.
         ("plugins/Cool.dll", Some("BepInEx/plugins/Cool/Cool.dll")),
-        ("config/cool.cfg", Some("BepInEx/config/cool.cfg")),
-        ("Cool.dll", Some("BepInEx/plugins/Cool/Cool.dll")),
-        (
-            "assets/thing.bundle",
-            Some("BepInEx/plugins/Cool/assets/thing.bundle"),
-        ),
         (
             "BepInEx/plugins/X/x.dll",
+            Some("BepInEx/plugins/Cool/X/x.dll"),
+        ),
+        (
+            "Wrapper/Plugins/X/x.dll",
             Some("BepInEx/plugins/Cool/X/x.dll"),
         ),
         (
@@ -45,10 +38,78 @@ fn bepinex_layout() {
         ),
         ("core/x.dll", Some("BepInEx/core/Cool/x.dll")),
         ("monomod/x.mm.dll", Some("BepInEx/monomod/Cool/x.mm.dll")),
+        ("config/cool.cfg", Some("BepInEx/config/cool.cfg")),
         ("BepInEx/config/x.cfg", Some("BepInEx/config/x.cfg")),
+        // The outermost route folder wins.
+        ("config/plugins/x.cfg", Some("BepInEx/config/plugins/x.cfg")),
+        // Everything else goes by extension, flattened.
+        ("Cool.dll", Some("BepInEx/plugins/Cool/Cool.dll")),
+        ("x.MM.dll", Some("BepInEx/monomod/Cool/x.MM.dll")),
+        ("Lib/x.mm.dll", Some("BepInEx/monomod/Cool/x.mm.dll")),
+        (
+            "assets/thing.bundle",
+            Some("BepInEx/plugins/Cool/thing.bundle"),
+        ),
+        ("BepInEx/other/a.txt", Some("BepInEx/plugins/Cool/a.txt")),
+        ("manifest.json", Some("BepInEx/plugins/Cool/manifest.json")),
+        ("icon.png", Some("BepInEx/plugins/Cool/icon.png")),
     ];
     for (path, expected) in cases {
         assert_eq!(dst(&rules, "Cool", path).as_deref(), expected, "{path}");
+    }
+}
+
+#[test]
+fn bepinex_loader_packs() {
+    let rules = bepinex();
+    let cases = [
+        (
+            "bbepis-BepInExPack",
+            "BepInExPack/winhttp.dll",
+            Some("winhttp.dll"),
+        ),
+        (
+            "bbepis-BepInExPack",
+            "BepInExPack/BepInEx/core/BepInEx.dll",
+            Some("BepInEx/core/BepInEx.dll"),
+        ),
+        ("bbepis-BepInExPack", "manifest.json", None),
+        ("BBEPIS-bepinexpack", "README.md", None),
+        (
+            "denikson-BepInExPack_Valheim",
+            "BepInExPack_Valheim/doorstop_config.ini",
+            Some("doorstop_config.ini"),
+        ),
+        (
+            "BepInEx-BepInExPack_Core_Keeper",
+            "BepInExPack_Core-Keeper/winhttp.dll",
+            Some("winhttp.dll"),
+        ),
+        (
+            "1F31A-BepInEx_Valheim_Full",
+            "BepInEx_Valheim_Full/BepInEx/core/BepInEx.dll",
+            Some("BepInEx/core/BepInEx.dll"),
+        ),
+        (
+            "bbepis-BepInEx_Rogue_Tower",
+            "BepInEx/core/BepInEx.dll",
+            Some("BepInEx/core/BepInEx.dll"),
+        ),
+        (
+            "bbepis-BepInEx_Rogue_Tower",
+            "winhttp.dll",
+            Some("winhttp.dll"),
+        ),
+        ("bbepis-BepInEx_Rogue_Tower", "icon.png", None),
+        // Unknown packs (say, from a local zip) are recognized by folder.
+        ("MyPack", "BepInExPack/winhttp.dll", Some("winhttp.dll")),
+    ];
+    for (mod_name, path, expected) in cases {
+        assert_eq!(
+            dst(&rules, mod_name, path).as_deref(),
+            expected,
+            "{mod_name}: {path}"
+        );
     }
 }
 
@@ -58,7 +119,8 @@ fn mod_filters_and_escapes() {
         RulesDeployer
             .compile(Rule {
                 files: files.to_owned(),
-                mods: mods.map(str::to_owned),
+                folder: None,
+                mods: mods.map(|m| Patterns::One(m.to_owned())),
                 strip: 0,
                 to: Some(to.to_owned()),
                 skip: false,
@@ -74,4 +136,18 @@ fn mod_filters_and_escapes() {
 
     let evil = [rule("**", None, "../{path}")];
     assert!(place(&evil, "m", &RelPath::new("x").unwrap()).is_err());
+}
+
+#[test]
+fn mod_lists() {
+    let ruleset: Ruleset =
+        toml::from_str("[[rules]]\nmods = [\"a-*\", \"B-exact\"]\nto = \"x/{file}\"\n").unwrap();
+    let rules: Vec<_> = ruleset
+        .rules
+        .into_iter()
+        .map(|r| RulesDeployer.compile(r).unwrap())
+        .collect();
+    assert_eq!(dst(&rules, "a-thing", "f").as_deref(), Some("x/f"));
+    assert_eq!(dst(&rules, "b-EXACT", "f").as_deref(), Some("x/f"));
+    assert_eq!(dst(&rules, "c", "f"), None);
 }
