@@ -31,6 +31,29 @@ pub struct GameDef {
     /// How files get from the store into the game directory.
     #[serde(default)]
     pub link: LinkMethod,
+    #[serde(default, skip_serializing_if = "Detect::is_empty")]
+    pub detect: Detect,
+}
+
+/// Hints for finding where a game is installed. They don't affect deploying.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Detect {
+    /// Steam app ids.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steam: Vec<u32>,
+    /// The install folder's name, e.g. under Steam's `steamapps/common`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// Executables, any of which marks a folder as this game's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exe: Vec<String>,
+}
+
+impl Detect {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

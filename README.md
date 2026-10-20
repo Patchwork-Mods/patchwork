@@ -24,6 +24,7 @@ patchwork undeploy
 | `patchwork-sources` | built-in sources (`local`) |
 | `patchwork-deployers` | built-in deployers (`rules`) |
 | `patchwork-cli` | the `patchwork` binary, a thin layer over core |
+| `registry-gen` | regenerates `registry/` from Thunderstore's ecosystem schema (a dev tool, not released) |
 
 `registry/` holds the built-in game definitions and rulesets; see its README.
 

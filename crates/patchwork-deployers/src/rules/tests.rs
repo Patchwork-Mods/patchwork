@@ -1,13 +1,28 @@
 use super::*;
 
-fn bepinex() -> Vec<CompiledRule> {
-    let text = include_str!("../../../../registry/rulesets/bepinex.toml");
+fn registry_ruleset(id: &str) -> Option<toml::Table> {
+    let text = match id {
+        "bepinex" => include_str!("../../../../registry/rulesets/bepinex.toml"),
+        "bepinex-loader" => include_str!("../../../../registry/rulesets/bepinex-loader.toml"),
+        _ => return None,
+    };
+    Some(toml::from_str(text).unwrap())
+}
+
+fn parse(text: &str) -> Result<Vec<CompiledRule>> {
     let ruleset: Ruleset = toml::from_str(text).unwrap();
-    ruleset
-        .rules
+    let tables: Vec<_> = ["bepinex", "bepinex-loader"]
         .into_iter()
-        .map(|r| RulesDeployer.compile(r).unwrap())
-        .collect()
+        .map(|id| (id, registry_ruleset(id).unwrap()))
+        .collect();
+    let lookup = |id: &str| tables.iter().find(|(t, _)| *t == id).map(|(_, t)| t);
+    let mut out = Vec::new();
+    RulesDeployer.expand(&lookup, ruleset.rules, &mut out, 0)?;
+    Ok(out)
+}
+
+fn bepinex() -> Vec<CompiledRule> {
+    parse("[[rules]]\nruleset = \"bepinex\"\n").unwrap()
 }
 
 fn dst(rules: &[CompiledRule], mod_name: &str, path: &str) -> Option<String> {
@@ -118,7 +133,8 @@ fn mod_filters_and_escapes() {
     let rule = |files: &str, mods: Option<&str>, to: &str| {
         RulesDeployer
             .compile(Rule {
-                files: files.to_owned(),
+                ruleset: None,
+                files: Some(files.to_owned()),
                 folder: None,
                 mods: mods.map(|m| Patterns::One(m.to_owned())),
                 strip: 0,
@@ -140,14 +156,30 @@ fn mod_filters_and_escapes() {
 
 #[test]
 fn mod_lists() {
-    let ruleset: Ruleset =
-        toml::from_str("[[rules]]\nmods = [\"a-*\", \"B-exact\"]\nto = \"x/{file}\"\n").unwrap();
-    let rules: Vec<_> = ruleset
-        .rules
-        .into_iter()
-        .map(|r| RulesDeployer.compile(r).unwrap())
-        .collect();
+    let rules = parse("[[rules]]\nmods = [\"a-*\", \"B-exact\"]\nto = \"x/{file}\"\n").unwrap();
     assert_eq!(dst(&rules, "a-thing", "f").as_deref(), Some("x/f"));
     assert_eq!(dst(&rules, "b-EXACT", "f").as_deref(), Some("x/f"));
     assert_eq!(dst(&rules, "c", "f"), None);
+}
+
+#[test]
+fn includes_must_stand_alone_and_exist() {
+    let mixed = parse("[[rules]]\nruleset = \"bepinex\"\nskip = true\n");
+    assert!(mixed.is_err());
+    let missing = parse("[[rules]]\nruleset = \"nope\"\n");
+    assert!(missing.is_err());
+    // Rules around an include keep their place in the order.
+    let rules = parse(
+        "[[rules]]\nfiles = \"first.txt\"\nto = \"a/{file}\"\n\
+         [[rules]]\nruleset = \"bepinex\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        dst(&rules, "m", "first.txt").as_deref(),
+        Some("a/first.txt")
+    );
+    assert_eq!(
+        dst(&rules, "m", "other.txt").as_deref(),
+        Some("BepInEx/plugins/m/other.txt")
+    );
 }

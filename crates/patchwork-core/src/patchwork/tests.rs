@@ -109,6 +109,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
             config: toml::Table::new(),
         },
         link: Default::default(),
+        detect: Default::default(),
     }
 }
 

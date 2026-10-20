@@ -22,6 +22,9 @@ use serde::Deserialize;
 /// [[deployer.rules]]
 /// folder = "plugins"         # a folder with this name, at any depth
 /// to = "BepInEx/plugins/{mod}/{path}"
+///
+/// [[deployer.rules]]
+/// ruleset = "bepinex"        # a ruleset's rules, at this point in the list
 /// ```
 pub struct RulesDeployer;
 
@@ -53,8 +56,10 @@ enum Unmatched {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Rule {
-    #[serde(default = "any_file")]
-    files: String,
+    /// Includes a ruleset's rules in place of this one, which can't then set
+    /// anything else.
+    ruleset: Option<String>,
+    files: Option<String>,
     folder: Option<String>,
     mods: Option<Patterns>,
     #[serde(default)]
@@ -62,10 +67,6 @@ struct Rule {
     to: Option<String>,
     #[serde(default)]
     skip: bool,
-}
-
-fn any_file() -> String {
-    "**".to_owned()
 }
 
 /// One glob, or a list of them.
@@ -96,22 +97,61 @@ impl RulesDeployer {
         let config: Config = toml::Value::Table(ctx.config.clone())
             .try_into()
             .map_err(|e| self.error(format!("bad config for {}: {e}", ctx.game.id)))?;
-        let mut rules = config.rules;
-        for id in &config.rulesets {
-            let entry = ctx
-                .registry
-                .data("rulesets", id)
-                .ok_or_else(|| self.error(format!("no ruleset named `{id}`")))?;
-            let ruleset: Ruleset = toml::Value::Table(entry.value.clone())
-                .try_into()
-                .map_err(|e| self.error(format!("bad ruleset `{id}`: {e}")))?;
-            rules.extend(ruleset.rules);
+        let lookup = |id: &str| ctx.registry.data("rulesets", id).map(|e| &e.value);
+        let mut rules = Vec::new();
+        self.expand(&lookup, config.rules, &mut rules, 0)?;
+        for id in config.rulesets {
+            self.include(&lookup, &id, &mut rules, 0)?;
         }
-        let rules = rules
-            .into_iter()
-            .map(|r| self.compile(r))
-            .collect::<Result<_>>()?;
         Ok((rules, config.unmatched))
+    }
+
+    /// Compiles `rules` onto `out`, replacing includes with what they include.
+    fn expand<'a>(
+        &self,
+        lookup: &impl Fn(&str) -> Option<&'a toml::Table>,
+        rules: Vec<Rule>,
+        out: &mut Vec<CompiledRule>,
+        depth: usize,
+    ) -> Result<()> {
+        for rule in rules {
+            match &rule.ruleset {
+                Some(id) => {
+                    let alone = rule.files.is_none()
+                        && rule.folder.is_none()
+                        && rule.mods.is_none()
+                        && rule.strip == 0
+                        && rule.to.is_none()
+                        && !rule.skip;
+                    if !alone {
+                        return Err(self.error(format!(
+                            "a rule that includes `{id}` can't set anything else"
+                        )));
+                    }
+                    self.include(lookup, id, out, depth + 1)?;
+                }
+                None => out.push(self.compile(rule)?),
+            }
+        }
+        Ok(())
+    }
+
+    fn include<'a>(
+        &self,
+        lookup: &impl Fn(&str) -> Option<&'a toml::Table>,
+        id: &str,
+        out: &mut Vec<CompiledRule>,
+        depth: usize,
+    ) -> Result<()> {
+        // Deep enough for any sensible nesting, and stops include cycles.
+        if depth > 8 {
+            return Err(self.error(format!("rulesets nest too deeply at `{id}`")));
+        }
+        let table = lookup(id).ok_or_else(|| self.error(format!("no ruleset named `{id}`")))?;
+        let ruleset: Ruleset = toml::Value::Table(table.clone())
+            .try_into()
+            .map_err(|e| self.error(format!("bad ruleset `{id}`: {e}")))?;
+        self.expand(lookup, ruleset.rules, out, depth)
     }
 
     fn compile(&self, rule: Rule) -> Result<CompiledRule> {
@@ -142,7 +182,7 @@ impl RulesDeployer {
             return Err(self.error(format!("bad folder `{folder}`: must be a single name")));
         }
         Ok(CompiledRule {
-            files: glob(&rule.files)?.compile_matcher(),
+            files: glob(rule.files.as_deref().unwrap_or("**"))?.compile_matcher(),
             folder: rule.folder,
             mods,
             strip: rule.strip,
