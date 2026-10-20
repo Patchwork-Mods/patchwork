@@ -324,6 +324,50 @@ export function fillVersions(select, m) {
   select.value = current;
 }
 
+/** The mods in the Hidden section, as last rendered. */
+let hiddenMods = [];
+
+function renderHiddenCount() {
+  const off = hiddenMods.filter((m) => !m.enabled).length;
+  $("#hidden-mods > summary").textContent =
+    `Hidden (${hiddenMods.length})` + (off ? ` · ${off} disabled` : "");
+}
+
+/**
+ * Turns a mod on or off from its switch. Only its card or row changes, so the
+ * rest aren't rebuilt (which makes their pictures blink), and the page is
+ * scrolled to keep the switch where it was, as a problem can show up above.
+ */
+async function toggleMod(m, input) {
+  const { id } = state.profile;
+  const enabled = input.checked;
+  const item = input.closest("li");
+  const top = item.getBoundingClientRect().top;
+  let profile;
+  try {
+    profile = await run("set_enabled", { id, name: m.name, enabled });
+  } catch {
+    input.checked = !enabled;
+    return;
+  }
+  if (state.profile?.id !== id) return;
+  const mods = state.profile.mods;
+  const same =
+    profile.mods.length === mods.length && profile.mods.every((n, i) => n.key === mods[i].key);
+  if (!same) {
+    showProfile(profile);
+    return;
+  }
+  // the cards and rows on screen were made from these, so keep them up to date
+  profile.mods = profile.mods.map((n, i) => Object.assign(mods[i], n));
+  item.classList.toggle("disabled", !enabled);
+  const onOff = input.parentElement.querySelector("span");
+  if (onOff) onOff.textContent = enabled ? "On" : "Off";
+  showProfile(profile, { keepMods: true });
+  renderHiddenCount();
+  if (item.isConnected) $("#tab-mods").scrollTop += item.getBoundingClientRect().top - top;
+}
+
 /** Counts renderMods() calls, so one still waiting on a search gives way to a later one. */
 let renders = 0;
 
@@ -339,9 +383,7 @@ export async function renderMods(mods) {
   const view = modsView === "cards" ? modCard : modRow;
   const item = (m) =>
     view(m, {
-      onToggle: async (e) => {
-        showProfile(await run("set_enabled", { id, name: m.name, enabled: e.target.checked }));
-      },
+      onToggle: (e) => toggleMod(m, e.target),
       onRemove: async () => {
         if (!(await confirmRemove(m))) return;
         await run("remove_mod", { id, name: m.name });
@@ -361,16 +403,14 @@ export async function renderMods(mods) {
         }
       },
     });
-  const hidden = shown.filter(isHidden);
+  hiddenMods = shown.filter(isHidden);
   const layout = modsView === "cards" ? "result-grid" : "mod-list";
   $("#mods").className = layout;
   $("#mods").replaceChildren(...shown.filter((m) => !isHidden(m)).map(item));
   $("#hidden-mods-list").className = layout;
-  $("#hidden-mods-list").replaceChildren(...hidden.map(item));
-  $("#hidden-mods").hidden = !hidden.length;
-  const off = hidden.filter((m) => !m.enabled).length;
-  $("#hidden-mods > summary").textContent =
-    `Hidden (${hidden.length})` + (off ? ` · ${off} disabled` : "");
+  $("#hidden-mods-list").replaceChildren(...hiddenMods.map(item));
+  $("#hidden-mods").hidden = !hiddenMods.length;
+  renderHiddenCount();
   $("#mods-empty").hidden = shown.length > 0;
   $("#mods-empty").textContent = mods.length
     ? `No mods match “${query}”.`

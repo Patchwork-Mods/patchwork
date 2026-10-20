@@ -53,12 +53,16 @@ export async function openProfile(id) {
   showProfile(await run("profile", { id }));
 }
 
-/** Shows a profile, as loaded or as returned by a command that changed it. */
-export function showProfile(profile) {
+/**
+ * Shows a profile, as loaded or as returned by a command that changed it.
+ * With `keepMods`, the mods on screen are left as they are, for a change
+ * that's already showing on them.
+ */
+export function showProfile(profile, { keepMods = false } = {}) {
   state.profile = profile;
   state.searches = {};
   renderSidebar();
-  renderProfile();
+  renderProfile({ keepMods });
   refreshDetails();
 }
 
@@ -71,7 +75,7 @@ export function renderDeploy(p) {
   $("#deploy").classList.toggle("primary", !!p?.install && p.deployStatus !== "deployed");
 }
 
-export function renderProfile() {
+export function renderProfile({ keepMods = false } = {}) {
   const p = state.profile;
   renderDeploy(p);
   $("#revert").hidden = !p?.hasChanges;
@@ -103,7 +107,7 @@ export function renderProfile() {
     `${enabled}/${p.mods.length} mods enabled · ${p.install ?? "game not set up"} · ${deployed}`;
   $("#game-path").hidden = !!p.install;
 
-  renderMods(p.mods);
+  if (!keepMods) renderMods(p.mods);
   $("#mods-toolbar").hidden = !p.mods.length;
   $("#mod-problems").replaceChildren(...p.problems.map((w) => h("li", {}, w)));
   renderSourceTabs(p.searchSources);
