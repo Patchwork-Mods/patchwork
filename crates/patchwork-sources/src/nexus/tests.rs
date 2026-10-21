@@ -163,6 +163,46 @@ fn file_pages_open_the_file() {
     );
 }
 
+#[test]
+fn parses_nxm_links() {
+    let link =
+        "nxm://skyrimspecialedition/mods/12604/files/2000?key=a-B_c&expires=1700000000&user_id=1";
+    assert_eq!(
+        parse_nxm(link),
+        Some(NxmLink {
+            domain: "skyrimspecialedition",
+            id: "12604",
+            file: "2000",
+            key: "a-B_c",
+            expires: "1700000000",
+        })
+    );
+    for bad in [
+        "https://www.nexusmods.com/skyrimspecialedition/mods/12604",
+        "nxm://skyrimspecialedition/mods/12604/files/2000",
+        "nxm://skyrimspecialedition/mods/12604/files/2000?expires=1",
+        "nxm://skyrimspecialedition/mods/SkyUI/files/2000?key=a&expires=1",
+        "nxm://skyrimspecialedition/collections/abc/revisions/1?key=a&expires=1",
+    ] {
+        assert_eq!(parse_nxm(bad), None, "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn ignores_links_for_other_games() {
+    let game = skyrim();
+    let ctx = SourceContext {
+        game: &game,
+        config: game.sources.get("nexus"),
+    };
+    // nothing is fetched, so this works offline
+    let accepted = Nexus::new(Some("key".to_owned()))
+        .accept_link(&ctx, "nxm://fallout4/mods/1/files/2?key=a&expires=1")
+        .await
+        .unwrap();
+    assert_eq!(accepted, None);
+}
+
 #[tokio::test]
 async fn needs_game_domain_config() {
     let mut game = skyrim();

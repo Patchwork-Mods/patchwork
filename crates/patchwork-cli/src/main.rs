@@ -129,6 +129,16 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Use a file you downloaded yourself for a mod that has to be
+    /// downloaded from its page, then lock again.
+    Provide {
+        /// The mod, by its name in the profile or as `source:id`.
+        name: String,
+        file: PathBuf,
+    },
+    /// Download the file a link from your browser is for, like the `nxm://`
+    /// links Nexus's "Mod Manager Download" button hands out.
+    Link { link: String },
     /// Show the current profile and what's deployed.
     Status,
     /// Update patchwork to the newest release.
@@ -243,6 +253,12 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
+            if let Some(patchwork_core::Error::NeedsDownload(_)) = e.downcast_ref() {
+                eprintln!(
+                    "\nDownload each one from its page, then run `patchwork provide <mod> <file>`,\n\
+                     or `patchwork link <link>` with the link a \"Mod Manager Download\" button gives you."
+                );
+            }
             ExitCode::FAILURE
         }
     }
@@ -418,6 +434,37 @@ async fn run(cli: Cli) -> Result<()> {
             };
             let plan = pw.plan_undeploy(&DeployTarget::Game(game))?;
             finish(&pw, &plan, dry_run)?;
+        }
+        Command::Provide { name, file } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let pending = match pw.lock(&profile, false).await {
+                Ok(_) => bail!("{} has nothing waiting to be downloaded", loaded.label()),
+                Err(patchwork_core::Error::NeedsDownload(pending)) => pending,
+                Err(e) => return Err(e.into()),
+            };
+            let Some(wanted) = pending
+                .iter()
+                .find(|p| p.name == name || p.file.key() == name)
+            else {
+                let names: Vec<&str> = pending.iter().map(|p| p.name.as_str()).collect();
+                bail!(
+                    "`{name}` isn't waiting to be downloaded; these are: {}",
+                    names.join(", ")
+                );
+            };
+            pw.provide(&wanted.file, &file)?;
+            let lock = pw.lock(&profile, false).await?;
+            println!("locked {} mods for {}", lock.mods.len(), loaded.label());
+        }
+        Command::Link { link } => {
+            let Some(file) = pw.accept_link(&link).await? else {
+                bail!("none of patchwork's sources recognize {link}");
+            };
+            println!(
+                "downloaded {} for {}; it's used the next time a profile is locked",
+                file.key(),
+                file.game
+            );
         }
         Command::Status => status(&pw, &cli.profile)?,
         Command::SelfUpdate { .. } => unreachable!("handled before opening"),

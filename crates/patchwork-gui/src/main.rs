@@ -15,7 +15,7 @@ use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
-use patchwork_core::source::ModSpec;
+use patchwork_core::source::{ModSpec, SourceFile};
 use patchwork_core::{DeployStatus, GameInstall, Patchwork};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
@@ -29,6 +29,23 @@ type CmdResult<T> = Result<T, String>;
 
 fn msg(e: impl Display) -> String {
     e.to_string()
+}
+
+/// [`msg`] for commands that lock. When locking is waiting on mods the user
+/// has to download themselves, the window is sent them as
+/// `patchwork://pending` to work through.
+fn lock_msg(handle: &AppHandle) -> impl Fn(patchwork_core::Error) -> String + '_ {
+    move |e| match e {
+        patchwork_core::Error::NeedsDownload(pending) => {
+            let message = match pending.len() {
+                1 => "1 mod has to be downloaded from its page first".to_owned(),
+                n => format!("{n} mods have to be downloaded from their pages first"),
+            };
+            let _ = handle.emit("patchwork://pending", pending);
+            message
+        }
+        e => e.to_string(),
+    }
 }
 
 struct App {
@@ -553,6 +570,7 @@ async fn find_mods(app: State<'_, App>, id: String, query: String) -> CmdResult<
 /// so the new version is fetched and any conflicts show up straight away.
 #[tauri::command]
 async fn set_version(
+    handle: AppHandle,
     app: State<'_, App>,
     id: String,
     name: String,
@@ -560,7 +578,7 @@ async fn set_version(
 ) -> CmdResult<ProfileDetail> {
     let r = profile_ref(&id)?;
     app.pw.set_version(&r, &name, version).map_err(msg)?;
-    app.pw.lock(&r, false).await.map_err(msg)?;
+    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
     profile_detail(&app.pw, id)
 }
 
@@ -579,20 +597,33 @@ struct LockChange {
 /// Mods that moved to a new version have new details too, so the next
 /// `refresh_details` fetches them.
 #[tauri::command]
-async fn update_lock(app: State<'_, App>, id: String) -> CmdResult<Vec<LockChange>> {
+async fn update_lock(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+) -> CmdResult<Vec<LockChange>> {
     let r = profile_ref(&id)?;
     let before = app.pw.load_lock(&r).map_err(msg)?;
-    let after = app.pw.lock(&r, true).await.map_err(msg)?;
+    let after = app.pw.lock(&r, true).await.map_err(lock_msg(&handle))?;
     Ok(lock_changes(&app, before, after))
 }
 
 /// [`update_lock`] for just one mod (by key), along with anything its new
 /// version needs newer.
 #[tauri::command]
-async fn update_mod(app: State<'_, App>, id: String, key: String) -> CmdResult<Vec<LockChange>> {
+async fn update_mod(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+    key: String,
+) -> CmdResult<Vec<LockChange>> {
     let r = profile_ref(&id)?;
     let before = app.pw.load_lock(&r).map_err(msg)?;
-    let after = app.pw.lock_updating(&r, &[key]).await.map_err(msg)?;
+    let after = app
+        .pw
+        .lock_updating(&r, &[key])
+        .await
+        .map_err(lock_msg(&handle))?;
     Ok(lock_changes(&app, before, after))
 }
 
@@ -672,8 +703,16 @@ async fn search(
 }
 
 #[tauri::command]
-async fn plan_deploy(app: State<'_, App>, id: String) -> CmdResult<PlanSummary> {
-    let plan = app.pw.plan_deploy(&profile_ref(&id)?).await.map_err(msg)?;
+async fn plan_deploy(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+) -> CmdResult<PlanSummary> {
+    let plan = app
+        .pw
+        .plan_deploy(&profile_ref(&id)?)
+        .await
+        .map_err(lock_msg(&handle))?;
     let summary = PlanSummary {
         ops: plan.ops.iter().cloned().map(UiOp::from).collect(),
         unchanged: plan.unchanged,
@@ -695,6 +734,79 @@ fn apply_plan(app: State<'_, App>) -> CmdResult<usize> {
         format!("deploy failed partway; what was done is recorded and can be undeployed: {e}")
     })?;
     Ok(state.files.len())
+}
+
+// Downloads the user has to start themselves (see `patchwork://pending`).
+
+/// Locks the profile, e.g. once the user has seen to its pending downloads.
+#[tauri::command]
+async fn lock_profile(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+) -> CmdResult<ProfileDetail> {
+    let r = profile_ref(&id)?;
+    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
+    profile_detail(&app.pw, id)
+}
+
+/// Uses a file the user downloaded themselves for a pending download.
+#[tauri::command]
+fn provide_download(app: State<'_, App>, file: SourceFile, path: String) -> CmdResult<()> {
+    app.pw
+        .provide(&file, std::path::Path::new(&path))
+        .map_err(msg)?;
+    Ok(())
+}
+
+/// Makes patchwork the handler for `nxm://` links, if it isn't already, so
+/// Nexus's "Mod Manager Download" buttons hand their downloads to it. On
+/// macOS that comes with installing the app instead.
+#[tauri::command]
+fn handle_links(handle: AppHandle) -> CmdResult<()> {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        let links = handle.deep_link();
+        if !links.is_registered("nxm").unwrap_or(false) {
+            links.register_all().map_err(msg)?;
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let _ = handle;
+    Ok(())
+}
+
+/// How a link from the browser went, sent to the window as
+/// `patchwork://link`.
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum LinkEvent {
+    Downloading,
+    Downloaded { file: SourceFile },
+    Failed { message: String },
+}
+
+/// Downloads what each link from the browser is for, like Nexus's
+/// `nxm://` ones, in the background.
+fn accept_links(handle: &AppHandle, links: Vec<tauri::Url>) {
+    for link in links {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = handle.emit("patchwork://link", LinkEvent::Downloading);
+            let app = handle.state::<App>();
+            let event = match app.pw.accept_link(link.as_str()).await {
+                Ok(Some(file)) => LinkEvent::Downloaded { file },
+                Ok(None) => LinkEvent::Failed {
+                    message: format!("patchwork doesn't know what {link} is for"),
+                },
+                Err(e) => LinkEvent::Failed {
+                    message: e.to_string(),
+                },
+            };
+            let _ = handle.emit("patchwork://link", event);
+        });
+    }
 }
 
 /// The built-in look, written out as `<config>/themes/default.css` when that
@@ -735,6 +847,15 @@ fn theme(app: State<'_, App>, game: Option<String>) -> Theme {
 
 fn main() {
     tauri::Builder::default()
+        // first, so a second launch (say, for an `nxm://` link) hands its
+        // link to this one and exits before doing anything else
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let pw = Patchwork::builder(Paths::from_env()?)
                 .source(LocalSource)
@@ -753,6 +874,16 @@ fn main() {
                 plan: Mutex::new(None),
                 details: details::Details::default(),
             });
+
+            use tauri_plugin_deep_link::DeepLinkExt;
+            let handle = app.handle().clone();
+            app.deep_link()
+                .on_open_url(move |event| accept_links(&handle, event.urls()));
+            // patchwork may have been started by a link, before it was
+            // listening for them
+            if let Some(links) = app.deep_link().get_current()? {
+                accept_links(app.handle(), links);
+            }
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -783,6 +914,9 @@ fn main() {
             search,
             plan_deploy,
             apply_plan,
+            lock_profile,
+            provide_download,
+            handle_links,
             theme,
         ])
         .run(tauri::generate_context!())

@@ -26,6 +26,7 @@ use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{
     ArtifactFormat, ArtifactLocation, Download, ModSpec, PendingDownload, Source, SourceContext,
+    SourceFile,
 };
 use crate::store::Store;
 use crate::{Error, Result};
@@ -67,6 +68,23 @@ fn cache_file(dir: &Path, game: &str, source: &str, id: &str) -> PathBuf {
     dir.join(game)
         .join(source)
         .join(format!("{}.json", ContentHash::of(id.as_bytes())))
+}
+
+/// What [`Patchwork::lock_mod`] made of a mod.
+enum Locking {
+    /// Locked, along with its key if it had to be resolved.
+    Locked(Box<LockedMod>, Option<String>),
+    /// Waiting on the user to download it. Its dependencies (as
+    /// `source:id`) still get locked in the meantime.
+    Pending(Vec<PendingDownload>, Vec<String>),
+}
+
+/// Which store entry a [`SourceFile`] is, saved under
+/// [`Paths::source_files`].
+#[derive(Debug, Serialize, Deserialize)]
+struct KnownSourceFile {
+    file: SourceFile,
+    hash: ContentHash,
 }
 
 /// A mod's summary as of when it was last fetched.
@@ -862,21 +880,33 @@ impl Patchwork {
         let mut seen = HashSet::new();
         let mut resolved_keys = HashSet::new();
         let mut mods = Vec::new();
+        let mut pending = Vec::new();
 
         while !level.is_empty() {
             let todo: Vec<_> = level
                 .into_iter()
                 .filter(|(spec, _)| seen.insert(mod_key(&spec.source, &spec.id)))
                 .collect();
-            let locked: Vec<(LockedMod, Option<String>)> = stream::iter(todo)
+            let locked: Vec<Locking> = stream::iter(todo)
                 .map(|(spec, name)| self.lock_mod(loaded, spec, name, previous, known))
                 .buffered(LOCK_CONCURRENCY)
                 .try_collect()
                 .await?;
             level = Vec::new();
-            for (locked, resolved) in locked {
-                resolved_keys.extend(resolved);
-                for dep in &locked.dependencies {
+            for locking in locked {
+                let dependencies = match locking {
+                    Locking::Locked(locked, resolved) => {
+                        resolved_keys.extend(resolved);
+                        let dependencies = locked.dependencies.clone();
+                        mods.push(*locked);
+                        dependencies
+                    }
+                    Locking::Pending(waiting, dependencies) => {
+                        pending.extend(waiting);
+                        dependencies
+                    }
+                };
+                for dep in dependencies {
                     if let Some((source, id)) = dep.split_once(':') {
                         let spec = ModSpec {
                             source: source.to_owned(),
@@ -886,15 +916,18 @@ impl Patchwork {
                         level.push((spec, None));
                     }
                 }
-                mods.push(locked);
             }
+        }
+        // everything else is fetched by now, so the user can see to all of
+        // these at once
+        if !pending.is_empty() {
+            return Err(Error::NeedsDownload(pending));
         }
         Ok((mods, resolved_keys))
     }
 
     /// Locks one mod for [`Patchwork::resolve_mods`]: keeps its entry from
-    /// `previous` if that still fits, or resolves it again. Also returns its
-    /// key if it had to be resolved.
+    /// `previous` if that still fits, or resolves it again.
     async fn lock_mod(
         &self,
         loaded: &Profile,
@@ -902,7 +935,7 @@ impl Patchwork {
         name: Option<String>,
         previous: &HashMap<String, LockedMod>,
         known: &HashMap<String, LockedMod>,
-    ) -> Result<(LockedMod, Option<String>)> {
+    ) -> Result<Locking> {
         let key = mod_key(&spec.source, &spec.id);
         if let Some(old) = previous.get(&key)
             && old.requested == spec.version
@@ -915,7 +948,7 @@ impl Patchwork {
                 self.reporter.report(Event::Fetching {
                     name: old.name.clone(),
                 });
-                let hash = self
+                let fetched = self
                     .fetch(
                         &loaded.game,
                         &spec.source,
@@ -924,7 +957,13 @@ impl Patchwork {
                         &old.artifact,
                         old.format,
                     )
-                    .await?;
+                    .await;
+                let hash = match fetched {
+                    Err(Error::NeedsDownload(waiting)) => {
+                        return Ok(Locking::Pending(waiting, old.dependencies));
+                    }
+                    fetched => fetched?,
+                };
                 if hash != old.hash {
                     return Err(Error::invalid(format!(
                         "`{}` changed since it was locked (expected {}, got {}); \
@@ -935,25 +974,30 @@ impl Patchwork {
                     )));
                 }
             }
-            return Ok((old, None));
+            return Ok(Locking::Locked(Box::new(old), None));
         }
 
         let label = name.clone().unwrap_or_else(|| key.clone());
         self.reporter.report(Event::Resolving { name: label });
         let resolved = self.resolve(&loaded.game, &spec).await?;
         let name = name.unwrap_or_else(|| resolved.name.clone());
+        let dependencies: Vec<String> = resolved
+            .dependencies
+            .iter()
+            .map(|d| mod_key(&d.source, &d.id))
+            .collect();
         // a URL is taken to always serve the same file, which
         // holds for versioned download links, and so is a source's
         // own file id; paths can change under us, and are cheap to
         // ingest again anyway
-        let hash = match known.get(&key) {
+        let fetched = match known.get(&key) {
             Some(old)
                 if !matches!(old.artifact, ArtifactLocation::Path { .. })
                     && old.artifact == resolved.artifact
                     && old.format == resolved.format
                     && self.store.contains(&old.hash, old.format) =>
             {
-                old.hash
+                Ok(old.hash)
             }
             _ => {
                 self.reporter.report(Event::Fetching { name: name.clone() });
@@ -965,8 +1009,14 @@ impl Patchwork {
                     &resolved.artifact,
                     resolved.format,
                 )
-                .await?
+                .await
             }
+        };
+        let hash = match fetched {
+            Err(Error::NeedsDownload(waiting)) => {
+                return Ok(Locking::Pending(waiting, dependencies));
+            }
+            fetched => fetched?,
         };
         let locked = LockedMod {
             name,
@@ -977,11 +1027,7 @@ impl Patchwork {
             hash,
             format: resolved.format,
             artifact: resolved.artifact,
-            dependencies: resolved
-                .dependencies
-                .iter()
-                .map(|d| mod_key(&d.source, &d.id))
-                .collect(),
+            dependencies,
             requires: resolved
                 .dependencies
                 .into_iter()
@@ -989,7 +1035,7 @@ impl Patchwork {
                 .map(|d| (mod_key(&d.source, &d.id), d.req))
                 .collect(),
         };
-        Ok((locked, Some(key)))
+        Ok(Locking::Locked(Box::new(locked), Some(key)))
     }
 
     /// Puts the artifact of mod `id` (named `name` in the profile) from
@@ -1007,19 +1053,32 @@ impl Patchwork {
             ArtifactLocation::Path { path } => self.store.ingest_path(path, format),
             ArtifactLocation::Url { url } => self.fetch_url(url, format).await,
             ArtifactLocation::Source { file, .. } => {
+                let file = SourceFile {
+                    game: game.to_owned(),
+                    source: source.to_owned(),
+                    id: id.to_owned(),
+                    file: file.clone(),
+                };
+                if let Some(hash) = self.known_source_file(&file, format) {
+                    return Ok(hash);
+                }
                 let registry = self.registry();
                 let game = &registry.game(game)?.value;
                 let ctx = SourceContext {
                     game,
                     config: game.sources.get(source),
                 };
-                match self.source(source)?.download(&ctx, id, file).await? {
-                    Download::Url(url) => self.fetch_url(&url, format).await,
+                match self.source(source)?.download(&ctx, id, &file.file).await? {
+                    Download::Url(url) => {
+                        let hash = self.fetch_url(&url, format).await?;
+                        self.remember_source_file(&file, hash)?;
+                        Ok(hash)
+                    }
                     Download::NeedsUser { page } => {
                         Err(Error::NeedsDownload(vec![PendingDownload {
                             name: name.to_owned(),
-                            key: mod_key(source, id),
                             page,
+                            file,
                         }]))
                     }
                 }
@@ -1044,6 +1103,75 @@ impl Patchwork {
             .into_temp_path();
         download(url, &tmp).await?;
         self.store.ingest_path(&tmp, format)
+    }
+
+    // Downloads the user finishes
+
+    /// Takes a file the user downloaded themselves for a
+    /// [`PendingDownload`]. The next lock uses it. There's no telling
+    /// whether it's really that file, so it's up to the user.
+    pub fn provide(&self, file: &SourceFile, path: &Path) -> Result<ContentHash> {
+        self.source(&file.source)?;
+        self.registry().game(&file.game)?;
+        // source files are single files, which are stored the same way
+        // whether they're archives or not
+        let hash = self.store.ingest_path(path, ArtifactFormat::File)?;
+        self.remember_source_file(file, hash)?;
+        Ok(hash)
+    }
+
+    /// Downloads the file that a link from the user's browser is for, like a
+    /// Nexus `nxm://` link, so the next lock uses it. `Ok(None)` means no
+    /// source recognizes the link.
+    pub async fn accept_link(&self, link: &str) -> Result<Option<SourceFile>> {
+        let registry = self.registry();
+        for (source_id, source) in &self.sources {
+            for entry in registry.games() {
+                let game = &entry.value;
+                let Some(config) = game.sources.get(source_id) else {
+                    continue;
+                };
+                let ctx = SourceContext {
+                    game,
+                    config: Some(config),
+                };
+                let Some(handoff) = source.accept_link(&ctx, link).await? else {
+                    continue;
+                };
+                let file = SourceFile {
+                    game: game.id.clone(),
+                    source: source_id.clone(),
+                    id: handoff.id,
+                    file: handoff.file,
+                };
+                let hash = self.fetch_url(&handoff.url, ArtifactFormat::File).await?;
+                self.remember_source_file(&file, hash)?;
+                return Ok(Some(file));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The store entry for `file`, if it's been downloaded and is still
+    /// there.
+    fn known_source_file(&self, file: &SourceFile, format: ArtifactFormat) -> Option<ContentHash> {
+        let known: KnownSourceFile = fsutil::read_json(&self.source_file_entry(file))
+            .ok()
+            .flatten()?;
+        (known.file == *file && self.store.contains(&known.hash, format)).then_some(known.hash)
+    }
+
+    fn remember_source_file(&self, file: &SourceFile, hash: ContentHash) -> Result<()> {
+        let known = KnownSourceFile {
+            file: file.clone(),
+            hash,
+        };
+        fsutil::write_json(&self.source_file_entry(file), &known)
+    }
+
+    fn source_file_entry(&self, file: &SourceFile) -> PathBuf {
+        let id = format!("{}\0{}", file.id, file.file);
+        cache_file(&self.paths.source_files(), &file.game, &file.source, &id)
     }
 
     // Sharing

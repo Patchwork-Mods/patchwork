@@ -82,6 +82,13 @@ impl Paths {
         self.cache.join("summaries")
     }
 
+    /// Which store entry each [`crate::source::SourceFile`] that's been
+    /// downloaded is. Files the user downloaded themselves can't be fetched
+    /// again without them, so this isn't a cache.
+    pub fn source_files(&self) -> PathBuf {
+        self.data.join("source-files")
+    }
+
     pub fn profiles(&self) -> PathBuf {
         self.data.join("profiles")
     }

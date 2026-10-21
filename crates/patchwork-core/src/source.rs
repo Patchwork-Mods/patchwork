@@ -25,7 +25,8 @@ pub enum ArtifactLocation {
     },
     /// A file that only its source knows how to download, e.g. because its
     /// download links expire. `file` is the source's own id for it, and
-    /// `name` its file name. The host asks [`Source::download`] for it.
+    /// `name` its file name. The host asks [`Source::download`] for it. It's
+    /// always a single downloaded file, so never [`ArtifactFormat::Dir`].
     Source {
         file: String,
         name: String,
@@ -70,14 +71,42 @@ pub enum Download {
     },
 }
 
+/// One of a game's [`ArtifactLocation::Source`] files.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SourceFile {
+    pub game: String,
+    pub source: String,
+    /// The mod's id.
+    pub id: String,
+    pub file: String,
+}
+
+impl SourceFile {
+    /// `source:id` of the mod.
+    pub fn key(&self) -> String {
+        crate::lock::mod_key(&self.source, &self.id)
+    }
+}
+
 /// A download that's waiting on the user, from [`Download::NeedsUser`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Once they've downloaded it, give it to [`crate::Patchwork::provide`], or
+/// pass the link their browser hands back to [`crate::Patchwork::accept_link`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingDownload {
     /// The mod's name in the profile.
     pub name: String,
-    /// `source:id` of the mod.
-    pub key: String,
     pub page: String,
+    pub file: SourceFile,
+}
+
+/// Where to download one of a source's files, from a link that the user's
+/// browser handed back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Handoff {
+    /// The mod's id.
+    pub id: String,
+    pub file: String,
+    pub url: String,
 }
 
 /// A request for a mod from a particular source.
@@ -235,6 +264,13 @@ pub trait Source: Send + Sync {
             source_id: self.id().to_owned(),
             message: "has no downloads of its own".to_owned(),
         })
+    }
+
+    /// Recognizes a link that the user's browser hands back once they start
+    /// a download from a [`Download::NeedsUser`] page, like Nexus's
+    /// `nxm://` links. `Ok(None)` means it isn't one, or is for another game.
+    async fn accept_link(&self, _ctx: &SourceContext<'_>, _link: &str) -> Result<Option<Handoff>> {
+        Ok(None)
     }
 
     /// Orders two of this source's versions, which is how dependency

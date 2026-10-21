@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use patchwork_core::Result;
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, Download, ModSpec, ResolvedMod, Source, SourceContext,
-    url_parts,
+    ArtifactFormat, ArtifactLocation, Download, Handoff, ModSpec, ResolvedMod, Source,
+    SourceContext, url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -122,6 +122,44 @@ fn config(ctx: &SourceContext<'_>) -> Result<Config> {
         .map_err(|e| error(format!("bad [sources.nexus] for {}: {e}", ctx.game.id)))
 }
 
+/// What an `nxm://` link is for, which the site hands to mod managers when
+/// a user clicks "Mod Manager Download". `key` and `expires` are what lets
+/// accounts without premium get a download link through the API.
+#[derive(Debug, PartialEq, Eq)]
+struct NxmLink<'a> {
+    domain: &'a str,
+    id: &'a str,
+    file: &'a str,
+    key: &'a str,
+    expires: &'a str,
+}
+
+/// Reads links like
+/// `nxm://skyrimspecialedition/mods/12604/files/2000?key=..&expires=..&user_id=..`.
+fn parse_nxm(link: &str) -> Option<NxmLink<'_>> {
+    let rest = link.strip_prefix("nxm://")?;
+    let (path, query) = rest.split_once('?')?;
+    let [domain, "mods", id, "files", file] = path.split('/').collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let param = |name: &str| {
+        query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
+    };
+    let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !numeric(id) || !numeric(file) {
+        return None;
+    }
+    Some(NxmLink {
+        domain,
+        id,
+        file,
+        key: param("key")?,
+        expires: param("expires")?,
+    })
+}
+
 /// The page where a user can download `file` of mod `id` themselves.
 fn file_page(domain: &str, id: &str, file: &str) -> String {
     format!("https://www.nexusmods.com/{domain}/mods/{id}?tab=files&file_id={file}")
@@ -221,11 +259,30 @@ impl Source for Nexus {
             });
         }
         let links: Vec<NexusDownloadLink> = decode(&url, response).await?;
-        let link = links
-            .into_iter()
-            .next()
-            .ok_or_else(|| error(format!("Nexus gave no download links for {id}")))?;
-        Ok(Download::Url(link.uri))
+        Ok(Download::Url(first_link(links, id)?))
+    }
+
+    /// Takes the `nxm://` links the site hands out for "Mod Manager
+    /// Download".
+    async fn accept_link(&self, ctx: &SourceContext<'_>, link: &str) -> Result<Option<Handoff>> {
+        let Some(nxm) = parse_nxm(link) else {
+            return Ok(None);
+        };
+        if !nxm.domain.eq_ignore_ascii_case(&config(ctx)?.game_domain) {
+            return Ok(None);
+        }
+        let (base, api_key) = self.mod_api(ctx, nxm.id)?;
+        // the key and expiry came from a URL, so they're still encoded
+        let url = format!(
+            "{base}/files/{}/download_link.json?key={}&expires={}",
+            nxm.file, nxm.key, nxm.expires
+        );
+        let links: Vec<NexusDownloadLink> = self.get_json(&url, api_key).await?;
+        Ok(Some(Handoff {
+            id: nxm.id.to_owned(),
+            file: nxm.file.to_owned(),
+            url: first_link(links, nxm.id)?,
+        }))
     }
 
     fn lists_versions(&self) -> bool {
@@ -329,6 +386,14 @@ impl Nexus {
                 result,
             })
     }
+}
+
+fn first_link(links: Vec<NexusDownloadLink>, id: &str) -> Result<String> {
+    links
+        .into_iter()
+        .next()
+        .map(|link| link.uri)
+        .ok_or_else(|| error(format!("Nexus gave no download links for {id}")))
 }
 
 /// The JSON body of a successful response to `url`.

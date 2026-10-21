@@ -23,5 +23,10 @@
   },
   "bundle": {
     "icon": ["icons/icon.png"]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["nxm"] }
+    }
   }
 }

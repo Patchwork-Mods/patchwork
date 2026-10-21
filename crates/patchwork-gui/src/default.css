@@ -1103,6 +1103,28 @@ dialog::backdrop {
   color: var(--pw-danger);
 }
 
+/* Downloads dialog */
+
+.downloads {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.downloads li {
+  padding: 4px 0;
+}
+
+.downloads .name {
+  flex: 1;
+}
+
+.downloads .done .name {
+  color: var(--pw-muted);
+}
+
 /* Add game dialog */
 
 .field {

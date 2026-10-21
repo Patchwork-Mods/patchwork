@@ -189,7 +189,8 @@ async fn updating_skips_downloads_that_havent_changed() {
 }
 
 /// Resolves every mod to a file of its own, which downloads from `url`, or
-/// needs the user if there's no `url`. Counts how often it's asked.
+/// needs the user if there's no `url`. Counts how often it's asked. Takes
+/// links like `own://<id>`, which download from `url` either way.
 struct OwnFiles {
     url: Option<String>,
     downloads: Arc<AtomicUsize>,
@@ -221,20 +222,36 @@ impl Source for OwnFiles {
     }
 
     async fn download(&self, _: &SourceContext<'_>, id: &str, file: &str) -> Result<Download> {
-        assert_eq!((id, file), ("a", "7"));
+        assert_eq!(file, "7");
         self.downloads.fetch_add(1, SeqCst);
         Ok(match &self.url {
             Some(url) => Download::Url(url.clone()),
             None => Download::NeedsUser {
-                page: "https://example.com/a".to_owned(),
+                page: format!("https://example.com/{id}"),
             },
         })
     }
+
+    async fn accept_link(
+        &self,
+        _: &SourceContext<'_>,
+        link: &str,
+    ) -> Result<Option<crate::source::Handoff>> {
+        Ok(link
+            .strip_prefix("own://")
+            .map(|id| crate::source::Handoff {
+                id: id.to_owned(),
+                file: "7".to_owned(),
+                url: self.url.clone().unwrap(),
+            }))
+    }
 }
 
+/// A profile with mods `ids` from [`OwnFiles`], and its download count.
 async fn own_files_profile(
     tmp: &Path,
     url: Option<String>,
+    ids: &[&str],
 ) -> (Patchwork, ProfileRef, Arc<AtomicUsize>) {
     let downloads = Arc::new(AtomicUsize::new(0));
     let source = OwnFiles {
@@ -246,49 +263,108 @@ async fn own_files_profile(
         .deployer(NoDeployer)
         .open()
         .unwrap();
-    pw.add_game(new_game("my-game", "none")).unwrap();
+    let mut game = new_game("my-game", "none");
+    game.sources.insert("own".to_owned(), toml::Table::new());
+    pw.add_game(game).unwrap();
     let profile = pw.create_profile("my-game", "default").unwrap();
-    let spec = ModSpec {
-        source: "own".to_owned(),
-        id: "a".to_owned(),
-        version: None,
-    };
-    pw.add_mod(&profile, spec, None, true).await.unwrap();
+    for id in ids {
+        let spec = ModSpec {
+            source: "own".to_owned(),
+            id: id.to_string(),
+            version: None,
+        };
+        pw.add_mod(&profile, spec, None, true).await.unwrap();
+    }
     (pw, profile, downloads)
+}
+
+fn pending(err: Error) -> Vec<PendingDownload> {
+    match err {
+        Error::NeedsDownload(pending) => pending,
+        err => panic!("expected NeedsDownload, got {err}"),
+    }
 }
 
 #[tokio::test]
 async fn source_files_are_downloaded_once() {
     let tmp = tempfile::tempdir().unwrap();
     let url = serve_once("200 OK", b"mod bytes");
-    let (pw, profile, downloads) = own_files_profile(tmp.path(), Some(url)).await;
+    let (pw, profile, downloads) = own_files_profile(tmp.path(), Some(url), &["a"]).await;
 
     let first = pw.lock(&profile, true).await.unwrap();
     let second = pw.lock(&profile, true).await.unwrap();
     assert_eq!(first.mods[0].hash, second.mods[0].hash);
     assert_eq!(first.mods[0].artifact.file_name(), "a.txt");
     assert_eq!(downloads.load(SeqCst), 1);
+
+    // a lockfile lost along with the store's copy of its download still
+    // finds the file through the source, rather than trusting a stale entry
+    fs::remove_dir_all(tmp.path().join("data/store")).unwrap();
+    let err = pw.lock(&profile, false).await.unwrap_err();
+    assert!(err.to_string().contains("mod.zip"), "{err}");
+    assert_eq!(downloads.load(SeqCst), 2);
 }
 
 #[tokio::test]
-async fn source_files_can_need_the_user() {
+async fn every_download_the_user_has_to_do_is_listed_at_once() {
     let tmp = tempfile::tempdir().unwrap();
-    let (pw, profile, _) = own_files_profile(tmp.path(), None).await;
+    let (pw, profile, _) = own_files_profile(tmp.path(), None, &["a", "b"]).await;
 
     let err = pw.lock(&profile, false).await.unwrap_err();
-    let Error::NeedsDownload(pending) = &err else {
-        panic!("expected NeedsDownload, got {err}");
-    };
+    assert!(err.to_string().contains("https://example.com/b"), "{err}");
+    let pending = pending(err);
     assert_eq!(
-        pending,
-        &[PendingDownload {
+        pending[0],
+        PendingDownload {
             name: "a".to_owned(),
-            key: "own:a".to_owned(),
             page: "https://example.com/a".to_owned(),
-        }]
+            file: SourceFile {
+                game: "my-game".to_owned(),
+                source: "own".to_owned(),
+                id: "a".to_owned(),
+                file: "7".to_owned(),
+            },
+        }
     );
-    assert!(err.to_string().contains("https://example.com/a"), "{err}");
+    assert_eq!(pending[1].name, "b");
     assert!(pw.load_lock(&profile).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn provided_files_are_used_by_the_next_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, profile, _) = own_files_profile(tmp.path(), None, &["a", "b"]).await;
+    let file = tmp.path().join("a.zip");
+    fs::write(&file, b"a bytes").unwrap();
+
+    let pending = pending(pw.lock(&profile, false).await.unwrap_err());
+    let hash = pw.provide(&pending[0].file, &file).unwrap();
+    let still = self::pending(pw.lock(&profile, false).await.unwrap_err());
+    assert_eq!(still.len(), 1);
+    assert_eq!(still[0].name, "b");
+
+    fs::write(&file, b"b bytes").unwrap();
+    pw.provide(&still[0].file, &file).unwrap();
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lock.mods[0].hash, hash);
+    assert_ne!(lock.mods[1].hash, hash);
+}
+
+#[tokio::test]
+async fn links_from_the_browser_download_their_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let url = serve_once("200 OK", b"mod bytes");
+    let (pw, profile, downloads) = own_files_profile(tmp.path(), Some(url), &["a"]).await;
+
+    assert_eq!(pw.accept_link("https://example.com").await.unwrap(), None);
+    let file = pw.accept_link("own://a").await.unwrap().unwrap();
+    assert_eq!(
+        (file.game.as_str(), file.key()),
+        ("my-game", "own:a".to_owned())
+    );
+    // the lock doesn't need the source to download it again
+    pw.lock(&profile, false).await.unwrap();
+    assert_eq!(downloads.load(SeqCst), 0);
 }
 
 /// Resolves every mod to `<id>-<version>.txt` in a folder, at whichever

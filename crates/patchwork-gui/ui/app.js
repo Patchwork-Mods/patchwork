@@ -11,6 +11,7 @@ import "./games.js";
 import "./browse.js";
 import "./toolbar.js";
 import "./deploy.js";
+import "./downloads.js";
 
 setModsView(modsView);
 refresh().catch(() => {});
