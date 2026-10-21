@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::source::PendingDownload;
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +50,8 @@ pub enum Error {
     Deployer { kind: String, message: String },
     #[error("another patchwork process is running (lock held on {})", .0.display())]
     Busy(PathBuf),
+    #[error("{}", needs_download(.0))]
+    NeedsDownload(Vec<PendingDownload>),
     #[error("{0}")]
     Invalid(String),
 }
@@ -63,6 +67,14 @@ impl Error {
             message: message.to_string(),
         }
     }
+}
+
+fn needs_download(pending: &[PendingDownload]) -> String {
+    let mut message = "these mods have to be downloaded from their pages first:".to_owned();
+    for p in pending {
+        message.push_str(&format!("\n  {}: {}", p.name, p.page));
+    }
+    message
 }
 
 /// Attaches the offending path to I/O errors.

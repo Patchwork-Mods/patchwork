@@ -24,7 +24,9 @@ use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name
 use crate::registry::Registry;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
-use crate::source::{ArtifactFormat, ArtifactLocation, ModSpec, Source, SourceContext};
+use crate::source::{
+    ArtifactFormat, ArtifactLocation, Download, ModSpec, PendingDownload, Source, SourceContext,
+};
 use crate::store::Store;
 use crate::{Error, Result};
 
@@ -913,7 +915,16 @@ impl Patchwork {
                 self.reporter.report(Event::Fetching {
                     name: old.name.clone(),
                 });
-                let hash = self.fetch(&old.artifact, old.format).await?;
+                let hash = self
+                    .fetch(
+                        &loaded.game,
+                        &spec.source,
+                        &old.id,
+                        &old.name,
+                        &old.artifact,
+                        old.format,
+                    )
+                    .await?;
                 if hash != old.hash {
                     return Err(Error::invalid(format!(
                         "`{}` changed since it was locked (expected {}, got {}); \
@@ -932,11 +943,12 @@ impl Patchwork {
         let resolved = self.resolve(&loaded.game, &spec).await?;
         let name = name.unwrap_or_else(|| resolved.name.clone());
         // a URL is taken to always serve the same file, which
-        // holds for versioned download links; paths can change
-        // under us, and are cheap to ingest again anyway
+        // holds for versioned download links, and so is a source's
+        // own file id; paths can change under us, and are cheap to
+        // ingest again anyway
         let hash = match known.get(&key) {
             Some(old)
-                if matches!(old.artifact, ArtifactLocation::Url { .. })
+                if !matches!(old.artifact, ArtifactLocation::Path { .. })
                     && old.artifact == resolved.artifact
                     && old.format == resolved.format
                     && self.store.contains(&old.hash, old.format) =>
@@ -945,7 +957,15 @@ impl Patchwork {
             }
             _ => {
                 self.reporter.report(Event::Fetching { name: name.clone() });
-                self.fetch(&resolved.artifact, resolved.format).await?
+                self.fetch(
+                    &loaded.game,
+                    &spec.source,
+                    &resolved.id,
+                    &name,
+                    &resolved.artifact,
+                    resolved.format,
+                )
+                .await?
             }
         };
         let locked = LockedMod {
@@ -972,32 +992,58 @@ impl Patchwork {
         Ok((locked, Some(key)))
     }
 
+    /// Puts the artifact of mod `id` (named `name` in the profile) from
+    /// `source` into the store.
     async fn fetch(
         &self,
+        game: &str,
+        source: &str,
+        id: &str,
+        name: &str,
         artifact: &ArtifactLocation,
         format: ArtifactFormat,
     ) -> Result<ContentHash> {
         match artifact {
             ArtifactLocation::Path { path } => self.store.ingest_path(path, format),
-            ArtifactLocation::Url { url } => {
-                if format == ArtifactFormat::Dir {
-                    return Err(Error::invalid(format!(
-                        "{url} can't be downloaded as a directory"
-                    )));
+            ArtifactLocation::Url { url } => self.fetch_url(url, format).await,
+            ArtifactLocation::Source { file, .. } => {
+                let registry = self.registry();
+                let game = &registry.game(game)?.value;
+                let ctx = SourceContext {
+                    game,
+                    config: game.sources.get(source),
+                };
+                match self.source(source)?.download(&ctx, id, file).await? {
+                    Download::Url(url) => self.fetch_url(&url, format).await,
+                    Download::NeedsUser { page } => {
+                        Err(Error::NeedsDownload(vec![PendingDownload {
+                            name: name.to_owned(),
+                            key: mod_key(source, id),
+                            page,
+                        }]))
+                    }
                 }
-                // downloads run side by side while locking, so each gets a
-                // file of its own, removed when it's dropped
-                let dir = self.paths.downloads();
-                fs::create_dir_all(&dir).at(&dir)?;
-                let tmp = tempfile::Builder::new()
-                    .suffix(".tmp")
-                    .tempfile_in(&dir)
-                    .at(&dir)?
-                    .into_temp_path();
-                download(url, &tmp).await?;
-                self.store.ingest_path(&tmp, format)
             }
         }
+    }
+
+    async fn fetch_url(&self, url: &str, format: ArtifactFormat) -> Result<ContentHash> {
+        if format == ArtifactFormat::Dir {
+            return Err(Error::invalid(format!(
+                "{url} can't be downloaded as a directory"
+            )));
+        }
+        // downloads run side by side while locking, so each gets a
+        // file of its own, removed when it's dropped
+        let dir = self.paths.downloads();
+        fs::create_dir_all(&dir).at(&dir)?;
+        let tmp = tempfile::Builder::new()
+            .suffix(".tmp")
+            .tempfile_in(&dir)
+            .at(&dir)?
+            .into_temp_path();
+        download(url, &tmp).await?;
+        self.store.ingest_path(&tmp, format)
     }
 
     // Sharing

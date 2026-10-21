@@ -1,5 +1,7 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
 
@@ -184,6 +186,109 @@ async fn updating_skips_downloads_that_havent_changed() {
     let first = pw.lock(&profile, true).await.unwrap();
     let second = pw.lock(&profile, true).await.unwrap();
     assert_eq!(first.mods[0].hash, second.mods[0].hash);
+}
+
+/// Resolves every mod to a file of its own, which downloads from `url`, or
+/// needs the user if there's no `url`. Counts how often it's asked.
+struct OwnFiles {
+    url: Option<String>,
+    downloads: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl Source for OwnFiles {
+    fn id(&self) -> &str {
+        "own"
+    }
+
+    async fn resolve(
+        &self,
+        _: &SourceContext<'_>,
+        id: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        Ok(crate::source::ResolvedMod {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            version: Some("1.0".to_owned()),
+            artifact: ArtifactLocation::Source {
+                file: "7".to_owned(),
+                name: format!("{id}.txt"),
+            },
+            format: ArtifactFormat::File,
+            dependencies: Vec::new(),
+        })
+    }
+
+    async fn download(&self, _: &SourceContext<'_>, id: &str, file: &str) -> Result<Download> {
+        assert_eq!((id, file), ("a", "7"));
+        self.downloads.fetch_add(1, SeqCst);
+        Ok(match &self.url {
+            Some(url) => Download::Url(url.clone()),
+            None => Download::NeedsUser {
+                page: "https://example.com/a".to_owned(),
+            },
+        })
+    }
+}
+
+async fn own_files_profile(
+    tmp: &Path,
+    url: Option<String>,
+) -> (Patchwork, ProfileRef, Arc<AtomicUsize>) {
+    let downloads = Arc::new(AtomicUsize::new(0));
+    let source = OwnFiles {
+        url,
+        downloads: downloads.clone(),
+    };
+    let pw = Patchwork::builder(Paths::rooted(tmp))
+        .source(source)
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let spec = ModSpec {
+        source: "own".to_owned(),
+        id: "a".to_owned(),
+        version: None,
+    };
+    pw.add_mod(&profile, spec, None, true).await.unwrap();
+    (pw, profile, downloads)
+}
+
+#[tokio::test]
+async fn source_files_are_downloaded_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let url = serve_once("200 OK", b"mod bytes");
+    let (pw, profile, downloads) = own_files_profile(tmp.path(), Some(url)).await;
+
+    let first = pw.lock(&profile, true).await.unwrap();
+    let second = pw.lock(&profile, true).await.unwrap();
+    assert_eq!(first.mods[0].hash, second.mods[0].hash);
+    assert_eq!(first.mods[0].artifact.file_name(), "a.txt");
+    assert_eq!(downloads.load(SeqCst), 1);
+}
+
+#[tokio::test]
+async fn source_files_can_need_the_user() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, profile, _) = own_files_profile(tmp.path(), None).await;
+
+    let err = pw.lock(&profile, false).await.unwrap_err();
+    let Error::NeedsDownload(pending) = &err else {
+        panic!("expected NeedsDownload, got {err}");
+    };
+    assert_eq!(
+        pending,
+        &[PendingDownload {
+            name: "a".to_owned(),
+            key: "own:a".to_owned(),
+            page: "https://example.com/a".to_owned(),
+        }]
+    );
+    assert!(err.to_string().contains("https://example.com/a"), "{err}");
+    assert!(pw.load_lock(&profile).unwrap().is_none());
 }
 
 /// Resolves every mod to `<id>-<version>.txt` in a folder, at whichever

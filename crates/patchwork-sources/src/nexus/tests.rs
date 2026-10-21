@@ -135,16 +135,32 @@ fn picks_files() {
 fn converts_api_response() {
     let mod_: NexusMod = serde_json::from_str(MOD).unwrap();
     let files: NexusFiles = serde_json::from_str(FILES).unwrap();
-    let links: Vec<NexusDownloadLink> = serde_json::from_str(LINKS).unwrap();
-    let url = links[0].uri.clone();
-    let resolved = nexus_to_resolved_mod(&mod_, &files.files[1], url.clone());
+    let resolved = nexus_to_resolved_mod(&mod_, &files.files[1]);
 
     assert_eq!(resolved.id, "12604");
     assert_eq!(resolved.name, "SkyUI");
     assert_eq!(resolved.version.as_deref(), Some("5.2SE"));
     assert_eq!(resolved.format, ArtifactFormat::Zip);
-    assert_eq!(resolved.artifact, ArtifactLocation::Url { url });
+    assert_eq!(
+        resolved.artifact,
+        ArtifactLocation::Source {
+            file: "2000".to_owned(),
+            name: "SkyUI_5_2_SE-12604-5-2SE.zip".to_owned(),
+        }
+    );
+    assert_eq!(
+        resolved.artifact.file_name(),
+        "SkyUI_5_2_SE-12604-5-2SE.zip"
+    );
     assert!(resolved.dependencies.is_empty());
+}
+
+#[test]
+fn file_pages_open_the_file() {
+    assert_eq!(
+        file_page("skyrimspecialedition", "12604", "2000"),
+        "https://www.nexusmods.com/skyrimspecialedition/mods/12604?tab=files&file_id=2000"
+    );
 }
 
 #[tokio::test]
@@ -190,9 +206,8 @@ async fn rejects_non_numeric_ids() {
     assert!(err.to_string().contains("numeric"), "{err}");
 }
 
-// This talks to nexusmods.com and needs NEXUS_API_KEY set (and a premium
-// account, since only premium users can get download links through the API);
-// run it with `cargo test -- --ignored`.
+// This talks to nexusmods.com and needs NEXUS_API_KEY set; run it with
+// `cargo test -- --ignored`.
 #[tokio::test]
 #[ignore = "needs network and a Nexus API key"]
 async fn test_get_mod() {

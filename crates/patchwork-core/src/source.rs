@@ -17,8 +17,19 @@ use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ArtifactLocation {
-    Path { path: PathBuf },
-    Url { url: String },
+    Path {
+        path: PathBuf,
+    },
+    Url {
+        url: String,
+    },
+    /// A file that only its source knows how to download, e.g. because its
+    /// download links expire. `file` is the source's own id for it, and
+    /// `name` its file name. The host asks [`Source::download`] for it.
+    Source {
+        file: String,
+        name: String,
+    },
 }
 
 impl ArtifactLocation {
@@ -32,6 +43,7 @@ impl ArtifactLocation {
                 let path = url.split(['?', '#']).next().unwrap_or(url);
                 path.rsplit('/').next().unwrap_or_default().to_owned()
             }
+            ArtifactLocation::Source { name, .. } => name.clone(),
         }
     }
 }
@@ -45,6 +57,27 @@ pub enum ArtifactFormat {
     Dir,
     /// A single file that's deployed as it is, like a `.pak` or `.ftl`.
     File,
+}
+
+/// How to get an [`ArtifactLocation::Source`] file right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Download {
+    Url(String),
+    /// The user has to start the download themselves from `page`, e.g.
+    /// because the site only lets its paying users download through its API.
+    NeedsUser {
+        page: String,
+    },
+}
+
+/// A download that's waiting on the user, from [`Download::NeedsUser`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDownload {
+    /// The mod's name in the profile.
+    pub name: String,
+    /// `source:id` of the mod.
+    pub key: String,
+    pub page: String,
 }
 
 /// A request for a mod from a particular source.
@@ -193,6 +226,16 @@ pub trait Source: Send + Sync {
         id: &str,
         version: Option<&str>,
     ) -> Result<ResolvedMod>;
+
+    /// How to download `file`, a [`ArtifactLocation::Source`] that
+    /// [`Source::resolve`] returned for `id`. Only sources that return those
+    /// need this.
+    async fn download(&self, _ctx: &SourceContext<'_>, _id: &str, _file: &str) -> Result<Download> {
+        Err(crate::Error::Source {
+            source_id: self.id().to_owned(),
+            message: "has no downloads of its own".to_owned(),
+        })
+    }
 
     /// Orders two of this source's versions, which is how dependency
     /// requirements get checked. `None` means they can't be compared.

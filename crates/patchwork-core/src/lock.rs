@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::hash::ContentHash;
 use crate::source::{ArtifactFormat, ArtifactLocation, VersionReq};
 
-pub const LOCK_SCHEMA: u32 = 1;
+/// Schema 2 added [`ArtifactLocation::Source`] artifacts.
+pub const LOCK_SCHEMA: u32 = 2;
 
 /// Exactly what a profile resolved to. Together with the profile, this is
 /// enough to reproduce a setup on another machine.

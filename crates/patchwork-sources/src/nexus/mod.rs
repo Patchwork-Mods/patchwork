@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use patchwork_core::Result;
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext, url_parts,
+    ArtifactFormat, ArtifactLocation, Download, ModSpec, ResolvedMod, Source, SourceContext,
+    url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -18,9 +19,10 @@ const API_KEY_VAR: &str = "NEXUS_API_KEY";
 /// `nexus:266` for nexusmods.com/skyrimspecialedition/mods/266. Versions are
 /// matched against the version of the mod's files.
 ///
-/// Downloading needs a personal API key, which is read from `NEXUS_API_KEY`
-/// (get one from https://www.nexusmods.com/settings/api-keys). Searching
-/// doesn't.
+/// Everything but searching needs a personal API key, which is read from
+/// `NEXUS_API_KEY` (get one from https://www.nexusmods.com/settings/api-keys).
+/// Only premium accounts can download through the API; everyone else is sent
+/// to the file's page to start the download there.
 pub struct Nexus {
     api_key: Option<String>,
     client: reqwest::Client,
@@ -120,6 +122,11 @@ fn config(ctx: &SourceContext<'_>) -> Result<Config> {
         .map_err(|e| error(format!("bad [sources.nexus] for {}: {e}", ctx.game.id)))
 }
 
+/// The page where a user can download `file` of mod `id` themselves.
+fn file_page(domain: &str, id: &str, file: &str) -> String {
+    format!("https://www.nexusmods.com/{domain}/mods/{id}?tab=files&file_id={file}")
+}
+
 /// Picks which of a mod's files `version` refers to. Main files win over
 /// optional ones, then the newest upload wins; old and archived files are
 /// only considered when a version is asked for.
@@ -156,13 +163,17 @@ fn file_versions(mut files: Vec<NexusFile>) -> Vec<String> {
 }
 
 // converts a nexus mod file to our internal version of a mod
-fn nexus_to_resolved_mod(mod_: &NexusMod, file: &NexusFile, url: String) -> ResolvedMod {
+fn nexus_to_resolved_mod(mod_: &NexusMod, file: &NexusFile) -> ResolvedMod {
     let id = mod_.mod_id.to_string();
     ResolvedMod {
         name: mod_.name.clone().unwrap_or_else(|| id.clone()),
         id,
         version: file.version.clone(),
-        artifact: ArtifactLocation::Url { url },
+        // download links expire, so they're asked for at download time
+        artifact: ArtifactLocation::Source {
+            file: file.file_id.to_string(),
+            name: file.file_name.clone(),
+        },
         format: ArtifactFormat::Zip,
         // nexus doesn't expose requirements in a machine-readable way
         dependencies: Vec::new(),
@@ -196,19 +207,25 @@ impl Source for Nexus {
                 file.file_name
             )));
         }
+        Ok(nexus_to_resolved_mod(&mod_, file))
+    }
 
-        let links: Vec<NexusDownloadLink> = self
-            .get_json(
-                &format!("{base}/files/{}/download_link.json", file.file_id),
-                api_key,
-            )
-            .await?;
-        let url = links
+    async fn download(&self, ctx: &SourceContext<'_>, id: &str, file: &str) -> Result<Download> {
+        let (base, api_key) = self.mod_api(ctx, id)?;
+        let url = format!("{base}/files/{file}/download_link.json");
+        let response = self.get(&url, api_key).await?;
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            let domain = config(ctx)?.game_domain;
+            return Ok(Download::NeedsUser {
+                page: file_page(&domain, id, file),
+            });
+        }
+        let links: Vec<NexusDownloadLink> = decode(&url, response).await?;
+        let link = links
             .into_iter()
             .next()
-            .ok_or_else(|| error(format!("Nexus gave no download links for {id}")))?
-            .uri;
-        Ok(nexus_to_resolved_mod(&mod_, file, url))
+            .ok_or_else(|| error(format!("Nexus gave no download links for {id}")))?;
+        Ok(Download::Url(link.uri))
     }
 
     fn lists_versions(&self) -> bool {
@@ -297,21 +314,34 @@ impl Nexus {
     }
 
     async fn get_json<T: DeserializeOwned>(&self, url: &str, api_key: &str) -> Result<T> {
-        let reqwest_error = |result| patchwork_core::Error::Reqwest {
-            url: url.to_owned(),
-            result,
-        };
-        let bytes = self
-            .client
+        decode(url, self.get(url, api_key).await?).await
+    }
+
+    /// Sends an API request, whatever status it gets back.
+    async fn get(&self, url: &str, api_key: &str) -> Result<reqwest::Response> {
+        self.client
             .get(url)
             .header("apikey", api_key)
             .send()
             .await
-            .and_then(|r| r.error_for_status())
-            .map_err(reqwest_error)?
-            .bytes()
-            .await
-            .map_err(reqwest_error)?;
-        Ok(serde_json::from_slice(&bytes)?)
+            .map_err(|result| patchwork_core::Error::Reqwest {
+                url: url.to_owned(),
+                result,
+            })
     }
+}
+
+/// The JSON body of a successful response to `url`.
+async fn decode<T: DeserializeOwned>(url: &str, response: reqwest::Response) -> Result<T> {
+    let reqwest_error = |result| patchwork_core::Error::Reqwest {
+        url: url.to_owned(),
+        result,
+    };
+    let bytes = response
+        .error_for_status()
+        .map_err(reqwest_error)?
+        .bytes()
+        .await
+        .map_err(reqwest_error)?;
+    Ok(serde_json::from_slice(&bytes)?)
 }
