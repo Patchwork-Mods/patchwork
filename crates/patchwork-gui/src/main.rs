@@ -6,6 +6,7 @@ mod details;
 use std::fmt::Display;
 use std::sync::Mutex;
 
+use base64::prelude::*;
 use patchwork_core::deploy::{DeployOp, DeployPlan};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -17,10 +18,9 @@ use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{ModSpec, SourceFile};
 use patchwork_core::{DeployStatus, GameInstall, Patchwork};
-use patchwork_deployers::RulesDeployer;
+use patchwork_deployers::{RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
-use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -262,7 +262,10 @@ fn image_src(image: &str) -> Option<String> {
         _ => return None,
     };
     let bytes = std::fs::read(path).ok()?;
-    Some(format!("data:{mime};base64,{}", BASE64_STANDARD.encode(bytes)))
+    Some(format!(
+        "data:{mime};base64,{}",
+        BASE64_STANDARD.encode(bytes)
+    ))
 }
 
 #[tauri::command]
@@ -705,11 +708,7 @@ async fn search(
 }
 
 #[tauri::command]
-async fn plan_deploy(
-    handle: AppHandle,
-    app: State<'_, App>,
-    id: String,
-) -> CmdResult<PlanSummary> {
+async fn plan_deploy(handle: AppHandle, app: State<'_, App>, id: String) -> CmdResult<PlanSummary> {
     let plan = app
         .pw
         .plan_deploy(&profile_ref(&id)?)
@@ -865,6 +864,7 @@ fn main() {
                 .source(Nexus::from_env())
                 .source(UrlSource)
                 .deployer(RulesDeployer)
+                .deployer(SmfDeployer)
                 .format(Archive)
                 .format(UrlList)
                 .format(R2modman)

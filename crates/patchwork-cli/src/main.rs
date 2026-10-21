@@ -12,7 +12,7 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::{ImportOptions, Patchwork};
-use patchwork_deployers::RulesDeployer;
+use patchwork_deployers::{RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
 
@@ -278,6 +278,7 @@ async fn run(cli: Cli) -> Result<()> {
         .source(Nexus::from_env())
         .source(UrlSource)
         .deployer(RulesDeployer)
+        .deployer(SmfDeployer)
         .format(Archive)
         .format(UrlList)
         .format(R2modman)

@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# Third-party crates kept in the repo; see each one's README.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"

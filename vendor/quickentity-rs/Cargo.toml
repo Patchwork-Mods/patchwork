@@ -1,0 +1,40 @@
+# Vendored from https://github.com/atampy25/quickentity-rs at 2e7a3563, as a
+# library only, patched to build on stable Rust; see README.md.
+[package]
+name = "quickentity-rs"
+version = "1.0.0"
+edition = "2021"
+license = "LGPL-3.0-only"
+publish = false
+
+[dependencies]
+itertools = "0.10.3"
+md5 = "0.7.0"
+rayon = "1.8.0"
+serde = { version = "1.0.137", features = ["derive"] }
+serde_json = { version = "1.0.81", features = ["preserve_order"] }
+serde_with = "2.0.1"
+similar = "2.2.1"
+anyhow = "1.0.70"
+tryvial = "0.2.0"
+fn-error-context = "0.2.1"
+auto_context = { path = "auto_context" }
+indexmap = { version = "2.1.0", features = ["serde", "rayon"] }
+serde_path_to_error = "0.1.14"
+log = "0.4.20"
+specta = { version = "=2.0.0-rc.24", features = [
+    "derive",
+    "indexmap",
+    "serde_json",
+] }
+hitman-commons = { git = "https://github.com/atampy25/glacier-commons", rev = "455c9fc2f17a87ce3d164b6de65ecc527de7fe21", features = [
+    "resourcelib",
+    "serde",
+    "specta",
+] }
+
+[lints.rust]
+# Upstream's code, left as it is; its `rune` and `tracing` features aren't
+# declared, so what they'd enable is compiled out.
+unused = "allow"
+unexpected_cfgs = "allow"

@@ -149,3 +149,29 @@ fn game_files_see_the_game_without_deployed_mods() {
     assert!(game.list(None).unwrap().is_empty());
     assert!(game.list(Some(&rel("Missing"))).unwrap().is_empty());
 }
+
+#[test]
+fn files_changed_since_deploying_become_the_new_original() {
+    let env = env();
+    let mut state = DeployState::empty("g", &env.game);
+    deploy(
+        &env,
+        &mut state,
+        vec![placement(&env, "Data/vanilla.txt", "modded", "a")],
+    );
+    // a game update puts its own file back
+    fs::write(env.game.join("Data/vanilla.txt"), "updated").unwrap();
+    let rel = RelPath::new("Data/vanilla.txt").unwrap();
+    let original = GameFiles::new(&env.game, &state).original(&rel).unwrap();
+    assert_eq!(fs::read_to_string(original).unwrap(), "updated");
+
+    deploy(
+        &env,
+        &mut state,
+        vec![placement(&env, "Data/vanilla.txt", "modded again", "b")],
+    );
+    let read = |p: &str| fs::read_to_string(env.game.join(p)).unwrap();
+    assert_eq!(read("Data/vanilla.txt"), "modded again");
+    deploy(&env, &mut state, Vec::new());
+    assert_eq!(read("Data/vanilla.txt"), "updated");
+}

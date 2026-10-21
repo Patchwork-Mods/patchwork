@@ -143,18 +143,21 @@ impl<'a> GameFiles<'a> {
     }
 
     /// Where the game's own copy of `rel` is, if it has one.
+    ///
+    /// A deployed file that's been changed since (say by a game update) is
+    /// the game's again, and is what deploying next will back up.
     pub fn original(&self, rel: &RelPath) -> Option<PathBuf> {
+        let path = rel.under(self.root);
         match self.state.files.get(rel) {
-            Some(deployed) => deployed.backup.clone(),
-            None => {
-                let path = rel.under(self.root);
-                path.is_file().then_some(path)
-            }
+            Some(deployed) if !changed_since_deployed(&path, deployed) => deployed.backup.clone(),
+            _ => path.is_file().then_some(path),
         }
     }
 
     /// The game's own files directly inside `dir` (the game directory itself
-    /// if `None`), sorted.
+    /// if `None`), sorted. Unlike [`GameFiles::original`], files patchwork
+    /// added are left out without checking whether they've changed, since
+    /// that would mean reading every one.
     pub fn list(&self, dir: Option<&RelPath>) -> Result<Vec<RelPath>> {
         let path = dir.map_or_else(|| self.root.to_owned(), |d| d.under(self.root));
         let entries = match fs::read_dir(&path) {
@@ -414,11 +417,26 @@ pub fn apply(
             DeployOp::Place { dst, src, mod_name } => {
                 let target = dst.under(&root);
                 create_dirs(&root, dst, &mut state.created_dirs)?;
-                if target.symlink_metadata().is_ok() {
+                let mut backup = state.files.get(dst).and_then(|e| e.backup.clone());
+                if let Some(entry) = state.files.get(dst)
+                    && changed_since_deployed(&target, entry)
+                {
+                    // Most likely a game update put its own file back, which
+                    // is now the original to restore.
+                    let to = dst.under(backups);
+                    create_parent(&to)?;
+                    if to.symlink_metadata().is_ok() {
+                        fs::remove_file(&to).at(&to)?;
+                    }
+                    move_file(&target, &to)?;
+                    reporter.report(Event::Warning(format!(
+                        "{dst} was changed after it was deployed; keeping the new version as the original"
+                    )));
+                    backup = Some(to);
+                } else if target.symlink_metadata().is_ok() {
                     fs::remove_file(&target).at(&target)?;
                 }
                 link(src, &target, plan.link)?;
-                let backup = state.files.get(dst).and_then(|e| e.backup.clone());
                 state.files.insert(
                     dst.clone(),
                     DeployedFile {
@@ -435,6 +453,11 @@ pub fn apply(
     remove_empty_dirs(&root, &mut state.created_dirs);
     state.inputs = plan.inputs;
     Ok(())
+}
+
+/// Whether the file at `path` is there but isn't what was deployed to it.
+fn changed_since_deployed(path: &Path, entry: &DeployedFile) -> bool {
+    path.is_file() && ContentHash::of_file(path).ok() != Some(entry.hash)
 }
 
 /// Removes a deployed file and restores whatever it replaced. Returns a

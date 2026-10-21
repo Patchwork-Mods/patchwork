@@ -98,6 +98,8 @@
                   dbus
                   # The folder picker (rfd's xdg-portal backend) links it.
                   wayland
+                  # libstdc++, for DirectXTex (HITMAN texture conversion).
+                  stdenv.cc.cc.lib
                 ]
               );
               GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules/";

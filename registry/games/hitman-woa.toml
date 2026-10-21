@@ -1,0 +1,18 @@
+schema = 1
+id = "hitman-woa"
+name = "HITMAN World of Assassination"
+description = "HITMAN 3 and the rest of the World of Assassination trilogy. Takes mods made for Simple Mod Framework, and plain RPKG mods."
+# Deploying builds archives that can be gigabytes, so they're linked rather
+# than copied into the game folder (falling back to a copy across drives).
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "hitman3"
+
+[deployer]
+kind = "smf"
+
+[detect]
+steam = [1659040]
+folder = "HITMAN 3"
+exe = ["Retail/HITMAN3.exe"]
