@@ -64,6 +64,7 @@ impl Reporter for Emit {
         let event = match event {
             Event::Resolving { name } => UiEvent::Resolving { name },
             Event::Fetching { name } => UiEvent::Fetching { name },
+            Event::Building { step } => UiEvent::Building { step },
             Event::Applying(op) => UiEvent::Applying(op.into()),
             Event::Warning(message) => UiEvent::Warning { message },
         };
@@ -77,6 +78,7 @@ impl Reporter for Emit {
 enum UiEvent {
     Resolving { name: String },
     Fetching { name: String },
+    Building { step: String },
     Applying(UiOp),
     Warning { message: String },
 }

@@ -140,6 +140,8 @@ listen("patchwork://event", ({ payload: e }) => {
       return status(`Resolving ${e.name}…`);
     case "fetching":
       return status(`Downloading ${e.name}…`);
+    case "building":
+      return status(`Building ${e.step}…`);
     case "applying":
       return status(`Deploying ${e.dst}`);
     case "warning":

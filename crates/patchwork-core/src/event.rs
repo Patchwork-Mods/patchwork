@@ -6,6 +6,7 @@ use crate::deploy::DeployOp;
 pub enum Event {
     Resolving { name: String },
     Fetching { name: String },
+    Building { step: String },
     Applying(DeployOp),
     Warning(String),
 }

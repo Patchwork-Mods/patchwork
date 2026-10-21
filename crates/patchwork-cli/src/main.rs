@@ -241,6 +241,7 @@ impl Reporter for Printer {
         match event {
             Event::Resolving { name } => eprintln!("  resolving {name}"),
             Event::Fetching { name } => eprintln!("   fetching {name}"),
+            Event::Building { step } => eprintln!("   building {step}"),
             Event::Applying(op) => print_op(&op),
             Event::Warning(warning) => eprintln!("warning: {warning}"),
         }

@@ -9,7 +9,8 @@ use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::deploy::{
-    self, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer, InstalledMod,
+    self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
+    DesiredState, GameFiles, InstalledMod,
 };
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
@@ -1491,8 +1492,29 @@ impl Patchwork {
             .get(&game.deployer.kind)
             .ok_or_else(|| Error::UnknownDeployer(game.deployer.kind.clone()))?;
 
+        let ctx = DeployContext {
+            game,
+            config: &game.deployer.config,
+            registry: &registry,
+        };
+        let prev = self.deploy_state(&target)?;
+        let prev = if prev.files.is_empty() {
+            DeployState::empty(&loaded.game, &root)
+        } else if prev.root != root {
+            return Err(Error::invalid(format!(
+                "mods are deployed to {}, but {} is now set to {}; run `patchwork undeploy {}` first",
+                prev.root.display(),
+                game.name,
+                root.display(),
+                game.id
+            )));
+        } else {
+            prev
+        };
+
         let order = deploy_order(&loaded, &lock);
-        let inputs = deploy_inputs(profile, &registry, entry.hash, &root, &order);
+        let fingerprint = deployer.fingerprint(&ctx, &GameFiles::new(&root, &prev))?;
+        let inputs = deploy_inputs(profile, &registry, entry.hash, &root, &order, fingerprint);
         let mut mods = Vec::new();
         for locked in order {
             let files =
@@ -1508,26 +1530,12 @@ impl Patchwork {
             });
         }
 
-        let ctx = DeployContext {
-            game,
-            config: &game.deployer.config,
-            registry: &registry,
-        };
-        let desired = deployer.plan(&ctx, &mods)?;
-        let prev = self.deploy_state(&target)?;
-        let prev = if prev.files.is_empty() {
-            DeployState::empty(&loaded.game, &root)
-        } else if prev.root != root {
-            return Err(Error::invalid(format!(
-                "mods are deployed to {}, but {} is now set to {}; run `patchwork undeploy {}` first",
-                prev.root.display(),
-                game.name,
-                root.display(),
-                game.id
-            )));
-        } else {
-            prev
-        };
+        let mut desired = deployer.plan(&ctx, &mods)?;
+        if deployer.builds(&ctx) {
+            let built = self.build(deployer.as_ref(), &ctx, &target, inputs, &prev, &mods)?;
+            desired.placements.extend(built.placements);
+            desired.warnings.extend(built.warnings);
+        }
         let mut plan = deploy::plan(target, &prev, desired, Some(profile.to_string()), game.link);
         plan.inputs = Some(inputs);
         Ok(plan)
@@ -1569,9 +1577,20 @@ impl Patchwork {
             return Ok(DeployStatus::Stale);
         }
         let registry = self.registry();
-        let game = registry.game(&loaded.game)?;
+        let entry = registry.game(&loaded.game)?;
+        let game = &entry.value;
+        let deployer = self
+            .deployers
+            .get(&game.deployer.kind)
+            .ok_or_else(|| Error::UnknownDeployer(game.deployer.kind.clone()))?;
+        let ctx = DeployContext {
+            game,
+            config: &game.deployer.config,
+            registry: &registry,
+        };
+        let fingerprint = deployer.fingerprint(&ctx, &GameFiles::new(&root, &state))?;
         let order = deploy_order(&loaded, &lock);
-        let inputs = deploy_inputs(profile, &registry, game.hash, &root, &order);
+        let inputs = deploy_inputs(profile, &registry, entry.hash, &root, &order, fingerprint);
         Ok(if inputs == recorded {
             DeployStatus::Deployed
         } else {
@@ -1602,11 +1621,87 @@ impl Patchwork {
         let result = deploy::apply(plan, &mut state, &backups, self.reporter.as_ref());
         // Saved even on failure, so whatever did get deployed can be undone.
         fsutil::write_json(&self.deploy_state_file(target), &state)?;
+        self.prune_generated(target, &state, plan.inputs);
         result?;
         if let Some(profile) = plan.profile.as_deref() {
             self.save_deployed(&profile.parse()?)?;
         }
         Ok(state)
+    }
+
+    /// Runs `deployer`'s build for a deploy with these `inputs`, or reuses
+    /// what an earlier build with the same inputs made.
+    fn build(
+        &self,
+        deployer: &dyn Deployer,
+        ctx: &DeployContext<'_>,
+        target: &DeployTarget,
+        inputs: ContentHash,
+        prev: &DeployState,
+        mods: &[InstalledMod],
+    ) -> Result<DesiredState> {
+        let dir = self.paths.generated().join(target.key());
+        let out = dir.join(inputs.to_string());
+        let record = dir.join(format!("{inputs}.json"));
+        if let Some(built) = fsutil::read_json(&record)? {
+            return Ok(built);
+        }
+        // Left over from a build that didn't finish.
+        if out.exists() {
+            fs::remove_dir_all(&out).at(&out)?;
+        }
+        fs::create_dir_all(&out).at(&out)?;
+        let cache = self.paths.deployer_cache(deployer.kind());
+        fs::create_dir_all(&cache).at(&cache)?;
+        let build = BuildContext {
+            game: GameFiles::new(&prev.root, prev),
+            out: &out,
+            cache: &cache,
+            reporter: self.reporter.as_ref(),
+        };
+        let built = match deployer.build(ctx, &build, mods) {
+            Ok(built) => built,
+            Err(e) => {
+                let _ = fs::remove_dir_all(&out);
+                return Err(e);
+            }
+        };
+        fsutil::write_json(&record, &built)?;
+        Ok(built)
+    }
+
+    /// Deletes built files for `target` that nothing deployed comes from,
+    /// keeping those for `keep` (the deploy just applied) for next time.
+    fn prune_generated(
+        &self,
+        target: &DeployTarget,
+        state: &DeployState,
+        keep: Option<ContentHash>,
+    ) {
+        let dir = self.paths.generated().join(target.key());
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return;
+        };
+        let keep = keep.map(|k| k.to_string());
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let build = name.strip_suffix(".json").unwrap_or(name);
+            let out = dir.join(build);
+            let used = keep.as_deref() == Some(build)
+                || state.files.values().any(|f| f.src.starts_with(&out));
+            if used {
+                continue;
+            }
+            // Best effort: whatever's left is tried again next time.
+            let _ = if path.is_dir() {
+                fs::remove_dir_all(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+        }
     }
 
     /// Remembers the profile as it is now, as what was last deployed.
@@ -1736,6 +1831,7 @@ fn deploy_inputs(
     game: ContentHash,
     root: &Path,
     order: &[&LockedMod],
+    fingerprint: Option<ContentHash>,
 ) -> ContentHash {
     let mut hasher = blake3::Hasher::new();
     let mut field = |bytes: &[u8]| {
@@ -1746,6 +1842,11 @@ fn deploy_inputs(
     field(profile.to_string().as_bytes());
     field(game.to_string().as_bytes());
     field(root.as_os_str().as_encoded_bytes());
+    // Only when there is one, so deploys from before fingerprints existed
+    // don't all look stale.
+    if let Some(fingerprint) = fingerprint {
+        field(fingerprint.to_string().as_bytes());
+    }
     for (kind, id, hash) in registry.data_hashes() {
         field(kind.as_bytes());
         field(id.as_bytes());

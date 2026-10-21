@@ -105,6 +105,16 @@ impl Paths {
         self.data.join("backups")
     }
 
+    /// Files deployers built, which deployed files can be links to.
+    pub fn generated(&self) -> PathBuf {
+        self.data.join("generated")
+    }
+
+    /// Where a kind of deployer keeps intermediate results between builds.
+    pub fn deployer_cache(&self, kind: &str) -> PathBuf {
+        self.cache.join("deployers").join(kind)
+    }
+
     pub fn state_file(&self) -> PathBuf {
         self.data.join("state.toml")
     }

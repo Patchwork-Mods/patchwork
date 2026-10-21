@@ -116,3 +116,36 @@ fn modified_files_are_left_alone() {
         "user edits"
     );
 }
+
+#[test]
+fn game_files_see_the_game_without_deployed_mods() {
+    let env = env();
+    fs::write(env.game.join("Data/other.txt"), "other").unwrap();
+    let mut state = DeployState::empty("g", &env.game);
+    deploy(
+        &env,
+        &mut state,
+        vec![
+            placement(&env, "Data/vanilla.txt", "modded", "a"),
+            placement(&env, "Data/added.txt", "added", "a"),
+        ],
+    );
+    let game = GameFiles::new(&env.game, &state);
+    let rel = |p: &str| RelPath::new(p).unwrap();
+
+    let original = game.original(&rel("Data/vanilla.txt")).unwrap();
+    assert_eq!(fs::read_to_string(original).unwrap(), "vanilla");
+    assert_eq!(
+        game.original(&rel("Data/other.txt")),
+        Some(env.game.join("Data/other.txt"))
+    );
+    assert_eq!(game.original(&rel("Data/added.txt")), None);
+    assert_eq!(game.original(&rel("Data/missing.txt")), None);
+
+    assert_eq!(
+        game.list(Some(&rel("Data"))).unwrap(),
+        vec![rel("Data/other.txt"), rel("Data/vanilla.txt")]
+    );
+    assert!(game.list(None).unwrap().is_empty());
+    assert!(game.list(Some(&rel("Missing"))).unwrap().is_empty());
+}

@@ -47,14 +47,14 @@ pub struct DeployContext<'a> {
 }
 
 /// A file that should exist in the game directory.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Placement {
     pub dst: RelPath,
     pub src: PathBuf,
     pub mod_name: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct DesiredState {
     pub placements: Vec<Placement>,
     pub warnings: Vec<String>,
@@ -62,14 +62,132 @@ pub struct DesiredState {
 
 /// Knows how a particular game or mod loader expects mods to be laid out.
 ///
-/// Deployers must not touch the filesystem: everything they need is in
-/// `mods`, and everything they decide goes in the returned [`DesiredState`].
+/// Deployers must not touch the filesystem when planning: everything they
+/// need is in `mods`, and everything they decide goes in the returned
+/// [`DesiredState`]. The exception is [`Deployer::build`], for the few
+/// deployers that have to generate files.
 pub trait Deployer: Send + Sync {
     fn kind(&self) -> &str;
 
     /// `mods` are in load order, with dependencies before the mods that need
     /// them.
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState>;
+
+    /// Whether [`Deployer::build`] has anything to do for this game. Most
+    /// deployers only ever place mod files and leave this `false`.
+    fn builds(&self, _ctx: &DeployContext<'_>) -> bool {
+        false
+    }
+
+    /// Makes files that can't simply be copied out of mods, such as archives
+    /// repacked from the game's own files with mods' changes applied.
+    ///
+    /// Unlike [`Deployer::plan`], this may read the game's files (through
+    /// [`BuildContext::game`]) and write files of its own, but only into
+    /// [`BuildContext::out`]. It returns placements whose `src` is under
+    /// `out` (or is a mod's file); they're added after the ones from `plan`,
+    /// so they win over them.
+    ///
+    /// The result is kept and reused for as long as the deploy's inputs stay
+    /// the same, so it has to depend only on `mods`, the game definition and
+    /// whatever [`Deployer::fingerprint`] covers.
+    fn build(
+        &self,
+        _ctx: &DeployContext<'_>,
+        _build: &BuildContext<'_>,
+        _mods: &[InstalledMod],
+    ) -> Result<DesiredState> {
+        Ok(DesiredState::default())
+    }
+
+    /// A hash of the game files [`Deployer::build`] reads, so a game update
+    /// makes the deploy stale and gets it built again. Called whenever
+    /// patchwork checks whether a deploy is current, so it should be cheap:
+    /// sizes and modification times rather than contents for big files.
+    fn fingerprint(
+        &self,
+        _ctx: &DeployContext<'_>,
+        _game: &GameFiles<'_>,
+    ) -> Result<Option<ContentHash>> {
+        Ok(None)
+    }
+}
+
+/// What [`Deployer::build`] gets to work with.
+pub struct BuildContext<'a> {
+    pub game: GameFiles<'a>,
+    /// An empty directory for the build's output. It's kept for as long as
+    /// anything deployed comes from it.
+    pub out: &'a Path,
+    /// Somewhere to keep intermediate results between builds. Like the rest
+    /// of patchwork's cache it can be deleted at any time.
+    pub cache: &'a Path,
+    pub reporter: &'a dyn Reporter,
+}
+
+/// The game's own files, as they are without anything patchwork deployed:
+/// files a mod replaced are found in their backups, and files patchwork
+/// added are left out.
+pub struct GameFiles<'a> {
+    root: &'a Path,
+    state: &'a DeployState,
+}
+
+impl<'a> GameFiles<'a> {
+    pub fn new(root: &'a Path, state: &'a DeployState) -> Self {
+        Self { root, state }
+    }
+
+    pub fn root(&self) -> &Path {
+        self.root
+    }
+
+    /// Where the game's own copy of `rel` is, if it has one.
+    pub fn original(&self, rel: &RelPath) -> Option<PathBuf> {
+        match self.state.files.get(rel) {
+            Some(deployed) => deployed.backup.clone(),
+            None => {
+                let path = rel.under(self.root);
+                path.is_file().then_some(path)
+            }
+        }
+    }
+
+    /// The game's own files directly inside `dir` (the game directory itself
+    /// if `None`), sorted.
+    pub fn list(&self, dir: Option<&RelPath>) -> Result<Vec<RelPath>> {
+        let path = dir.map_or_else(|| self.root.to_owned(), |d| d.under(self.root));
+        let entries = match fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e).at(&path),
+        };
+        let mut files = Vec::new();
+        for entry in entries {
+            let entry = entry.at(&path)?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let rel = match dir {
+                Some(d) => format!("{d}/{name}"),
+                None => name,
+            };
+            let Ok(rel) = RelPath::new(&rel) else {
+                continue;
+            };
+            let is_file = entry.path().is_file();
+            let ours = self
+                .state
+                .files
+                .get(&rel)
+                .is_some_and(|d| d.backup.is_none());
+            if is_file && !ours {
+                files.push(rel);
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
 }
 
 /// Somewhere mods are deployed to. Each target has its own [`DeployState`],

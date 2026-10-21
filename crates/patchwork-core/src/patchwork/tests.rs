@@ -541,3 +541,99 @@ impl Source for SharedSource {
         self.0.resolve(ctx, id, version).await
     }
 }
+
+/// Builds `data.txt` from the game's own copy, counting how often it runs.
+#[derive(Default)]
+struct Builder {
+    builds: AtomicUsize,
+    version: std::sync::Mutex<String>,
+}
+
+struct SharedBuilder(std::sync::Arc<Builder>);
+
+impl Deployer for SharedBuilder {
+    fn kind(&self) -> &str {
+        "builder"
+    }
+
+    fn plan(&self, _: &DeployContext<'_>, _: &[InstalledMod]) -> Result<deploy::DesiredState> {
+        Ok(Default::default())
+    }
+
+    fn builds(&self, _: &DeployContext<'_>) -> bool {
+        true
+    }
+
+    fn build(
+        &self,
+        _: &DeployContext<'_>,
+        build: &BuildContext<'_>,
+        _: &[InstalledMod],
+    ) -> Result<deploy::DesiredState> {
+        self.0.builds.fetch_add(1, SeqCst);
+        let dst = crate::relpath::RelPath::new("data.txt").unwrap();
+        let original = fs::read_to_string(build.game.original(&dst).unwrap()).unwrap();
+        let src = build.out.join("data.txt");
+        fs::write(&src, format!("{original} patched")).unwrap();
+        Ok(deploy::DesiredState {
+            placements: vec![deploy::Placement {
+                dst,
+                src,
+                mod_name: "built".to_owned(),
+            }],
+            warnings: Vec::new(),
+        })
+    }
+
+    fn fingerprint(&self, _: &DeployContext<'_>, _: &GameFiles<'_>) -> Result<Option<ContentHash>> {
+        Ok(Some(ContentHash::of(
+            self.0.version.lock().unwrap().as_bytes(),
+        )))
+    }
+}
+
+#[tokio::test]
+async fn built_files_are_reused_until_the_game_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let builder = std::sync::Arc::new(Builder::default());
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(SharedBuilder(builder.clone()))
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "builder")).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    fs::write(game.join("data.txt"), "vanilla").unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let data = || fs::read_to_string(game.join("data.txt")).unwrap();
+    let generated = tmp.path().join("data/generated/my-game");
+    let builds = || fs::read_dir(&generated).unwrap().count();
+
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(data(), "vanilla patched");
+    assert_eq!(builder.builds.load(SeqCst), 1);
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+
+    // the same inputs reuse the last build
+    assert!(pw.plan_deploy(&profile).await.unwrap().is_noop());
+    assert_eq!(builder.builds.load(SeqCst), 1);
+
+    // a game update builds again, from the game's own file rather than the
+    // deployed one
+    *builder.version.lock().unwrap() = "2".to_owned();
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Stale);
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(builder.builds.load(SeqCst), 2);
+    assert_eq!(data(), "vanilla patched");
+    // the old build is gone: one directory and its record
+    assert_eq!(builds(), 2);
+
+    pw.apply(
+        &pw.plan_undeploy(&DeployTarget::Game("my-game".into()))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(data(), "vanilla");
+    assert_eq!(builds(), 0);
+}
