@@ -44,7 +44,6 @@ function render() {
     ...waiting.map((item) =>
       h(
         "li",
-        // .row too, so it's laid out even with an old copy of default.css
         { class: item.done ? "row done" : "row" },
         h("span", { class: "name" }, item.pending.name),
         item.done

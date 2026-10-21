@@ -149,7 +149,8 @@ $("#back").addEventListener("click", () => go(showGames));
 async function applyTheme(game) {
   document.body.dataset.game = game ?? "";
   const theme = await invoke("theme", { game });
-  $("#theme-default").textContent = theme.default;
+  $("#theme-builtin").textContent = theme.builtin;
+  $("#theme-user").textContent = theme.user ?? "";
   $("#theme-game").textContent = theme.game ?? "";
 }
 

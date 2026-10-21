@@ -1,9 +1,9 @@
 /*
- * Patchwork's look, used for every game. Edit it freely; delete it to get
- * the built-in version back. A game's own theme (<game>.css, next to this
- * file) loads after it, so it only needs the rules it changes. The
- * variables below are the easy knobs; for more, target the ids and classes
- * in index.html, or `body[data-game="<id>"]`.
+ * Patchwork's built-in look. It's compiled in and always loads first, so
+ * users' own CSS (<config>/themes/user.css, then <game>.css) only needs the
+ * rules it changes, and everything else keeps up with updates here. Treat
+ * the --pw-* variables and the ids and classes in index.html as things
+ * people may have overridden: renaming one quietly breaks their override.
  */
 
 :root {

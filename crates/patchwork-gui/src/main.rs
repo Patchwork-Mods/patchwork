@@ -810,41 +810,68 @@ fn accept_links(handle: &AppHandle, links: Vec<tauri::Url>) {
     }
 }
 
-/// The built-in look, written out as `<config>/themes/default.css` when that
-/// file doesn't exist so users have something to edit.
-const DEFAULT_CSS: &str = include_str!("default.css");
+/// The built-in look. It always loads first, straight from the binary, so
+/// changes to it reach everyone; users' own CSS goes in files loaded after it.
+const BUILTIN_CSS: &str = include_str!("default.css");
+
+/// Written out as `<config>/themes/user.css` when that file doesn't exist,
+/// so users can see what there is to change.
+const USER_CSS: &str = include_str!("user.css");
 
 #[derive(Serialize)]
 struct Theme {
-    /// `<config>/themes/default.css`, applied for every game.
-    default: String,
-    /// `<config>/themes/<game>.css`, applied on top of `default`.
+    builtin: &'static str,
+    /// `<config>/themes/user.css`, applied on top of `builtin` for every game.
+    user: Option<String>,
+    /// `<config>/themes/<game>.css`, applied on top of `user`.
     game: Option<String>,
 }
 
 #[tauri::command]
 fn theme(app: State<'_, App>, game: Option<String>) -> Theme {
     let dir = app.pw.paths().config.join("themes");
-    let default_path = dir.join("default.css");
-    let default = match std::fs::read_to_string(&default_path) {
-        Ok(css) => css,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Still use the built-in look if it can't be written out.
-            if let Err(e) = std::fs::create_dir_all(&dir)
-                .and_then(|()| std::fs::write(&default_path, DEFAULT_CSS))
-            {
-                eprintln!("couldn't create {}: {e}", default_path.display());
-            }
-            DEFAULT_CSS.to_owned()
-        }
+    if let Err(e) = write_theme_files(&dir) {
+        eprintln!("couldn't write the theme files in {}: {e}", dir.display());
+    }
+    let read = |name: &str| match std::fs::read_to_string(dir.join(name)) {
+        Ok(css) => Some(css),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
-            eprintln!("couldn't read {}: {e}", default_path.display());
-            DEFAULT_CSS.to_owned()
+            eprintln!("couldn't read {}: {e}", dir.join(name).display());
+            None
         }
     };
-    let game = game.and_then(|g| std::fs::read_to_string(dir.join(format!("{g}.css"))).ok());
-    Theme { default, game }
+    Theme {
+        builtin: BUILTIN_CSS,
+        user: read("user.css"),
+        game: game.and_then(|g| read(&format!("{g}.css"))),
+    }
 }
+
+/// Writes `user.css` if it's missing, and keeps `builtin.css` (never loaded,
+/// just there to read for the ids and classes to target) up to date.
+fn write_theme_files(dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let user = dir.join("user.css");
+    if !user.exists() {
+        std::fs::write(user, USER_CSS)?;
+    }
+    let builtin = dir.join("builtin.css");
+    let current = format!("{BUILTIN_HEADER}{BUILTIN_CSS}");
+    if std::fs::read_to_string(&builtin).ok().as_deref() != Some(&current) {
+        std::fs::write(builtin, current)?;
+    }
+    Ok(())
+}
+
+const BUILTIN_HEADER: &str = "\
+/*
+ * A copy of Patchwork's built-in look, for reference. It isn't loaded, and
+ * it's replaced whenever Patchwork updates, so edits here are lost; put
+ * changes in user.css (or <game>.css) instead.
+ */
+
+";
 
 fn main() {
     tauri::Builder::default()

@@ -1,0 +1,41 @@
+/*
+ * Your changes to Patchwork's look, applied for every game. They load after
+ * the built-in look, so only what you put here changes; the rest keeps up
+ * with Patchwork's updates.
+ *
+ * Uncomment a variable to change it. For more, see builtin.css (next to this
+ * file) for the ids and classes to target, or use `body[data-game="<id>"]`.
+ * A game's own theme goes in <game>.css and loads after this.
+ */
+
+:root {
+  /* --pw-font: system-ui, sans-serif; */
+  /* --pw-radius: 6px; */
+  /* --pw-gap: 12px; */
+
+  /* --pw-bg: #f6f5f2; */
+  /* --pw-surface: #ffffff; */
+  /* --pw-sidebar: #ecebe6; */
+  /* --pw-text: #1f1e1c; */
+  /* --pw-muted: #6b6963; */
+  /* --pw-border: #d8d6cf; */
+  /* --pw-accent: #c4643f; */
+  /* --pw-accent-text: #ffffff; */
+  /* --pw-danger: #b3261e; */
+  /* Width over height of the cover image on search results. */
+  /* --pw-cover-ratio: 1; */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* --pw-bg: #1b1b1a; */
+    /* --pw-surface: #252523; */
+    /* --pw-sidebar: #141413; */
+    /* --pw-text: #ecebe6; */
+    /* --pw-muted: #9c9a93; */
+    /* --pw-border: #3a3936; */
+    /* --pw-accent: #e07a52; */
+    /* --pw-accent-text: #141413; */
+    /* --pw-danger: #f2b8b5; */
+  }
+}
