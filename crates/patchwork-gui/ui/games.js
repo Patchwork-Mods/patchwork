@@ -4,6 +4,7 @@ import { gameInfo, invoke, profilesOf, run, state, status } from "./state.js";
 import { $, h, initials, pickFolder } from "./dom.js";
 import { refresh, renderProfile, renderSidebar, switchProfile } from "./profile.js";
 import { selectTab } from "./browse.js";
+import { go } from "./nav.js";
 
 function showScreen(screen) {
   document.body.dataset.screen = screen;
@@ -70,7 +71,7 @@ function gameCard(g) {
     {},
     h(
       "button",
-      { class: "game-card", "data-game": g.id, onclick: () => openGame(g.id) },
+      { class: "game-card", "data-game": g.id, onclick: () => go(() => openGame(g.id)) },
       gameArt(g),
       h("span", { class: "game-name" }, g.name),
       h("span", { class: "muted" }, `${count} profile${count === 1 ? "" : "s"}`),
@@ -126,10 +127,10 @@ gameSearch.addEventListener("keydown", (e) => {
 });
 
 /**
- * Shows a game's profiles, opening the current profile if it's for this
- * game, or else its first one.
+ * Shows a game's profiles, opening `profile` if given, or else the current
+ * profile if it's for this game, or else its first one.
  */
-async function openGame(id) {
+export async function openGame(id, profile = null) {
   state.game = id;
   state.profile = null;
   showScreen("game");
@@ -138,12 +139,12 @@ async function openGame(id) {
   renderSidebar();
   const current = state.overview.current;
   const ps = profilesOf(id);
-  const pick = ps.find((p) => p.id === current) ?? ps[0];
+  const pick = ps.find((p) => p.id === profile) ?? ps.find((p) => p.id === current) ?? ps[0];
   if (pick) await switchProfile(pick.id);
   else renderProfile();
 }
 
-$("#back").addEventListener("click", () => showGames());
+$("#back").addEventListener("click", () => go(showGames));
 
 async function applyTheme(game) {
   document.body.dataset.game = game ?? "";
@@ -229,7 +230,7 @@ gameForm.addEventListener("submit", async (e) => {
     return;
   }
   $("#game-dialog").close();
-  await openGame(game.id);
+  await go(() => openGame(game.id));
   status(error ?? `Added ${game.name}`, !!error);
 });
 

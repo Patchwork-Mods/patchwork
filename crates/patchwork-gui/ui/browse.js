@@ -5,6 +5,7 @@ import { $, h, ms, nextFrame } from "./dom.js";
 import { renderProfile } from "./profile.js";
 import { cardMain } from "./mods.js";
 import { refreshDetails } from "./details.js";
+import { go } from "./nav.js";
 
 const SOURCE_NAMES = { thunderstore: "Thunderstore", nexus: "Nexus Mods" };
 const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
@@ -33,9 +34,13 @@ export function selectTab(key) {
 /** Replaces the source tabs, staying on the open one if it's still there. */
 export function renderSourceTabs(sources) {
   $("#tabs").replaceChildren(
-    h("button", { role: "tab", onclick: () => selectTab("mods") }, "Mods"),
+    h("button", { role: "tab", onclick: () => go(() => selectTab("mods")) }, "Mods"),
     ...sources.map((s) =>
-      h("button", { role: "tab", "data-source": s, onclick: () => selectTab(s) }, sourceName(s)),
+      h(
+        "button",
+        { role: "tab", "data-source": s, onclick: () => go(() => selectTab(s)) },
+        sourceName(s),
+      ),
     ),
   );
   selectTab(sources.includes(state.source) ? state.source : "mods");

@@ -8,6 +8,7 @@ import { refreshDetails } from "./details.js";
 import { modSearch } from "./toolbar.js";
 import { renderSourceTabs } from "./browse.js";
 import { markUpdates } from "./deploy.js";
+import { go } from "./nav.js";
 
 /** Reloads everything, staying on whichever screen and profile is open. */
 export async function refresh() {
@@ -33,7 +34,7 @@ export function renderSidebar() {
         "button",
         {
           "aria-current": String(p.id === current),
-          onclick: () => switchProfile(p.id),
+          onclick: () => go(() => switchProfile(p.id)),
           oncontextmenu: (e) => openProfileMenu(e, p),
         },
         h("span", {}, p.name),
@@ -118,7 +119,7 @@ $("#new-profile").addEventListener("submit", async (e) => {
   const id = await run("create_profile", { game: state.game, name });
   e.target.reset();
   state.overview = await run("overview");
-  await openProfile(id);
+  await go(() => openProfile(id));
 });
 
 // Right-clicking a profile in the sidebar. Its only item, Delete, asks again
