@@ -5,6 +5,7 @@ import { $, ago, chevronIcon, compact, h, initials, link, openExternal, trashIco
 import { openProfile, refresh, showProfile } from "./profile.js";
 import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
+import { showChangelog } from "./changelog.js";
 
 // The Mods tab shows mods either as cards, like a source's search results,
 // or as a denser list of rows that each expand to show the rest.
@@ -35,7 +36,7 @@ const expandedRows = new Set();
 
 // An added mod's list row: its picture, name and author, an on/off switch
 // and its version, and an arrow that expands it to show its description,
-// when it was updated, links to its pages and a remove button.
+// when it was updated, links to its pages, its changelog and a remove button.
 function modRow(m, { onToggle, onRemove, onVersion }) {
   const { key } = m;
   const update = h("div", { class: "card-update" });
@@ -128,6 +129,7 @@ function rowDetails(m, item, onRemove) {
       { class: "row-actions" },
       urlButton(item.url, "Website"),
       urlButton(item.author_url, "Author's mods"),
+      m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
       h("button", { type: "button", class: "danger", onclick: onRemove }, "Remove"),
     ),
   ];

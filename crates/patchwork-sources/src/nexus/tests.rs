@@ -405,3 +405,33 @@ async fn summarizes_one_mod() {
     assert!(skyui.icon_url.is_some());
     assert!(nexus.summary(&ctx, "999999999").await.unwrap().is_none());
 }
+
+#[test]
+fn changelogs_come_newest_first() {
+    let changelogs: NexusChangelogs = serde_json::from_str(
+        r#"{"1.0": ["First release"], "1.10": ["Later", " "], "1.2": ["Fixed a crash", "Faster"]}"#,
+    )
+    .unwrap();
+    let entries = changelog_entries(changelogs);
+    let versions: Vec<_> = entries.iter().map(|e| e.version.as_deref()).collect();
+    assert_eq!(versions, [Some("1.10"), Some("1.2"), Some("1.0")]);
+    assert_eq!(entries[0].notes, "- Later");
+    assert_eq!(entries[1].notes, "- Fixed a crash\n- Faster");
+}
+
+#[test]
+fn free_text_changelog_versions_keep_nexus_order_reversed() {
+    let changelogs: NexusChangelogs =
+        serde_json::from_str(r#"{"5.1SE": ["a"], "5.2SE": ["b"], "5.0": ["c"]}"#).unwrap();
+    let versions: Vec<_> = changelog_entries(changelogs)
+        .into_iter()
+        .map(|e| e.version.unwrap())
+        .collect();
+    assert_eq!(versions, ["5.0", "5.2SE", "5.1SE"]);
+}
+
+#[test]
+fn no_changelogs_is_an_empty_list() {
+    let changelogs: NexusChangelogs = serde_json::from_str("[]").unwrap();
+    assert!(changelog_entries(changelogs).is_empty());
+}

@@ -4,6 +4,7 @@ use std::sync::{LazyLock, Mutex};
 use async_trait::async_trait;
 use jiff::Timestamp;
 use patchwork_core::Result;
+use patchwork_core::changelog::{ChangelogEntry, split_markdown};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, Dependency, ModSpec, ResolvedMod, Source, SourceContext,
@@ -120,6 +121,12 @@ struct ListedCategory {
 struct ListedVersion {
     version_number: String,
     datetime_created: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct VersionChangelog {
+    /// The package's `CHANGELOG.md` as of that version, if it has one.
+    markdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -330,6 +337,30 @@ impl Source for Thunderstore {
         let versions: Vec<ListedVersion> =
             get_json(format!("{CYBERSTORM}/package/{namespace}/{name}/versions/")).await?;
         Ok(sort_versions(versions))
+    }
+
+    /// The package's `CHANGELOG.md`, split up by version. Each version has
+    /// its own copy, which usually has every version before it in it too.
+    async fn changelog(
+        &self,
+        _ctx: &SourceContext<'_>,
+        id: &str,
+        version: Option<&str>,
+    ) -> Result<Vec<ChangelogEntry>> {
+        let (namespace, name) = split_id(id)?;
+        let url = format!("{API}/package/{namespace}/{name}/");
+        let version = match version {
+            Some(v) => v.to_owned(),
+            None => {
+                let package: PackageExperimental = get_json(url.clone()).await?;
+                package.latest.version_number
+            }
+        };
+        let changelog: VersionChangelog = get_json(format!("{url}{version}/changelog/")).await?;
+        Ok(changelog
+            .markdown
+            .map(|m| split_markdown(&m))
+            .unwrap_or_default())
     }
 
     async fn summary(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Option<ModSummary>> {

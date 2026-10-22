@@ -2,7 +2,9 @@
 // through invoke() to the commands in main.rs.
 //
 // Mod names, summaries and so on come from remote sources, so they're only
-// ever put in the page as text (see h() in dom.js), never as HTML.
+// ever put in the page as text (see h() in dom.js), never as HTML. The one
+// exception is changelogs, which main.rs turns from markdown into HTML with
+// anything unsafe taken out (see changelog.rs).
 
 import { modsView, setModsView } from "./mods.js";
 import { refresh } from "./profile.js";

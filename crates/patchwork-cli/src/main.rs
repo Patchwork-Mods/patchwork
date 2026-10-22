@@ -7,6 +7,7 @@ use axoupdater::AxoUpdater;
 use clap::{Parser, Subcommand};
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
 use patchwork_core::event::{Event, Reporter};
+use patchwork_core::lock::mod_key;
 use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
@@ -86,6 +87,13 @@ enum Command {
     Unpin { name: String },
     /// List the versions a mod can be pinned to, newest first.
     Versions { name: String },
+    /// Show a mod's changelog, newest first.
+    Changelog {
+        name: String,
+        /// Only show what's changed since the version it's locked at.
+        #[arg(long)]
+        new: bool,
+    },
     /// List the mods in the profile, in load order.
     List {
         /// Only list mods matching this, best match first. Mods are found by
@@ -398,6 +406,47 @@ async fn run(cli: Cli) -> Result<()> {
                     ""
                 };
                 println!("{v}{mark}");
+            }
+        }
+        Command::Changelog { name, new } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let m =
+                loaded.mods.iter().find(|m| m.name == name).ok_or_else(|| {
+                    anyhow::anyhow!("{} has no mod named `{name}`", loaded.label())
+                })?;
+            let entries = if new {
+                let key = mod_key(&m.source, &m.id);
+                let locked = pw
+                    .load_lock(&profile)?
+                    .and_then(|lock| lock.mods.into_iter().find(|l| l.key() == key))
+                    .and_then(|l| l.version);
+                let Some(locked) = locked else {
+                    bail!("`{name}` isn't locked at a version yet; run `patchwork lock`");
+                };
+                pw.changes(
+                    &loaded.game,
+                    &m.source,
+                    &m.id,
+                    Some(&locked),
+                    m.version.as_deref(),
+                )
+                .await?
+            } else {
+                pw.changelog(&loaded.game, &m.source, &m.id, None).await?
+            };
+            if entries.is_empty() && new {
+                println!("nothing new in {name}'s changelog");
+            } else if entries.is_empty() {
+                println!("no changelog for {name}");
+            }
+            for (i, entry) in entries.iter().enumerate() {
+                if i > 0 {
+                    println!();
+                }
+                if let Some(version) = &entry.version {
+                    println!("== {version} ==");
+                }
+                println!("{}", entry.notes);
             }
         }
         Command::List { query } => {

@@ -1218,6 +1218,102 @@ dialog::backdrop {
   color: var(--pw-danger);
 }
 
+/* Update and changelog dialogs. Changelogs are markdown, so they get
+   headings, lists and code blocks sized to sit in a dialog. */
+
+.update-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.update-list li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--pw-border);
+}
+
+.update-list li:first-child {
+  border-top: none;
+}
+
+.update-list input {
+  margin-top: 3px;
+}
+
+.update-list summary {
+  cursor: pointer;
+}
+
+.update-list .changelog {
+  margin-top: 6px;
+}
+
+#changelog-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.changelog .error {
+  color: var(--pw-danger);
+}
+
+.changelog-entry + .changelog-entry {
+  margin-top: 12px;
+}
+
+.changelog-entry h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.changelog-notes {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.changelog-notes > :first-child {
+  margin-top: 0;
+}
+
+.changelog-notes > :last-child {
+  margin-bottom: 0;
+}
+
+.changelog-notes :is(h1, h2, h3, h4, h5, h6) {
+  margin: 8px 0 4px;
+  font-size: 13px;
+}
+
+.changelog-notes :is(ul, ol) {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.changelog-notes p {
+  margin: 4px 0;
+}
+
+.changelog-notes pre {
+  overflow-x: auto;
+  padding: 6px 8px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+}
+
+.changelog-notes code {
+  font: 12px ui-monospace, monospace;
+}
+
+.changelog-notes a {
+  color: var(--pw-accent);
+}
+
 /* Downloads dialog */
 
 .downloads {

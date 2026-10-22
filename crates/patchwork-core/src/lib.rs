@@ -10,6 +10,7 @@
 //! Ways of sharing profiles (zips, URL lists, mod manager codes) plug in
 //! through [`share::ProfileFormat`].
 
+pub mod changelog;
 pub mod deploy;
 pub mod error;
 pub mod event;

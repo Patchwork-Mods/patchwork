@@ -1,8 +1,9 @@
 // Deploying the profile, updating its mods, and progress from main.rs.
 
 import { gameInfo, listen, run, state, status } from "./state.js";
-import { $, h } from "./dom.js";
+import { $, h, link } from "./dom.js";
 import { openProfile, renderDeploy, showProfile } from "./profile.js";
+import { renderEntries } from "./changelog.js";
 
 /** Whether #plan-dialog is confirming a deploy or an undeploy. */
 let planKind = "deploy";
@@ -107,55 +108,142 @@ $("#revert-dialog").addEventListener("close", async () => {
   status("Reverted to the last deploy");
 });
 
-// Update. Relocks the profile at the newest versions, like `patchwork lock
+// Update. Checks which mods that follow the latest version have newer ones
+// out, and shows what each would bring in from its changelog. The ones left
+// ticked are then relocked at their newest versions, like `patchwork lock
 // --update`; pinned mods stay where they are. Nothing changes in the game
 // until the next deploy.
 
 $("#update").addEventListener("click", async () => {
   $("#update").disabled = true;
-  await relock(run("update_lock", { id: state.profile.id }), "Checking for updates…");
+  await previewUpdates();
 });
 
-/** Moves one mod that follows the latest version (and whatever it needs) to the newest one. */
+/** Offers to move one mod that follows the latest version to the newest one. */
 export function updateMod(m) {
-  return relock(
-    run("update_mod", { id: state.profile.id, key: m.key }),
-    `Updating ${m.name}…`,
-    m.name,
-  );
+  return previewUpdates([m.key], m.name);
 }
 
 /**
- * Waits on update_lock or update_mod and says what changed: in the status
- * bar if it's nothing or just `name`, or in a dialog listing them otherwise.
+ * Shows #update-dialog with the updates for the mods in `keys` (every mod,
+ * if not given; `name` is the one mod's) and makes the ones that are kept
+ * ticked.
  */
-async function relock(changing, doing, name) {
+async function previewUpdates(keys, name) {
   const id = state.profile.id;
-  status(doing);
+  status(name ? `Checking for updates to ${name}…` : "Checking for updates…");
   try {
-    const changes = await changing;
+    const { updates, failures } = await run("preview_updates", { id, keys });
+    for (const f of failures) console.warn(f);
+    if (!updates.length) {
+      if (failures.length) {
+        const count = failures.length;
+        status(`Couldn't check ${count} mod${count === 1 ? "" : "s"} for updates`, true);
+      } else {
+        status(name ? `${name} is already up to date` : "Everything's up to date");
+      }
+      return;
+    }
+    const picked = await confirmUpdates(updates, failures);
+    if (!picked.length) {
+      status("Ready");
+      return;
+    }
+    status(picked.length === 1 ? `Updating ${picked[0].name}…` : `Updating ${picked.length} mods…`);
+    const changes = await run("update_mods", { id, keys: picked.map((u) => u.key) });
+    const updated = changes.filter((c) => picked.some((u) => u.name === c.name));
+    const extra = changes.length - updated.length;
     if (!changes.length) {
-      status(name ? `${name} is already up to date` : "Everything's up to date");
+      status("Nothing needed updating after all");
       return;
     }
-    if (changes.length === 1 && changes[0].name === name) {
-      status(`Updated ${name} to ${changes[0].to ?? "(no version)"}; deploy to apply`);
-      return;
-    }
-    const count = changes.length;
-    const summary = `${count} mod${count === 1 ? "" : "s"} changed; deploy to apply`;
-    $("#update-summary").textContent = summary;
-    $("#update-list").replaceChildren(
-      ...changes.map((c) =>
-        h("li", {}, `${c.name}  ${c.from ?? "(new)"} → ${c.to ?? "(no version)"}`),
-      ),
+    status(
+      (updated.length === 1
+        ? `Updated ${updated[0].name} to ${updated[0].to ?? "(no version)"}`
+        : `Updated ${updated.length} mods`) +
+        (extra ? `, and ${extra} more they need` : "") +
+        "; deploy to apply",
     );
-    status(summary);
-    $("#update-dialog").showModal();
   } finally {
-    // the mods that changed get their details again
+    // the mods that changed get their details again, and the versions just
+    // checked show up
     await openProfile(id);
   }
+}
+
+/**
+ * Lists `updates` in #update-dialog, each with its changelog and ticked, and
+ * resolves to the ones still ticked once it's confirmed (none if cancelled).
+ */
+function confirmUpdates(updates, failures) {
+  const dialog = $("#update-dialog");
+  const confirm = $("#update-dialog [value=update]");
+  const count = updates.length;
+  const boxes = [];
+  const sync = () => {
+    const ticked = boxes.filter((b) => b.checked).length;
+    confirm.disabled = !ticked;
+    confirm.textContent = ticked === count ? "Update" : `Update ${ticked}`;
+  };
+  $("#update-title").textContent = count === 1 ? `Update ${updates[0].name}?` : `Update ${count} mods?`;
+  $("#update-summary").textContent =
+    count === 1
+      ? "Here's what's changed. Nothing changes in the game until you deploy."
+      : "Here's what's changed in each. Untick any to leave as they are; nothing changes in the game until you deploy.";
+  $("#update-warnings").replaceChildren(
+    ...failures.map((f) => h("li", {}, `Couldn't check ${f}`)),
+  );
+  $("#update-list").replaceChildren(
+    ...updates.map((u) => {
+      const box = h("input", {
+        type: "checkbox",
+        checked: true,
+        "aria-label": `Update ${u.name}`,
+        onchange: sync,
+      });
+      boxes.push(box);
+      const notes = u.changes.length
+        ? renderEntries(u.changes)
+        : [
+            h(
+              "p",
+              { class: "muted" },
+              u.changelogError
+                ? `Couldn't get the changelog: ${u.changelogError}`
+                : "No changelog for these versions.",
+              u.url && [" ", link(u.url, "See the mod's page")],
+            ),
+          ];
+      return h(
+        "li",
+        {},
+        box,
+        h(
+          "details",
+          // a long list starts folded up, so it can be read through
+          { open: count <= 3 },
+          h(
+            "summary",
+            {},
+            h("span", { class: "mod-name" }, u.name),
+            h("span", { class: "muted" }, ` ${u.from ?? "(new)"} → ${u.to}`),
+          ),
+          h("div", { class: "changelog" }, notes),
+        ),
+      );
+    }),
+  );
+  sync();
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) =>
+    dialog.addEventListener(
+      "close",
+      () =>
+        resolve(dialog.returnValue === "update" ? updates.filter((_, i) => boxes[i].checked) : []),
+      { once: true },
+    ),
+  );
 }
 
 /** Whether a mod follows the latest version and a newer one than it's locked at is out. */

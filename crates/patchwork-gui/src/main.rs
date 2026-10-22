@@ -1,6 +1,7 @@
 // Don't open a console window alongside the app on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod changelog;
 mod details;
 
 use std::fmt::Display;
@@ -704,36 +705,22 @@ struct LockChange {
     to: Option<String>,
 }
 
-/// Relocks the profile at the newest versions, like `patchwork lock
-/// --update`, and returns what changed. Pinned mods stay where they are.
-/// Mods that moved to a new version have new details too, so the next
-/// `refresh_details` fetches them.
+/// Moves the mods in `keys` (as `<source>:<id>`) to their newest versions,
+/// along with anything those need newer, and returns what changed. This is
+/// what confirming `preview_updates` does. Mods that moved to a new version
+/// have new details too, so the next `refresh_details` fetches them.
 #[tauri::command]
-async fn update_lock(
+async fn update_mods(
     handle: AppHandle,
     app: State<'_, App>,
     id: String,
-) -> CmdResult<Vec<LockChange>> {
-    let r = profile_ref(&id)?;
-    let before = app.pw.load_lock(&r).map_err(msg)?;
-    let after = app.pw.lock(&r, true).await.map_err(lock_msg(&handle))?;
-    Ok(lock_changes(&app, before, after))
-}
-
-/// [`update_lock`] for just one mod (by key), along with anything its new
-/// version needs newer.
-#[tauri::command]
-async fn update_mod(
-    handle: AppHandle,
-    app: State<'_, App>,
-    id: String,
-    key: String,
+    keys: Vec<String>,
 ) -> CmdResult<Vec<LockChange>> {
     let r = profile_ref(&id)?;
     let before = app.pw.load_lock(&r).map_err(msg)?;
     let after = app
         .pw
-        .lock_updating(&r, &[key])
+        .lock_updating(&r, &keys)
         .await
         .map_err(lock_msg(&handle))?;
     Ok(lock_changes(&app, before, after))
@@ -1093,8 +1080,9 @@ fn main() {
             find_games,
             find_mods,
             set_version,
-            update_lock,
-            update_mod,
+            changelog::preview_updates,
+            changelog::mod_changelog,
+            update_mods,
             add_mod,
             search,
             search_categories,

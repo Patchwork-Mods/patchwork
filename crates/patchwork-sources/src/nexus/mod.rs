@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use patchwork_core::Result;
+use patchwork_core::changelog::ChangelogEntry;
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, Download, Handoff, ModSpec, ResolvedMod, Source,
-    SourceContext, url_parts,
+    SourceContext, compare_dotted, url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -91,6 +92,44 @@ pub struct NexusDownloadLink {
     pub short_name: String,
     #[serde(rename = "URI")]
     pub uri: String,
+}
+
+/// A mod's changelogs: each version's notes as a list of lines, in the
+/// order Nexus sends them, which is kept because versions are free text.
+#[derive(Debug, Clone, Default)]
+pub struct NexusChangelogs(pub Vec<(String, Vec<String>)>);
+
+impl<'de> Deserialize<'de> for NexusChangelogs {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = NexusChangelogs;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a map of versions to lists of changes")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                let mut versions = Vec::new();
+                while let Some(entry) = map.next_entry::<String, Vec<String>>()? {
+                    versions.push(entry);
+                }
+                Ok(NexusChangelogs(versions))
+            }
+            // mods without any come back as an empty list rather than map
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(NexusChangelogs::default())
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
 }
 
 // --- End API Responses ---
@@ -200,6 +239,34 @@ fn file_versions(mut files: Vec<NexusFile>) -> Vec<String> {
     versions
 }
 
+/// Turns a mod's changelogs into entries, newest first: by version number
+/// if every version is one, or else the reverse of the order Nexus lists
+/// them in, which is oldest first.
+fn changelog_entries(changelogs: NexusChangelogs) -> Vec<ChangelogEntry> {
+    let mut versions = changelogs.0;
+    let numbered = versions
+        .iter()
+        .all(|(v, _)| compare_dotted(v, "0").is_some());
+    if numbered {
+        versions.sort_by(|(a, _), (b, _)| compare_dotted(b, a).unwrap());
+    } else {
+        versions.reverse();
+    }
+    versions
+        .into_iter()
+        .map(|(version, lines)| ChangelogEntry {
+            version: Some(version),
+            notes: lines
+                .iter()
+                .map(|line| line.trim())
+                .filter(|line| !line.is_empty())
+                .map(|line| format!("- {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        })
+        .collect()
+}
+
 // converts a nexus mod file to our internal version of a mod
 fn nexus_to_resolved_mod(mod_: &NexusMod, file: &NexusFile) -> ResolvedMod {
     let id = mod_.mod_id.to_string();
@@ -296,6 +363,21 @@ impl Source for Nexus {
             .get_json(&format!("{base}/files.json"), api_key)
             .await?;
         Ok(file_versions(files.files))
+    }
+
+    /// The mod's changelogs, which are for the whole mod rather than any one
+    /// version of it, so `version` makes no difference.
+    async fn changelog(
+        &self,
+        ctx: &SourceContext<'_>,
+        id: &str,
+        _version: Option<&str>,
+    ) -> Result<Vec<ChangelogEntry>> {
+        let (base, api_key) = self.mod_api(ctx, id)?;
+        let changelogs: NexusChangelogs = self
+            .get_json(&format!("{base}/changelogs.json"), api_key)
+            .await?;
+        Ok(changelog_entries(changelogs))
     }
 
     /// Doesn't need an API key.

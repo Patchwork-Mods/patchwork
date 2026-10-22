@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
+use crate::changelog::ChangelogEntry;
 use crate::game::GameDef;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 
@@ -298,6 +299,17 @@ pub trait Source: Send + Sync {
     /// `Ok(None)` means the source has nothing to show beyond the id.
     async fn summary(&self, _ctx: &SourceContext<'_>, _id: &str) -> Result<Option<ModSummary>> {
         Ok(None)
+    }
+
+    /// `id`'s changelog as of `version` (the newest if `None`), newest entry
+    /// first. Empty means the source has none for it.
+    async fn changelog(
+        &self,
+        _ctx: &SourceContext<'_>,
+        _id: &str,
+        _version: Option<&str>,
+    ) -> Result<Vec<ChangelogEntry>> {
+        Ok(Vec::new())
     }
 
     /// A link to `id`'s page, used when sharing a profile as a list of URLs.

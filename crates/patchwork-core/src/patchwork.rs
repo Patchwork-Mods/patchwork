@@ -8,6 +8,7 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
+use crate::changelog::{self, ChangelogEntry};
 use crate::deploy::{
     self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
     DesiredState, GameFiles, InstalledMod, Resolved,
@@ -636,6 +637,51 @@ impl Patchwork {
 
     fn known_summary_file(&self, game: &str, source: &str, id: &str) -> PathBuf {
         cache_file(&self.paths.known_summaries(), game, source, id)
+    }
+
+    /// A mod's changelog as of `version` (the newest if `None`), newest entry
+    /// first, fetched from its source. Empty if the source has none.
+    pub async fn changelog(
+        &self,
+        game: &str,
+        source: &str,
+        id: &str,
+        version: Option<&str>,
+    ) -> Result<Vec<ChangelogEntry>> {
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
+        let ctx = SourceContext {
+            game: def,
+            config: def.sources.get(source),
+        };
+        self.source(source)?.changelog(&ctx, id, version).await
+    }
+
+    /// What moving a mod from `from` to `to` brings in: its changelog as of
+    /// `to`, cut down to the versions in between (see
+    /// [`changelog::between`]).
+    pub async fn changes(
+        &self,
+        game: &str,
+        source: &str,
+        id: &str,
+        from: Option<&str>,
+        to: Option<&str>,
+    ) -> Result<Vec<ChangelogEntry>> {
+        let entries = self.changelog(game, source, id, to).await?;
+        let compare = |a: &str, b: &str| self.source(source).ok()?.compare_versions(a, b);
+        Ok(changelog::between(&entries, from, to, compare))
+    }
+
+    /// A link to a mod's page on its source, if it has one.
+    pub fn mod_url(&self, game: &str, source: &str, id: &str) -> Option<String> {
+        let registry = self.registry();
+        let def = &registry.game(game).ok()?.value;
+        let ctx = SourceContext {
+            game: def,
+            config: def.sources.get(source),
+        };
+        self.source(source).ok()?.mod_url(&ctx, id, None)
     }
 
     fn source(&self, id: &str) -> Result<&dyn Source> {

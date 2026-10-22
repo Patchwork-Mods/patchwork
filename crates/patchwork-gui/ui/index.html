@@ -405,11 +405,25 @@
       </form>
     </dialog>
 
+    <!-- Confirms an update, with what it changes; see deploy.js. -->
     <dialog id="update-dialog">
       <form method="dialog" class="stack">
-        <h2>Updated</h2>
-        <p id="update-summary"></p>
-        <ul id="update-list" class="plan-ops"></ul>
+        <h2 id="update-title">Update</h2>
+        <p id="update-summary" class="hint"></p>
+        <ul id="update-warnings" class="warnings"></ul>
+        <ul id="update-list" class="update-list"></ul>
+        <div class="row end">
+          <button value="cancel">Cancel</button>
+          <button value="update" class="primary">Update</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- See changelog.js. -->
+    <dialog id="changelog-dialog">
+      <form method="dialog" class="stack">
+        <h2 id="changelog-title">Changelog</h2>
+        <div id="changelog-body" class="changelog"></div>
         <div class="row end">
           <button value="close">Close</button>
         </div>
