@@ -51,7 +51,9 @@ body {
   margin: 0;
   height: 100vh;
   display: grid;
-  grid-template-columns: 240px 1fr;
+  /* The sidebar gives up width as the window narrows, so the main area isn't
+     squeezed by empty space on the left. */
+  grid-template-columns: clamp(150px, 24vw, 240px) minmax(0, 1fr);
   grid-template-rows: 1fr auto;
   grid-template-areas:
     "sidebar main"
