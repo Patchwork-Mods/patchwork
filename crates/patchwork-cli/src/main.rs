@@ -208,6 +208,10 @@ enum ProfileCommand {
     /// Delete a profile, along with its lockfile and any local mods imported
     /// with it. A deployed profile has to be undeployed first.
     Remove { profile: String },
+    /// Rename a profile; it stays for the same game.
+    Rename { profile: String, name: String },
+    /// Copy a profile, mods and all, to a new name for the same game.
+    Copy { profile: String, name: String },
     /// Export the profile to share it (see `profile formats`).
     Export {
         #[arg(short, long, default_value = "patchwork")]
@@ -544,6 +548,15 @@ async fn profile(pw: &Patchwork, command: ProfileCommand, explicit: &Option<Stri
         ProfileCommand::Remove { profile } => {
             pw.remove_profile(&pw.find_profile(&profile)?)?;
             println!("removed {profile}");
+        }
+        ProfileCommand::Rename { profile, name } => {
+            let found = pw.find_profile(&profile)?;
+            pw.rename_profile(&found, &name)?;
+            println!("renamed {profile} to {}", pw.load_profile(&found)?.label());
+        }
+        ProfileCommand::Copy { profile, name } => {
+            let copy = pw.duplicate_profile(&pw.find_profile(&profile)?, &name)?;
+            println!("copied {profile} to {}", pw.load_profile(&copy)?.label());
         }
         ProfileCommand::Export { format, output } => {
             let (profile, loaded) = selected(pw, explicit)?;

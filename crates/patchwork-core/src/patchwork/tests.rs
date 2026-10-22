@@ -636,3 +636,66 @@ async fn built_files_are_reused_until_the_game_changes() {
     assert_eq!(data(), "vanilla");
     assert_eq!(builds(), 0);
 }
+
+#[test]
+fn renaming_a_profile_keeps_its_id_and_checks_the_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    pw.create_profile("my-game", "taken").unwrap();
+
+    pw.rename_profile(&profile, "renamed").unwrap();
+    assert_eq!(pw.find_profile("my-game/renamed").unwrap(), profile);
+    assert!(pw.find_profile("my-game/default").is_err());
+    // renaming to its own name does nothing
+    pw.rename_profile(&profile, "renamed").unwrap();
+
+    let taken = pw.rename_profile(&profile, "taken").unwrap_err();
+    assert!(taken.to_string().contains("already exists"), "{taken}");
+    assert!(pw.rename_profile(&profile, "has spaces").is_err());
+}
+
+#[test]
+fn duplicating_a_profile_copies_its_local_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    // as if it had been imported with a local mod
+    let file = pw.profile_dir(&profile).join("files/abc/mod.zip");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, b"mod bytes").unwrap();
+    let mut loaded = pw.load_profile(&profile).unwrap();
+    loaded.mods.push(ProfileMod {
+        name: "mod".to_owned(),
+        source: "local".to_owned(),
+        id: file.to_string_lossy().into_owned(),
+        version: None,
+        enabled: false,
+    });
+    loaded.hidden_tags = vec!["library".to_owned()];
+    pw.save_profile(&profile, &loaded).unwrap();
+
+    let copy = pw.duplicate_profile(&profile, "copy").unwrap();
+    assert_ne!(copy, profile);
+    assert_eq!(pw.find_profile("my-game/copy").unwrap(), copy);
+    let copied = pw.load_profile(&copy).unwrap();
+    assert_eq!(copied.hidden_tags, loaded.hidden_tags);
+    assert!(!copied.mods[0].enabled);
+    let copied_file = pw.profile_dir(&copy).join("files/abc/mod.zip");
+    assert_eq!(copied.mods[0].id, copied_file.to_string_lossy());
+    assert_eq!(fs::read(&copied_file).unwrap(), b"mod bytes");
+
+    // the copy stands on its own
+    pw.remove_profile(&profile).unwrap();
+    assert!(copied_file.is_file());
+    let taken = pw.duplicate_profile(&copy, "copy").unwrap_err();
+    assert!(taken.to_string().contains("already exists"), "{taken}");
+}

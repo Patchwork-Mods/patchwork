@@ -313,6 +313,16 @@ fn profiles_are_found_by_name() {
             .contains("no profile named")
     );
 
+    env.run(&["profile", "copy", "lethal-company/other", "copied"]);
+    env.run(&["profile", "rename", "lethal-company/copied", "renamed"]);
+    let list = env.run(&["profile", "list"]);
+    assert!(list.contains("  lethal-company/renamed"), "{list}");
+    assert!(!list.contains("lethal-company/copied"), "{list}");
+    assert!(
+        env.fails(&["profile", "rename", "lethal-company/renamed", "main"])
+            .contains("already exists")
+    );
+
     env.run(&["profile", "remove", "lethal-company/other"]);
     let list = env.run(&["profile", "list"]);
     assert!(!list.contains("lethal-company/other"), "{list}");

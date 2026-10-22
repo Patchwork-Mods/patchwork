@@ -59,6 +59,7 @@
         <h2>New profile</h2>
         <input name="name" placeholder="Name" required pattern="[A-Za-z0-9._\-]+" />
         <button type="submit">Create</button>
+        <button type="button" id="import-profile">Import…</button>
       </form>
     </aside>
 
@@ -284,8 +285,76 @@
 
     <!-- Opened by right-clicking a profile in the sidebar; see profile.js. -->
     <div id="profile-menu" class="menu-items context-menu" role="menu" hidden>
+      <button type="button" role="menuitem" id="rename-profile">Rename…</button>
+      <button type="button" role="menuitem" id="duplicate-profile">Duplicate…</button>
+      <button type="button" role="menuitem" id="export-profile">Export…</button>
+      <hr />
       <button type="button" role="menuitem" id="delete-profile" class="danger-text">Delete</button>
     </div>
+
+    <!-- Names a profile, for renaming or duplicating one; see profile.js. -->
+    <dialog id="profile-name-dialog">
+      <form id="profile-name-form" method="dialog" class="stack">
+        <h2 id="profile-name-title"></h2>
+        <label class="field">
+          <span>Name <small class="muted">letters, digits, <code>-</code>, <code>_</code> or <code>.</code></small></span>
+          <input name="name" required pattern="[A-Za-z0-9._\-]+" autocomplete="off" />
+        </label>
+        <p id="profile-name-error" class="error" hidden></p>
+        <div class="row end">
+          <button type="button" value="cancel" formnovalidate>Cancel</button>
+          <button type="submit" id="profile-name-submit" class="primary"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="export-dialog">
+      <form id="export-form" method="dialog" class="stack">
+        <h2 id="export-title">Export profile</h2>
+        <label class="field">
+          <span>Format</span>
+          <select name="format"></select>
+          <small id="export-description" class="muted"></small>
+        </label>
+        <!-- Text formats (codes, links) are shown here to copy. -->
+        <div id="export-text" class="field" hidden>
+          <textarea name="text" readonly rows="4"></textarea>
+        </div>
+        <p id="export-error" class="error" hidden></p>
+        <div class="row end">
+          <button type="button" value="cancel" formnovalidate>Close</button>
+          <button type="button" id="export-copy" hidden>Copy</button>
+          <button type="submit" id="export-submit" class="primary">Export</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="import-dialog">
+      <form id="import-form" method="dialog" class="stack">
+        <h2 id="import-title">Import a profile</h2>
+        <div class="field">
+          <label for="import-text">Paste a code or a list of links</label>
+          <textarea id="import-text" name="text" rows="4" autocomplete="off"></textarea>
+        </div>
+        <div class="row">
+          <button type="button" id="import-file">Choose a file…</button>
+          <span id="import-file-name" class="muted">or a profile exported to a file</span>
+        </div>
+        <label class="field">
+          <span>Name <small class="muted">optional; defaults to the name it was shared with</small></span>
+          <input name="name" pattern="[A-Za-z0-9._\-]+" autocomplete="off" />
+        </label>
+        <label class="row">
+          <input type="checkbox" name="replace" />
+          <span>Update the profile if it's already here, rather than failing</span>
+        </label>
+        <p id="import-error" class="error" hidden></p>
+        <div class="row end">
+          <button type="button" value="cancel" formnovalidate>Cancel</button>
+          <button type="submit" class="primary">Import</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="delete-profile-dialog">
       <form method="dialog" class="stack">

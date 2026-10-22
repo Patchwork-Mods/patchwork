@@ -12,6 +12,7 @@ use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::fsutil;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileRef, validate_name};
+use crate::source::ArtifactLocation;
 use crate::{Error, Result};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -37,21 +38,89 @@ impl Patchwork {
     /// Creates `<game>/<name>`, which must not already exist.
     pub fn create_profile(&self, game: &str, name: &str) -> Result<ProfileRef> {
         self.registry().game(game)?;
-        validate_name(name)?;
         let profile = Profile::new(game, name);
+        self.check_new_name(&profile)?;
+        let profile_ref = profile.reference();
+        fsutil::write_toml(&self.profile_file(&profile_ref), &profile)?;
+        Ok(profile_ref)
+    }
+
+    /// Renames a profile within its game. Everything else refers to it by
+    /// id, so nothing else has to change.
+    pub fn rename_profile(&self, profile: &ProfileRef, name: &str) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        if loaded.name == name {
+            return Ok(());
+        }
+        loaded.name = name.to_owned();
+        self.check_new_name(&loaded)?;
+        self.save_profile(profile, &loaded)
+    }
+
+    /// Copies a profile to `<game>/<name>` with a new id: its mods, its
+    /// lockfile and any local mods imported with it. The copy hasn't been
+    /// deployed, so it has nothing to revert to.
+    pub fn duplicate_profile(&self, profile: &ProfileRef, name: &str) -> Result<ProfileRef> {
+        let mut copy = self.load_profile(profile)?;
+        copy.id = Uuid::new_v4();
+        copy.name = name.to_owned();
+        self.check_new_name(&copy)?;
+        let copy_ref = copy.reference();
+
+        // Local mods imported with the profile are kept in its folder, and
+        // their ids are their paths, so they have to move with the copy.
+        let old_files = self.profile_dir(profile).join("files");
+        let new_files = self.profile_dir(&copy_ref).join("files");
+        if old_files.is_dir() {
+            fsutil::copy_dir(&old_files, &new_files)?;
+        }
+        let moved = |path: &str| {
+            std::path::Path::new(path)
+                .strip_prefix(&old_files)
+                .ok()
+                .map(|rest| new_files.join(rest).to_string_lossy().into_owned())
+        };
+        for m in &mut copy.mods {
+            if let Some(id) = moved(&m.id) {
+                m.id = id;
+            }
+        }
+        let lock = self.load_lock(profile)?.map(|mut lock| {
+            for m in &mut lock.mods {
+                if let Some(id) = moved(&m.id) {
+                    m.id = id;
+                }
+                if let ArtifactLocation::Path { path } = &mut m.artifact
+                    && let Some(new) = moved(&path.to_string_lossy())
+                {
+                    *path = new.into();
+                }
+            }
+            lock
+        });
+
+        self.save_profile(&copy_ref, &copy)?;
+        if let Some(lock) = lock {
+            fsutil::write_toml(&self.lock_file(&copy_ref), &lock)?;
+        }
+        Ok(copy_ref)
+    }
+
+    /// Fails unless `profile`'s name is valid and no other profile for its
+    /// game already has it.
+    fn check_new_name(&self, profile: &Profile) -> Result<()> {
+        validate_name(&profile.name)?;
         if self
             .profiles()?
             .iter()
-            .any(|(_, p)| p.label() == profile.label())
+            .any(|(r, p)| r.uuid != profile.id && p.label() == profile.label())
         {
             return Err(Error::invalid(format!(
                 "profile {} already exists",
                 profile.label()
             )));
         }
-        let profile_ref = profile.reference();
-        fsutil::write_toml(&self.profile_file(&profile_ref), &profile)?;
-        Ok(profile_ref)
+        Ok(())
     }
 
     /// Removes the profile and everything kept with it: its lockfile, what

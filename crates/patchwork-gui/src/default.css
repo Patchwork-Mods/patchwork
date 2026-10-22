@@ -99,7 +99,8 @@ h2 {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: inherit;
   background: var(--pw-surface);
@@ -131,6 +132,7 @@ button.danger {
 
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--pw-accent);
   outline-offset: 1px;
@@ -563,6 +565,13 @@ button.link {
 
 .menu-items button.danger-text {
   color: var(--pw-danger);
+}
+
+.menu-items hr {
+  width: 100%;
+  margin: 4px 0;
+  border: none;
+  border-top: 1px solid var(--pw-border);
 }
 
 /* The filter menu's tags: a checkbox, the tag, and how many mods have it. */
@@ -1229,6 +1238,14 @@ dialog::backdrop {
 
 .downloads .done .name {
   color: var(--pw-muted);
+}
+
+/* Export and import dialogs: codes and links are long and unbroken. */
+
+textarea {
+  resize: vertical;
+  font: 12px/1.5 ui-monospace, monospace;
+  word-break: break-all;
 }
 
 /* Add game dialog */

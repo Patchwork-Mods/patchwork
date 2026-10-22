@@ -18,6 +18,22 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
     fs::rename(&tmp, path).at(path)
 }
 
+/// Copies a directory and everything in it to `dst`, which must not exist.
+pub fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst).at(dst)?;
+    for entry in fs::read_dir(src).at(src)? {
+        let entry = entry.at(src)?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry.file_type().at(&from)?.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            fs::copy(&from, &to).at(&from)?;
+        }
+    }
+    Ok(())
+}
+
 /// Reads a TOML file, returning `None` if it doesn't exist.
 pub fn read_toml<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     match fs::read_to_string(path) {

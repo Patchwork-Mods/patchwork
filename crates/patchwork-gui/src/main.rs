@@ -17,7 +17,7 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{ModSpec, SourceFile};
-use patchwork_core::{DeployStatus, GameInstall, Patchwork};
+use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
@@ -431,6 +431,108 @@ fn use_profile(app: State<'_, App>, id: String) -> CmdResult<()> {
 #[tauri::command]
 fn remove_profile(app: State<'_, App>, id: String) -> CmdResult<()> {
     app.pw.remove_profile(&profile_ref(&id)?).map_err(msg)
+}
+
+#[tauri::command]
+fn rename_profile(app: State<'_, App>, id: String, name: String) -> CmdResult<()> {
+    app.pw
+        .rename_profile(&profile_ref(&id)?, &name)
+        .map_err(msg)
+}
+
+/// Copies a profile to a new name, returning the copy's id.
+#[tauri::command]
+fn duplicate_profile(app: State<'_, App>, id: String, name: String) -> CmdResult<String> {
+    let copy = app
+        .pw
+        .duplicate_profile(&profile_ref(&id)?, &name)
+        .map_err(msg)?;
+    Ok(copy.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FormatInfo {
+    id: String,
+    description: String,
+    /// What exported files end in, or `None` for text (a code, links) to
+    /// copy and paste.
+    extension: Option<String>,
+}
+
+/// The formats `game`'s profiles can be exported to and imported from.
+#[tauri::command]
+fn profile_formats(app: State<'_, App>, game: String) -> CmdResult<Vec<FormatInfo>> {
+    let registry = app.pw.registry();
+    let game = &registry.game(&game).map_err(msg)?.value;
+    Ok(app
+        .pw
+        .formats()
+        .filter(|f| f.supports(game))
+        .map(|f| FormatInfo {
+            id: f.id().to_owned(),
+            description: f.description().to_owned(),
+            extension: f.extension().map(str::to_owned),
+        })
+        .collect())
+}
+
+/// Exports a profile. Writes it to `path` if given; otherwise it's text,
+/// which is returned for the user to copy.
+#[tauri::command]
+async fn export_profile(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+    format: String,
+    path: Option<String>,
+) -> CmdResult<Option<String>> {
+    let bytes = app
+        .pw
+        .export_profile(&profile_ref(&id)?, &format)
+        .await
+        .map_err(lock_msg(&handle))?;
+    match path {
+        Some(path) => {
+            std::fs::write(&path, bytes).map_err(|e| format!("writing {path}: {e}"))?;
+            Ok(None)
+        }
+        None => String::from_utf8(bytes).map(Some).map_err(msg),
+    }
+}
+
+/// What to import a profile from: a file, or text that was pasted in.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ImportInput {
+    Path(String),
+    Text(String),
+}
+
+/// Imports a profile for `game` and switches to it, returning its id.
+#[tauri::command]
+async fn import_profile(
+    app: State<'_, App>,
+    input: ImportInput,
+    game: String,
+    name: Option<String>,
+    replace: bool,
+) -> CmdResult<String> {
+    let bytes = match input {
+        ImportInput::Path(path) => {
+            std::fs::read(&path).map_err(|e| format!("reading {path}: {e}"))?
+        }
+        ImportInput::Text(text) => text.trim().as_bytes().to_vec(),
+    };
+    let options = ImportOptions {
+        format: None,
+        game: Some(&game),
+        name: name.as_deref().filter(|n| !n.is_empty()),
+        replace,
+    };
+    let imported = app.pw.import_profile(&bytes, &options).await.map_err(msg)?;
+    app.pw.use_profile(&imported.profile).map_err(msg)?;
+    Ok(imported.profile.to_string())
 }
 
 #[tauri::command]
@@ -973,6 +1075,11 @@ fn main() {
             create_profile,
             use_profile,
             remove_profile,
+            rename_profile,
+            duplicate_profile,
+            profile_formats,
+            export_profile,
+            import_profile,
             set_game_path,
             game_settings,
             set_game_settings,
