@@ -66,6 +66,7 @@ export async function openProfile(id) {
 export function showProfile(profile, { keepMods = false } = {}) {
   state.profile = profile;
   state.searches = {};
+  state.filters = {};
   renderSidebar();
   renderProfile({ keepMods });
   refreshDetails();

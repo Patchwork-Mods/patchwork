@@ -269,6 +269,15 @@ fn searches_thunderstore() {
         found.contains("(thunderstore:notnotnotswipez-MoreCompany)"),
         "{found}"
     );
+    assert!(
+        env.run(&["search", "lethallib"])
+            .contains("(thunderstore:Evaisa-LethalLib)")
+    );
+    let without = env.run(&["search", "lethallib", "-x", "Libraries"]);
+    assert!(
+        !without.contains("(thunderstore:Evaisa-LethalLib)"),
+        "{without}"
+    );
     assert!(env.run(&["search", "--list-categories"]).contains("moons"));
 }
 

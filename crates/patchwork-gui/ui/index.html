@@ -177,6 +177,12 @@
             <option value="newest">Newest</option>
             <option value="rating">Rating</option>
           </select>
+          <!-- Narrows the search down by the source's categories. Its rows
+               are filled in each time it opens; see renderSourceFilter(). -->
+          <details id="source-filter" class="menu">
+            <summary title="Only show, or hide, mods in some categories, like libraries">Filter</summary>
+            <div class="menu-items"></div>
+          </details>
         </form>
         <ul id="results" class="result-grid"></ul>
         <!-- Scrolling near this loads the next page; see showMore() in browse.js. -->

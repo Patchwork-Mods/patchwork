@@ -171,6 +171,14 @@ pub(super) fn mods_filter(game_domain: &str, query: &SearchQuery) -> Value {
             .collect();
         groups.push(json!({ "op": "OR", "categoryName": categories }));
     }
+    if !query.excluded_categories.is_empty() {
+        let excluded: Vec<_> = query
+            .excluded_categories
+            .iter()
+            .map(|c| json!({ "value": c, "op": "NOT_EQUALS" }))
+            .collect();
+        groups.push(json!({ "op": "AND", "categoryName": excluded }));
+    }
     json!({
         "gameDomainName": [{ "value": game_domain, "op": "EQUALS" }],
         "adultContent": [{ "value": false, "op": "EQUALS" }],

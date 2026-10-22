@@ -30,6 +30,7 @@ export function selectTab(key) {
     form.elements.text.value = last?.query.text ?? "";
     form.elements.sort.value = last?.query.sort ?? "";
     renderResults(last);
+    renderFilterCount();
     // a source opens on its home page, which is a search with no text
     if (!last) search().catch(() => {});
   }
@@ -59,17 +60,22 @@ async function search() {
   const source = state.source;
   if (!p || !source) return;
   const form = new FormData($("#search"));
+  const seq = (searchSeq[source] = (searchSeq[source] ?? 0) + 1);
+  status("Searching…");
+  const started = performance.now();
+  const filter = await filterOf(source);
+  // the first search on a tab is what starts its filter off
+  if (state.source === source) renderFilterCount();
   const query = {
     game: p.game,
     source,
     text: form.get("text"),
     sort: form.get("sort") || null,
+    categories: filter.only,
+    excludedCategories: filter.hide,
     page: 0,
   };
-  const seq = (searchSeq[source] = (searchSeq[source] ?? 0) + 1);
-  status("Searching…");
-  const started = performance.now();
-  const results = await run("search", query);
+  const results = await run("search", { query });
   const fetched = performance.now();
   if (seq !== searchSeq[source] || state.profile?.id !== p.id) return;
   state.searches[source] = {
@@ -100,7 +106,7 @@ async function loadMore() {
   status("Loading more…");
   let results;
   try {
-    results = await run("search", query);
+    results = await run("search", { query });
   } finally {
     last.loading = false;
   }
@@ -187,6 +193,145 @@ function showMore(search) {
   moreObserver.unobserve(more);
   if (search.hasMore) moreObserver.observe(more);
 }
+
+// Filtering by category. The source does the filtering, so paging and the
+// number of mods found stay right. A source's filter starts out hiding the
+// categories the Mods tab's filter hides, matched by name; changing it here
+// only lasts until the profile is opened again.
+
+const filterMenu = $("#source-filter");
+
+/** Each source's categories for each game, by "game:source", once asked for. */
+const categoryLists = new Map();
+
+/** The categories `source` can filter by, sorted by name. */
+function categoriesOf(source) {
+  const k = `${state.profile.game}:${source}`;
+  if (!categoryLists.has(k)) {
+    const list = run("search_categories", { game: state.profile.game, source })
+      .then((categories) => categories.sort((a, b) => a.name.localeCompare(b.name)))
+      // a failed fetch is tried again next time
+      .catch((e) => (categoryLists.delete(k), Promise.reject(e)));
+    categoryLists.set(k, list);
+  }
+  return categoryLists.get(k);
+}
+
+/** `source`'s filter, starting it from the profile's hidden tags if it's new. */
+async function filterOf(source) {
+  const p = state.profile;
+  if (state.filters[source]) return state.filters[source];
+  let hide = [];
+  if (p.hiddenTags.length) {
+    const hidden = p.hiddenTags.map((t) => t.toLowerCase());
+    // not knowing the categories just means searching without hiding any
+    const categories = await categoriesOf(source).catch(() => []);
+    hide = categories.filter((c) => hidden.includes(c.name.toLowerCase())).map((c) => c.id);
+  }
+  // another search may have started it while this was waiting
+  if (state.profile === p) state.filters[source] ??= { only: [], hide };
+  return state.filters[source] ?? { only: [], hide };
+}
+
+function renderFilterCount() {
+  const filter = state.filters[state.source];
+  const n = filter ? filter.only.length + filter.hide.length : 0;
+  filterMenu.querySelector("summary").textContent = n ? `Filter (${n})` : "Filter";
+}
+
+/**
+ * Lists the open source's categories, each of which can be shown on its own
+ * (along with any others shown on their own) or hidden.
+ */
+async function renderSourceFilter() {
+  const source = state.source;
+  const items = filterMenu.querySelector(".menu-items");
+  items.replaceChildren(h("p", { class: "muted menu-note" }, "Loading categories…"));
+  let categories;
+  try {
+    [categories] = await Promise.all([categoriesOf(source), filterOf(source)]);
+  } catch {
+    items.replaceChildren(h("p", { class: "muted menu-note" }, "Couldn't load the categories."));
+    return;
+  }
+  if (state.source !== source) return;
+  if (!categories.length) {
+    items.replaceChildren(h("p", { class: "muted menu-note" }, "This source has no categories."));
+    return;
+  }
+  const filter = state.filters[source];
+  // Buttons are updated in place rather than redrawn, since a click on one
+  // that's gone counts as a click outside, which closes the menu.
+  const rows = categories.map((c) => {
+    const toggle = (list, label, title) =>
+      h(
+        "button",
+        {
+          type: "button",
+          class: `toggle ${list}`,
+          title,
+          "aria-pressed": String(filter[list].includes(c.id)),
+          onclick: () => setFilter(source, c.id, list),
+        },
+        label,
+      );
+    return h(
+      "div",
+      { class: "category", "data-id": c.id },
+      h("span", {}, c.name),
+      toggle("only", "Only", `Only show mods in ${c.name}, or in other categories shown only`),
+      toggle("hide", "Hide", `Leave out mods in ${c.name}`),
+    );
+  });
+  const clear = h(
+    "button",
+    { type: "button", class: "clear", onclick: () => clearFilter(source) },
+    "Clear",
+  );
+  items.replaceChildren(
+    h("div", { class: "menu-head" }, h("span", { class: "muted menu-note" }, "Categories"), clear),
+    h("div", { class: "categories" }, rows),
+  );
+  updateSourceFilter();
+}
+
+/** Brings the open menu's buttons and the summary's count up to date. */
+function updateSourceFilter() {
+  const filter = state.filters[state.source];
+  if (!filter) return;
+  for (const row of filterMenu.querySelectorAll(".category")) {
+    for (const list of ["only", "hide"]) {
+      const on = filter[list].includes(row.dataset.id);
+      row.querySelector(`.${list}`).setAttribute("aria-pressed", String(on));
+    }
+  }
+  const clear = filterMenu.querySelector(".clear");
+  if (clear) clear.disabled = !filter.only.length && !filter.hide.length;
+  renderFilterCount();
+}
+
+/** Turns `list` ("only" or "hide") on or off for a category, and searches again. */
+function setFilter(source, id, list) {
+  const filter = state.filters[source];
+  const other = list === "only" ? "hide" : "only";
+  const on = !filter[list].includes(id);
+  filter[list] = filter[list].filter((c) => c !== id);
+  if (on) filter[list].push(id);
+  // a category can't be both shown alone and hidden
+  filter[other] = filter[other].filter((c) => c !== id);
+  updateSourceFilter();
+  searchNow();
+}
+
+function clearFilter(source) {
+  state.filters[source] = { only: [], hide: [] };
+  updateSourceFilter();
+  searchNow();
+}
+
+filterMenu.addEventListener("toggle", () => {
+  if (filterMenu.open && state.source) renderSourceFilter().catch(() => {});
+});
 
 // Searches as you type, waiting for a short pause so each keystroke doesn't
 // hit the source; changing the sort searches straight away.

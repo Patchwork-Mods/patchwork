@@ -64,6 +64,10 @@ enum Command {
         /// several.
         #[arg(short, long = "category")]
         categories: Vec<String>,
+        /// Leave out mods in this category, by id or name; repeat to leave out
+        /// several.
+        #[arg(short = 'x', long = "exclude")]
+        excluded_categories: Vec<String>,
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
         page: u32,
         /// List the categories and sorts instead of searching.
@@ -309,6 +313,7 @@ async fn run(cli: Cli) -> Result<()> {
             game,
             sort,
             categories,
+            excluded_categories,
             page,
             list_categories,
         } => {
@@ -337,6 +342,7 @@ async fn run(cli: Cli) -> Result<()> {
                 text: Some(text.join(" ")),
                 sort,
                 categories,
+                excluded_categories,
                 page: page - 1,
             };
             search(&pw, &game, &source, &query).await?;

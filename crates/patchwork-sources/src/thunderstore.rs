@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
 use async_trait::async_trait;
 use jiff::Timestamp;
 use patchwork_core::Result;
@@ -403,15 +406,17 @@ impl Source for Thunderstore {
         if let Some(text) = query.text() {
             params.push(("q", text.to_owned()));
         }
-        if !query.categories.is_empty() {
+        if !query.categories.is_empty() || !query.excluded_categories.is_empty() {
             // the listing filters by numeric id, so look up the slugs
             let known = community_categories(&community).await?;
-            for wanted in &query.categories {
+            let included = query.categories.iter().map(|c| ("included_categories", c));
+            let excluded = (query.excluded_categories.iter()).map(|c| ("excluded_categories", c));
+            for (param, wanted) in included.chain(excluded) {
                 let category = known
                     .iter()
                     .find(|c| c.slug == *wanted)
                     .ok_or_else(|| error(format!("{community} has no category `{wanted}`")))?;
-                params.push(("included_categories", category.id.clone()));
+                params.push((param, category.id.clone()));
             }
         }
         let url =
@@ -441,9 +446,20 @@ impl Source for Thunderstore {
     }
 }
 
+/// A community's categories, which are only fetched once since every search
+/// by category needs them.
 async fn community_categories(community: &str) -> Result<Vec<ListedCategory>> {
+    static KNOWN: LazyLock<Mutex<HashMap<String, Vec<ListedCategory>>>> =
+        LazyLock::new(Mutex::default);
+    if let Some(known) = KNOWN.lock().unwrap().get(community) {
+        return Ok(known.clone());
+    }
     let filters: CommunityFilters =
         get_json(format!("{CYBERSTORM}/community/{community}/filters/")).await?;
+    KNOWN
+        .lock()
+        .unwrap()
+        .insert(community.to_owned(), filters.package_categories.clone());
     Ok(filters.package_categories)
 }
 

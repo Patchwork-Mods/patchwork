@@ -76,6 +76,8 @@ pub struct SearchQuery {
     pub sort: Option<SortBy>,
     /// [`Category::id`]s; mods must be in at least one of them.
     pub categories: Vec<String>,
+    /// [`Category::id`]s; mods in any of them are left out.
+    pub excluded_categories: Vec<String>,
     /// Zero-based. Sources choose their own page size.
     pub page: u32,
 }

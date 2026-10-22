@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use futures_util::{StreamExt, TryStreamExt, stream};
 use jiff::{SignedDuration, Timestamp};
@@ -195,6 +195,7 @@ impl Builder {
             deployers: self.deployers,
             formats: self.formats,
             reporter: self.reporter,
+            categories: Mutex::default(),
             _lock: lock,
         };
         patchwork.migrate_profiles()?;
@@ -214,6 +215,10 @@ pub struct Patchwork {
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
     formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
     reporter: Arc<dyn Reporter>,
+    /// Each source's search categories for each game, by `(source, game)`.
+    /// They hardly ever change, and a search by category needs them, so
+    /// they're only fetched once.
+    categories: Mutex<HashMap<(String, String), Vec<Category>>>,
     _lock: StateLock,
 }
 
@@ -243,6 +248,8 @@ impl Patchwork {
     pub fn reload_registry(&self) -> Result<()> {
         let registry = Registry::load(&self.paths)?;
         *self.registry.write().unwrap() = Arc::new(registry);
+        // a game's sources may be set up differently now
+        self.categories.lock().unwrap().clear();
         Ok(())
     }
 
@@ -674,6 +681,10 @@ impl Patchwork {
     }
 
     pub async fn search_categories(&self, game: &str, source: &str) -> Result<Vec<Category>> {
+        let key = (source.to_owned(), game.to_owned());
+        if let Some(known) = self.categories.lock().unwrap().get(&key) {
+            return Ok(known.clone());
+        }
         let source = self.searchable(source)?;
         let registry = self.registry();
         let game = &registry.game(game)?.value;
@@ -681,11 +692,14 @@ impl Patchwork {
             game,
             config: game.sources.get(source.id()),
         };
-        source.search_categories(&ctx).await
+        let known = source.search_categories(&ctx).await?;
+        self.categories.lock().unwrap().insert(key, known.clone());
+        Ok(known)
     }
 
     /// Searches `source` for `game`'s mods. Leave `query.text` empty for the
-    /// source's home screen. Categories can be given by id or by name.
+    /// source's home screen. Categories, included or excluded, can be given by
+    /// id or by name.
     pub async fn search(
         &self,
         game: &str,
@@ -710,30 +724,32 @@ impl Patchwork {
             game,
             config: game.sources.get(source.id()),
         };
-        if query.categories.is_empty() {
+        if query.categories.is_empty() && query.excluded_categories.is_empty() {
             return source.search(&ctx, query).await;
         }
-        let known = source.search_categories(&ctx).await?;
-        let categories = query
-            .categories
-            .iter()
-            .map(|wanted| {
-                known
-                    .iter()
-                    .find(|c| c.id == *wanted)
-                    .or_else(|| known.iter().find(|c| c.name.eq_ignore_ascii_case(wanted)))
-                    .map(|c| c.id.clone())
-                    .ok_or_else(|| {
-                        Error::invalid(format!(
-                            "{} has no category `{wanted}` for {}",
-                            source.id(),
-                            game.id
-                        ))
-                    })
-            })
-            .collect::<Result<_>>()?;
+        let known = self.search_categories(&game.id, source.id()).await?;
+        let resolve = |wanted: &Vec<String>| {
+            wanted
+                .iter()
+                .map(|wanted| {
+                    known
+                        .iter()
+                        .find(|c| c.id == *wanted)
+                        .or_else(|| known.iter().find(|c| c.name.eq_ignore_ascii_case(wanted)))
+                        .map(|c| c.id.clone())
+                        .ok_or_else(|| {
+                            Error::invalid(format!(
+                                "{} has no category `{wanted}` for {}",
+                                source.id(),
+                                game.id
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>>>()
+        };
         let query = SearchQuery {
-            categories,
+            categories: resolve(&query.categories)?,
+            excluded_categories: resolve(&query.excluded_categories)?,
             ..query.clone()
         };
         source.search(&ctx, &query).await

@@ -344,6 +344,23 @@ fn builds_search_filters() {
     assert_eq!(groups[1]["op"], "OR");
     assert_eq!(groups[1]["categoryName"][1]["value"], "Audio");
     assert_eq!(effective_sort(&query), SortBy::Relevance);
+
+    // leaving categories out has to rule out each one, so its group is ANDed
+    let query = SearchQuery {
+        excluded_categories: vec!["Utilities".to_owned(), "Modders Resources".to_owned()],
+        ..Default::default()
+    };
+    let filter = mods_filter("skyrimspecialedition", &query);
+    assert_eq!(
+        filter["filter"],
+        json!([{
+            "op": "AND",
+            "categoryName": [
+                { "value": "Utilities", "op": "NOT_EQUALS" },
+                { "value": "Modders Resources", "op": "NOT_EQUALS" },
+            ],
+        }])
+    );
 }
 
 // Searching doesn't need an API key, but it does need the network.

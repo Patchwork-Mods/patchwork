@@ -369,6 +369,19 @@ async fn searches() {
             .all(|m| { m.categories.iter().any(|c| c.id == "cosmetics") })
     );
 
+    let without = SearchQuery {
+        excluded_categories: vec!["libraries".to_owned()],
+        ..Default::default()
+    };
+    let found = Thunderstore.search(&ctx, &without).await.unwrap();
+    assert!(found.total < home.total);
+    assert!(
+        found
+            .items
+            .iter()
+            .all(|m| { m.categories.iter().all(|c| c.id != "libraries") })
+    );
+
     let past_end = SearchQuery {
         page: 10_000,
         ..query

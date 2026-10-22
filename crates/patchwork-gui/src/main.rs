@@ -15,7 +15,7 @@ use patchwork_core::matching::{self, ModText};
 use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
-use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
+use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{ModSpec, SourceFile};
 use patchwork_core::{DeployStatus, GameInstall, Patchwork};
 use patchwork_deployers::{RulesDeployer, SmfDeployer};
@@ -694,22 +694,50 @@ async fn add_mod(
     })
 }
 
-#[tauri::command]
-async fn search(
-    app: State<'_, App>,
+/// A search from a source's tab.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Search {
     game: String,
     source: String,
     text: String,
     sort: Option<SortBy>,
+    /// Category ids; mods must be in at least one of them.
+    categories: Vec<String>,
+    /// Category ids; mods in any of them are left out.
+    excluded_categories: Vec<String>,
     page: u32,
-) -> CmdResult<SearchPage> {
+}
+
+#[tauri::command]
+async fn search(app: State<'_, App>, query: Search) -> CmdResult<SearchPage> {
+    let Search {
+        game,
+        source,
+        text,
+        sort,
+        categories,
+        excluded_categories,
+        page,
+    } = query;
     let query = SearchQuery {
         text: Some(text),
         sort,
-        categories: Vec::new(),
+        categories,
+        excluded_categories,
         page,
     };
     app.pw.search(&game, &source, &query).await.map_err(msg)
+}
+
+/// The categories `source`'s searches for `game` can be narrowed by.
+#[tauri::command]
+async fn search_categories(
+    app: State<'_, App>,
+    game: String,
+    source: String,
+) -> CmdResult<Vec<Category>> {
+    app.pw.search_categories(&game, &source).await.map_err(msg)
 }
 
 #[tauri::command]
@@ -962,6 +990,7 @@ fn main() {
             update_mod,
             add_mod,
             search,
+            search_categories,
             plan_deploy,
             plan_undeploy,
             apply_plan,

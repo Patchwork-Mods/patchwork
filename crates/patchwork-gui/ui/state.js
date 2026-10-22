@@ -14,6 +14,11 @@ export const state = {
   source: null,
   /** Each source's last search, as `{ page, query, results }`. */
   searches: {},
+  /**
+   * Each source's category filter, as `{ only, hide }` lists of category ids.
+   * One that hasn't been set yet starts out hiding what the Mods tab hides.
+   */
+  filters: {},
 };
 
 export function status(text, isError = false) {
