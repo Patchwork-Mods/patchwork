@@ -1149,6 +1149,90 @@ span.mod-version {
   stroke-linejoin: round;
 }
 
+/* Moving mods by hand; see reorder.js. A list row's handle sits on its
+   left, and a card's over its picture across from the remove button,
+   showing on hover like it. */
+#mods,
+#hidden-mods-list {
+  position: relative;
+}
+
+#mods>li,
+#hidden-mods-list>li {
+  transition: box-shadow 0.15s ease;
+}
+
+.drag-handle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 28px;
+  padding: 0;
+  color: var(--pw-muted);
+  background: transparent;
+  border-color: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+.drag-handle:hover {
+  color: var(--pw-text);
+}
+
+.drag-handle svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.mod-row .drag-handle {
+  margin-right: -6px;
+}
+
+.result .drag-handle {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 28px;
+  background: var(--pw-surface);
+  border-color: var(--pw-border);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.result:hover .drag-handle,
+.result .drag-handle:focus-visible,
+.result.dragging .drag-handle {
+  opacity: 1;
+}
+
+/* The one being dragged is lifted above the rest and follows the pointer. */
+#mods>li.dragging,
+#hidden-mods-list>li.dragging {
+  position: relative;
+  z-index: 1;
+  background: var(--pw-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  transition: box-shadow 0.15s ease;
+  /* its own layer, so moving it doesn't repaint everything under it */
+  will-change: transform;
+}
+
+.mod-list>li.dragging {
+  border-radius: var(--pw-radius);
+}
+
+body.dragging-mod {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.dragging-mod .drag-handle {
+  cursor: grabbing;
+}
+
 /* A disabled mod fades out, all but its switch so it's easy to turn back on. */
 .result.disabled .card-main>*,
 .result.disabled .mod-version,

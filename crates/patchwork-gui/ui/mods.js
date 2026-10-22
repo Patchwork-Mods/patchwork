@@ -6,6 +6,7 @@ import { openProfile, refresh, showProfile } from "./profile.js";
 import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
 import { showChangelog } from "./changelog.js";
+import { dragHandle, dragging } from "./reorder.js";
 
 // The Mods tab shows mods either as cards, like a source's search results,
 // or as a denser list of rows that each expand to show the rest.
@@ -34,10 +35,11 @@ for (const button of document.querySelectorAll("#mods-view button")) {
 /** The mods whose list rows are expanded, by key, so re-renders keep them open. */
 const expandedRows = new Set();
 
-// An added mod's list row: its picture, name and author, an on/off switch
-// and its version, and an arrow that expands it to show its description,
-// when it was updated, links to its pages, its changelog and a remove button.
-function modRow(m, { onToggle, onRemove, onVersion }) {
+// An added mod's list row: a handle to drag it by, its picture, name and
+// author, an on/off switch and its version, and an arrow that expands it to
+// show its description, when it was updated, links to its pages, its
+// changelog and a remove button.
+function modRow(m, { movable, onToggle, onRemove, onVersion }) {
   const { key } = m;
   const update = h("div", { class: "card-update" });
   fillUpdate(update, m, onVersion);
@@ -60,7 +62,7 @@ function modRow(m, { onToggle, onRemove, onVersion }) {
   summaryViews.set(key, fill);
   updateNotes.set(key, { el: update, onVersion });
 
-  const row = h("li", { class: m.enabled ? "mod-row" : "mod-row disabled" });
+  const row = h("li", { class: m.enabled ? "mod-row" : "mod-row disabled", "data-name": m.name });
   const arrow = h(
     "button",
     {
@@ -83,6 +85,7 @@ function modRow(m, { onToggle, onRemove, onVersion }) {
   setExpanded(expandedRows.has(key));
 
   row.append(
+    movable && dragHandle(m),
     head,
     update,
     h(
@@ -178,9 +181,9 @@ export function cardMain(item) {
 const cardItem = (m) => m.summary ?? { name: m.name, summary: `${m.source}:${m.id}` };
 
 // An added mod's card: an on/off switch and its version along the bottom,
-// a note when there's a newer version, and a remove button that only shows
-// while the card is hovered or focused.
-function modCard(m, { onToggle, onRemove, onVersion }) {
+// a note when there's a newer version, and a remove button and a handle to
+// drag it by that only show while the card is hovered or focused.
+function modCard(m, { movable, onToggle, onRemove, onVersion }) {
   let main = cardMain(cardItem(m));
   const update = h("div", { class: "card-update" });
   summaryViews.set(m.key, () => {
@@ -192,8 +195,9 @@ function modCard(m, { onToggle, onRemove, onVersion }) {
   fillUpdate(update, m, onVersion);
   return h(
     "li",
-    { class: m.enabled ? "result" : "result disabled" },
+    { class: m.enabled ? "result" : "result disabled", "data-name": m.name },
     main,
+    movable && dragHandle(m),
     h(
       "button",
       {
@@ -385,6 +389,8 @@ export async function renderMods(mods) {
   const view = modsView === "cards" ? modCard : modRow;
   const item = (m) =>
     view(m, {
+      // search results come best match first, not in load order
+      movable: !query,
       onToggle: (e) => toggleMod(m, e.target),
       onRemove: async () => {
         if (!(await confirmRemove(m))) return;
@@ -433,11 +439,15 @@ async function findMods(id, mods, query) {
   return keys.map((key) => byKey.get(key)).filter(Boolean);
 }
 
-/** Renders the mods again on the next frame, once for any number of calls. */
+/**
+ * Renders the mods again on the next frame, once for any number of calls,
+ * or once a mod being dragged has been let go.
+ */
 let rerender = null;
 export function renderModsSoon() {
   rerender ??= requestAnimationFrame(() => {
     rerender = null;
-    if (state.profile) renderMods(state.profile.mods);
+    if (dragging()) renderModsSoon();
+    else if (state.profile) renderMods(state.profile.mods);
   });
 }
