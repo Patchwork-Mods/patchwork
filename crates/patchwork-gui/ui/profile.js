@@ -73,11 +73,20 @@ export function showProfile(profile, { keepMods = false } = {}) {
 
 /**
  * Enables the deploy button if there's somewhere to deploy to, and makes it
- * stand out when deploying would change anything.
+ * stand out when deploying would change anything. Undeploy, in its menu, is
+ * only enabled while something's deployed.
  */
 export function renderDeploy(p) {
   $("#deploy").disabled = !p?.install;
   $("#deploy").classList.toggle("primary", !!p?.install && p.deployStatus !== "deployed");
+  $("#deploy-menu").hidden = !p;
+  const files = p?.gameFiles ?? 0;
+  $("#undeploy").disabled = !files;
+  $("#undeploy-note").textContent = !files
+    ? "nothing's deployed"
+    : p.deployStatus === "otherProfile"
+      ? "another profile's mods"
+      : `${files} file${files === 1 ? "" : "s"}`;
 }
 
 export function renderProfile({ keepMods = false } = {}) {

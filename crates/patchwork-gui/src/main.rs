@@ -7,7 +7,7 @@ use std::fmt::Display;
 use std::sync::Mutex;
 
 use base64::prelude::*;
-use patchwork_core::deploy::{DeployOp, DeployPlan};
+use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::lock::{Lockfile, mod_key};
@@ -158,6 +158,9 @@ struct ProfileDetail {
     /// Files patchwork has deployed for this profile's game, if it's this
     /// profile that's deployed.
     deployed_files: Option<usize>,
+    /// Files patchwork has deployed to the game, whichever profile they're
+    /// from, so it can offer to undeploy them.
+    game_files: usize,
     /// Whether deploying would change anything, so the button can say so.
     deploy_status: DeployStatus,
     /// Whether the profile has changed since it was last deployed, so it
@@ -286,6 +289,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let state = pw.deploy_state(&target).map_err(msg)?;
     let deployed_files =
         (state.profile.as_deref() == Some(id.as_str())).then_some(state.files.len());
+    let game_files = state.files.len();
     let deploy_status = pw.deploy_status(&r).map_err(msg)?;
     let has_changes = pw.has_changes(&r).map_err(msg)?;
     let search_sources = pw
@@ -341,6 +345,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         id,
         install,
         deployed_files,
+        game_files,
         deploy_status,
         has_changes,
         search_sources,
@@ -714,13 +719,29 @@ async fn plan_deploy(handle: AppHandle, app: State<'_, App>, id: String) -> CmdR
         .plan_deploy(&profile_ref(&id)?)
         .await
         .map_err(lock_msg(&handle))?;
+    Ok(hold_plan(&app, plan))
+}
+
+/// Works out how to take everything patchwork deployed back out of `game`,
+/// like `patchwork undeploy`, to be confirmed with `apply_plan` as well.
+#[tauri::command]
+fn plan_undeploy(app: State<'_, App>, game: String) -> CmdResult<PlanSummary> {
+    let plan = app
+        .pw
+        .plan_undeploy(&DeployTarget::Game(game))
+        .map_err(msg)?;
+    Ok(hold_plan(&app, plan))
+}
+
+/// Keeps `plan` for `apply_plan` and summarises it for the UI.
+fn hold_plan(app: &App, plan: DeployPlan) -> PlanSummary {
     let summary = PlanSummary {
         ops: plan.ops.iter().cloned().map(UiOp::from).collect(),
         unchanged: plan.unchanged,
         warnings: plan.warnings.clone(),
     };
     *app.plan.lock().unwrap() = Some(plan);
-    Ok(summary)
+    summary
 }
 
 #[tauri::command]
@@ -942,6 +963,7 @@ fn main() {
             add_mod,
             search,
             plan_deploy,
+            plan_undeploy,
             apply_plan,
             lock_profile,
             provide_download,

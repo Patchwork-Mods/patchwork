@@ -1,8 +1,26 @@
 // Deploying the profile, updating its mods, and progress from main.rs.
 
-import { listen, run, state, status } from "./state.js";
+import { gameInfo, listen, run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { openProfile, renderDeploy, showProfile } from "./profile.js";
+
+/** Whether #plan-dialog is confirming a deploy or an undeploy. */
+let planKind = "deploy";
+
+/** Fills in #plan-dialog for `plan`, worded for `kind`, and opens it. */
+function showPlan(kind, plan, summary) {
+  planKind = kind;
+  const apply = $("#plan-dialog [value=apply]");
+  $("#plan-title").textContent = kind === "undeploy" ? "Undeploy" : "Deploy";
+  apply.textContent = kind === "undeploy" ? "Undeploy" : "Apply";
+  apply.className = kind === "undeploy" ? "danger" : "primary";
+  apply.disabled = !plan.ops.length;
+  $("#plan-summary").textContent = summary;
+  $("#plan-warnings").replaceChildren(...plan.warnings.map((w) => h("li", {}, w)));
+  $("#plan-ops").replaceChildren(...plan.ops.map(opRow));
+  status("Ready");
+  $("#plan-dialog").showModal();
+}
 
 $("#deploy").addEventListener("click", async () => {
   const id = state.profile.id;
@@ -11,14 +29,13 @@ $("#deploy").addEventListener("click", async () => {
   try {
     const plan = await run("plan_deploy", { id });
     const changes = plan.ops.length;
-    $("#plan-summary").textContent = changes
-      ? `${changes} change${changes === 1 ? "" : "s"}, ${plan.unchanged} files already in place.`
-      : `Nothing to do; ${plan.unchanged} files already in place.`;
-    $("#plan-warnings").replaceChildren(...plan.warnings.map((w) => h("li", {}, w)));
-    $("#plan-ops").replaceChildren(...plan.ops.map(opRow));
-    $("#plan-dialog [value=apply]").disabled = !changes;
-    status("Ready");
-    $("#plan-dialog").showModal();
+    showPlan(
+      "deploy",
+      plan,
+      changes
+        ? `${changes} change${changes === 1 ? "" : "s"}, ${plan.unchanged} files already in place.`
+        : `Nothing to do; ${plan.unchanged} files already in place.`,
+    );
     if (!changes) {
       // Nothing to place, but applying records that this profile is
       // deployed as it is now, which tones the button down again.
@@ -30,11 +47,35 @@ $("#deploy").addEventListener("click", async () => {
   }
 });
 
+// Undeploy. Takes every file patchwork put in the game folder back out and
+// puts back the game's own files that mods replaced, whichever profile was
+// deployed. The profiles themselves aren't touched.
+
+$("#undeploy").addEventListener("click", async () => {
+  $("#deploy-menu").open = false;
+  const game = gameInfo(state.game);
+  status("Working out what to undeploy…");
+  const plan = await run("plan_undeploy", { game: game.id });
+  const files = plan.ops.length;
+  showPlan(
+    "undeploy",
+    plan,
+    `Remove ${files} file${files === 1 ? "" : "s"} patchwork put in ${game.name}'s folder ` +
+      `and put back any of the game's own files they replaced? Your profiles stay as they are.`,
+  );
+});
+
 $("#plan-dialog").addEventListener("close", async () => {
   if ($("#plan-dialog").returnValue !== "apply") return;
-  status("Deploying…");
-  const files = await run("apply_plan");
-  status(`Deployed ${files} files`);
+  if (planKind === "undeploy") {
+    status("Undeploying…");
+    await run("apply_plan");
+    status(`Undeployed everything from ${gameInfo(state.game).name}`);
+  } else {
+    status("Deploying…");
+    const files = await run("apply_plan");
+    status(`Deployed ${files} files`);
+  }
   await openProfile(state.profile.id);
 });
 

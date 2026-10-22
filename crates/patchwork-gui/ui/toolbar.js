@@ -161,7 +161,7 @@ for (const item of sortMenu.querySelectorAll("[data-keys]")) {
 }
 
 // <details> doesn't close by itself when you click elsewhere or press Escape.
-for (const menu of [sortMenu, filterMenu]) {
+for (const menu of document.querySelectorAll("details.menu")) {
   document.addEventListener("click", (e) => {
     if (!menu.contains(e.target)) menu.open = false;
   });

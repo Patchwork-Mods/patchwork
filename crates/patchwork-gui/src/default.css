@@ -161,6 +161,52 @@ button:focus-visible {
   font-weight: 600;
 }
 
+/* Deploy and its menu, drawn as one button split in two. The menu half is
+   just an arrow, and takes on Deploy's colours while it stands out. */
+.split {
+  display: inline-flex;
+}
+
+.split>button {
+  border-radius: var(--pw-radius) 0 0 var(--pw-radius);
+}
+
+.split>.menu {
+  display: flex;
+}
+
+.split>.menu>summary {
+  display: flex;
+  align-items: center;
+  font-size: inherit;
+  padding: 5px 7px;
+  border-left: none;
+  border-radius: 0 var(--pw-radius) var(--pw-radius) 0;
+}
+
+.split>.menu>summary::after {
+  content: "▾";
+}
+
+#deploy.primary+.menu>summary {
+  background: var(--pw-accent);
+  color: var(--pw-accent-text);
+  border-color: transparent;
+  /* a line between the halves, since they're the same colour */
+  box-shadow: inset 1px 0 0 rgb(0 0 0 / 0.2);
+}
+
+#deploy.primary+.menu>summary::after {
+  color: inherit;
+}
+
+/* Opens leftwards, as it's at the right edge of the window. */
+.split .menu-items {
+  left: auto;
+  right: 0;
+  min-width: 220px;
+}
+
 /* Game picker */
 
 #games-screen {

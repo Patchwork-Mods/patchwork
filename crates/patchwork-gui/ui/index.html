@@ -78,7 +78,19 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8M3 3v5h5" /></svg>
         </button>
         <button id="update" title="Update all mods that are set to Auto" disabled>Update</button>
-        <button id="deploy" disabled>Deploy</button>
+        <!-- Deploy, with the less common things to do in a menu joined on
+             its right; see deploy.js. -->
+        <div class="split">
+          <button id="deploy" disabled>Deploy</button>
+          <details id="deploy-menu" class="menu">
+            <summary title="More deploy options" aria-label="More deploy options"></summary>
+            <div class="menu-items" role="menu">
+              <button type="button" role="menuitem" id="undeploy" class="danger-text">
+                Undeploy <span id="undeploy-note" class="muted"></span>
+              </button>
+            </div>
+          </details>
+        </div>
       </header>
 
       <section id="tab-mods" class="tab">
@@ -183,8 +195,9 @@
     </footer>
 
     <dialog id="plan-dialog">
+      <!-- Also confirms undeploying, worded for it; see deploy.js. -->
       <form method="dialog" class="stack">
-        <h2>Deploy</h2>
+        <h2 id="plan-title">Deploy</h2>
         <p id="plan-summary"></p>
         <ul id="plan-warnings" class="warnings"></ul>
         <ul id="plan-ops" class="plan-ops"></ul>
