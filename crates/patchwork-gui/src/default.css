@@ -1094,8 +1094,8 @@ span.mod-version {
   color: var(--pw-muted);
 }
 
-#pager {
-  justify-content: center;
+#more {
+  text-align: center;
 }
 
 /* Status bar */

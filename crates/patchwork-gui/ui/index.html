@@ -177,14 +177,10 @@
             <option value="newest">Newest</option>
             <option value="rating">Rating</option>
           </select>
-          <button type="submit">Search</button>
         </form>
         <ul id="results" class="result-grid"></ul>
-        <div id="pager" class="row" hidden>
-          <button id="prev">Previous</button>
-          <span id="page-info" class="muted"></span>
-          <button id="next">Next</button>
-        </div>
+        <!-- Scrolling near this loads the next page; see showMore() in browse.js. -->
+        <p id="more" class="muted" hidden>Loading more…</p>
       </section>
     </main>
 

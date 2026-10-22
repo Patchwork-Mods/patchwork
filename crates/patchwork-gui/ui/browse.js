@@ -10,6 +10,9 @@ import { go } from "./nav.js";
 const SOURCE_NAMES = { thunderstore: "Thunderstore", nexus: "Nexus Mods" };
 const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
 
+/** The search waiting for the user to stop typing. */
+let typing;
+
 /** Opens the Mods tab ("mods") or a source's tab; source tabs all share #tab-browse. */
 export function selectTab(key) {
   state.source = key === "mods" ? null : key;
@@ -18,6 +21,7 @@ export function selectTab(key) {
   }
   $("#tab-mods").hidden = key !== "mods";
   $("#tab-browse").hidden = key === "mods";
+  clearTimeout(typing);
   if (state.source) {
     // the search form is shared, so put back what this tab last searched for
     const last = state.searches[key];
@@ -27,7 +31,7 @@ export function selectTab(key) {
     form.elements.sort.value = last?.query.sort ?? "";
     renderResults(last);
     // a source opens on its home page, which is a search with no text
-    if (!last) search(0).catch(() => {});
+    if (!last) search().catch(() => {});
   }
 }
 
@@ -49,7 +53,8 @@ export function renderSourceTabs(sources) {
 /** Each source's latest search, so an older one finishing late is ignored. */
 const searchSeq = {};
 
-async function search(page) {
+/** Starts a new search from the form, replacing the source's results. */
+async function search() {
   const p = state.profile;
   const source = state.source;
   if (!p || !source) return;
@@ -59,7 +64,7 @@ async function search(page) {
     source,
     text: form.get("text"),
     sort: form.get("sort") || null,
-    page,
+    page: 0,
   };
   const seq = (searchSeq[source] = (searchSeq[source] ?? 0) + 1);
   status("Searching…");
@@ -67,7 +72,13 @@ async function search(page) {
   const results = await run("search", query);
   const fetched = performance.now();
   if (seq !== searchSeq[source] || state.profile?.id !== p.id) return;
-  state.searches[source] = { page, query, results };
+  state.searches[source] = {
+    query,
+    items: results.items,
+    total: results.total,
+    hasMore: results.has_more,
+    loading: false,
+  };
   // The user may have switched tabs while this was in flight.
   if (state.source === source) renderResults(state.searches[source]);
   await nextFrame();
@@ -77,68 +88,118 @@ async function search(page) {
   );
 }
 
+/** Adds the next page of the open source's search to the bottom. */
+async function loadMore() {
+  const source = state.source;
+  const last = state.searches[source];
+  if (!last?.hasMore || last.loading) return;
+  // Doesn't bump searchSeq: a new search started meanwhile wins over this.
+  const seq = searchSeq[source];
+  last.loading = true;
+  const query = { ...last.query, page: last.query.page + 1 };
+  status("Loading more…");
+  let results;
+  try {
+    results = await run("search", query);
+  } finally {
+    last.loading = false;
+  }
+  if (seq !== searchSeq[source] || state.searches[source] !== last) return;
+  // Mods can shift between pages while scrolling, so skip ones already shown.
+  const shown = new Set(last.items.map(key));
+  const items = results.items.filter((item) => !shown.has(key(item)));
+  last.query = query;
+  last.items.push(...items);
+  last.total = results.total;
+  last.hasMore = results.has_more;
+  if (state.source === source) {
+    const added = addedMods();
+    $("#results").append(...items.map((item) => resultCard(item, added)));
+    showMore(last);
+  }
+  status(`${last.total ?? last.items.length} mods · showing ${last.items.length}`);
+}
+
+const key = (item) => `${item.source}:${item.id}`;
+const addedMods = () => new Set(state.profile.mods.map(key));
+
 /** Shows a source's last search, or nothing if it hasn't been searched. */
 function renderResults(search) {
   if (!search) {
     $("#results").replaceChildren();
-    $("#pager").hidden = true;
+    $("#more").hidden = true;
     return;
   }
-  const { page, results } = search;
-  const added = new Set(state.profile.mods.map((m) => `${m.source}:${m.id}`));
-  $("#results").replaceChildren(
-    ...results.items.map((item) => {
-      const isAdded = added.has(`${item.source}:${item.id}`);
-      return h(
-        "li",
-        { class: "result" },
-        cardMain(item),
-        h(
-          "button",
-          {
-            class: "add",
-            disabled: isAdded,
-            onclick: async (e) => {
-              e.target.disabled = true;
-              status(`Adding ${item.name}…`);
-              const added = await run("add_mod", {
-                id: state.profile.id,
-                source: item.source,
-                modId: item.id,
-              }).catch(() => (e.target.disabled = false));
-              if (added) {
-                status(`Added ${added.name}`);
-                e.target.textContent = "Added";
-                state.profile = added.profile;
-                renderProfile();
-                refreshDetails();
-              }
-            },
-          },
-          isAdded ? "Added" : "Add",
-        ),
-      );
-    }),
-  );
-  if (!results.items.length) {
+  const added = addedMods();
+  $("#results").replaceChildren(...search.items.map((item) => resultCard(item, added)));
+  if (!search.items.length) {
     $("#results").append(h("p", { class: "empty" }, "No mods found."));
   }
-  $("#pager").hidden = page === 0 && !results.has_more;
-  $("#prev").disabled = page === 0;
-  $("#next").disabled = !results.has_more;
-  $("#page-info").textContent = `Page ${page + 1}`;
   $("#tab-browse").scrollTop = 0;
+  showMore(search);
 }
 
+function resultCard(item, added) {
+  const isAdded = added.has(key(item));
+  return h(
+    "li",
+    { class: "result" },
+    cardMain(item),
+    h(
+      "button",
+      {
+        class: "add",
+        disabled: isAdded,
+        onclick: async (e) => {
+          e.target.disabled = true;
+          status(`Adding ${item.name}…`);
+          const added = await run("add_mod", {
+            id: state.profile.id,
+            source: item.source,
+            modId: item.id,
+          }).catch(() => (e.target.disabled = false));
+          if (added) {
+            status(`Added ${added.name}`);
+            e.target.textContent = "Added";
+            state.profile = added.profile;
+            renderProfile();
+            refreshDetails();
+          }
+        },
+      },
+      isAdded ? "Added" : "Add",
+    ),
+  );
+}
+
+// #more sits under the results while there are more pages, and loads the
+// next one once it's within a screen of coming into view.
+const moreObserver = new IntersectionObserver(
+  (entries) => {
+    if (entries.some((e) => e.isIntersecting)) loadMore().catch(() => {});
+  },
+  { root: $("#tab-browse"), rootMargin: "0px 0px 100% 0px" },
+);
+function showMore(search) {
+  const more = $("#more");
+  more.hidden = !search.hasMore;
+  // Observing again re-checks it, in case a page didn't push it out of reach.
+  moreObserver.unobserve(more);
+  if (search.hasMore) moreObserver.observe(more);
+}
+
+// Searches as you type, waiting for a short pause so each keystroke doesn't
+// hit the source; changing the sort searches straight away.
+function searchNow() {
+  clearTimeout(typing);
+  search().catch(() => {});
+}
 $("#search").addEventListener("submit", (e) => {
   e.preventDefault();
-  search(0);
+  searchNow();
 });
-// Emptying the search bar goes back to the source's home page.
-$("#search [name=text]").addEventListener("input", (e) => {
-  if (!e.target.value.trim() && state.searches[state.source]?.query.text?.trim()) {
-    search(0).catch(() => {});
-  }
+$("#search [name=text]").addEventListener("input", () => {
+  clearTimeout(typing);
+  typing = setTimeout(searchNow, 150);
 });
-$("#prev").addEventListener("click", () => search(state.searches[state.source].page - 1));
-$("#next").addEventListener("click", () => search(state.searches[state.source].page + 1));
+$("#search [name=sort]").addEventListener("change", searchNow);
