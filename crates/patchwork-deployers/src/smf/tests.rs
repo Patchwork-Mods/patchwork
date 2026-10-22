@@ -1,4 +1,4 @@
-use patchwork_core::deploy::DeployState;
+use patchwork_core::deploy::{self, DeployState};
 use patchwork_core::event::Silent;
 use patchwork_core::game::{DeployerSpec, GameDef};
 use patchwork_core::registry::Registry;
@@ -213,10 +213,12 @@ impl Env {
     }
 }
 
-fn placed<'a>(desired: &'a DesiredState, dst: &str) -> &'a Path {
-    &desired
-        .placements
-        .iter()
+/// Where the file placed at `dst` is, checked the way a deploy would.
+fn placed(env: &Env, desired: &DesiredState, dst: &str) -> PathBuf {
+    let out = env.tmp.path().join("out");
+    deploy::resolve("smf", desired.placements.clone(), &[], Some(&out))
+        .unwrap()
+        .into_iter()
         .find(|p| p.dst.as_str() == dst)
         .unwrap_or_else(|| panic!("nothing placed at {dst}"))
         .src
@@ -304,7 +306,7 @@ fn framework_mods_are_built_into_a_patch_archive() {
     );
     let desired = env.build(&[first, second]).unwrap();
 
-    let archive = contents(placed(&desired, "Runtime/chunk0patch300.rpkg"));
+    let archive = contents(&placed(&env, &desired, "Runtime/chunk0patch300.rpkg"));
     let data = |hash: u64| archive.get(&hash).map(|(d, _)| d.as_slice());
     assert_eq!(data(0x00B0_0000_0000_0001), Some(&b"temp"[..]));
     assert_eq!(archive[&0x00B0_0000_0000_0001].1, vec![IN_CHUNK0]);
@@ -315,7 +317,7 @@ fn framework_mods_are_built_into_a_patch_archive() {
     assert_eq!(data(0x00B0_0000_0000_0004), None);
     assert_eq!(archive.len(), 3);
 
-    let pd = decrypted(placed(&desired, PACKAGE_DEFINITION));
+    let pd = decrypted(&placed(&env, &desired, PACKAGE_DEFINITION));
     assert!(
         !pd.contains("patchlevel=3 ") && !pd.contains("patchlevel=12"),
         "{pd}"
@@ -330,7 +332,7 @@ fn framework_mods_are_built_into_a_patch_archive() {
     );
     assert!(pd.contains("@partition name=mymod parent=chunk0 type=standard patchlevel=310"));
 
-    let thumbs = decrypted(placed(&desired, THUMBS));
+    let thumbs = decrypted(&placed(&env, &desired, THUMBS));
     assert_eq!(
         thumbs,
         "[application]\nForceVSync=1\n[Hitman5]\nConsoleCmd UI_EnableMouseEvents 0\nPrimaryScene=boot"
@@ -387,7 +389,7 @@ fn rpkg_mods_and_dependencies_are_staged() {
     );
     let desired = env.build(&[rpkg, other, deps]).unwrap();
 
-    let chunk0 = contents(placed(&desired, "Runtime/chunk0patch300.rpkg"));
+    let chunk0 = contents(&placed(&env, &desired, "Runtime/chunk0patch300.rpkg"));
     let data = |hash: u64| chunk0.get(&hash).map(|(d, _)| d.as_slice());
     assert_eq!(data(0x00C0_0000_0000_0001), Some(&b"plain"[..]));
     // dependencies don't replace what mods staged
@@ -400,7 +402,7 @@ fn rpkg_mods_and_dependencies_are_staged() {
     assert_eq!(data(UNREFERENCED), None);
 
     // an archive named after its partition goes there
-    let chunk2 = contents(placed(&desired, "Runtime/chunk2patch300.rpkg"));
+    let chunk2 = contents(&placed(&env, &desired, "Runtime/chunk2patch300.rpkg"));
     assert_eq!(chunk2.len(), 2);
 }
 
@@ -419,7 +421,7 @@ fn dependencies_take_the_latest_patch_and_can_include_chunk1() {
         )],
     );
     let desired = env.build(&[deps]).unwrap();
-    let chunk1 = contents(placed(&desired, "Runtime/chunk1patch300.rpkg"));
+    let chunk1 = contents(&placed(&env, &desired, "Runtime/chunk1patch300.rpkg"));
     let data = |hash: u64| chunk1.get(&hash).map(|(d, _)| d.as_slice());
     assert_eq!(data(IN_CHUNK2), Some(&b"two"[..]));
     assert_eq!(data(IN_CHUNK1), Some(&b"one"[..]));
@@ -440,7 +442,7 @@ fn new_partitions_get_a_base_archive() {
         ],
     );
     let desired = env.build(&[m]).unwrap();
-    placed(&desired, "Runtime/chunk40.rpkg");
+    placed(&env, &desired, "Runtime/chunk40.rpkg");
 }
 
 #[test]
@@ -609,9 +611,9 @@ fn unlockables_and_repository_edits_build_on_each_other() {
         )],
     );
     let desired = env.build(&[first, second]).unwrap();
-    let archive = placed(&desired, "Runtime/chunk0patch300.rpkg");
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
 
-    let unlockables = resource(archive, json::UNLOCKABLES);
+    let unlockables = resource(&archive, json::UNLOCKABLES);
     assert_eq!(
         ores_json(&unlockables.data),
         serde_json::json!([
@@ -623,7 +625,7 @@ fn unlockables_and_repository_edits_build_on_each_other() {
     assert_eq!(unlockables.resource_type, "ORES");
     assert_eq!(references(&unlockables), vec![(IN_CHUNK1, 0x1F)]);
 
-    let repository = resource(archive, json::REPOSITORY);
+    let repository = resource(&archive, json::REPOSITORY);
     assert_eq!(
         json_of(&repository.data),
         serde_json::json!([
@@ -660,10 +662,10 @@ fn contracts_are_added_and_listed_in_destinations() {
         ],
     );
     let desired = env.build(&[m]).unwrap();
-    let archive = placed(&desired, "Runtime/chunk0patch300.rpkg");
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
 
     let hash = u64::from(json::contract_hash("my-contract"));
-    let contracts = resource(archive, json::CONTRACTS);
+    let contracts = resource(&archive, json::CONTRACTS);
     assert_eq!(
         ores_hashes(&contracts.data),
         vec![
@@ -676,15 +678,15 @@ fn contracts_are_added_and_listed_in_destinations() {
         vec![(GAME_CONTRACT, 0x1F), (hash, 0x9F)]
     );
 
-    let mine = resource(archive, hash);
+    let mine = resource(&archive, hash);
     assert_eq!(mine.resource_type, "JSON");
     assert_eq!(json_of(&mine.data)["Metadata"]["Id"], "my-contract");
     // replacing one of the game's keeps its header
-    let game = resource(archive, GAME_CONTRACT);
+    let game = resource(&archive, GAME_CONTRACT);
     assert_eq!(json_of(&game.data)["Metadata"]["Changed"], true);
     assert_eq!(references(&game), vec![(IN_CHUNK1, 0x1F)]);
 
-    let menu = json_of(&resource(archive, json::DESTINATIONS).data);
+    let menu = json_of(&resource(&archive, json::DESTINATIONS).data);
     let ids: Vec<_> = menu["Root"]["Children"]
         .as_array()
         .unwrap()
@@ -738,18 +740,18 @@ fn json_patches_apply_to_each_kind_of_resource() {
     let borrowed: Vec<(&str, &str)> = files.iter().map(|(f, c)| (*f, c.as_str())).collect();
     let m = content_mod(&env, "Patches", &borrowed);
     let desired = env.build(&[m]).unwrap();
-    let archive = placed(&desired, "Runtime/chunk0patch300.rpkg");
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
 
-    let menu = json_of(&resource(archive, json::DESTINATIONS).data);
+    let menu = json_of(&resource(&archive, json::DESTINATIONS).data);
     assert_eq!(menu["Root"]["Children"][2]["Id"], "m3");
-    let repository = json_of(&resource(archive, json::REPOSITORY).data);
+    let repository = json_of(&resource(&archive, json::REPOSITORY).data);
     assert_eq!(repository[0]["Name"], "Patched");
     assert_eq!(
-        ores_json(&resource(archive, json::UNLOCKABLES).data),
+        ores_json(&resource(&archive, json::UNLOCKABLES).data),
         serde_json::json!([])
     );
     assert_eq!(
-        ores_hashes(&resource(archive, json::CONTRACTS).data),
+        ores_hashes(&resource(&archive, json::CONTRACTS).data),
         vec![
             (GAME_CONTRACT, "game-contract".to_owned()),
             (0x00CC_0000_0000_0001, "added".to_owned())
@@ -783,18 +785,18 @@ fn blobs_are_added_to_the_online_resources() {
         ],
     );
     let desired = env.build(&[m]).unwrap();
-    let archive = placed(&desired, "Runtime/chunk0patch300.rpkg");
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
 
     let (image, image_type) = json::blob("images/new.jpg");
     let (data, data_type) = json::blob("data/thing.json");
     assert_eq!((image_type.as_str(), data_type.as_str()), ("GFXI", "JSON"));
-    let blob = resource(archive, u64::from(image));
+    let blob = resource(&archive, u64::from(image));
     assert_eq!(
         (blob.resource_type.as_str(), blob.data.as_slice()),
         ("GFXI", &b"jpeg"[..])
     );
 
-    let ores = resource(archive, json::BLOBS);
+    let ores = resource(&archive, json::BLOBS);
     let entries = ores_hashes(&ores.data);
     assert_eq!(entries.len(), 3);
     assert!(entries.contains(&(u64::from(image), "images/new.jpg".to_owned())));
@@ -899,9 +901,9 @@ fn entities_are_built_from_quickentity_json() {
         &[("thing.entity.json", &entity_json().to_string())],
     );
     let desired = env.build(&[m]).unwrap();
-    let archive = placed(&desired, "Runtime/chunk0patch300.rpkg");
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
 
-    let factory = resource(archive, ENTITY_TEMP);
+    let factory = resource(&archive, ENTITY_TEMP);
     let referenced: Vec<u64> = references(&factory).iter().map(|(r, _)| *r).collect();
     assert!(
         referenced.contains(&0x00D0_0000_0000_0001),
@@ -912,7 +914,7 @@ fn entities_are_built_from_quickentity_json() {
         "{referenced:X?}"
     );
 
-    let entity = built_entity(archive);
+    let entity = built_entity(&archive);
     assert_eq!(entity["entities"], entity_json()["entities"]);
     assert_eq!(entity["rootEntity"], "abcdef0000000001");
 }
@@ -978,7 +980,7 @@ fn entity_patches_apply_in_order_to_the_current_entity() {
     );
     let desired = env.build(&[first, later]).unwrap();
 
-    let entity = built_entity(placed(&desired, "Runtime/chunk2patch300.rpkg"));
+    let entity = built_entity(&placed(&env, &desired, "Runtime/chunk2patch300.rpkg"));
     let child = &entity["entities"][CHILD];
     // The later mod's patch applies on top of the first's.
     assert_eq!(child["properties"]["m_nCount"]["value"], 3);
@@ -1067,9 +1069,9 @@ fn textures_are_converted_to_a_text() {
         Some(&texture_meta(0x42)),
     );
     let desired = env.build(&[m]).unwrap();
-    let archive = placed(&desired, "Runtime/chunk0patch300.rpkg");
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
 
-    let text = resource(archive, TEXTURE_TEXT);
+    let text = resource(&archive, TEXTURE_TEXT);
     assert_eq!(text.resource_type, "TEXT");
     assert!(text.header.scrambled);
     assert!(text.header.references.is_empty());
@@ -1096,11 +1098,11 @@ fn textures_named_with_a_texd_are_split_between_text_and_texd() {
         Some(&texture_meta(0x49)),
     );
     let desired = env.build(&[m]).unwrap();
-    let archive = placed(&desired, "Runtime/chunk0patch300.rpkg");
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
 
-    let text = resource(archive, TEXTURE_TEXT);
+    let text = resource(&archive, TEXTURE_TEXT);
     assert_eq!(references(&text), [(TEXTURE_TEXD, json::LOOKUP_REFERENCE)]);
-    let texd = resource(archive, TEXTURE_TEXD);
+    let texd = resource(&archive, TEXTURE_TEXD);
     assert_eq!(texd.resource_type, "TEXD");
     assert!(!texd.header.scrambled);
     // The top mip, which only the TEXD has.

@@ -5,7 +5,7 @@
 /// shown to the user before [`apply`] carries it out. Everything applied is
 /// recorded in a [`DeployState`], so it can be removed exactly and any game
 /// files that were overwritten can be restored.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -46,12 +46,96 @@ pub struct DeployContext<'a> {
     pub registry: &'a Registry,
 }
 
+impl InstalledMod {
+    /// Where to place `file`, one of this mod's files, from.
+    pub fn src(&self, file: &ModFile) -> Src {
+        Src::Mod {
+            hash: self.hash,
+            rel: file.rel.clone(),
+        }
+    }
+}
+
 /// A file that should exist in the game directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Placement {
     pub dst: RelPath,
+    pub src: Src,
+    pub mod_name: String,
+}
+
+/// Where a placed file comes from. Deployers can only name files they were
+/// given or made, never a path of their own choosing, so the only files that
+/// can end up in a game directory are mods' and what a deployer built.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Src {
+    /// A file in one of the mods being deployed, by the mod's hash.
+    Mod { hash: ContentHash, rel: RelPath },
+    /// A file [`Deployer::build`] wrote, relative to [`BuildContext::out`].
+    Built(RelPath),
+}
+
+/// A [`Placement`] whose source has been checked and found on disk.
+#[derive(Debug, Clone)]
+pub struct Resolved {
+    pub dst: RelPath,
     pub src: PathBuf,
     pub mod_name: String,
+}
+
+/// Finds where each placement's file is, checking that it's one of `mods`'
+/// files or, when `out` is given (for [`Deployer::build`]'s placements), a
+/// file the build made there. `kind` is the deployer's, for errors.
+pub fn resolve(
+    kind: &str,
+    placements: Vec<Placement>,
+    mods: &[InstalledMod],
+    out: Option<&Path>,
+) -> Result<Vec<Resolved>> {
+    let error = |message: String| Error::Deployer {
+        kind: kind.to_owned(),
+        message,
+    };
+    let files: HashMap<(ContentHash, &RelPath), &Path> = mods
+        .iter()
+        .flat_map(|m| m.files.iter().map(|f| ((m.hash, &f.rel), f.src.as_path())))
+        .collect();
+    // Canonicalized so a symlink the build made can't point outside it.
+    let out = out
+        .map(|out| out.canonicalize().at(out).map(|canon| (out, canon)))
+        .transpose()?;
+    placements
+        .into_iter()
+        .map(|p| {
+            let src = match &p.src {
+                Src::Mod { hash, rel } => files
+                    .get(&(*hash, rel))
+                    .map(|src| src.to_path_buf())
+                    .ok_or_else(|| {
+                        error(format!("{} isn't a file of any mod being deployed", rel))
+                    })?,
+                Src::Built(rel) => {
+                    let Some((out, canon)) = &out else {
+                        return Err(error(format!("{rel} can only be placed by a build")));
+                    };
+                    let src = rel.under(out);
+                    let inside = src
+                        .canonicalize()
+                        .is_ok_and(|real| real.starts_with(canon) && real.is_file());
+                    if !inside {
+                        return Err(error(format!("{rel} isn't a file the build made")));
+                    }
+                    src
+                }
+            };
+            Ok(Resolved {
+                dst: p.dst,
+                src,
+                mod_name: p.mod_name,
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -84,9 +168,9 @@ pub trait Deployer: Send + Sync {
     ///
     /// Unlike [`Deployer::plan`], this may read the game's files (through
     /// [`BuildContext::game`]) and write files of its own, but only into
-    /// [`BuildContext::out`]. It returns placements whose `src` is under
-    /// `out` (or is a mod's file); they're added after the ones from `plan`,
-    /// so they win over them.
+    /// [`BuildContext::out`]. It returns placements of those files
+    /// ([`Src::Built`]) or mods' files; they're added after the ones from
+    /// `plan`, so they win over them.
     ///
     /// The result is kept and reused for as long as the deploy's inputs stay
     /// the same, so it has to depend only on `mods`, the game definition and
@@ -303,15 +387,14 @@ impl DeployPlan {
 pub fn plan(
     target: DeployTarget,
     prev: &DeployState,
-    desired: DesiredState,
+    placements: Vec<Resolved>,
+    mut warnings: Vec<String>,
     profile: Option<String>,
     link: LinkMethod,
 ) -> DeployPlan {
-    let mut warnings = desired.warnings;
-
     // Later placements win, which is what makes load order meaningful.
-    let mut wanted: BTreeMap<RelPath, Placement> = BTreeMap::new();
-    for placement in desired.placements {
+    let mut wanted: BTreeMap<RelPath, Resolved> = BTreeMap::new();
+    for placement in placements {
         if let Some(old) = wanted.get(&placement.dst)
             && old.mod_name != placement.mod_name
         {

@@ -23,27 +23,24 @@ fn env() -> Env {
     }
 }
 
-fn placement(env: &Env, dst: &str, contents: &str, mod_name: &str) -> Placement {
+fn placement(env: &Env, dst: &str, contents: &str, mod_name: &str) -> Resolved {
     let src = env
         .store
         .join(format!("{mod_name}-{}", dst.replace('/', "_")));
     fs::write(&src, contents).unwrap();
-    Placement {
+    Resolved {
         dst: RelPath::new(dst).unwrap(),
         src,
         mod_name: mod_name.to_owned(),
     }
 }
 
-fn deploy(env: &Env, state: &mut DeployState, placements: Vec<Placement>) -> DeployPlan {
-    let desired = DesiredState {
-        placements,
-        warnings: Vec::new(),
-    };
+fn deploy(env: &Env, state: &mut DeployState, placements: Vec<Resolved>) -> DeployPlan {
     let plan = plan(
         DeployTarget::Game("g".into()),
         state,
-        desired,
+        placements,
+        Vec::new(),
         None,
         LinkMethod::Copy,
     );
@@ -174,4 +171,62 @@ fn files_changed_since_deploying_become_the_new_original() {
     assert_eq!(read("Data/vanilla.txt"), "modded again");
     deploy(&env, &mut state, Vec::new());
     assert_eq!(read("Data/vanilla.txt"), "updated");
+}
+
+#[test]
+fn placements_can_only_come_from_mods_and_builds() {
+    let env = env();
+    let rel = |p: &str| RelPath::new(p).unwrap();
+    let src = env.store.join("a.dll");
+    fs::write(&src, "a").unwrap();
+    let m = InstalledMod {
+        name: "a".to_owned(),
+        source: "local".to_owned(),
+        id: "a".to_owned(),
+        version: None,
+        hash: ContentHash::of(b"a"),
+        files: vec![ModFile {
+            rel: rel("a.dll"),
+            src: src.clone(),
+        }],
+    };
+    let out = env.store.join("out");
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join("built.txt"), "built").unwrap();
+    let place = |src: Src| Placement {
+        dst: rel("Mods/x"),
+        src,
+        mod_name: "a".to_owned(),
+    };
+    let resolve = |src: Src, out: Option<&Path>| {
+        resolve("test", vec![place(src)], std::slice::from_ref(&m), out)
+            .map(|resolved| resolved[0].src.clone())
+    };
+
+    assert_eq!(resolve(m.src(&m.files[0]), None).unwrap(), src);
+    assert_eq!(
+        resolve(Src::Built(rel("built.txt")), Some(&out)).unwrap(),
+        out.join("built.txt")
+    );
+    // a file the mod doesn't have, or a mod that isn't being deployed
+    let other = Src::Mod {
+        hash: m.hash,
+        rel: rel("b.dll"),
+    };
+    assert!(resolve(other, None).is_err());
+    let other = Src::Mod {
+        hash: ContentHash::of(b"b"),
+        rel: rel("a.dll"),
+    };
+    assert!(resolve(other, None).is_err());
+    // built files only from a build, and only ones it made
+    assert!(resolve(Src::Built(rel("built.txt")), None).is_err());
+    assert!(resolve(Src::Built(rel("missing.txt")), Some(&out)).is_err());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&src, out.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(&env.store, out.join("dir")).unwrap();
+        assert!(resolve(Src::Built(rel("link.txt")), Some(&out)).is_err());
+        assert!(resolve(Src::Built(rel("dir/a.dll")), Some(&out)).is_err());
+    }
 }

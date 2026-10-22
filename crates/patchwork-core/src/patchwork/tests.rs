@@ -573,12 +573,11 @@ impl Deployer for SharedBuilder {
         self.0.builds.fetch_add(1, SeqCst);
         let dst = crate::relpath::RelPath::new("data.txt").unwrap();
         let original = fs::read_to_string(build.game.original(&dst).unwrap()).unwrap();
-        let src = build.out.join("data.txt");
-        fs::write(&src, format!("{original} patched")).unwrap();
+        fs::write(build.out.join("data.txt"), format!("{original} patched")).unwrap();
         Ok(deploy::DesiredState {
             placements: vec![deploy::Placement {
-                dst,
-                src,
+                dst: dst.clone(),
+                src: deploy::Src::Built(dst),
                 mod_name: "built".to_owned(),
             }],
             warnings: Vec::new(),

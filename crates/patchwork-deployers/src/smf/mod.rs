@@ -45,7 +45,7 @@ use std::time::UNIX_EPOCH;
 
 use patchwork_core::deploy::{
     BuildContext, DeployContext, Deployer, DesiredState, GameFiles, InstalledMod, ModFile,
-    Placement,
+    Placement, Src,
 };
 use patchwork_core::error::IoContext;
 use patchwork_core::event::Event;
@@ -243,7 +243,7 @@ impl<'a> Build<'a> {
             let rel = format!("{RUNTIME}/{name}");
             let out = self.output(&rel)?;
             self.archives.write(id, patch, resources, &out)?;
-            placements.push(placement(&rel, out));
+            placements.push(placement(&rel));
         }
 
         placements.push(self.write_package_definition()?);
@@ -789,7 +789,7 @@ impl<'a> Build<'a> {
         let out = self.output(file)?;
         let bytes = text::encrypt(text).map_err(|e| format!("couldn't encrypt {file}: {e}"))?;
         fs::write(&out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
-        Ok(placement(file, out))
+        Ok(placement(file))
     }
 
     fn output(&self, rel: &str) -> Result<PathBuf, String> {
@@ -801,10 +801,13 @@ impl<'a> Build<'a> {
     }
 }
 
-fn placement(rel: &str, src: PathBuf) -> Placement {
+/// Places a file the build wrote to `rel` in its output at the same path in
+/// the game.
+fn placement(rel: &str) -> Placement {
+    let rel = RelPath::new(rel).unwrap();
     Placement {
-        dst: RelPath::new(rel).unwrap(),
-        src,
+        dst: rel.clone(),
+        src: Src::Built(rel),
         mod_name: BUILT_BY.to_owned(),
     }
 }

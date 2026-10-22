@@ -254,7 +254,7 @@ impl Deployer for RulesDeployer {
                 match outcome {
                     Outcome::Place(dst) => desired.placements.push(Placement {
                         dst,
-                        src: file.src.clone(),
+                        src: m.src(file),
                         mod_name: m.name.clone(),
                     }),
                     Outcome::Skip => {}

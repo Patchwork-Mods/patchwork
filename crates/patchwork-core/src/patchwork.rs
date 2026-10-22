@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::deploy::{
     self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
-    DesiredState, GameFiles, InstalledMod,
+    DesiredState, GameFiles, InstalledMod, Resolved,
 };
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
@@ -1530,13 +1530,23 @@ impl Patchwork {
             });
         }
 
-        let mut desired = deployer.plan(&ctx, &mods)?;
+        let desired = deployer.plan(&ctx, &mods)?;
+        let mut placements = deploy::resolve(deployer.kind(), desired.placements, &mods, None)?;
+        let mut warnings = desired.warnings;
         if deployer.builds(&ctx) {
-            let built = self.build(deployer.as_ref(), &ctx, &target, inputs, &prev, &mods)?;
-            desired.placements.extend(built.placements);
-            desired.warnings.extend(built.warnings);
+            let (built, built_warnings) =
+                self.build(deployer.as_ref(), &ctx, &target, inputs, &prev, &mods)?;
+            placements.extend(built);
+            warnings.extend(built_warnings);
         }
-        let mut plan = deploy::plan(target, &prev, desired, Some(profile.to_string()), game.link);
+        let mut plan = deploy::plan(
+            target,
+            &prev,
+            placements,
+            warnings,
+            Some(profile.to_string()),
+            game.link,
+        );
         plan.inputs = Some(inputs);
         Ok(plan)
     }
@@ -1605,7 +1615,8 @@ impl Patchwork {
         Ok(deploy::plan(
             target.clone(),
             &prev,
-            Default::default(),
+            Vec::new(),
+            Vec::new(),
             None,
             link,
         ))
@@ -1630,7 +1641,8 @@ impl Patchwork {
     }
 
     /// Runs `deployer`'s build for a deploy with these `inputs`, or reuses
-    /// what an earlier build with the same inputs made.
+    /// what an earlier build with the same inputs made. Returns the build's
+    /// placements, resolved, and its warnings.
     fn build(
         &self,
         deployer: &dyn Deployer,
@@ -1639,12 +1651,18 @@ impl Patchwork {
         inputs: ContentHash,
         prev: &DeployState,
         mods: &[InstalledMod],
-    ) -> Result<DesiredState> {
+    ) -> Result<(Vec<Resolved>, Vec<String>)> {
         let dir = self.paths.generated().join(target.key());
         let out = dir.join(inputs.to_string());
         let record = dir.join(format!("{inputs}.json"));
-        if let Some(built) = fsutil::read_json(&record)? {
-            return Ok(built);
+        // Anything wrong with an earlier build (a record from an older
+        // version, or files that have since been deleted) just means
+        // building again.
+        if let Ok(Some(built)) = fsutil::read_json::<DesiredState>(&record)
+            && let Ok(placements) =
+                deploy::resolve(deployer.kind(), built.placements, mods, Some(&out))
+        {
+            return Ok((placements, built.warnings));
         }
         // Left over from a build that didn't finish.
         if out.exists() {
@@ -1666,8 +1684,16 @@ impl Patchwork {
                 return Err(e);
             }
         };
+        let placements =
+            match deploy::resolve(deployer.kind(), built.placements.clone(), mods, Some(&out)) {
+                Ok(placements) => placements,
+                Err(e) => {
+                    let _ = fs::remove_dir_all(&out);
+                    return Err(e);
+                }
+            };
         fsutil::write_json(&record, &built)?;
-        Ok(built)
+        Ok((placements, built.warnings))
     }
 
     /// Deletes built files for `target` that nothing deployed comes from,
