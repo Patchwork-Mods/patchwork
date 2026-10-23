@@ -36,11 +36,19 @@ anyway**).
 
 ## Releasing
 
-Push a version tag (`v0.2.0`) after bumping `version` in `Cargo.toml`.
-`release.yml` (made by dist; regenerate it with `dist generate`) builds the
-CLI, and `gui-release.yml` the app's bundles and the `latest.json` the app's
-updater reads. The GitHub Release is only made once all of them have built,
-so if any fail there's no release: fix it and re-run the failed jobs.
+Bump `version` in `Cargo.toml` and push it to main, then run the **Release**
+workflow on main from GitHub's Actions tab with the tag to make (`v0.2.0`).
+`release.yml` builds the CLI with dist, and in the same jobs the app's bundles,
+then the `latest.json` the app's updater reads. The GitHub Release (and its
+tag) is only made once all of them have built, so if any fail there's no
+release: fix it and re-run the failed jobs.
+
+Run it with the default tag, `dry-run`, to build everything without releasing
+it, and fill in `only` (say `aarch64-apple-darwin`) to build just some targets
+while debugging one. Nothing builds on pushes, since macOS runners bill at 10×.
+
+`release.yml` was made by dist but has since been edited by hand, so don't
+regenerate it with `dist generate`: the top of it lists what changed.
 
 The app's updates are signed. Once, before the first release:
 

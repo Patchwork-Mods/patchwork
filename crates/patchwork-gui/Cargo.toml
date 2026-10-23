@@ -7,7 +7,7 @@ license.workspace = true
 repository = "https://github.com/patchwork-mods/patchwork"
 
 # Bundled and released by Tauri instead, with the CLI inside; see
-# .github/workflows/gui-release.yml.
+# .github/workflows/release.yml.
 [package.metadata.dist]
 dist = false
 

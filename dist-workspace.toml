@@ -10,16 +10,19 @@ ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell"]
 # Target platforms to build apps for (Rust target-triple syntax)
-targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Path that installers should place binaries in
 install-path = "CARGO_HOME"
+# Build only the CLI, not the whole workspace: the GUI needs system libraries
+# dist doesn't install, and release.yml bundles it with Tauri anyway.
+precise-builds = true
 # Whether to install an updater program
 install-updater = false
-# Bundles the Patchwork app before the release exists, so the release (and the
-# latest.json the app's updater reads) only appears with every bundle in it;
-# see gui-release.yml.
-publish-jobs = ["./gui-release"]
-github-release = "announce"
-# The app is bundled for prereleases too.
-publish-prereleases = true
-github-custom-job-permissions = { "gui-release" = { contents = "read" } }
+# Caches each target's dependencies in the build jobs.
+cache-builds = true
+# Releases are started by hand from main, not by pushing a tag, so their runs
+# can restore and save main's caches; see the top of release.yml.
+dispatch-releases = true
+# release.yml has been edited by hand (see the top of it), so dist mustn't
+# fail on it not matching what `dist generate` would write.
+allow-dirty = ["ci"]
