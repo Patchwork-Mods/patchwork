@@ -8,6 +8,7 @@ exclude = ["vendor"]
 version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.89"
+license = "MIT"
 
 [workspace.dependencies]
 patchwork-core = { path = "crates/patchwork-core" }

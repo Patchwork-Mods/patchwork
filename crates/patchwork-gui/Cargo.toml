@@ -3,6 +3,7 @@ name = "patchwork-gui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository = "https://github.com/patchwork-mods/patchwork"
 
 # Bundled and released by Tauri instead, with the CLI inside; see
