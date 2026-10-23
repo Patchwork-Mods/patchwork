@@ -52,6 +52,8 @@ pub enum Error {
     Busy(PathBuf),
     #[error("{}", needs_download(.0))]
     NeedsDownload(Vec<PendingDownload>),
+    #[error("updating patchwork: {0}")]
+    SelfUpdate(String),
     #[error("{0}")]
     Invalid(String),
 }

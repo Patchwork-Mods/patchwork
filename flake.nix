@@ -64,6 +64,8 @@
                 cargo-watch
                 rust-analyzer
                 cargo-dist
+                # `cargo tauri`, for bundling the app and its updater signing key.
+                cargo-tauri
                 self.formatter.${system}
               ]
               # For the Tauri GUI (patchwork-gui).

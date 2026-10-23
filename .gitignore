@@ -1,3 +1,4 @@
 /.direnv
 /target
 /crates/patchwork-gui/gen
+/crates/patchwork-gui/binaries

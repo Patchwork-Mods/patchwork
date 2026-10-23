@@ -232,6 +232,38 @@ button:focus-visible {
   width: min(280px, 100%);
 }
 
+.games-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-gap);
+}
+
+#self-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Shown on #self-update while a newer patchwork is out. */
+.update-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--pw-accent);
+  color: var(--pw-accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+#self-update-bar {
+  width: 100%;
+  accent-color: var(--pw-accent);
+}
+
 /* Installed games, then the rest. */
 .game-section + .game-section {
   margin-top: calc(var(--pw-gap) * 2.5);

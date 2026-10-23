@@ -34,6 +34,7 @@ tauri-build = "2.7.3"
 tauri-plugin-deep-link = "2.6.2"
 tauri-plugin-dialog = { version = "2.7.3", default-features = false, features = ["xdg-portal"] }
 tauri-plugin-opener = "2.7.2"
+tauri-plugin-updater = "2"
 tauri-plugin-single-instance = { version = "2.5.4", features = ["deep-link"] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"

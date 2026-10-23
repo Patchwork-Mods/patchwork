@@ -20,16 +20,29 @@
           <h1 class="brand">Patchwork</h1>
           <p class="muted">Pick a game to manage its profiles and mods.</p>
         </div>
-        <!-- Narrows the games down to the ones matching, best first; see
-             find_games in main.rs. -->
-        <input
-          id="game-search"
-          type="search"
-          placeholder="Search games"
-          aria-label="Search games"
-          autocomplete="off"
-          spellcheck="false"
-        />
+        <div class="games-actions">
+          <!-- Only on macOS and AppImages, whose installs can't put the
+               bundled CLI on PATH themselves; see cli.js. -->
+          <button id="install-cli" type="button" title="Put the patchwork command on your PATH, to use Patchwork from a terminal" hidden>
+            Install command-line tool
+          </button>
+          <!-- Marked with a "!" while a newer patchwork is out; see
+               selfupdate.js. -->
+          <button id="self-update" type="button" title="Check for a newer version of Patchwork">
+            Check for updates
+            <span class="update-mark" aria-label="An update is available" hidden>!</span>
+          </button>
+          <!-- Narrows the games down to the ones matching, best first; see
+               find_games in main.rs. -->
+          <input
+            id="game-search"
+            type="search"
+            placeholder="Search games"
+            aria-label="Search games"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
       </header>
       <section id="installed-games" class="game-section" aria-labelledby="installed-games-title">
         <h2 id="installed-games-title">Installed <span class="count muted"></span></h2>
@@ -415,6 +428,29 @@
         <div class="row end">
           <button value="cancel">Cancel</button>
           <button value="update" class="primary">Update</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Offers a newer patchwork; see selfupdate.js. -->
+    <dialog id="self-update-dialog">
+      <form method="dialog" class="stack">
+        <h2>Update Patchwork</h2>
+        <p id="self-update-summary"></p>
+        <p id="self-update-manual" class="hint" hidden>
+          This copy wasn't installed by Patchwork's installer, so it can't update itself. Update it
+          the way you installed it, or download the new version.
+        </p>
+        <div id="self-update-progress" class="stack" hidden>
+          <progress id="self-update-bar"></progress>
+          <p id="self-update-progress-text" class="hint"></p>
+        </div>
+        <p id="self-update-error" class="error" hidden></p>
+        <div class="row end">
+          <button value="cancel" id="self-update-later">Not now</button>
+          <button type="button" id="self-update-stop" hidden>Cancel</button>
+          <button type="button" id="self-update-download" hidden>Open download page</button>
+          <button type="button" id="self-update-install" class="primary" hidden>Update and restart</button>
         </div>
       </form>
     </dialog>

@@ -28,6 +28,7 @@ pub mod search;
 pub mod share;
 pub mod source;
 pub mod store;
+pub mod update;
 
 mod builtin;
 mod patchwork;

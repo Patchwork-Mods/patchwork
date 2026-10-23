@@ -15,3 +15,11 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+# Bundles the Patchwork app before the release exists, so the release (and the
+# latest.json the app's updater reads) only appears with every bundle in it;
+# see gui-release.yml.
+publish-jobs = ["./gui-release"]
+github-release = "announce"
+# The app is bundled for prereleases too.
+publish-prereleases = true
+github-custom-job-permissions = { "gui-release" = { contents = "read" } }

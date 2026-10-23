@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
-use axoupdater::AxoUpdater;
 use clap::{Parser, Subcommand};
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
 use patchwork_core::event::{Event, Reporter};
@@ -12,6 +11,7 @@ use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
+use patchwork_core::update;
 use patchwork_core::{ImportOptions, Patchwork};
 use patchwork_deployers::{RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
@@ -778,29 +778,33 @@ fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
 const DIST_APP: &str = "patchwork-cli";
 
 async fn self_update(check: bool) -> Result<()> {
-    let current = env!("CARGO_PKG_VERSION");
-    let mut updater = AxoUpdater::new_for(DIST_APP);
-    // Without a receipt from our installer we didn't put this binary here
-    // (Nix, cargo install, a dev build, ...), so replacing it isn't ours to do.
-    let ours = updater.load_receipt().is_ok() && updater.check_receipt_is_for_this_executable()?;
-    if !ours {
-        bail!(
-            "this copy of patchwork ({current}) wasn't installed by its installer; \
-             update it the way you installed it"
+    let found = update::check(DIST_APP).await?;
+    let current = &found.current;
+    let Some(latest) = found.latest.as_deref().filter(|_| found.available) else {
+        println!("patchwork {current} is up to date");
+        return Ok(());
+    };
+    println!("patchwork {latest} is available (you have {current})");
+    if !found.installable {
+        let how = format!(
+            "this copy wasn't installed by patchwork's installer, so update it the way you \
+             installed it (if it came with the Patchwork app, updating the app updates it), \
+             or get it from {}",
+            update::RELEASES_URL
         );
+        // Only a failure when asked to do the update.
+        if check {
+            println!("{how}");
+            return Ok(());
+        }
+        bail!(how);
     }
     if check {
-        if !updater.is_update_needed().await? {
-            println!("patchwork {current} is up to date");
-        } else if let Some(new) = updater.query_new_version().await? {
-            println!(
-                "patchwork {new} is available (you have {current}); run `patchwork self-update`"
-            );
-        }
+        println!("run `patchwork self-update` to update");
         return Ok(());
     }
-    match updater.run().await? {
-        Some(result) => println!("updated patchwork {current} -> {}", result.new_version),
+    match update::install(DIST_APP, true).await? {
+        Some(new) => println!("updated patchwork {current} -> {new}"),
         None => println!("patchwork {current} is up to date"),
     }
     Ok(())

@@ -16,6 +16,44 @@ patchwork disable MoreCompany && patchwork deploy
 patchwork undeploy
 ```
 
+## Installing
+
+Each [release](https://github.com/michaelgoldenn/patchwork-new/releases/latest) has:
+
+- **The app**, with the `patchwork` CLI inside it: an installer for Windows,
+  a `.dmg` for macOS, and an AppImage, `.deb` or `.rpm` for Linux. It handles
+  Nexus's `nxm://` links and updates itself from the button at the top of the
+  game list. The Windows installer, `.deb` and `.rpm` put `patchwork` on your
+  PATH; on macOS or with the AppImage, use **Install command-line tool** on
+  the same screen.
+- **Just the CLI**, from its shell or PowerShell installer. It updates itself
+  with `patchwork self-update`.
+
+Neither is signed yet. macOS blocks the app the first time it's opened: allow
+it under System Settings → Privacy & Security → **Open Anyway**. Windows
+SmartScreen warns about the installer the same way (**More info** → **Run
+anyway**).
+
+## Releasing
+
+Push a version tag (`v0.2.0`) after bumping `version` in `Cargo.toml`.
+`release.yml` (made by dist; regenerate it with `dist generate`) builds the
+CLI, and `gui-release.yml` the app's bundles and the `latest.json` the app's
+updater reads. The GitHub Release is only made once all of them have built,
+so if any fail there's no release: fix it and re-run the failed jobs.
+
+The app's updates are signed. Once, before the first release:
+
+```
+cargo tauri signer generate -w ~/.tauri/patchwork.key
+```
+
+Put the public key in `plugins.updater.pubkey` in
+`crates/patchwork-gui/tauri.conf.json`, and the private key's contents and
+password in the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep the private key safe: without it,
+existing installs can't be updated.
+
 ## Layout
 
 | Crate | |
@@ -24,6 +62,7 @@ patchwork undeploy
 | `patchwork-sources` | built-in sources (`local`) |
 | `patchwork-deployers` | built-in deployers (`rules`) |
 | `patchwork-cli` | the `patchwork` binary, a thin layer over core |
+| `patchwork-gui` | the Patchwork app (Tauri), also a thin layer over core |
 | `registry-gen` | regenerates `registry/` from Thunderstore's ecosystem schema (a dev tool, not released) |
 
 `registry/` holds the built-in game definitions and rulesets; see its README.

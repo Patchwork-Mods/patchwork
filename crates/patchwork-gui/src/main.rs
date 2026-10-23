@@ -2,7 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod changelog;
+mod cli;
 mod details;
+mod selfupdate;
 
 use std::fmt::Display;
 use std::sync::Mutex;
@@ -55,6 +57,9 @@ struct App {
     /// it with `apply_plan`.
     plan: Mutex<Option<DeployPlan>>,
     details: details::Details,
+    /// What an update has to wait for. Commands that write to games or
+    /// download hold a guard from it while they run.
+    work: selfupdate::Work,
 }
 
 /// Forwards core progress to the window as `patchwork://event`.
@@ -488,6 +493,7 @@ async fn export_profile(
     format: String,
     path: Option<String>,
 ) -> CmdResult<Option<String>> {
+    let _work = app.work.start()?;
     let bytes = app
         .pw
         .export_profile(&profile_ref(&id)?, &format)
@@ -519,6 +525,7 @@ async fn import_profile(
     name: Option<String>,
     replace: bool,
 ) -> CmdResult<String> {
+    let _work = app.work.start()?;
     let bytes = match input {
         ImportInput::Path(path) => {
             std::fs::read(&path).map_err(|e| format!("reading {path}: {e}"))?
@@ -601,6 +608,7 @@ async fn sort_mods(
     id: String,
     keys: Vec<String>,
 ) -> CmdResult<Option<Vec<String>>> {
+    let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     let keys = keys
         .iter()
@@ -689,6 +697,7 @@ async fn set_version(
     name: String,
     version: Option<String>,
 ) -> CmdResult<ProfileDetail> {
+    let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     app.pw.set_version(&r, &name, version).map_err(msg)?;
     app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
@@ -716,6 +725,7 @@ async fn update_mods(
     id: String,
     keys: Vec<String>,
 ) -> CmdResult<Vec<LockChange>> {
+    let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     let before = app.pw.load_lock(&r).map_err(msg)?;
     let after = app
@@ -767,6 +777,7 @@ async fn add_mod(
     source: String,
     mod_id: String,
 ) -> CmdResult<Added> {
+    let _work = app.work.start()?;
     let spec = ModSpec {
         source,
         id: mod_id,
@@ -831,6 +842,7 @@ async fn search_categories(
 
 #[tauri::command]
 async fn plan_deploy(handle: AppHandle, app: State<'_, App>, id: String) -> CmdResult<PlanSummary> {
+    let _work = app.work.start()?;
     let plan = app
         .pw
         .plan_deploy(&profile_ref(&id)?)
@@ -863,6 +875,7 @@ fn hold_plan(app: &App, plan: DeployPlan) -> PlanSummary {
 
 #[tauri::command]
 fn apply_plan(app: State<'_, App>) -> CmdResult<usize> {
+    let _work = app.work.start()?;
     let plan = app
         .plan
         .lock()
@@ -884,6 +897,7 @@ async fn lock_profile(
     app: State<'_, App>,
     id: String,
 ) -> CmdResult<ProfileDetail> {
+    let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
     profile_detail(&app.pw, id)
@@ -892,6 +906,7 @@ async fn lock_profile(
 /// Uses a file the user downloaded themselves for a pending download.
 #[tauri::command]
 fn provide_download(app: State<'_, App>, file: SourceFile, path: String) -> CmdResult<()> {
+    let _work = app.work.start()?;
     app.pw
         .provide(&file, std::path::Path::new(&path))
         .map_err(msg)?;
@@ -932,8 +947,15 @@ fn accept_links(handle: &AppHandle, links: Vec<tauri::Url>) {
     for link in links {
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
-            let _ = handle.emit("patchwork://link", LinkEvent::Downloading);
             let app = handle.state::<App>();
+            let _work = match app.work.start() {
+                Ok(work) => work,
+                Err(message) => {
+                    let _ = handle.emit("patchwork://link", LinkEvent::Failed { message });
+                    return;
+                }
+            };
+            let _ = handle.emit("patchwork://link", LinkEvent::Downloading);
             let event = match app.pw.accept_link(link.as_str()).await {
                 Ok(Some(file)) => LinkEvent::Downloaded { file },
                 Ok(None) => LinkEvent::Failed {
@@ -1039,6 +1061,7 @@ fn main() {
             app.manage(App {
                 pw,
                 plan: Mutex::new(None),
+                work: Default::default(),
                 details: details::Details::default(),
             });
 
@@ -1051,10 +1074,22 @@ fn main() {
             if let Some(links) = app.deep_link().get_current()? {
                 accept_links(app.handle(), links);
             }
+            // An AppImage has no installer to tell the system it handles
+            // `nxm://` links, so it does that itself each time it starts (it
+            // may have moved). Windows' installer does it too, but only for
+            // the user who installed it.
+            use tauri::utils::config::BundleType;
+            if let Some(BundleType::AppImage | BundleType::Nsis) = selfupdate::installed_from()
+                && let Err(e) = app.deep_link().register_all()
+            {
+                eprintln!("couldn't register for nxm:// links: {e}");
+            }
+            cli::refresh_copy(&app.state::<App>());
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             overview,
             profile,
@@ -1093,6 +1128,11 @@ fn main() {
             provide_download,
             handle_links,
             theme,
+            selfupdate::check_for_update,
+            selfupdate::install_update,
+            selfupdate::cancel_update,
+            cli::cli_status,
+            cli::install_cli,
         ])
         .run(tauri::generate_context!())
         .expect("error while running patchwork");
