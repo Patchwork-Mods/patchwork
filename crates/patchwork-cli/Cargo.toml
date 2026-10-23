@@ -3,7 +3,7 @@ name = "patchwork-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-repository = "https://github.com/michaelgoldenn/patchwork-new"
+repository = "https://github.com/patchwork-mods/patchwork"
 
 [[bin]]
 name = "patchwork"

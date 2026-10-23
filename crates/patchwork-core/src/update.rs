@@ -12,11 +12,11 @@ use serde::Serialize;
 
 use crate::{Error, Result};
 
-const OWNER: &str = "michaelgoldenn";
-const REPO: &str = "patchwork-new";
+const OWNER: &str = "patchwork-mods";
+const REPO: &str = "patchwork";
 
 /// Where to send people whose copy can't update itself.
-pub const RELEASES_URL: &str = "https://github.com/michaelgoldenn/patchwork-new/releases/latest";
+pub const RELEASES_URL: &str = "https://github.com/patchwork-mods/patchwork/releases/latest";
 
 /// This build's version. Every crate shares the workspace's, and they're all
 /// released together.

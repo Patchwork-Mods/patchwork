@@ -48,7 +48,7 @@
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU0QUQ5QkVBQzU1MzY4MzUKUldRMWFGUEY2cHV0NUx5dXNJN1YrcVJoRUFqelBOc0hRSzBUUFIzUHQra0pJRXB2NmhGQWZaODMK",
-      "endpoints": ["https://github.com/michaelgoldenn/patchwork-new/releases/latest/download/latest.json"]
+      "endpoints": ["https://github.com/patchwork-mods/patchwork/releases/latest/download/latest.json"]
     }
   }
 }

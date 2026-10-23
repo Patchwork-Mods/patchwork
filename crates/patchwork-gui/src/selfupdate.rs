@@ -15,7 +15,7 @@ use tauri_plugin_updater::UpdaterExt;
 use crate::{App, CmdResult, msg};
 
 /// Where to get it by hand, when this copy can't update itself.
-const RELEASES_URL: &str = "https://github.com/michaelgoldenn/patchwork-new/releases/latest";
+const RELEASES_URL: &str = "https://github.com/patchwork-mods/patchwork/releases/latest";
 
 /// How this copy was installed, if it came from one of our bundles. Anything
 /// else (Nix, a dev build, ...) isn't ours to replace.

@@ -18,7 +18,7 @@ patchwork undeploy
 
 ## Installing
 
-Each [release](https://github.com/michaelgoldenn/patchwork-new/releases/latest) has:
+Each [release](https://github.com/patchwork-mods/patchwork/releases/latest) has:
 
 - **The app**, with the `patchwork` CLI inside it: an installer for Windows,
   a `.dmg` for macOS, and an AppImage, `.deb` or `.rpm` for Linux. It handles
