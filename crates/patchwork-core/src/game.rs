@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
+use crate::relpath::RelPath;
 
 pub const GAME_SCHEMA: u32 = 1;
 
@@ -48,6 +49,38 @@ pub struct Detect {
     /// Executables, any of which marks a folder as this game's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exe: Vec<String>,
+    /// Ways to find out which version of the game is installed, tried in
+    /// order until one finds it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub version: Vec<VersionProbe>,
+}
+
+/// Somewhere a game's version can be read from, relative to its install.
+///
+/// ```toml
+/// [[detect.version]]
+/// kind = "exe"               # the file version in a Windows executable
+/// file = "SkyrimSE.exe"
+/// parts = 3                  # 1.6.1170.0 -> 1.6.1170
+///
+/// [[detect.version]]
+/// kind = "json"              # a string in a JSON file
+/// file = "version.json"
+/// key = "game.version"       # dots separate nested keys
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum VersionProbe {
+    Exe {
+        file: RelPath,
+        /// How many of the version's four numbers to keep.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parts: Option<usize>,
+    },
+    Json {
+        file: RelPath,
+        key: String,
+    },
 }
 
 impl Detect {

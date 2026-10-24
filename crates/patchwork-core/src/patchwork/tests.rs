@@ -699,3 +699,63 @@ fn duplicating_a_profile_copies_its_local_files() {
     let taken = pw.duplicate_profile(&copy, "copy").unwrap_err();
     assert!(taken.to_string().contains("already exists"), "{taken}");
 }
+
+#[tokio::test]
+async fn a_game_update_shows_up_as_stale_and_an_issue() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "none");
+    def.detect.version = vec![crate::game::VersionProbe::Json {
+        file: crate::relpath::RelPath::new("version.json").unwrap(),
+        key: "version".to_owned(),
+    }];
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    let set_version = |v: &str| {
+        fs::write(
+            game.join("version.json"),
+            format!(r#"{{"version": "{v}"}}"#),
+        )
+        .unwrap()
+    };
+    set_version("1.0");
+    pw.set_game_path("my-game", &game).unwrap();
+    let target = DeployTarget::Game("my-game".into());
+    assert_eq!(
+        pw.game_env(&target).unwrap().unwrap().version.as_deref(),
+        Some("1.0")
+    );
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+    assert_eq!(pw.issues(&profile).unwrap(), []);
+
+    set_version("1.1");
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Stale);
+    let issues = pw.issues(&profile).unwrap();
+    assert_eq!(issues.len(), 1);
+    assert!(
+        issues[0].message.contains("(1.0 -> 1.1)"),
+        "{}",
+        issues[0].message
+    );
+    assert!(matches!(
+        &issues[0].kind,
+        crate::issue::IssueKind::GameChanged { from, to }
+            if from.version.as_deref() == Some("1.0") && to.version.as_deref() == Some("1.1")
+    ));
+    // only the deployed profile has it
+    let other = pw.create_profile("my-game", "other").unwrap();
+    assert_eq!(pw.issues(&other).unwrap(), []);
+
+    // deploying again, even with nothing to change, records the new version
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert!(plan.is_noop());
+    pw.apply(&plan).unwrap();
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+    assert_eq!(pw.issues(&profile).unwrap(), []);
+}

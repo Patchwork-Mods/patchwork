@@ -11,8 +11,10 @@ use std::sync::Mutex;
 
 use base64::prelude::*;
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
+use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
+use patchwork_core::issue::Issue;
 use patchwork_core::lock::{Lockfile, mod_key};
 use patchwork_core::matching::{self, ModText};
 use patchwork_core::order::SortKey;
@@ -158,8 +160,8 @@ struct ProfileDetail {
     mods: Vec<UiMod>,
     /// Mods with any of these tags go in the Mods tab's hidden section.
     hidden_tags: Vec<String>,
-    /// Dependency requirements the locked versions don't meet.
-    problems: Vec<String>,
+    /// Everything worth warning about, from [`Patchwork::issues`].
+    issues: Vec<Issue>,
     install: Option<String>,
     /// Files patchwork has deployed for this profile's game, if it's this
     /// profile that's deployed.
@@ -305,15 +307,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .map(str::to_owned)
         .collect();
     let lock = pw.load_lock(&r).map_err(msg)?;
-    let problems = lock
-        .as_ref()
-        .map(|l| {
-            pw.unmet_requirements(l)
-                .iter()
-                .map(|u| u.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
+    let issues = pw.issues(&r).map_err(msg)?;
     let label = loaded.label();
     let name = loaded.name.clone();
     let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
@@ -347,7 +341,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         game: loaded.game,
         mods,
         hidden_tags,
-        problems,
+        issues,
         id,
         install,
         deployed_files,
@@ -556,6 +550,27 @@ fn set_game_path(app: State<'_, App>, game: String, path: String) -> CmdResult<(
 #[tauri::command]
 fn game_settings(app: State<'_, App>, game: String) -> CmdResult<Option<GameInstall>> {
     app.pw.game_install(&game).map_err(msg)
+}
+
+/// What patchwork can tell about a game's install, such as its version, for
+/// the game settings dialog. `None` until it's been set up.
+#[tauri::command]
+fn game_env(app: State<'_, App>, game: String) -> CmdResult<Option<GameEnvInfo>> {
+    let env = app.pw.game_env(&DeployTarget::Game(game)).map_err(msg)?;
+    Ok(env.map(|env| GameEnvInfo {
+        summary: (!env.is_empty()).then(|| env.to_string()),
+        env,
+    }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameEnvInfo {
+    #[serde(flatten)]
+    env: GameEnv,
+    /// How the CLI describes it, e.g. `1.6.1170 (Steam build 13190634)`.
+    /// `None` when nothing could be found out.
+    summary: Option<String>,
 }
 
 #[tauri::command]
@@ -1104,6 +1119,7 @@ fn main() {
             import_profile,
             set_game_path,
             game_settings,
+            game_env,
             set_game_settings,
             set_enabled,
             remove_mod,

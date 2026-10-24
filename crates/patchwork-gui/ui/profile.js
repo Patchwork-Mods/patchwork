@@ -119,7 +119,9 @@ export function renderProfile({ keepMods = false } = {}) {
 
   if (!keepMods) renderMods(p.mods);
   $("#mods-toolbar").hidden = !p.mods.length;
-  $("#mod-problems").replaceChildren(...p.problems.map((w) => h("li", {}, w)));
+  $("#mod-problems").replaceChildren(
+    ...p.issues.map((i) => h("li", { class: i.severity, "data-kind": i.kind.type }, i.message)),
+  );
   renderSourceTabs(p.searchSources);
 }
 

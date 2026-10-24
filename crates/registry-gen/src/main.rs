@@ -336,6 +336,7 @@ fn game_file(
                 .collect(),
             folder: r2.steam_folder_name.clone().filter(|f| !f.is_empty()),
             exe: r2.exe_names.clone(),
+            version: Vec::new(),
         },
     })
 }

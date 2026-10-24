@@ -248,12 +248,17 @@ const settingsForm = $("#game-settings-form");
 
 $("#game-settings").addEventListener("click", async () => {
   const game = gameInfo(state.game);
-  const settings = await run("game_settings", { game: game.id });
+  const [settings, env] = await Promise.all([
+    run("game_settings", { game: game.id }),
+    run("game_env", { game: game.id }),
+  ]);
   settingsForm.reset();
   for (const [key, value] of Object.entries(settings ?? {})) {
     if (settingsForm.elements[key]) settingsForm.elements[key].value = value;
   }
   $("#game-settings-title").textContent = `${game.name} settings`;
+  $("#game-settings-env").textContent = env?.summary ? `Installed: ${env.summary}` : "";
+  $("#game-settings-env").hidden = !env?.summary;
   $("#game-settings-error").hidden = true;
   $("#game-settings-dialog").showModal();
 });

@@ -12,11 +12,13 @@
 
 pub mod changelog;
 pub mod deploy;
+pub mod environment;
 pub mod error;
 pub mod event;
 pub mod fsutil;
 pub mod game;
 pub mod hash;
+pub mod issue;
 pub mod lock;
 pub mod matching;
 pub mod order;

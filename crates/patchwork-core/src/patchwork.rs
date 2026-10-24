@@ -13,11 +13,13 @@ use crate::deploy::{
     self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
     DesiredState, GameFiles, InstalledMod, Resolved,
 };
+use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
 use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, validate_game_id};
 use crate::hash::ContentHash;
+use crate::issue::Issue;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
 use crate::matching::{self, ModText};
 use crate::order::{self, ModFacts, Position, SortKey};
@@ -299,6 +301,17 @@ impl Patchwork {
 
     fn install_file(&self, game: &str) -> PathBuf {
         self.paths.game_installs().join(format!("{game}.toml"))
+    }
+
+    /// What can be found out about the game `target` deploys to, such as
+    /// its version. `None` if it hasn't been set up.
+    pub fn game_env(&self, target: &DeployTarget) -> Result<Option<GameEnv>> {
+        let Some(root) = self.target_root(target)? else {
+            return Ok(None);
+        };
+        let registry = self.registry();
+        let game = &registry.game(target.game())?.value;
+        Ok(Some(GameEnv::detect(game, &root)))
     }
 
     /// Saves a new game definition to the user's registry (`<config>/games/`)
@@ -910,6 +923,31 @@ impl Patchwork {
     /// Requirements in `lock` that the locked versions don't meet.
     pub fn unmet_requirements(&self, lock: &Lockfile) -> Vec<UnmetRequirement> {
         lock.unmet_requirements(|source, a, b| self.source(source).ok()?.compare_versions(a, b))
+    }
+
+    /// Everything worth warning the user about in `profile`, from what's
+    /// already known: it doesn't lock or go online.
+    pub fn issues(&self, profile: &ProfileRef) -> Result<Vec<Issue>> {
+        let loaded = self.load_profile(profile)?;
+        let mut issues: Vec<Issue> = match self.load_lock(profile)? {
+            Some(lock) => self
+                .unmet_requirements(&lock)
+                .into_iter()
+                .map(Issue::from)
+                .collect(),
+            None => Vec::new(),
+        };
+        let target = self.deploy_target(&loaded)?;
+        let state = self.deploy_state(&target)?;
+        if state.profile.as_deref() == Some(profile.to_string().as_str())
+            && let Some(deployed) = state.env
+            && let Some(now) = self.game_env(&target)?
+            && deployed != now
+        {
+            let name = self.registry().game(&loaded.game)?.value.name.clone();
+            issues.push(Issue::game_changed(&name, deployed, now));
+        }
+        Ok(issues)
     }
 
     /// One pass of [`Patchwork::lock`]: walks the profile's mods and their
@@ -1610,6 +1648,7 @@ impl Patchwork {
             game.link,
         );
         plan.inputs = Some(inputs);
+        plan.env = Some(GameEnv::detect(game, &root));
         Ok(plan)
     }
 
@@ -1620,7 +1659,8 @@ impl Patchwork {
     /// Anything that might change what's deployed (enabling, reordering or
     /// updating mods, or a changed game definition or ruleset) makes it
     /// [`DeployStatus::Stale`], even when the files would come out the same.
-    /// Changes made to the game directory by hand aren't noticed.
+    /// So does the game changing, as far as [`GameEnv`] can tell. Other
+    /// changes made to the game directory aren't noticed.
     pub fn deploy_status(&self, profile: &ProfileRef) -> Result<DeployStatus> {
         let loaded = self.load_profile(profile)?;
         let target = self.deploy_target(&loaded)?;
@@ -1663,7 +1703,13 @@ impl Patchwork {
         let fingerprint = deployer.fingerprint(&ctx, &GameFiles::new(&root, &state))?;
         let order = deploy_order(&loaded, &lock);
         let inputs = deploy_inputs(profile, &registry, entry.hash, &root, &order, fingerprint);
-        Ok(if inputs == recorded {
+        // Not part of the inputs, so that deploys from before it was
+        // recorded don't all look stale.
+        let same_game = state
+            .env
+            .as_ref()
+            .is_none_or(|env| *env == GameEnv::detect(game, &root));
+        Ok(if inputs == recorded && same_game {
             DeployStatus::Deployed
         } else {
             DeployStatus::Stale
@@ -1886,7 +1932,8 @@ pub enum DeployStatus {
     NotDeployed,
     /// A different profile is deployed to the target.
     OtherProfile,
-    /// This profile is deployed, but deploying again would change something.
+    /// This profile is deployed, but deploying again would change something,
+    /// or the game has changed since (say, by updating).
     Stale,
     /// This profile is deployed as it is now.
     Deployed,

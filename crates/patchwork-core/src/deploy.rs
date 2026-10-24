@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter};
 use crate::game::{GameDef, LinkMethod};
@@ -321,6 +322,9 @@ pub struct DeployState {
     /// without working out a whole plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inputs: Option<ContentHash>,
+    /// [`DeployPlan::env`] of the last deploy that finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<GameEnv>,
 }
 
 impl DeployState {
@@ -333,6 +337,7 @@ impl DeployState {
             files: BTreeMap::new(),
             created_dirs: BTreeSet::new(),
             inputs: None,
+            env: None,
         }
     }
 }
@@ -374,6 +379,9 @@ pub struct DeployPlan {
     /// A hash of everything that went into the plan, recorded in the
     /// [`DeployState`] once it's applied. `None` for undeploying.
     pub inputs: Option<ContentHash>,
+    /// The game install the plan was made for, recorded like `inputs` so
+    /// it's possible to tell when the game has changed since.
+    pub env: Option<GameEnv>,
 }
 
 impl DeployPlan {
@@ -441,6 +449,7 @@ pub fn plan(
         unchanged,
         warnings,
         inputs: None,
+        env: None,
     }
 }
 
@@ -464,6 +473,7 @@ pub fn apply(
     // Only set again once everything's done, so a deploy that failed
     // partway is never mistaken for a current one.
     state.inputs = None;
+    state.env = None;
 
     for op in &plan.ops {
         reporter.report(Event::Applying(op.clone()));
@@ -535,6 +545,7 @@ pub fn apply(
 
     remove_empty_dirs(&root, &mut state.created_dirs);
     state.inputs = plan.inputs;
+    state.env = plan.env.clone();
     Ok(())
 }
 

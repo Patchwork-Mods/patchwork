@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
 use patchwork_core::event::{Event, Reporter};
+use patchwork_core::issue::Severity;
 use patchwork_core::lock::mod_key;
 use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
@@ -560,6 +561,9 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
                 entry.hash.short()
             );
             print!("{}", toml::to_string_pretty(&entry.value)?);
+            if let Some(env) = pw.game_env(&DeployTarget::Game(id))? {
+                println!("# installed: {env}");
+            }
         }
         GameCommand::SetPath { id, path } => {
             let install = pw.set_game_path(&id, &path)?;
@@ -752,14 +756,23 @@ fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
         loaded.label(),
         loaded.mods.len()
     );
+    let target = pw.deploy_target(&loaded)?;
     match pw.game_install(&loaded.game)? {
-        Some(install) => println!("game:    {}", install.path.display()),
+        Some(install) => {
+            let env = pw.game_env(&target)?.unwrap_or_default();
+            let env = if env.is_empty() {
+                String::new()
+            } else {
+                format!(" ({env})")
+            };
+            println!("game:    {}{env}", install.path.display())
+        }
         None => println!(
             "game:    not set up; run `patchwork game set-path {} <dir>`",
             loaded.game
         ),
     }
-    let state = pw.deploy_state(&pw.deploy_target(&loaded)?)?;
+    let state = pw.deploy_state(&target)?;
     match &state.profile {
         Some(deployed) if !state.files.is_empty() => {
             // Recorded by id; fall back to that if the profile's gone.
@@ -770,6 +783,9 @@ fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
             println!("deployed: {deployed} ({} files)", state.files.len())
         }
         _ => println!("deployed: nothing"),
+    }
+    for issue in pw.issues(&profile)? {
+        println!("{}: {}", severity(issue.severity), issue.message);
     }
     Ok(())
 }
@@ -815,6 +831,11 @@ fn finish(pw: &Patchwork, plan: &DeployPlan, dry_run: bool) -> Result<()> {
         eprintln!("warning: {warning}");
     }
     if plan.is_noop() {
+        // Nothing to place, but applying a deploy records that the profile
+        // is deployed as it is now, and to the game as it is now.
+        if plan.profile.is_some() && !dry_run {
+            pw.apply(plan)?;
+        }
         println!("nothing to do ({})", in_place(plan.unchanged));
         return Ok(());
     }
@@ -835,6 +856,13 @@ fn finish(pw: &Patchwork, plan: &DeployPlan, dry_run: bool) -> Result<()> {
         in_place(plan.unchanged)
     );
     Ok(())
+}
+
+fn severity(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Warning => "warning",
+        Severity::Error => "error",
+    }
 }
 
 fn changes(n: usize) -> String {
