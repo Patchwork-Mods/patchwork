@@ -20,6 +20,7 @@ async fn resolves_without_fetching() {
     let ctx = SourceContext {
         game: &game,
         config: None,
+        env: None,
     };
     let zip = UrlSource
         .resolve(&ctx, "https://example.com/files/Cool.Mod.zip?dl=1", None)

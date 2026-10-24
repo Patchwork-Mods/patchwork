@@ -11,6 +11,7 @@ axoupdater.workspace = true
 blake3.workspace = true
 directories.workspace = true
 futures-util.workspace = true
+globset.workspace = true
 jiff.workspace = true
 reqwest = "0.13.5"
 serde.workspace = true

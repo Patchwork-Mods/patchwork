@@ -112,6 +112,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         },
         link: Default::default(),
         detect: Default::default(),
+        versions: Default::default(),
     }
 }
 
@@ -161,6 +162,7 @@ impl Source for FixedUrl {
             },
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
+            game_versions: None,
         })
     }
 }
@@ -218,6 +220,7 @@ impl Source for OwnFiles {
             },
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
+            game_versions: None,
         })
     }
 
@@ -397,6 +400,7 @@ impl Source for Versioned {
             artifact: ArtifactLocation::Path { path },
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
+            game_versions: None,
         })
     }
 }
@@ -679,6 +683,7 @@ fn duplicating_a_profile_copies_its_local_files() {
         id: file.to_string_lossy().into_owned(),
         version: None,
         enabled: false,
+        game_versions: None,
     });
     loaded.hidden_tags = vec!["library".to_owned()];
     pw.save_profile(&profile, &loaded).unwrap();
@@ -758,4 +763,112 @@ async fn a_game_update_shows_up_as_stale_and_an_issue() {
     pw.apply(&plan).unwrap();
     assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
     assert_eq!(pw.issues(&profile).unwrap(), []);
+}
+
+/// Mods that are folders under `dir`, which all say they're for 1.5.97.
+/// Remembers which game version it was last told about.
+struct ForOldGame {
+    dir: PathBuf,
+    saw: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+#[async_trait::async_trait]
+impl Source for ForOldGame {
+    fn id(&self) -> &str {
+        "old"
+    }
+
+    async fn resolve(
+        &self,
+        ctx: &SourceContext<'_>,
+        id: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        *self.saw.lock().unwrap() = ctx.env.and_then(|e| e.version.clone());
+        Ok(crate::source::ResolvedMod {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            version: Some("1.0".to_owned()),
+            artifact: ArtifactLocation::Path {
+                path: self.dir.join(id),
+            },
+            format: ArtifactFormat::Dir,
+            dependencies: Vec::new(),
+            game_versions: Some("1.5.97".parse().unwrap()),
+        })
+    }
+}
+
+#[tokio::test]
+async fn mods_for_other_versions_of_the_game_are_issues() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mods = tmp.path().join("mods");
+    for (id, file) in [("plugin", "SKSE/Plugins/fix.dll"), ("textures", "a.dds")] {
+        let path = mods.join(id).join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, id).unwrap();
+    }
+    let saw = Arc::new(std::sync::Mutex::new(None));
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(ForOldGame {
+            dir: mods,
+            saw: saw.clone(),
+        })
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "none");
+    def.sources.insert("old".to_owned(), toml::Table::new());
+    def.detect.version = vec![crate::game::VersionProbe::Json {
+        file: crate::relpath::RelPath::new("version.json").unwrap(),
+        key: "version".to_owned(),
+    }];
+    def.versions = toml::from_str(r#"files = ["**/SKSE/Plugins/*.dll"]"#).unwrap();
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    fs::write(game.join("version.json"), r#"{"version": "1.6.1170"}"#).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    for id in ["plugin", "textures"] {
+        let spec = ModSpec {
+            source: "old".to_owned(),
+            id: id.to_owned(),
+            version: None,
+        };
+        pw.add_mod(&profile, spec, None, true).await.unwrap();
+    }
+    assert_eq!(saw.lock().unwrap().as_deref(), Some("1.6.1170"));
+
+    // only the mod with a DLL cares what version it's on
+    let lock = pw.lock(&profile, false).await.unwrap();
+    let locked = |id: &str| lock.mods.iter().find(|m| m.id == id).unwrap().clone();
+    assert!(locked("plugin").game_versions.is_some());
+    assert_eq!(locked("textures").game_versions, None);
+    let issues = pw.issues(&profile).unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].mods, ["plugin"]);
+    assert!(
+        issues[0]
+            .message
+            .contains("is for My Game 1.5.97, but 1.6.1170 is installed"),
+        "{}",
+        issues[0].message
+    );
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert_eq!(plan.warnings, [issues[0].message.clone()]);
+
+    // the profile can say otherwise, for either kind of mod
+    pw.set_game_versions(&profile, "plugin", Some("1.6.*".parse().unwrap()))
+        .unwrap();
+    pw.set_game_versions(&profile, "textures", Some("<1.6".parse().unwrap()))
+        .unwrap();
+    let issues = pw.issues(&profile).unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].mods, ["textures"]);
+    // disabled mods aren't deployed, so they don't count
+    pw.set_enabled(&profile, "textures", false).unwrap();
+    assert_eq!(pw.issues(&profile).unwrap(), []);
+    pw.set_game_versions(&profile, "plugin", None).unwrap();
+    assert_eq!(pw.issues(&profile).unwrap().len(), 1);
 }

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::Error;
+use crate::compat::GameVersions;
 
 /// Schema 2 added `id` and `name`; profiles used to be identified by their
 /// directory, `<game>/<name>`.
@@ -66,6 +67,10 @@ pub struct ProfileMod {
     pub version: Option<String>,
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
+    /// Which versions of the game the mod works with, in place of whatever
+    /// its source says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_versions: Option<GameVersions>,
 }
 
 fn enabled_by_default() -> bool {

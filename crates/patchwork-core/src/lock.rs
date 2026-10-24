@@ -4,6 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::compat::GameVersions;
 use crate::hash::ContentHash;
 use crate::source::{ArtifactFormat, ArtifactLocation, VersionReq};
 
@@ -48,6 +49,10 @@ pub struct LockedMod {
     /// `dependencies`. Dependencies it doesn't care about are left out.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub requires: BTreeMap<String, VersionReq>,
+    /// Which versions of the game the source says this is for. Left out
+    /// for mods that don't care, going by the game's `[versions] files`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_versions: Option<GameVersions>,
 }
 
 impl LockedMod {

@@ -95,6 +95,7 @@ fn urls_round_trip() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        env: None,
     };
     let url = Thunderstore
         .mod_url(&ctx, "notnotnotswipez-MoreCompany", Some("1.11.0"))
@@ -255,6 +256,7 @@ async fn needs_community_config() {
     let ctx = SourceContext {
         game: &game,
         config: None,
+        env: None,
     };
     let err = Thunderstore
         .resolve(&ctx, "notnotnotswipez-MoreCompany", None)
@@ -272,6 +274,7 @@ async fn test_get_mod() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        env: None,
     };
 
     let latest = Thunderstore
@@ -315,6 +318,7 @@ async fn summarizes_one_mod() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        env: None,
     };
     let summary = Thunderstore
         .summary(&ctx, "notnotnotswipez-MoreCompany")
@@ -333,6 +337,7 @@ async fn searches() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        env: None,
     };
 
     let home = Thunderstore
@@ -404,6 +409,7 @@ async fn rejects_other_communities() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        env: None,
     };
     let err = Thunderstore
         .resolve(&ctx, "notnotnotswipez-MoreCompany", None)

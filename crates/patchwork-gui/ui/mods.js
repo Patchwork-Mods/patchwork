@@ -39,6 +39,15 @@ const expandedRows = new Set();
 // author, an on/off switch and its version, and an arrow that expands it to
 // show its description, when it was updated, links to its pages, its
 // changelog and a remove button.
+/** A warning sign on a mod with issues (see Patchwork::issues), saying what
+ * they are when hovered. */
+function issueMark(m) {
+  const issues = (state.profile?.issues ?? []).filter((i) => i.mods.includes(m.name));
+  if (!issues.length) return null;
+  const messages = issues.map((i) => i.message).join("\n");
+  return h("span", { class: "mod-issue", title: messages, "aria-label": messages }, "⚠");
+}
+
 function modRow(m, { movable, onToggle, onRemove, onVersion }) {
   const { key } = m;
   const update = h("div", { class: "card-update" });
@@ -52,7 +61,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
       h(
         "div",
         { class: "row-title" },
-        h("span", { class: "mod-name" }, item.name),
+        h("span", { class: "mod-name" }, item.name, issueMark(m)),
         item.author && h("span", { class: "author" }, item.author),
       ),
     );
@@ -197,6 +206,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
     "li",
     { class: m.enabled ? "result" : "result disabled", "data-name": m.name },
     main,
+    issueMark(m),
     movable && dragHandle(m),
     h(
       "button",

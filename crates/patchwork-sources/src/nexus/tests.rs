@@ -96,6 +96,7 @@ fn urls_round_trip() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        env: None,
     };
     let nexus = Nexus::new(None);
     let url = nexus.mod_url(&ctx, "12604", Some("5.2SE")).unwrap();
@@ -124,18 +125,69 @@ fn urls_round_trip() {
 #[test]
 fn picks_files() {
     let files: NexusFiles = serde_json::from_str(FILES).unwrap();
-    let pick = |v| pick_file(&files.files, v).map(|f| f.file_id);
+    let pick = |v| pick_file(&files.files, v, |_| 1).map(|f| f.file_id);
     assert_eq!(pick(None), Some(2000));
     assert_eq!(pick(Some("5.2SE")), Some(2000));
     assert_eq!(pick(Some("5.1SE")), Some(1000));
     assert_eq!(pick(Some("9.9")), None);
 }
 
+/// Two main files, one for each runtime, as SKSE plugins tend to have.
+const RUNTIME_FILES: &str = r#"{
+    "files": [
+        {
+            "file_id": 1,
+            "name": "Engine Fixes AE",
+            "version": "7",
+            "category_name": "MAIN",
+            "is_primary": true,
+            "file_name": "Engine Fixes AE-17230-7.zip",
+            "uploaded_timestamp": 1700000000
+        },
+        {
+            "file_id": 2,
+            "name": "Engine Fixes",
+            "version": "7",
+            "category_name": "MAIN",
+            "is_primary": false,
+            "file_name": "Engine Fixes-17230-7.zip",
+            "uploaded_timestamp": 1690000000,
+            "description": "For Skyrim 1.5.97 only."
+        }
+    ]
+}"#;
+
+fn labelled_skyrim() -> GameDef {
+    let mut game = skyrim();
+    game.versions = toml::from_str(r#"labels = { AE = ">=1.6", "1.5.97" = "1.5.97" }"#).unwrap();
+    game
+}
+
+#[test]
+fn picks_the_file_for_the_installed_game() {
+    let game = labelled_skyrim();
+    let files: NexusFiles = serde_json::from_str(RUNTIME_FILES).unwrap();
+    let pick = |installed: Option<&str>, version| {
+        pick_file(&files.files, version, |f| fit(&game, installed, f)).map(|f| f.file_id)
+    };
+    assert_eq!(pick(Some("1.5.97"), None), Some(2));
+    assert_eq!(pick(Some("1.6.1170"), None), Some(1));
+    // without a version to go on, the primary file as before
+    assert_eq!(pick(None, None), Some(1));
+    assert_eq!(pick(Some("2.0.0.0.x"), None), Some(1));
+
+    let versions = |i: usize| game_versions(&game, &files.files[i]).map(|v| v.to_string());
+    assert_eq!(versions(0).as_deref(), Some(">=1.6"));
+    assert_eq!(versions(1).as_deref(), Some("1.5.97"));
+    // and nothing guessed for games without labels
+    assert_eq!(game_versions(&skyrim(), &files.files[0]), None);
+}
+
 #[test]
 fn converts_api_response() {
     let mod_: NexusMod = serde_json::from_str(MOD).unwrap();
     let files: NexusFiles = serde_json::from_str(FILES).unwrap();
-    let resolved = nexus_to_resolved_mod(&mod_, &files.files[1]);
+    let resolved = nexus_to_resolved_mod(&skyrim(), &mod_, &files.files[1]);
 
     assert_eq!(resolved.id, "12604");
     assert_eq!(resolved.name, "SkyUI");
@@ -153,6 +205,7 @@ fn converts_api_response() {
         "SkyUI_5_2_SE-12604-5-2SE.zip"
     );
     assert!(resolved.dependencies.is_empty());
+    assert_eq!(resolved.game_versions, None);
 }
 
 #[test]
@@ -194,6 +247,7 @@ async fn ignores_links_for_other_games() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        env: None,
     };
     // nothing is fetched, so this works offline
     let accepted = Nexus::new(Some("key".to_owned()))
@@ -210,6 +264,7 @@ async fn needs_game_domain_config() {
     let ctx = SourceContext {
         game: &game,
         config: None,
+        env: None,
     };
     let err = Nexus::new(Some("key".to_owned()))
         .resolve(&ctx, "12604", None)
@@ -224,6 +279,7 @@ async fn needs_api_key() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        env: None,
     };
     let err = Nexus::new(None)
         .resolve(&ctx, "12604", None)
@@ -238,6 +294,7 @@ async fn rejects_non_numeric_ids() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        env: None,
     };
     let err = Nexus::new(Some("key".to_owned()))
         .resolve(&ctx, "SkyUI", None)
@@ -255,6 +312,7 @@ async fn test_get_mod() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        env: None,
     };
     let resolved = Nexus::from_env()
         .resolve(&ctx, "12604", None)
@@ -371,6 +429,7 @@ async fn searches() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        env: None,
     };
     let nexus = Nexus::new(None);
     let query = SearchQuery {
@@ -398,6 +457,7 @@ async fn summarizes_one_mod() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        env: None,
     };
     let nexus = Nexus::new(None);
     let skyui = nexus.summary(&ctx, "12604").await.unwrap().unwrap();

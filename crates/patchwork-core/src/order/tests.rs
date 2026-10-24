@@ -10,6 +10,7 @@ fn profile_mod(name: &str) -> ProfileMod {
         id: name.to_owned(),
         version: None,
         enabled: true,
+        game_versions: None,
     }
 }
 
@@ -171,6 +172,7 @@ fn lock(entries: &[(&str, &[&str])]) -> Lockfile {
             },
             dependencies: deps.iter().map(|d| format!("ts:{d}")).collect(),
             requires: Default::default(),
+            game_versions: None,
         })
         .collect();
     Lockfile {

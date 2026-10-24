@@ -29,6 +29,7 @@ fn profile_mod(source: &str, id: &str, enabled: bool) -> ProfileMod {
         id: id.to_owned(),
         version: None,
         enabled,
+        game_versions: None,
     }
 }
 
@@ -46,6 +47,7 @@ fn locked(source: &str, id: &str, version: &str, dependencies: &[&str]) -> Locke
         },
         dependencies: dependencies.iter().map(|d| d.to_string()).collect(),
         requires: Default::default(),
+        game_versions: None,
     }
 }
 

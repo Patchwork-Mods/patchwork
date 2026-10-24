@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Result;
 use crate::changelog::ChangelogEntry;
+use crate::compat::GameVersions;
+use crate::environment::GameEnv;
 use crate::game::GameDef;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 
@@ -235,12 +237,20 @@ pub struct ResolvedMod {
     pub artifact: ArtifactLocation,
     pub format: ArtifactFormat,
     pub dependencies: Vec<Dependency>,
+    /// Which versions of the game this is for, if the source can tell.
+    /// [`crate::compat::guess`] helps sources that only have free text to
+    /// go on.
+    pub game_versions: Option<GameVersions>,
 }
 
 pub struct SourceContext<'a> {
     pub game: &'a GameDef,
     /// This source's table from the game definition's `[sources]`, if any.
     pub config: Option<&'a toml::Table>,
+    /// The game install mods are being resolved for, when there is one, so
+    /// sources with a file for each version of the game can pick the right
+    /// one.
+    pub env: Option<&'a GameEnv>,
 }
 
 /// Somewhere mods come from (local files, thunderstore, github, etc.)

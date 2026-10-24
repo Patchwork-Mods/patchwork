@@ -934,6 +934,12 @@ button.link {
   padding: 6px 8px;
 }
 
+.mod-issue {
+  margin-left: 6px;
+  color: var(--pw-danger);
+  cursor: help;
+}
+
 .result-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

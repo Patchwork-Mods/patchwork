@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 
+use crate::compat::GameVersions;
 use crate::environment::GameEnv;
 use crate::lock::UnmetRequirement;
 use crate::source::VersionReq;
@@ -46,6 +47,11 @@ pub enum IssueKind {
     /// The game install isn't what it was when the profile was deployed,
     /// most likely because the game updated.
     GameChanged { from: GameEnv, to: GameEnv },
+    /// A mod says it doesn't work with the installed version of the game.
+    IncompatibleGame {
+        version: String,
+        supports: GameVersions,
+    },
 }
 
 impl From<UnmetRequirement> for Issue {
@@ -65,6 +71,26 @@ impl From<UnmetRequirement> for Issue {
 }
 
 impl Issue {
+    pub fn incompatible_game(
+        name: &str,
+        game: &str,
+        version: &str,
+        supports: GameVersions,
+    ) -> Self {
+        Issue {
+            severity: Severity::Warning,
+            mods: vec![name.to_owned()],
+            message: format!(
+                "`{name}` is for {game} {supports}, but {version} is installed; \
+                 look for a version of it that works with {version}"
+            ),
+            kind: IssueKind::IncompatibleGame {
+                version: version.to_owned(),
+                supports,
+            },
+        }
+    }
+
     pub fn game_changed(game: &str, from: GameEnv, to: GameEnv) -> Self {
         Issue {
             severity: Severity::Warning,

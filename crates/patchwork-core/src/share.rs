@@ -75,6 +75,7 @@ impl FormatContext<'_> {
             let ctx = SourceContext {
                 game,
                 config: game.sources.get(id),
+                env: None,
             };
             (source.as_ref(), ctx)
         }))

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
+use crate::compat::GameVersions;
 use crate::relpath::RelPath;
 
 pub const GAME_SCHEMA: u32 = 1;
@@ -34,6 +35,60 @@ pub struct GameDef {
     pub link: LinkMethod,
     #[serde(default, skip_serializing_if = "Detect::is_empty")]
     pub detect: Detect,
+    #[serde(default, skip_serializing_if = "Versions::is_empty")]
+    pub versions: Versions,
+}
+
+/// How a game's versions matter to its mods.
+///
+/// ```toml
+/// [versions]
+/// # Only mods with files like these care which version they're on. Leave
+/// # it out if they all do.
+/// files = ["**/SKSE/Plugins/*.dll"]
+/// # Words in what a source says about a file that mark which versions
+/// # it's for, for sources that don't say in so many words.
+/// labels = { AE = ">=1.6", "1.5.97" = "1.5.97" }
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Versions {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FilePattern>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, GameVersions>,
+}
+
+impl Versions {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// A glob matched against paths inside a mod, ignoring case.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct FilePattern(String);
+
+impl FilePattern {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for FilePattern {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, String> {
+        globset::Glob::new(&s).map_err(|e| format!("`{s}` isn't a valid pattern: {e}"))?;
+        Ok(FilePattern(s))
+    }
+}
+
+impl From<FilePattern> for String {
+    fn from(p: FilePattern) -> String {
+        p.0
+    }
 }
 
 /// Hints for finding where a game is installed. They don't affect deploying.

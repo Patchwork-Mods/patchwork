@@ -18,6 +18,7 @@ fn locked(id: &str, version: &str, requested: bool, requires: &[(&str, &str)]) -
             .iter()
             .map(|(k, r)| (k.to_string(), r.parse().unwrap()))
             .collect(),
+        game_versions: None,
     }
 }
 

@@ -103,6 +103,7 @@ impl ProfileFormat for UrlList {
                 id: resolved.id,
                 version: spec.version,
                 enabled: true,
+                game_versions: None,
             });
         }
         if mods.is_empty() {

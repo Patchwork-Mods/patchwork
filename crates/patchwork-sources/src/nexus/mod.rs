@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use patchwork_core::Result;
 use patchwork_core::changelog::ChangelogEntry;
+use patchwork_core::compat::{self, GameVersions};
+use patchwork_core::game::GameDef;
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, Download, Handoff, ModSpec, ResolvedMod, Source,
@@ -71,6 +73,7 @@ pub struct NexusFile {
     pub is_primary: Option<bool>,
     pub file_name: String,
     pub uploaded_timestamp: Option<i64>,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,10 +207,15 @@ fn file_page(domain: &str, id: &str, file: &str) -> String {
     format!("https://www.nexusmods.com/{domain}/mods/{id}?tab=files&file_id={file}")
 }
 
-/// Picks which of a mod's files `version` refers to. Main files win over
-/// optional ones, then the newest upload wins; old and archived files are
-/// only considered when a version is asked for.
-fn pick_file<'a>(files: &'a [NexusFile], version: Option<&str>) -> Option<&'a NexusFile> {
+/// Picks which of a mod's files `version` refers to. Without a version,
+/// files that `fit` the game best win, then main files over optional ones,
+/// then the newest upload; old and archived files are only considered when
+/// a version is asked for.
+fn pick_file<'a>(
+    files: &'a [NexusFile],
+    version: Option<&str>,
+    fit: impl Fn(&NexusFile) -> u8,
+) -> Option<&'a NexusFile> {
     let rank = |f: &NexusFile| match f.category_name {
         Some(FileCategory::Main) => 3,
         Some(FileCategory::Update) => 2,
@@ -223,7 +231,37 @@ fn pick_file<'a>(files: &'a [NexusFile], version: Option<&str>) -> Option<&'a Ne
                 Some(FileCategory::OldVersion | FileCategory::Archived)
             ),
         })
-        .max_by_key(|f| (f.is_primary.unwrap_or(false), rank(f), f.uploaded_timestamp))
+        .max_by_key(|f| {
+            let fit = if version.is_some() { 0 } else { fit(f) };
+            (
+                fit,
+                f.is_primary.unwrap_or(false),
+                rank(f),
+                f.uploaded_timestamp,
+            )
+        })
+}
+
+/// Which versions of the game `file` is for, going by the words in its
+/// name and description, since Nexus has nowhere to say.
+fn game_versions(game: &GameDef, file: &NexusFile) -> Option<GameVersions> {
+    let texts = [
+        file.name.as_deref(),
+        Some(file.file_name.as_str()),
+        file.description.as_deref(),
+    ];
+    compat::guess(game, texts.into_iter().flatten())
+}
+
+/// How well `file` suits the installed game: 2 if it says it's for this
+/// version, 0 if it says it's for others, and 1 if it can't be told.
+fn fit(game: &GameDef, installed: Option<&str>, file: &NexusFile) -> u8 {
+    let matches = installed.and_then(|v| game_versions(game, file)?.matches(v));
+    match matches {
+        Some(true) => 2,
+        None => 1,
+        Some(false) => 0,
+    }
 }
 
 /// The distinct versions among `files`, newest upload first. Nexus versions
@@ -268,7 +306,7 @@ fn changelog_entries(changelogs: NexusChangelogs) -> Vec<ChangelogEntry> {
 }
 
 // converts a nexus mod file to our internal version of a mod
-fn nexus_to_resolved_mod(mod_: &NexusMod, file: &NexusFile) -> ResolvedMod {
+fn nexus_to_resolved_mod(game: &GameDef, mod_: &NexusMod, file: &NexusFile) -> ResolvedMod {
     let id = mod_.mod_id.to_string();
     ResolvedMod {
         name: mod_.name.clone().unwrap_or_else(|| id.clone()),
@@ -282,6 +320,7 @@ fn nexus_to_resolved_mod(mod_: &NexusMod, file: &NexusFile) -> ResolvedMod {
         format: ArtifactFormat::Zip,
         // nexus doesn't expose requirements in a machine-readable way
         dependencies: Vec::new(),
+        game_versions: game_versions(game, file),
     }
 }
 
@@ -302,17 +341,21 @@ impl Source for Nexus {
         let files: NexusFiles = self
             .get_json(&format!("{base}/files.json"), api_key)
             .await?;
-        let file = pick_file(&files.files, version).ok_or_else(|| match version {
-            Some(v) => error(format!("{id} has no file with version {v}")),
-            None => error(format!("{id} has no downloadable files")),
-        })?;
+        let installed = ctx.env.and_then(|env| env.version.as_deref());
+        let file =
+            pick_file(&files.files, version, |f| fit(ctx.game, installed, f)).ok_or_else(|| {
+                match version {
+                    Some(v) => error(format!("{id} has no file with version {v}")),
+                    None => error(format!("{id} has no downloadable files")),
+                }
+            })?;
         if !file.file_name.to_ascii_lowercase().ends_with(".zip") {
             return Err(error(format!(
                 "{} is not a zip, and only zips are supported for now",
                 file.file_name
             )));
         }
-        Ok(nexus_to_resolved_mod(&mod_, file))
+        Ok(nexus_to_resolved_mod(ctx.game, &mod_, file))
     }
 
     async fn download(&self, ctx: &SourceContext<'_>, id: &str, file: &str) -> Result<Download> {

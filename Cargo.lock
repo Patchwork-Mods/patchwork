@@ -4112,6 +4112,7 @@ dependencies = [
  "blake3",
  "directories",
  "futures-util",
+ "globset",
  "jiff",
  "reqwest",
  "serde",

@@ -191,6 +191,7 @@ impl Env {
             },
             link: Default::default(),
             detect: Default::default(),
+            versions: Default::default(),
         };
         let registry = Registry::default();
         let ctx = DeployContext {

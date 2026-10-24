@@ -403,6 +403,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         },
         link: game.link,
         detect: Default::default(),
+        versions: Default::default(),
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
     if let Some(path) = filled(game.install) {

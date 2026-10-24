@@ -11,6 +11,7 @@
 //! through [`share::ProfileFormat`].
 
 pub mod changelog;
+pub mod compat;
 pub mod deploy;
 pub mod environment;
 pub mod error;

@@ -9,6 +9,7 @@ use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::changelog::{self, ChangelogEntry};
+use crate::compat::{self, GameVersions};
 use crate::deploy::{
     self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
     DesiredState, GameFiles, InstalledMod, Resolved,
@@ -408,6 +409,7 @@ impl Patchwork {
             id: resolved.id,
             version: spec.version,
             enabled,
+            game_versions: None,
         };
         loaded.mods.push(added.clone());
         self.save_profile(profile, &loaded)?;
@@ -468,6 +470,23 @@ impl Patchwork {
             )));
         }
         m.version = version;
+        self.save_profile(profile, &loaded)
+    }
+
+    /// Says which versions of the game a mod works with, overriding what its
+    /// source says, or with `None` goes back to what the source says.
+    pub fn set_game_versions(
+        &self,
+        profile: &ProfileRef,
+        name: &str,
+        versions: Option<GameVersions>,
+    ) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let m = loaded
+            .find_mut(name)
+            .ok_or_else(|| no_such_mod(&label, name))?;
+        m.game_versions = versions;
         self.save_profile(profile, &loaded)
     }
 
@@ -593,6 +612,7 @@ impl Patchwork {
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
+            env: None,
         };
         let versions = self.source(source)?.versions(&ctx, id).await?;
         let known = KnownVersions {
@@ -627,6 +647,7 @@ impl Patchwork {
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
+            env: None,
         };
         let summary = self.source(source)?.summary(&ctx, id).await?;
         let known = KnownSummary {
@@ -666,6 +687,7 @@ impl Patchwork {
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
+            env: None,
         };
         self.source(source)?.changelog(&ctx, id, version).await
     }
@@ -693,6 +715,7 @@ impl Patchwork {
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
+            env: None,
         };
         self.source(source).ok()?.mod_url(&ctx, id, None)
     }
@@ -706,11 +729,13 @@ impl Patchwork {
 
     async fn resolve(&self, game: &str, spec: &ModSpec) -> Result<crate::source::ResolvedMod> {
         let source = self.source(&spec.source)?;
+        let env = self.game_env(&DeployTarget::Game(game.to_owned()))?;
         let registry = self.registry();
         let game = &registry.game(game)?.value;
         let ctx = SourceContext {
             game,
             config: game.sources.get(&spec.source),
+            env: env.as_ref(),
         };
         source
             .resolve(&ctx, &spec.id, spec.version.as_deref())
@@ -750,6 +775,7 @@ impl Patchwork {
         let ctx = SourceContext {
             game,
             config: game.sources.get(source.id()),
+            env: None,
         };
         let known = source.search_categories(&ctx).await?;
         self.categories.lock().unwrap().insert(key, known.clone());
@@ -782,6 +808,7 @@ impl Patchwork {
         let ctx = SourceContext {
             game,
             config: game.sources.get(source.id()),
+            env: None,
         };
         if query.categories.is_empty() && query.excluded_categories.is_empty() {
             return source.search(&ctx, query).await;
@@ -929,25 +956,58 @@ impl Patchwork {
     /// already known: it doesn't lock or go online.
     pub fn issues(&self, profile: &ProfileRef) -> Result<Vec<Issue>> {
         let loaded = self.load_profile(profile)?;
+        let target = self.deploy_target(&loaded)?;
+        let env = self.game_env(&target)?;
         let mut issues: Vec<Issue> = match self.load_lock(profile)? {
-            Some(lock) => self
-                .unmet_requirements(&lock)
-                .into_iter()
-                .map(Issue::from)
-                .collect(),
+            Some(lock) => {
+                let mut issues: Vec<Issue> = self
+                    .unmet_requirements(&lock)
+                    .into_iter()
+                    .map(Issue::from)
+                    .collect();
+                if let Some(env) = &env {
+                    issues.extend(self.incompatible(&loaded, &lock, env)?);
+                }
+                issues
+            }
             None => Vec::new(),
         };
-        let target = self.deploy_target(&loaded)?;
         let state = self.deploy_state(&target)?;
         if state.profile.as_deref() == Some(profile.to_string().as_str())
             && let Some(deployed) = state.env
-            && let Some(now) = self.game_env(&target)?
+            && let Some(now) = env
             && deployed != now
         {
             let name = self.registry().game(&loaded.game)?.value.name.clone();
             issues.push(Issue::game_changed(&name, deployed, now));
         }
         Ok(issues)
+    }
+
+    /// The mods deploying `loaded` would place that say they don't work
+    /// with the installed version of the game.
+    fn incompatible(&self, loaded: &Profile, lock: &Lockfile, env: &GameEnv) -> Result<Vec<Issue>> {
+        let Some(version) = &env.version else {
+            return Ok(Vec::new());
+        };
+        let overrides: HashMap<String, &GameVersions> = loaded
+            .mods
+            .iter()
+            .filter_map(|m| Some((mod_key(&m.source, &m.id), m.game_versions.as_ref()?)))
+            .collect();
+        let registry = self.registry();
+        let name = &registry.game(&loaded.game)?.value.name;
+        Ok(deploy_order(loaded, lock)
+            .into_iter()
+            .filter_map(|m| {
+                let supports = overrides
+                    .get(&m.key())
+                    .copied()
+                    .or(m.game_versions.as_ref())?;
+                (supports.matches(version) == Some(false))
+                    .then(|| Issue::incompatible_game(&m.name, name, version, supports.clone()))
+            })
+            .collect())
     }
 
     /// One pass of [`Patchwork::lock`]: walks the profile's mods and their
@@ -1119,6 +1179,20 @@ impl Patchwork {
             }
             fetched => fetched?,
         };
+        let game_versions = match resolved.game_versions {
+            Some(versions) => {
+                let registry = self.registry();
+                let game = &registry.game(&loaded.game)?.value;
+                let specific = game.versions.files.is_empty() || {
+                    let files =
+                        self.store
+                            .files(&hash, resolved.format, &resolved.artifact.file_name())?;
+                    compat::is_version_specific(game, files.iter().map(|f| &f.rel))
+                };
+                specific.then_some(versions)
+            }
+            None => None,
+        };
         let locked = LockedMod {
             name,
             source: spec.source,
@@ -1135,6 +1209,7 @@ impl Patchwork {
                 .filter(|d| !d.req.is_any())
                 .map(|d| (mod_key(&d.source, &d.id), d.req))
                 .collect(),
+            game_versions,
         };
         Ok(Locking::Locked(Box::new(locked), Some(key)))
     }
@@ -1168,6 +1243,7 @@ impl Patchwork {
                 let ctx = SourceContext {
                     game,
                     config: game.sources.get(source),
+                    env: None,
                 };
                 match self.source(source)?.download(&ctx, id, &file.file).await? {
                     Download::Url(url) => {
@@ -1235,6 +1311,7 @@ impl Patchwork {
                 let ctx = SourceContext {
                     game,
                     config: Some(config),
+                    env: None,
                 };
                 let Some(handoff) = source.accept_link(&ctx, link).await? else {
                     continue;
@@ -1630,9 +1707,13 @@ impl Patchwork {
             });
         }
 
+        let env = GameEnv::detect(game, &root);
         let desired = deployer.plan(&ctx, &mods)?;
         let mut placements = deploy::resolve(deployer.kind(), desired.placements, &mods, None)?;
         let mut warnings = desired.warnings;
+        for issue in self.incompatible(&loaded, &lock, &env)? {
+            warnings.push(issue.message);
+        }
         if deployer.builds(&ctx) {
             let (built, built_warnings) =
                 self.build(deployer.as_ref(), &ctx, &target, inputs, &prev, &mods)?;
@@ -1648,7 +1729,7 @@ impl Patchwork {
             game.link,
         );
         plan.inputs = Some(inputs);
-        plan.env = Some(GameEnv::detect(game, &root));
+        plan.env = Some(env);
         Ok(plan)
     }
 

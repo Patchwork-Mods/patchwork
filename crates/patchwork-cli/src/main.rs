@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use patchwork_core::compat::GameVersions;
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::issue::Severity;
@@ -88,6 +89,17 @@ enum Command {
     Unpin { name: String },
     /// List the versions a mod can be pinned to, newest first.
     Versions { name: String },
+    /// Show which versions of the game a mod works with, or say so in place
+    /// of what its source says, e.g. `supports EngineFixes 1.5.97 ">=1.6.640"`.
+    Supports {
+        name: String,
+        /// Version ranges, any of which will do: `1.5.97`, `1.6.*`,
+        /// `">=1.6.640 <1.7"`.
+        versions: Vec<String>,
+        /// Go back to what the mod's source says.
+        #[arg(long, conflicts_with = "versions")]
+        reset: bool,
+    },
     /// Show a mod's changelog, newest first.
     Changelog {
         name: String,
@@ -393,6 +405,38 @@ async fn run(cli: Cli) -> Result<()> {
                 .and_then(|m| m.version.as_deref())
                 .unwrap_or("its newest version");
             println!("unpinned {name}; it's now at {version}");
+        }
+        Command::Supports {
+            name,
+            versions,
+            reset,
+        } => {
+            let (profile, mut loaded) = selected(&pw, &cli.profile)?;
+            if reset || !versions.is_empty() {
+                let versions = if reset {
+                    None
+                } else {
+                    Some(GameVersions::try_from(versions).map_err(anyhow::Error::msg)?)
+                };
+                pw.set_game_versions(&profile, &name, versions)?;
+                loaded = pw.load_profile(&profile)?;
+            }
+            let m = loaded
+                .mods
+                .iter()
+                .find(|m| m.name == name)
+                .with_context(|| format!("{} has no mod named `{name}`", loaded.label()))?;
+            let locked = pw.load_lock(&profile)?.and_then(|lock| {
+                let key = mod_key(&m.source, &m.id);
+                lock.mods.into_iter().find(|l| l.key() == key)
+            });
+            match (&m.game_versions, locked.and_then(|l| l.game_versions)) {
+                (Some(v), _) => println!("{name} works with {v} (set in the profile)"),
+                (None, Some(v)) => println!("{name} works with {v} (going by its source)"),
+                (None, None) => {
+                    println!("{name} works with any version, as far as patchwork knows")
+                }
+            }
         }
         Command::Versions { name } => {
             let (_, loaded) = selected(&pw, &cli.profile)?;
