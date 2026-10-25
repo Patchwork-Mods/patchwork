@@ -694,3 +694,53 @@ fn other_roots_are_always_copied_to() {
     assert!(is_link(env.game.join("Mods/a.dll")));
     assert!(!is_link(appdata.join("plugins.txt")));
 }
+
+#[test]
+fn paths_take_the_case_already_on_disk() {
+    let env = env();
+    let mut state = DeployState::empty("g", &Roots::game(&env.game));
+    let placements = vec![
+        placement(&env, "data/Meshes/a.nif", "a", "a"),
+        placement(&env, "DATA/meshes/b.nif", "b", "b"),
+        placement(&env, "data/VANILLA.txt", "modded", "a"),
+    ];
+    let plan = deploy(&env, &mut state, placements.clone());
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+
+    let mut names: Vec<_> = state.files.keys().map(|d| d.to_string()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["Data/Meshes/a.nif", "Data/Meshes/b.nif", "Data/vanilla.txt"]
+    );
+    let read = |p: &str| fs::read_to_string(env.game.join(p)).unwrap();
+    assert_eq!(read("Data/Meshes/b.nif"), "b");
+    assert_eq!(read("Data/vanilla.txt"), "modded");
+    let top: Vec<_> = fs::read_dir(&env.game).unwrap().collect();
+    assert_eq!(top.len(), 1, "made a second Data folder");
+
+    assert!(deploy(&env, &mut state, placements).is_noop());
+    deploy(&env, &mut state, Vec::new());
+    assert_eq!(read("Data/vanilla.txt"), "vanilla");
+    assert!(!env.game.join("Data/Meshes").exists());
+}
+
+#[test]
+fn spellings_of_one_file_conflict() {
+    let env = env();
+    let mut state = DeployState::empty("g", &Roots::game(&env.game));
+    let plan = deploy(
+        &env,
+        &mut state,
+        vec![
+            placement(&env, "Mods/x.cfg", "first", "a"),
+            placement(&env, "mods/X.CFG", "second", "b"),
+        ],
+    );
+    assert_eq!(plan.warnings.len(), 1, "{:?}", plan.warnings);
+    assert_eq!(state.files.len(), 1);
+    assert_eq!(
+        fs::read_to_string(env.game.join("Mods/x.cfg")).unwrap(),
+        "second"
+    );
+}

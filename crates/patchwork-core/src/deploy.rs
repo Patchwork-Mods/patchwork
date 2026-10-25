@@ -470,6 +470,7 @@ pub fn plan(
     link: LinkMethod,
 ) -> Result<DeployPlan> {
     let roots = prev.roots();
+    let placements = match_case(&roots, placements)?;
     // Later placements win, which is what makes load order meaningful.
     let mut wanted: BTreeMap<Dest, Resolved> = BTreeMap::new();
     for placement in placements {
@@ -521,6 +522,55 @@ pub fn plan(
         inputs: None,
         env: None,
     })
+}
+
+/// Spells each placement's path the way it's already spelled on disk or,
+/// for what isn't there yet, the way the first placement to name it did.
+/// Mods are made on Windows, which ignores case, and rarely agree on it:
+/// without this, on other systems they'd end up in folders next to the
+/// game's own (`data/` beside `Data/`), and two spellings of one file would
+/// both be deployed.
+fn match_case(roots: &Roots, placements: Vec<Resolved>) -> Result<Vec<Resolved>> {
+    // What's in each folder, by lowercased name, keyed by where it is.
+    let mut folders: HashMap<PathBuf, HashMap<String, String>> = HashMap::new();
+    placements
+        .into_iter()
+        .map(|mut placement| {
+            let mut dir = match roots.get(&placement.dst.root) {
+                Some(root) => root.to_owned(),
+                // For its error about a root the target doesn't have.
+                None => return Err(roots.path(&placement.dst).unwrap_err()),
+            };
+            let mut parts = Vec::new();
+            for part in placement.dst.path.components() {
+                let names = folders.entry(dir.clone()).or_insert_with(|| list_dir(&dir));
+                let name = names
+                    .entry(part.to_lowercase())
+                    .or_insert_with(|| part.to_owned())
+                    .clone();
+                dir.push(&name);
+                parts.push(name);
+            }
+            placement.dst.path = RelPath::new(&parts.join("/")).map_err(Error::invalid)?;
+            Ok(placement)
+        })
+        .collect()
+}
+
+/// The names in `dir` by lowercased name, or nothing if it isn't there.
+/// Where several differ only in case, the first in sort order is used.
+fn list_dir(dir: &Path) -> HashMap<String, String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    let mut by_lower = HashMap::new();
+    for name in names {
+        by_lower.entry(name.to_lowercase()).or_insert(name);
+    }
+    by_lower
 }
 
 /// Carries out a plan, updating `state` as it goes. Files it moves out of
