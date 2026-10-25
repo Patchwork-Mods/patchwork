@@ -26,6 +26,9 @@ pub struct ChangelogEntry {
 ///   The first one sets which level of heading starts an entry, so later
 ///   ones at that level without a version (`## Unreleased`) do too.
 /// - a line that starts with a version (`v1.2.0`, `**1.2.0**`, `Version 1.2`).
+/// - a list item that's nothing but a version (`- **1.2.0**`), for
+///   changelogs that nest each version's notes under one. The notes are
+///   dedented to match.
 /// - a version on the first line of a code block, for changelogs that put
 ///   each version's notes in one. The code block stays in the notes.
 ///
@@ -40,6 +43,9 @@ pub fn split_markdown(markdown: &str) -> Vec<ChangelogEntry> {
     // a code block's opening line, held back until the next line says
     // whether it starts an entry
     let mut opened: Option<&str> = None;
+    // how far the current entry's notes are indented, when they're nested
+    // under a list item
+    let mut indent = 0;
     let start = |entries: &mut Vec<ChangelogEntry>, version: Option<&str>, notes: &str| {
         entries.push(ChangelogEntry {
             version: version.map(str::to_owned),
@@ -56,10 +62,11 @@ pub fn split_markdown(markdown: &str) -> Vec<ChangelogEntry> {
         let trimmed = line.trim_start();
         if let Some(open) = opened.take() {
             if let Some(version) = version_line(line) {
+                indent = 0;
                 start(&mut entries, Some(version), &format!("{open}\n"));
                 continue;
             }
-            push(&mut entries, open);
+            push(&mut entries, dedent(open, indent));
         }
         if let Some(open) = fence {
             // nothing else in a code block marks a version
@@ -74,17 +81,23 @@ pub fn split_markdown(markdown: &str) -> Vec<ChangelogEntry> {
             let version = find_version(text);
             if version.is_some() || level.is_some_and(|level| depth <= level) {
                 level.get_or_insert(depth);
+                indent = 0;
                 start(&mut entries, version, "");
                 continue;
             }
+        } else if let Some((version, item_indent)) = version_item(line) {
+            indent = item_indent;
+            start(&mut entries, Some(version), "");
+            continue;
         } else if let Some(version) = version_line(line) {
+            indent = 0;
             start(&mut entries, Some(version), "");
             continue;
         }
-        push(&mut entries, line);
+        push(&mut entries, dedent(line, indent));
     }
     if let Some(open) = opened {
-        push(&mut entries, open);
+        push(&mut entries, dedent(open, indent));
     }
     if entries.is_empty() {
         let notes = markdown.trim();
@@ -124,6 +137,70 @@ fn version_line(line: &str) -> Option<&str> {
         .next()
         .is_none_or(|c| c.is_whitespace() || ":)]*_`,-".contains(c));
     ends.then(|| &text[..len])
+}
+
+/// The version in a top-level list item that's nothing but a version, like
+/// `-   **1.2.0**`, and how many columns in the item's text starts, which is
+/// how far notes nested under it are indented. Items with more in them
+/// (`- 1.0.1: fixed a crash`) are notes, unless the version is set off
+/// (`- **1.2.0** - Shipped in 5.4`).
+fn version_item(line: &str) -> Option<(&str, usize)> {
+    let marker = if line.starts_with(['-', '*', '+']) {
+        1
+    } else {
+        let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+        let numbered = digits > 0 && matches!(line.as_bytes().get(digits), Some(b'.' | b')'));
+        if !numbered {
+            return None;
+        }
+        digits + 1
+    };
+    let rest = &line[marker..];
+    if !rest.starts_with([' ', '\t']) {
+        return None;
+    }
+    let text = rest.trim_start();
+    let version = version_line(text)?;
+    let (before, after) = text.split_once(version)?;
+    let marks = ['*', '_', '`', '['];
+    let set_off = before.starts_with(marks) && after.starts_with(marks.map(closing));
+    if !set_off
+        && !after
+            .chars()
+            .all(|c| c.is_whitespace() || ":)]*_`".contains(c))
+    {
+        return None;
+    }
+    Some((version, columns(&line[..line.len() - text.len()])))
+}
+
+/// The mark that closes one opened with `c`.
+fn closing(c: char) -> char {
+    if c == '[' { ']' } else { c }
+}
+
+/// How many columns `whitespace` takes up, with tabs stopping every four.
+fn columns(whitespace: &str) -> usize {
+    whitespace.chars().fold(0, |col, c| match c {
+        '\t' => col + 4 - col % 4,
+        _ => col + 1,
+    })
+}
+
+/// `line` with up to `indent` columns of leading whitespace taken off.
+fn dedent(line: &str, indent: usize) -> &str {
+    let mut col = 0;
+    for (i, c) in line.char_indices() {
+        if col >= indent {
+            return &line[i..];
+        }
+        match c {
+            ' ' => col += 1,
+            '\t' => col += 4 - col % 4,
+            _ => return &line[i..],
+        }
+    }
+    ""
 }
 
 /// An ATX heading's depth and text, e.g. `(2, "1.2.0")` for `## 1.2.0 ##`.

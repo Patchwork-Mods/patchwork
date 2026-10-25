@@ -81,6 +81,28 @@ fn splits_on_versions_opening_code_blocks() {
 }
 
 #[test]
+fn splits_on_list_items_that_are_versions() {
+    // RoR2BepInExPack nests each version's notes under a list item, some
+    // indented with spaces and some with tabs
+    let markdown = "-   **1.49.0**\n\n    -  Fix loading.\n    -  Optimize.\n\n\
+        -   **1.39.0**\n\n    -   Add a class.\n\t-   Add another.\n\t    nested\n\n\
+        -   **1.8.0** - Shipped in BepInExPack **5.4.2111**\n\n-   Fix a run.\n\n\
+        2. v1.0.0\n   - first";
+    let entries = split_markdown(markdown);
+    assert_eq!(
+        versions(&entries),
+        [Some("1.49.0"), Some("1.39.0"), Some("1.8.0"), Some("1.0.0")]
+    );
+    assert_eq!(entries[0].notes, "-  Fix loading.\n-  Optimize.");
+    assert_eq!(
+        entries[1].notes,
+        "-   Add a class.\n-   Add another.\n    nested"
+    );
+    assert_eq!(entries[2].notes, "-   Fix a run.");
+    assert_eq!(entries[3].notes, "- first");
+}
+
+#[test]
 fn notes_mentioning_versions_stay_notes() {
     let markdown =
         "## 2.0.0\n- 1.9 configs are migrated\n  1.5 too\nNeeds R2API 5.0 or newer\n1.5x faster";

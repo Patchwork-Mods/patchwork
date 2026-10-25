@@ -1353,7 +1353,7 @@ dialog::backdrop {
   overflow-y: auto;
 }
 
-.update-list li {
+.update-list > li {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: start;
@@ -1362,7 +1362,7 @@ dialog::backdrop {
   border-top: 1px solid var(--pw-border);
 }
 
-.update-list li:first-child {
+.update-list > li:first-child {
   border-top: none;
 }
 
