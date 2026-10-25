@@ -183,3 +183,180 @@ fn includes_must_stand_alone_and_exist() {
         Some("BepInEx/plugins/m/other.txt")
     );
 }
+
+const SKYRIM_RULES: &str = r#"
+[[rules]]
+folder = "Data"
+to = "Data/{path}"
+
+[[rules]]
+files = "*.exe"
+to = "{path}"
+
+[[rules]]
+files = "*.dll"
+to = "{path}"
+
+[[rules]]
+to = "Data/{path}"
+"#;
+
+const SKYRIM_ROOT: &str = r#"
+[root]
+markers = ["Data", "meshes", "textures", "scripts", "interface", "SKSE", "*.esp", "*.esm", "*.esl", "*.bsa"]
+unless = ["fomod/ModuleConfig.xml"]
+"#;
+
+/// Plans one mod with `files` under `config`, giving its destinations and
+/// warnings, sorted.
+fn deploy(config: &str, files: &[&str]) -> Result<(Vec<String>, Vec<String>)> {
+    let config: Config = toml::from_str(config).unwrap();
+    let setup = RulesDeployer.setup(config, &|_| None)?;
+    let m = InstalledMod {
+        name: "Cool".to_owned(),
+        source: "local".to_owned(),
+        id: "cool".to_owned(),
+        version: None,
+        hash: patchwork_core::hash::ContentHash::of(b""),
+        files: files
+            .iter()
+            .map(|f| patchwork_core::deploy::ModFile {
+                rel: RelPath::new(f).unwrap(),
+                src: f.into(),
+            })
+            .collect(),
+    };
+    let mut desired = DesiredState::default();
+    RulesDeployer.plan_mod(&setup, &m, &mut desired)?;
+    let mut dsts: Vec<_> = desired
+        .placements
+        .iter()
+        .map(|p| match &p.src {
+            patchwork_core::deploy::Src::Mod { rel, .. } => format!("{rel} -> {:?}", p.dst),
+            _ => unreachable!(),
+        })
+        .collect();
+    dsts.sort();
+    desired.warnings.sort();
+    Ok((dsts, desired.warnings))
+}
+
+/// Just the destinations, for mods that deploy without warnings.
+fn tops(config: &str, files: &[&str]) -> Vec<String> {
+    let (dsts, warnings) = deploy(config, files).unwrap();
+    assert!(warnings.is_empty(), "{files:?}: {warnings:?}");
+    dsts
+}
+
+#[test]
+fn root_layouts() {
+    let config = format!("{SKYRIM_ROOT}{SKYRIM_RULES}");
+    let cases: &[(&[&str], &[&str])] = &[
+        (&["meshes/a.nif"], &["Data/meshes/a.nif"]),
+        (&["Data/meshes/a.nif"], &["Data/meshes/a.nif"]),
+        (&["Wrapper/meshes/a.nif"], &["Data/meshes/a.nif"]),
+        (&["Wrapper/Data/meshes/a.nif"], &["Data/meshes/a.nif"]),
+        (&["Wrapper/Plugin.esp"], &["Data/Plugin.esp"]),
+        (
+            &["skse64_loader.exe", "Data/Scripts/x.pex"],
+            &["Data/Scripts/x.pex", "skse64_loader.exe"],
+        ),
+        // Markers and the top folder ignore case.
+        (&["wrapper/MESHES/a.nif"], &["Data/MESHES/a.nif"]),
+        (&["Wrapper/data/meshes/a.nif"], &["Data/meshes/a.nif"]),
+        (
+            &["Wrapper/meshes/a.nif", "WRAPPER/textures/b.dds"],
+            &["Data/meshes/a.nif", "Data/textures/b.dds"],
+        ),
+        // Nothing marks it, so the rules see it as packed.
+        (&["Wrapper/notes/a.txt"], &["Data/Wrapper/notes/a.txt"]),
+    ];
+    for (files, expected) in cases {
+        let mut dsts: Vec<_> = tops(&config, files)
+            .into_iter()
+            .map(|d| d.split_once(" -> ").unwrap().1.to_owned())
+            .collect();
+        dsts.sort();
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|e| format!("{:?}", Dest::game(RelPath::new(e).unwrap())))
+            .collect();
+        assert_eq!(dsts, expected, "{files:?}");
+    }
+}
+
+#[test]
+fn root_keeps_sources() {
+    let config = format!("{SKYRIM_ROOT}{SKYRIM_RULES}");
+    let dsts = tops(&config, &["Wrapper/meshes/a.nif"]);
+    let expected = format!(
+        "Wrapper/meshes/a.nif -> {:?}",
+        Dest::game(RelPath::new("Data/meshes/a.nif").unwrap())
+    );
+    assert_eq!(dsts, [expected]);
+}
+
+#[test]
+fn root_leaves_out_files_outside_the_top() {
+    let config = format!("{SKYRIM_ROOT}{SKYRIM_RULES}");
+    let (dsts, warnings) = deploy(
+        &config,
+        &["readme.txt", "screenshot.png", "Wrapper/meshes/a.nif"],
+    )
+    .unwrap();
+    assert_eq!(dsts.len(), 1);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("2 file(s)"), "{warnings:?}");
+}
+
+#[test]
+fn root_with_variants_strips_nothing() {
+    let config = format!("{SKYRIM_ROOT}{SKYRIM_RULES}");
+    let (dsts, warnings) =
+        deploy(&config, &["Option A/meshes/a.nif", "Option B/meshes/a.nif"]).unwrap();
+    assert!(dsts.iter().all(|d| d.contains("Data/Option ")), "{dsts:?}");
+    assert_eq!(dsts.len(), 2);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("`option a`"), "{warnings:?}");
+}
+
+#[test]
+fn root_leaves_unless_mods_alone() {
+    let config = format!("{SKYRIM_ROOT}{SKYRIM_RULES}");
+    let (dsts, warnings) =
+        deploy(&config, &["fomod/ModuleConfig.xml", "Wrapper/meshes/a.nif"]).unwrap();
+    assert!(
+        dsts.iter().any(|d| d.contains("Data/Wrapper/meshes/a.nif")),
+        "{dsts:?}"
+    );
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+}
+
+#[test]
+fn no_root_changes_nothing() {
+    let files = ["Wrapper/meshes/a.nif", "readme.txt", "skse64_loader.exe"];
+    let dsts = tops(SKYRIM_RULES, &files);
+    let rules = parse(SKYRIM_RULES).unwrap();
+    let mut expected: Vec<_> = files
+        .iter()
+        .map(|f| {
+            let d = dst(&rules, "Cool", f).unwrap();
+            format!("{f} -> {:?}", Dest::game(RelPath::new(&d).unwrap()))
+        })
+        .collect();
+    expected.sort();
+    assert_eq!(dsts, expected);
+}
+
+#[test]
+fn bad_root_configs() {
+    let empty = format!("[root]\nmarkers = []\n{SKYRIM_RULES}");
+    assert!(deploy(&empty, &["a"]).is_err());
+    let bad_marker = format!("[root]\nmarkers = [\"[\"]\n{SKYRIM_RULES}");
+    assert!(deploy(&bad_marker, &["a"]).is_err());
+    let bad_unless = format!("[root]\nmarkers = [\"Data\"]\nunless = [\"a{{\"]\n{SKYRIM_RULES}");
+    assert!(deploy(&bad_unless, &["a"]).is_err());
+    let unknown: std::result::Result<Config, _> =
+        toml::from_str("[root]\nmarkers = [\"Data\"]\nother = 1\n");
+    assert!(unknown.is_err());
+}

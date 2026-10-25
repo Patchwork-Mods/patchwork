@@ -1,4 +1,6 @@
-use globset::{GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
+use std::collections::BTreeSet;
+
+use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use patchwork_core::deploy::{
     DeployContext, Deployer, DesiredState, Dest, InstalledMod, Placement,
 };
@@ -11,6 +13,12 @@ use serde::Deserialize;
 /// rules that say where it goes. Covers any game where installing a mod means
 /// putting its files in the right folders. Patterns ignore case, since mods
 /// are rarely consistent about it.
+///
+/// Mods are often packed with an extra folder around them, or sometimes
+/// without the folder the game expects. If `root` is set, each mod's real top
+/// is found first: the shallowest folder with a marker directly inside it.
+/// Everything above that folder is stripped before the rules see the paths,
+/// and files outside it are left out.
 ///
 /// ```toml
 /// [deployer]
@@ -28,6 +36,10 @@ use serde::Deserialize;
 ///
 /// [[deployer.rules]]
 /// ruleset = "bepinex"        # a ruleset's rules, at this point in the list
+///
+/// [deployer.root]
+/// markers = ["Data", "meshes", "*.esp"]  # folder or file names
+/// unless = ["fomod/ModuleConfig.xml"]    # mods with these are left as they are
 /// ```
 pub struct RulesDeployer;
 
@@ -58,6 +70,18 @@ struct Config {
     rulesets: Vec<String>,
     #[serde(default)]
     unmatched: Unmatched,
+    root: Option<RootConfig>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootConfig {
+    /// Folder names or file globs that a mod's top folder directly contains.
+    markers: Vec<String>,
+    /// Globs for paths from the archive's top. Mods with any of them are
+    /// left exactly as they are.
+    #[serde(default)]
+    unless: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -107,6 +131,18 @@ struct CompiledRule {
     skip: bool,
 }
 
+struct CompiledRoot {
+    markers: GlobSet,
+    unless: GlobSet,
+}
+
+/// Everything the game's config says, ready to plan with.
+struct Setup {
+    rules: Vec<CompiledRule>,
+    root: Option<CompiledRoot>,
+    unmatched: Unmatched,
+}
+
 enum Outcome {
     Place(RelPath),
     Skip,
@@ -114,17 +150,30 @@ enum Outcome {
 }
 
 impl RulesDeployer {
-    fn load(&self, ctx: &DeployContext<'_>) -> Result<(Vec<CompiledRule>, Unmatched)> {
+    fn load(&self, ctx: &DeployContext<'_>) -> Result<Setup> {
         let config: Config = toml::Value::Table(ctx.config.clone())
             .try_into()
             .map_err(|e| self.error(format!("bad config for {}: {e}", ctx.game.id)))?;
         let lookup = |id: &str| ctx.registry.data("rulesets", id).map(|e| &e.value);
+        self.setup(config, &lookup)
+    }
+
+    fn setup<'a>(
+        &self,
+        config: Config,
+        lookup: &impl Fn(&str) -> Option<&'a toml::Table>,
+    ) -> Result<Setup> {
         let mut rules = Vec::new();
-        self.expand(&lookup, config.rules, &mut rules, 0)?;
+        self.expand(lookup, config.rules, &mut rules, 0)?;
         for id in config.rulesets {
-            self.include(&lookup, &id, &mut rules, 0)?;
+            self.include(lookup, &id, &mut rules, 0)?;
         }
-        Ok((rules, config.unmatched))
+        let root = config.root.map(|r| self.compile_root(r)).transpose()?;
+        Ok(Setup {
+            rules,
+            root,
+            unmatched: config.unmatched,
+        })
     }
 
     /// Compiles `rules` onto `out`, replacing includes with what they include.
@@ -175,27 +224,37 @@ impl RulesDeployer {
         self.expand(lookup, ruleset.rules, out, depth)
     }
 
+    fn glob(&self, pattern: &str) -> Result<Glob> {
+        GlobBuilder::new(pattern)
+            .literal_separator(true)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| self.error(format!("bad pattern `{pattern}`: {e}")))
+    }
+
+    fn glob_set(&self, patterns: &[String]) -> Result<GlobSet> {
+        let mut set = GlobSetBuilder::new();
+        for pattern in patterns {
+            set.add(self.glob(pattern)?);
+        }
+        set.build().map_err(|e| self.error(e.to_string()))
+    }
+
+    fn compile_root(&self, root: RootConfig) -> Result<CompiledRoot> {
+        if root.markers.is_empty() {
+            return Err(self.error("`root` needs at least one marker".to_owned()));
+        }
+        Ok(CompiledRoot {
+            markers: self.glob_set(&root.markers)?,
+            unless: self.glob_set(&root.unless)?,
+        })
+    }
+
     fn compile(&self, rule: Rule) -> Result<CompiledRule> {
-        let glob = |pattern: &str| {
-            GlobBuilder::new(pattern)
-                .literal_separator(true)
-                .case_insensitive(true)
-                .build()
-                .map_err(|e| self.error(format!("bad pattern `{pattern}`: {e}")))
-        };
         let mods = match rule.mods {
             None => None,
-            Some(patterns) => {
-                let patterns = match patterns {
-                    Patterns::One(p) => vec![p],
-                    Patterns::Many(ps) => ps,
-                };
-                let mut set = GlobSetBuilder::new();
-                for pattern in &patterns {
-                    set.add(glob(pattern)?);
-                }
-                Some(set.build().map_err(|e| self.error(e.to_string()))?)
-            }
+            Some(Patterns::One(p)) => Some(self.glob_set(&[p])?),
+            Some(Patterns::Many(ps)) => Some(self.glob_set(&ps)?),
         };
         if let Some(folder) = &rule.folder
             && (folder.is_empty() || folder.contains(['/', '\\']))
@@ -203,7 +262,9 @@ impl RulesDeployer {
             return Err(self.error(format!("bad folder `{folder}`: must be a single name")));
         }
         Ok(CompiledRule {
-            files: glob(rule.files.as_deref().unwrap_or("**"))?.compile_matcher(),
+            files: self
+                .glob(rule.files.as_deref().unwrap_or("**"))?
+                .compile_matcher(),
             folder: rule.folder,
             mods,
             strip: rule.strip,
@@ -212,11 +273,109 @@ impl RulesDeployer {
         })
     }
 
+    /// Adds where `m`'s files go to `desired`.
+    fn plan_mod(&self, setup: &Setup, m: &InstalledMod, desired: &mut DesiredState) -> Result<()> {
+        let top = match &setup.root {
+            Some(root) => root.find(m, &mut desired.warnings),
+            None => Vec::new(),
+        };
+        let mut outside = 0;
+        for file in &m.files {
+            let rel = if top.is_empty() {
+                file.rel.clone()
+            } else {
+                let parts: Vec<_> = file.rel.components().collect();
+                let inside = parts.len() > top.len()
+                    && parts.iter().zip(&top).all(|(p, t)| p.to_lowercase() == *t);
+                if !inside {
+                    outside += 1;
+                    continue;
+                }
+                RelPath::new(&parts[top.len()..].join("/")).map_err(|e| self.error(e))?
+            };
+            let outcome = place(&setup.rules, &m.name, &rel)
+                .map_err(|e| self.error(format!("`{}`: {e}", m.name)))?;
+            match outcome {
+                Outcome::Place(dst) => desired.placements.push(Placement {
+                    dst: Dest::game(dst),
+                    src: m.src(file),
+                    mod_name: m.name.clone(),
+                }),
+                Outcome::Skip => {}
+                Outcome::Unmatched => {
+                    let message = format!("no rule for {} in `{}`", file.rel, m.name);
+                    if setup.unmatched == Unmatched::Error {
+                        return Err(self.error(message));
+                    }
+                    desired.warnings.push(format!("{message}; skipped it"));
+                }
+            }
+        }
+        if outside > 0 {
+            desired.warnings.push(format!(
+                "left out {outside} file(s) of `{}` that aren't inside its top folder `{}`",
+                m.name,
+                top.join("/")
+            ));
+        }
+        Ok(())
+    }
+
     fn error(&self, message: String) -> Error {
         Error::Deployer {
             kind: self.kind().to_owned(),
             message,
         }
+    }
+}
+
+impl CompiledRoot {
+    /// The folders to strip from the front of `m`'s paths, lowercased: the
+    /// shallowest folder with a marker directly inside it. None if the mod
+    /// is already laid out from its top, if nothing marks it, if several
+    /// folders could be the top, or if it has a file matching `unless`.
+    fn find(&self, m: &InstalledMod, warnings: &mut Vec<String>) -> Vec<String> {
+        if let Some(file) = m
+            .files
+            .iter()
+            .find(|f| self.unless.is_match(f.rel.as_str()))
+        {
+            warnings.push(format!(
+                "`{}` has {}, which patchwork can't handle yet; deployed its files as packed",
+                m.name, file.rel
+            ));
+            return Vec::new();
+        }
+        // Each folder with a marker directly inside, shallowest first. Names
+        // are lowercased so differently cased copies of a folder count once.
+        let mut found = BTreeSet::new();
+        for file in &m.files {
+            let parts: Vec<_> = file.rel.components().collect();
+            for (depth, name) in parts.iter().enumerate() {
+                if self.markers.is_match(name) {
+                    let folder: Vec<_> = parts[..depth].iter().map(|p| p.to_lowercase()).collect();
+                    found.insert((depth, folder));
+                }
+            }
+        }
+        let Some((depth, _)) = found.first() else {
+            return Vec::new();
+        };
+        let mut tops: Vec<_> = found
+            .iter()
+            .take_while(|(d, _)| d == depth)
+            .map(|(_, folder)| folder.clone())
+            .collect();
+        if tops.len() > 1 {
+            let names: Vec<_> = tops.iter().map(|t| format!("`{}`", t.join("/"))).collect();
+            warnings.push(format!(
+                "`{}` could start at any of {}; deployed its files as packed",
+                m.name,
+                names.join(", ")
+            ));
+            return Vec::new();
+        }
+        tops.pop().unwrap_or_default()
     }
 }
 
@@ -270,28 +429,10 @@ impl Deployer for RulesDeployer {
     }
 
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState> {
-        let (rules, unmatched) = self.load(ctx)?;
+        let setup = self.load(ctx)?;
         let mut desired = DesiredState::default();
         for m in mods {
-            for file in &m.files {
-                let outcome = place(&rules, &m.name, &file.rel)
-                    .map_err(|e| self.error(format!("`{}`: {e}", m.name)))?;
-                match outcome {
-                    Outcome::Place(dst) => desired.placements.push(Placement {
-                        dst: Dest::game(dst),
-                        src: m.src(file),
-                        mod_name: m.name.clone(),
-                    }),
-                    Outcome::Skip => {}
-                    Outcome::Unmatched => {
-                        let message = format!("no rule for {} in `{}`", file.rel, m.name);
-                        if unmatched == Unmatched::Error {
-                            return Err(self.error(message));
-                        }
-                        desired.warnings.push(format!("{message}; skipped it"));
-                    }
-                }
-            }
+            self.plan_mod(&setup, m, &mut desired)?;
         }
         Ok(desired)
     }

@@ -1,0 +1,56 @@
+schema = 1
+id = "skyrim-se"
+name = "The Elder Scrolls V: Skyrim Special Edition"
+description = "Skyrim Special Edition and Anniversary Edition. Plugins (.esp, .esm, .esl) aren't added to the load order yet, so for now only mods without them, or ones you enable in the game's own menu, take effect."
+# A load order is often tens of gigabytes of meshes and textures.
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "skyrimspecialedition"
+
+[deployer]
+kind = "rules"
+
+# Mods are packed every which way: from the game folder (`Data/...`), from
+# inside Data (`meshes/...`, `Plugin.esp`), or with a wrapper folder around
+# either. Each mod's top is found from what Data usually holds.
+[deployer.root]
+markers = [
+    "Data",
+    "*.esp", "*.esm", "*.esl", "*.bsa",
+    "meshes", "textures", "scripts", "interface", "sound", "music", "strings",
+    "seq", "video", "lodsettings", "grass", "shadersfx", "materials", "SKSE",
+]
+# FOMOD installers pick files from option folders, which needs its own step.
+unless = ["fomod/ModuleConfig.xml"]
+
+[[deployer.rules]]
+folder = "Data"
+to = "Data/{path}"
+
+# Script extenders, their loaders and engine fixes go next to SkyrimSE.exe.
+# Only files at the top match, so `SKSE/Plugins/*.dll` still goes in Data.
+[[deployer.rules]]
+files = "*.exe"
+to = "{path}"
+
+[[deployer.rules]]
+files = "*.dll"
+to = "{path}"
+
+[[deployer.rules]]
+to = "Data/{path}"
+
+[roots.appdata]
+path = "{localappdata}/Skyrim Special Edition"
+allow = ["plugins.txt", "loadorder.txt"]
+
+[detect]
+steam = [489830]
+folder = "Skyrim Special Edition"
+exe = ["SkyrimSE.exe"]
+
+[[detect.version]]
+kind = "exe"
+file = "SkyrimSE.exe"
+parts = 3
