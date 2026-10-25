@@ -44,7 +44,7 @@ use std::str::FromStr;
 use std::time::UNIX_EPOCH;
 
 use patchwork_core::deploy::{
-    BuildContext, DeployContext, Deployer, DesiredState, GameFiles, InstalledMod, ModFile,
+    BuildContext, DeployContext, Deployer, DesiredState, Dest, GameFiles, InstalledMod, ModFile,
     Placement, Src,
 };
 use patchwork_core::error::IoContext;
@@ -806,7 +806,7 @@ impl<'a> Build<'a> {
 fn placement(rel: &str) -> Placement {
     let rel = RelPath::new(rel).unwrap();
     Placement {
-        dst: rel.clone(),
+        dst: Dest::game(rel.clone()),
         src: Src::Built(rel),
         mod_name: BUILT_BY.to_owned(),
     }

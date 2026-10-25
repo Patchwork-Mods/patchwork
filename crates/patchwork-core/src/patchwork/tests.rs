@@ -580,7 +580,7 @@ impl Deployer for SharedBuilder {
         fs::write(build.out.join("data.txt"), format!("{original} patched")).unwrap();
         Ok(deploy::DesiredState {
             placements: vec![deploy::Placement {
-                dst: dst.clone(),
+                dst: deploy::Dest::game(dst.clone()),
                 src: deploy::Src::Built(dst),
                 mod_name: "built".to_owned(),
             }],

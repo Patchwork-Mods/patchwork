@@ -1,4 +1,4 @@
-use patchwork_core::deploy::{self, DeployState};
+use patchwork_core::deploy::{self, DeployState, Roots};
 use patchwork_core::event::Silent;
 use patchwork_core::game::{DeployerSpec, GameDef};
 use patchwork_core::registry::Registry;
@@ -199,7 +199,7 @@ impl Env {
             config: &def.deployer.config,
             registry: &registry,
         };
-        let state = DeployState::empty("hitman-woa", &self.game);
+        let state = DeployState::empty("hitman-woa", &Roots::game(&self.game));
         let out = self.tmp.path().join("out");
         let _ = fs::remove_dir_all(&out);
         fs::create_dir_all(&out).unwrap();
@@ -217,10 +217,11 @@ impl Env {
 /// Where the file placed at `dst` is, checked the way a deploy would.
 fn placed(env: &Env, desired: &DesiredState, dst: &str) -> PathBuf {
     let out = env.tmp.path().join("out");
-    deploy::resolve("smf", desired.placements.clone(), &[], Some(&out))
+    let roots = Roots::game(&env.game);
+    deploy::resolve("smf", desired.placements.clone(), &[], Some(&out), &roots)
         .unwrap()
         .into_iter()
-        .find(|p| p.dst.as_str() == dst)
+        .find(|p| p.dst.to_string() == dst)
         .unwrap_or_else(|| panic!("nothing placed at {dst}"))
         .src
 }

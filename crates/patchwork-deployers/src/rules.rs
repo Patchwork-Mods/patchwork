@@ -1,5 +1,7 @@
 use globset::{GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
-use patchwork_core::deploy::{DeployContext, Deployer, DesiredState, InstalledMod, Placement};
+use patchwork_core::deploy::{
+    DeployContext, Deployer, DesiredState, Dest, InstalledMod, Placement,
+};
 use patchwork_core::relpath::RelPath;
 use patchwork_core::{Error, Result};
 use serde::Deserialize;
@@ -253,7 +255,7 @@ impl Deployer for RulesDeployer {
                     .map_err(|e| self.error(format!("`{}`: {e}", m.name)))?;
                 match outcome {
                     Outcome::Place(dst) => desired.placements.push(Placement {
-                        dst,
+                        dst: Dest::game(dst),
                         src: m.src(file),
                         mod_name: m.name.clone(),
                     }),

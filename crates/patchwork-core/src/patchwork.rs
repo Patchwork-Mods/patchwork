@@ -12,7 +12,7 @@ use crate::changelog::{self, ChangelogEntry};
 use crate::compat::{self, GameVersions};
 use crate::deploy::{
     self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
-    DesiredState, GameFiles, InstalledMod, Resolved,
+    DesiredState, GameFiles, InstalledMod, Resolved, RootId, Roots,
 };
 use crate::environment::GameEnv;
 use crate::error::IoContext;
@@ -289,10 +289,11 @@ impl Patchwork {
             )));
         }
         let state = self.deploy_state(&DeployTarget::Game(game.to_owned()))?;
-        if !state.files.is_empty() && state.root != path {
+        let moved = state.roots().with(RootId::game(), &path);
+        if let Some((_, was)) = state.moved_root(&moved) {
             return Err(Error::invalid(format!(
                 "mods are still deployed to {}; run `patchwork undeploy {game}` first",
-                state.root.display()
+                was.display()
             )));
         }
         let install = GameInstall { path };
@@ -1627,11 +1628,17 @@ impl Patchwork {
         Ok(DeployTarget::Game(profile.game.clone()))
     }
 
-    /// The directory mods for `target` go in, if it's been set up.
+    /// The directory mods for `target` go in, if it's been set up: its
+    /// `game` root.
     pub fn target_root(&self, target: &DeployTarget) -> Result<Option<PathBuf>> {
         match target {
             DeployTarget::Game(game) => Ok(self.game_install(game)?.map(|i| i.path)),
         }
+    }
+
+    /// Every folder mods for `target` can go in, if it's been set up.
+    pub fn target_roots(&self, target: &DeployTarget) -> Result<Option<Roots>> {
+        Ok(self.target_root(target)?.map(|root| Roots::game(&root)))
     }
 
     pub fn deploy_state(&self, target: &DeployTarget) -> Result<DeployState> {
@@ -1639,8 +1646,9 @@ impl Patchwork {
         if let Some(state) = fsutil::read_json(&path)? {
             return Ok(state);
         }
-        let root = self.target_root(target)?.unwrap_or_default();
-        Ok(DeployState::empty(target.game(), &root))
+        let roots = self.target_roots(target)?;
+        let roots = roots.unwrap_or_else(|| Roots::game(Path::new("")));
+        Ok(DeployState::empty(target.game(), &roots))
     }
 
     fn deploy_state_file(&self, target: &DeployTarget) -> PathBuf {
@@ -1658,12 +1666,13 @@ impl Patchwork {
         let entry = registry.game(&loaded.game)?;
         let game = &entry.value;
         let target = self.deploy_target(&loaded)?;
-        let root = self.target_root(&target)?.ok_or_else(|| {
+        let roots = self.target_roots(&target)?.ok_or_else(|| {
             Error::invalid(format!(
                 "patchwork doesn't know where {} is installed; run `patchwork game set-path {} <dir>`",
                 game.name, game.id
             ))
         })?;
+        let root = roots.game_path().to_owned();
         let deployer = self
             .deployers
             .get(&game.deployer.kind)
@@ -1674,24 +1683,26 @@ impl Patchwork {
             config: &game.deployer.config,
             registry: &registry,
         };
-        let prev = self.deploy_state(&target)?;
-        let prev = if prev.files.is_empty() {
-            DeployState::empty(&loaded.game, &root)
-        } else if prev.root != root {
+        let mut prev = self.deploy_state(&target)?;
+        if prev.files.is_empty() {
+            prev = DeployState::empty(&loaded.game, &roots);
+        } else if let Some((moved, was)) = prev.moved_root(&roots) {
+            let now = roots
+                .get(&moved)
+                .map_or_else(|| "nowhere".to_owned(), |p| p.display().to_string());
             return Err(Error::invalid(format!(
-                "mods are deployed to {}, but {} is now set to {}; run `patchwork undeploy {}` first",
-                prev.root.display(),
+                "mods are deployed to {}, but {} is now set to {now}; run `patchwork undeploy {}` first",
+                was.display(),
                 game.name,
-                root.display(),
                 game.id
             )));
         } else {
-            prev
-        };
+            prev.set_roots(&roots);
+        }
 
         let order = deploy_order(&loaded, &lock);
         let fingerprint = deployer.fingerprint(&ctx, &GameFiles::new(&root, &prev))?;
-        let inputs = deploy_inputs(profile, &registry, entry.hash, &root, &order, fingerprint);
+        let inputs = deploy_inputs(profile, &registry, entry.hash, &roots, &order, fingerprint);
         let mut mods = Vec::new();
         for locked in order {
             let files =
@@ -1709,7 +1720,8 @@ impl Patchwork {
 
         let env = GameEnv::detect(game, &root);
         let desired = deployer.plan(&ctx, &mods)?;
-        let mut placements = deploy::resolve(deployer.kind(), desired.placements, &mods, None)?;
+        let mut placements =
+            deploy::resolve(deployer.kind(), desired.placements, &mods, None, &roots)?;
         let mut warnings = desired.warnings;
         for issue in self.incompatible(&loaded, &lock, &env)? {
             warnings.push(issue.message);
@@ -1727,7 +1739,7 @@ impl Patchwork {
             warnings,
             Some(profile.to_string()),
             game.link,
-        );
+        )?;
         plan.inputs = Some(inputs);
         plan.env = Some(env);
         Ok(plan)
@@ -1751,10 +1763,10 @@ impl Patchwork {
             Some(p) if p != profile.to_string() => return Ok(DeployStatus::OtherProfile),
             Some(_) => {}
         }
-        let (Some(recorded), Some(lock), Some(root)) = (
+        let (Some(recorded), Some(lock), Some(roots)) = (
             state.inputs,
             self.load_lock(profile)?,
-            self.target_root(&target)?,
+            self.target_roots(&target)?,
         ) else {
             return Ok(DeployStatus::Stale);
         };
@@ -1781,15 +1793,16 @@ impl Patchwork {
             config: &game.deployer.config,
             registry: &registry,
         };
-        let fingerprint = deployer.fingerprint(&ctx, &GameFiles::new(&root, &state))?;
+        let root = roots.game_path();
+        let fingerprint = deployer.fingerprint(&ctx, &GameFiles::new(root, &state))?;
         let order = deploy_order(&loaded, &lock);
-        let inputs = deploy_inputs(profile, &registry, entry.hash, &root, &order, fingerprint);
+        let inputs = deploy_inputs(profile, &registry, entry.hash, &roots, &order, fingerprint);
         // Not part of the inputs, so that deploys from before it was
         // recorded don't all look stale.
         let same_game = state
             .env
             .as_ref()
-            .is_none_or(|env| *env == GameEnv::detect(game, &root));
+            .is_none_or(|env| *env == GameEnv::detect(game, root));
         Ok(if inputs == recorded && same_game {
             DeployStatus::Deployed
         } else {
@@ -1801,21 +1814,14 @@ impl Patchwork {
     pub fn plan_undeploy(&self, target: &DeployTarget) -> Result<DeployPlan> {
         let link = self.registry().game(target.game())?.value.link;
         let prev = self.deploy_state(target)?;
-        Ok(deploy::plan(
-            target.clone(),
-            &prev,
-            Vec::new(),
-            Vec::new(),
-            None,
-            link,
-        ))
+        deploy::plan(target.clone(), &prev, Vec::new(), Vec::new(), None, link)
     }
 
     pub fn apply(&self, plan: &DeployPlan) -> Result<DeployState> {
         let target = &plan.target;
         let mut state = self.deploy_state(target)?;
         if state.files.is_empty() {
-            state = DeployState::empty(target.game(), &plan.root);
+            state = DeployState::empty(target.game(), &plan.roots);
         }
         let backups = self.paths.backups().join(target.key());
         let result = deploy::apply(plan, &mut state, &backups, self.reporter.as_ref());
@@ -1848,8 +1854,13 @@ impl Patchwork {
         // version, or files that have since been deleted) just means
         // building again.
         if let Ok(Some(built)) = fsutil::read_json::<DesiredState>(&record)
-            && let Ok(placements) =
-                deploy::resolve(deployer.kind(), built.placements, mods, Some(&out))
+            && let Ok(placements) = deploy::resolve(
+                deployer.kind(),
+                built.placements,
+                mods,
+                Some(&out),
+                &prev.roots(),
+            )
         {
             return Ok((placements, built.warnings));
         }
@@ -1873,14 +1884,19 @@ impl Patchwork {
                 return Err(e);
             }
         };
-        let placements =
-            match deploy::resolve(deployer.kind(), built.placements.clone(), mods, Some(&out)) {
-                Ok(placements) => placements,
-                Err(e) => {
-                    let _ = fs::remove_dir_all(&out);
-                    return Err(e);
-                }
-            };
+        let placements = match deploy::resolve(
+            deployer.kind(),
+            built.placements.clone(),
+            mods,
+            Some(&out),
+            &prev.roots(),
+        ) {
+            Ok(placements) => placements,
+            Err(e) => {
+                let _ = fs::remove_dir_all(&out);
+                return Err(e);
+            }
+        };
         fsutil::write_json(&record, &built)?;
         Ok((placements, built.warnings))
     }
@@ -2045,7 +2061,7 @@ fn deploy_inputs(
     profile: &ProfileRef,
     registry: &Registry,
     game: ContentHash,
-    root: &Path,
+    roots: &Roots,
     order: &[&LockedMod],
     fingerprint: Option<ContentHash>,
 ) -> ContentHash {
@@ -2057,7 +2073,14 @@ fn deploy_inputs(
     field(env!("CARGO_PKG_VERSION").as_bytes());
     field(profile.to_string().as_bytes());
     field(game.to_string().as_bytes());
-    field(root.as_os_str().as_encoded_bytes());
+    // The game root on its own, as it was before there were others, so
+    // existing deploys don't all look stale.
+    for (id, path) in roots.iter() {
+        if !id.is_game() {
+            field(id.as_str().as_bytes());
+        }
+        field(path.as_os_str().as_encoded_bytes());
+    }
     // Only when there is one, so deploys from before fingerprints existed
     // don't all look stale.
     if let Some(fingerprint) = fingerprint {

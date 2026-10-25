@@ -20,6 +20,10 @@ use crate::registry::Registry;
 use crate::relpath::RelPath;
 use crate::{Error, Result};
 
+mod roots;
+
+pub use roots::{Dest, RootId, Roots};
+
 #[derive(Debug, Clone)]
 pub struct ModFile {
     /// The path inside the mod.
@@ -57,10 +61,10 @@ impl InstalledMod {
     }
 }
 
-/// A file that should exist in the game directory.
+/// A file that should exist in one of the target's roots.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Placement {
-    pub dst: RelPath,
+    pub dst: Dest,
     pub src: Src,
     pub mod_name: String,
 }
@@ -80,19 +84,21 @@ pub enum Src {
 /// A [`Placement`] whose source has been checked and found on disk.
 #[derive(Debug, Clone)]
 pub struct Resolved {
-    pub dst: RelPath,
+    pub dst: Dest,
     pub src: PathBuf,
     pub mod_name: String,
 }
 
 /// Finds where each placement's file is, checking that it's one of `mods`'
 /// files or, when `out` is given (for [`Deployer::build`]'s placements), a
-/// file the build made there. `kind` is the deployer's, for errors.
+/// file the build made there, and that it goes in one of `roots`. `kind` is
+/// the deployer's, for errors.
 pub fn resolve(
     kind: &str,
     placements: Vec<Placement>,
     mods: &[InstalledMod],
     out: Option<&Path>,
+    roots: &Roots,
 ) -> Result<Vec<Resolved>> {
     let error = |message: String| Error::Deployer {
         kind: kind.to_owned(),
@@ -109,6 +115,12 @@ pub fn resolve(
     placements
         .into_iter()
         .map(|p| {
+            if roots.get(&p.dst.root).is_none() {
+                return Err(error(format!(
+                    "{} is in a folder called `{}`, which this game doesn't have",
+                    p.dst, p.dst.root
+                )));
+            }
             let src = match &p.src {
                 Src::Mod { hash, rel } => files
                     .get(&(*hash, rel))
@@ -233,7 +245,7 @@ impl<'a> GameFiles<'a> {
     /// the game's again, and is what deploying next will back up.
     pub fn original(&self, rel: &RelPath) -> Option<PathBuf> {
         let path = rel.under(self.root);
-        match self.state.files.get(rel) {
+        match self.state.files.get(&Dest::game(rel.clone())) {
             Some(deployed) if !changed_since_deployed(&path, deployed) => deployed.backup.clone(),
             _ => path.is_file().then_some(path),
         }
@@ -267,7 +279,7 @@ impl<'a> GameFiles<'a> {
             let ours = self
                 .state
                 .files
-                .get(&rel)
+                .get(&Dest::game(rel.clone()))
                 .is_some_and(|d| d.backup.is_none());
             if is_file && !ours {
                 files.push(rel);
@@ -305,18 +317,23 @@ impl DeployTarget {
 
 pub const DEPLOY_STATE_SCHEMA: u32 = 1;
 
-/// What patchwork has put into a game directory.
+/// What patchwork has put into a target's roots.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeployState {
     pub schema: u32,
     pub game: String,
     pub profile: Option<String>,
+    /// The `game` root. It's kept apart from the others so that states
+    /// from before there were other roots still read the same.
     pub root: PathBuf,
+    /// The other roots; see [`DeployState::roots`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub roots: BTreeMap<RootId, PathBuf>,
     #[serde(default)]
-    pub files: BTreeMap<RelPath, DeployedFile>,
+    pub files: BTreeMap<Dest, DeployedFile>,
     /// Directories patchwork created, removed again once they're empty.
     #[serde(default)]
-    pub created_dirs: BTreeSet<RelPath>,
+    pub created_dirs: BTreeSet<Dest>,
     /// [`DeployPlan::inputs`] of the last deploy that finished, so it's
     /// possible to tell whether deploying again would change anything
     /// without working out a whole plan.
@@ -328,17 +345,57 @@ pub struct DeployState {
 }
 
 impl DeployState {
-    pub fn empty(game: &str, root: &Path) -> Self {
-        Self {
+    pub fn empty(game: &str, roots: &Roots) -> Self {
+        let mut state = Self {
             schema: DEPLOY_STATE_SCHEMA,
             game: game.to_owned(),
             profile: None,
-            root: root.to_owned(),
+            root: PathBuf::new(),
+            roots: BTreeMap::new(),
             files: BTreeMap::new(),
             created_dirs: BTreeSet::new(),
             inputs: None,
             env: None,
+        };
+        state.set_roots(roots);
+        state
+    }
+
+    /// Every root, `game` included.
+    pub fn roots(&self) -> Roots {
+        self.roots
+            .iter()
+            .fold(Roots::game(&self.root), |roots, (id, path)| {
+                roots.with(id.clone(), path)
+            })
+    }
+
+    pub fn set_roots(&mut self, roots: &Roots) {
+        self.root = roots.game_path().to_owned();
+        self.roots = roots
+            .iter()
+            .filter(|(id, _)| !id.is_game())
+            .map(|(id, path)| (id.clone(), path.to_owned()))
+            .collect();
+    }
+
+    /// A root that something's deployed to which isn't where `roots` says
+    /// it is now, and where it was. Deploying there would lose track of
+    /// what's in the old place, so it has to be undeployed first.
+    pub fn moved_root(&self, roots: &Roots) -> Option<(RootId, PathBuf)> {
+        let current = self.roots();
+        let used = self
+            .files
+            .keys()
+            .chain(&self.created_dirs)
+            .map(|dest| &dest.root);
+        for root in used {
+            let was = current.get(root)?;
+            if roots.get(root) != Some(was) {
+                return Some((root.clone(), was.to_owned()));
+            }
         }
+        None
     }
 }
 
@@ -356,11 +413,11 @@ pub struct DeployedFile {
 #[derive(Debug, Clone)]
 pub enum DeployOp {
     /// Remove a deployed file, restoring the original if one was backed up.
-    Remove { dst: RelPath },
+    Remove { dst: Dest },
     /// Move a file that patchwork didn't create out of the way.
-    Backup { dst: RelPath },
+    Backup { dst: Dest },
     Place {
-        dst: RelPath,
+        dst: Dest,
         src: PathBuf,
         mod_name: String,
     },
@@ -370,7 +427,7 @@ pub enum DeployOp {
 pub struct DeployPlan {
     pub target: DeployTarget,
     pub profile: Option<String>,
-    pub root: PathBuf,
+    pub roots: Roots,
     pub link: LinkMethod,
     pub ops: Vec<DeployOp>,
     /// Files that are already in place.
@@ -390,8 +447,9 @@ impl DeployPlan {
     }
 }
 
-/// Works out how to get from `prev` to `desired`. Reads the game directory to
-/// find files that would be overwritten, but doesn't change anything.
+/// Works out how to get from `prev` to `desired`, deploying to `prev`'s
+/// roots. Reads them to find files that would be overwritten, but doesn't
+/// change anything.
 pub fn plan(
     target: DeployTarget,
     prev: &DeployState,
@@ -399,9 +457,10 @@ pub fn plan(
     mut warnings: Vec<String>,
     profile: Option<String>,
     link: LinkMethod,
-) -> DeployPlan {
+) -> Result<DeployPlan> {
+    let roots = prev.roots();
     // Later placements win, which is what makes load order meaningful.
-    let mut wanted: BTreeMap<RelPath, Resolved> = BTreeMap::new();
+    let mut wanted: BTreeMap<Dest, Resolved> = BTreeMap::new();
     for placement in placements {
         if let Some(old) = wanted.get(&placement.dst)
             && old.mod_name != placement.mod_name
@@ -426,7 +485,7 @@ pub fn plan(
         match prev.files.get(&dst) {
             Some(existing) if existing.src == placement.src => unchanged += 1,
             Some(_) => {}
-            None if dst.under(&prev.root).symlink_metadata().is_ok() => {
+            None if roots.path(&dst)?.symlink_metadata().is_ok() => {
                 ops.push(DeployOp::Backup { dst: dst.clone() });
             }
             None => {}
@@ -440,20 +499,21 @@ pub fn plan(
         }
     }
 
-    DeployPlan {
+    Ok(DeployPlan {
         target,
         profile,
-        root: prev.root.clone(),
+        roots,
         link,
         ops,
         unchanged,
         warnings,
         inputs: None,
         env: None,
-    }
+    })
 }
 
-/// Carries out a plan, updating `state` as it goes.
+/// Carries out a plan, updating `state` as it goes. Files it moves out of
+/// the way go in `backups`, under their root's name.
 ///
 /// If an operation fails, `state` still reflects everything done up to that
 /// point, so the caller should save it either way.
@@ -463,12 +523,13 @@ pub fn apply(
     backups: &Path,
     reporter: &dyn Reporter,
 ) -> Result<()> {
-    if state.root != plan.root {
+    if state.moved_root(&plan.roots).is_some() {
         return Err(Error::invalid(
             "deploy plan doesn't match the current state",
         ));
     }
-    let root = plan.root.clone();
+    let roots = &plan.roots;
+    state.set_roots(roots);
     state.profile = plan.profile.clone();
     // Only set again once everything's done, so a deploy that failed
     // partway is never mistaken for a current one.
@@ -480,14 +541,14 @@ pub fn apply(
         match op {
             DeployOp::Remove { dst } => {
                 if let Some(entry) = state.files.remove(dst)
-                    && let Some(warning) = remove(&root, dst, &entry)?
+                    && let Some(warning) = remove(&roots.path(dst)?, dst, &entry)?
                 {
                     reporter.report(Event::Warning(warning));
                 }
             }
             DeployOp::Backup { dst } => {
-                let from = dst.under(&root);
-                let to = dst.under(backups);
+                let from = roots.path(dst)?;
+                let to = backup_path(backups, dst);
                 if to.symlink_metadata().is_ok() {
                     return Err(Error::invalid(format!(
                         "a backup of {dst} already exists at {}; move it somewhere safe and try again",
@@ -508,15 +569,15 @@ pub fn apply(
                 );
             }
             DeployOp::Place { dst, src, mod_name } => {
-                let target = dst.under(&root);
-                create_dirs(&root, dst, &mut state.created_dirs)?;
+                let target = roots.path(dst)?;
+                create_dirs(roots, dst, &mut state.created_dirs)?;
                 let mut backup = state.files.get(dst).and_then(|e| e.backup.clone());
                 if let Some(entry) = state.files.get(dst)
                     && changed_since_deployed(&target, entry)
                 {
                     // Most likely a game update put its own file back, which
                     // is now the original to restore.
-                    let to = dst.under(backups);
+                    let to = backup_path(backups, dst);
                     create_parent(&to)?;
                     if to.symlink_metadata().is_ok() {
                         fs::remove_file(&to).at(&to)?;
@@ -543,7 +604,7 @@ pub fn apply(
         }
     }
 
-    remove_empty_dirs(&root, &mut state.created_dirs);
+    remove_empty_dirs(roots, &mut state.created_dirs);
     state.inputs = plan.inputs;
     state.env = plan.env.clone();
     Ok(())
@@ -554,12 +615,16 @@ fn changed_since_deployed(path: &Path, entry: &DeployedFile) -> bool {
     path.is_file() && ContentHash::of_file(path).ok() != Some(entry.hash)
 }
 
-/// Removes a deployed file and restores whatever it replaced. Returns a
-/// warning instead of deleting if the file was changed after deployment.
-fn remove(root: &Path, dst: &RelPath, entry: &DeployedFile) -> Result<Option<String>> {
-    let target = dst.under(root);
+fn backup_path(backups: &Path, dst: &Dest) -> PathBuf {
+    dst.path.under(&backups.join(dst.root.as_str()))
+}
+
+/// Removes the file deployed to `dst`, which is at `target`, and restores
+/// whatever it replaced. Returns a warning instead of deleting if the file
+/// was changed after deployment.
+fn remove(target: &Path, dst: &Dest, entry: &DeployedFile) -> Result<Option<String>> {
     if target.symlink_metadata().is_ok() {
-        if ContentHash::of_file(&target).ok() != Some(entry.hash) {
+        if ContentHash::of_file(target).ok() != Some(entry.hash) {
             return Ok(Some(format!(
                 "{dst} was changed after it was deployed, so it was left in place{}",
                 match &entry.backup {
@@ -568,10 +633,10 @@ fn remove(root: &Path, dst: &RelPath, entry: &DeployedFile) -> Result<Option<Str
                 }
             )));
         }
-        fs::remove_file(&target).at(&target)?;
+        fs::remove_file(target).at(target)?;
     }
     if let Some(backup) = &entry.backup {
-        move_file(backup, &target)?;
+        move_file(backup, target)?;
     }
     Ok(None)
 }
@@ -583,30 +648,32 @@ fn create_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn create_dirs(root: &Path, dst: &RelPath, created: &mut BTreeSet<RelPath>) -> Result<()> {
+fn create_dirs(roots: &Roots, dst: &Dest, created: &mut BTreeSet<Dest>) -> Result<()> {
     let mut missing = Vec::new();
     let mut dir = dst.parent();
     while let Some(d) = dir {
-        if d.under(root).is_dir() {
+        if roots.path(&d)?.is_dir() {
             break;
         }
         dir = d.parent();
         missing.push(d);
     }
     for d in missing.into_iter().rev() {
-        let path = d.under(root);
+        let path = roots.path(&d)?;
         fs::create_dir(&path).at(&path)?;
         created.insert(d);
     }
     Ok(())
 }
 
-fn remove_empty_dirs(root: &Path, created: &mut BTreeSet<RelPath>) {
+fn remove_empty_dirs(roots: &Roots, created: &mut BTreeSet<Dest>) {
     // Longest paths first, so children go before their parents.
     let mut dirs: Vec<_> = created.iter().cloned().collect();
-    dirs.sort_by_key(|d| std::cmp::Reverse(d.as_str().len()));
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.path.as_str().len()));
     for dir in dirs {
-        let path = dir.under(root);
+        let Ok(path) = roots.path(&dir) else {
+            continue;
+        };
         if !path.exists() || fs::remove_dir(&path).is_ok() {
             created.remove(&dir);
         }
