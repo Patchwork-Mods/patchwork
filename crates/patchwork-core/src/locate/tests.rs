@@ -118,3 +118,39 @@ fn installs_reachable_twice_are_found_once() {
     let locator = Locator::steam([root, link, tmp.path().join("missing")]);
     assert_eq!(paths(locator.find(&game("[1]"))), [path]);
 }
+
+#[test]
+fn proton_prefixes_are_next_to_the_steam_install() {
+    let tmp = tempfile::tempdir().unwrap();
+    let steamapps = tmp.path().join("steamapps");
+    let game_dir = steamapps.join("common/Game");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    let game = game("[10, 20]");
+    assert_eq!(proton_prefix(&game, &game_dir), None);
+    // a prefix only counts once Proton has made it
+    std::fs::create_dir_all(steamapps.join("compatdata/10/pfx")).unwrap();
+    assert_eq!(proton_prefix(&game, &game_dir), None);
+    std::fs::create_dir_all(steamapps.join("compatdata/20/pfx/drive_c")).unwrap();
+    assert_eq!(
+        proton_prefix(&game, &game_dir),
+        Some(steamapps.join("compatdata/20/pfx"))
+    );
+    // not in a Steam library
+    assert_eq!(proton_prefix(&game, tmp.path()), None);
+
+    // another app installed to the same folder
+    let other = install(tmp.path(), 30, "Game");
+    std::fs::remove_dir_all(steamapps.join("compatdata/20")).unwrap();
+    std::fs::create_dir_all(steamapps.join("compatdata/30/pfx/drive_c")).unwrap();
+    assert_eq!(
+        proton_prefix(&game, &other),
+        Some(
+            other
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("compatdata/30/pfx")
+        )
+    );
+}

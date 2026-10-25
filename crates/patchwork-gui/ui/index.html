@@ -310,6 +310,23 @@
           </label>
           <div id="game-settings-deployer" class="stack"></div>
         </fieldset>
+        <!-- Filled in from the game's other roots; see games.js. -->
+        <fieldset id="game-settings-roots" class="stack" hidden>
+          <legend>Other folders</legend>
+          <small class="muted">
+            Folders outside the game's own that patchwork puts a few files in. Leave them empty to use
+            where patchwork finds them. Undeploy first to move one that has files deployed.
+          </small>
+          <div id="game-settings-prefix" class="field" hidden>
+            <label for="game-settings-prefix-input">Wine prefix</label>
+            <div class="row">
+              <input id="game-settings-prefix-input" name="prefix" autocomplete="off" />
+              <button type="button" data-browse="prefix">Browse…</button>
+            </div>
+            <small class="muted">Where a Windows game keeps its files when it runs through Proton or Wine.</small>
+          </div>
+          <div id="game-settings-root-list" class="stack"></div>
+        </fieldset>
         <p class="muted hint">
           Accounts for sources like Nexus Mods are in
           <button type="button" id="game-settings-app" class="link">Settings</button>.

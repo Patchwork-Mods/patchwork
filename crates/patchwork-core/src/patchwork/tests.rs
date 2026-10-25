@@ -113,6 +113,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         link: Default::default(),
         detect: Default::default(),
         versions: Default::default(),
+        roots: Default::default(),
     }
 }
 
@@ -1052,4 +1053,138 @@ async fn game_settings_override_the_definition() {
         pw.plan_deploy(&profile).await.unwrap().link,
         LinkMethod::Symlink
     );
+}
+
+/// Builds the load order a game keeps in its AppData folder.
+struct LoadOrder;
+
+impl Deployer for LoadOrder {
+    fn kind(&self) -> &str {
+        "load-order"
+    }
+
+    fn plan(&self, _: &DeployContext<'_>, _: &[InstalledMod]) -> Result<deploy::DesiredState> {
+        Ok(Default::default())
+    }
+
+    fn builds(&self, _: &DeployContext<'_>) -> bool {
+        true
+    }
+
+    fn build(
+        &self,
+        _: &DeployContext<'_>,
+        build: &BuildContext<'_>,
+        _: &[InstalledMod],
+    ) -> Result<deploy::DesiredState> {
+        fs::write(build.out.join("plugins.txt"), "modded").unwrap();
+        Ok(deploy::DesiredState {
+            placements: vec![deploy::Placement {
+                dst: "appdata:plugins.txt".parse().unwrap(),
+                src: deploy::Src::Built(crate::relpath::RelPath::new("plugins.txt").unwrap()),
+                mod_name: "built".to_owned(),
+            }],
+            warnings: Vec::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn games_deploy_to_their_other_roots() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(LoadOrder)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "load-order");
+    def.detect.steam = vec![1];
+    def.roots = toml::from_str(
+        r#"
+        [appdata]
+        path = "{localappdata}/My Game"
+        allow = ["plugins.txt"]
+        "#,
+    )
+    .unwrap();
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("steamapps/common/My Game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let appdata_id = RootId::new("appdata").unwrap();
+
+    // nothing to deploy into until there's a Proton prefix
+    #[cfg(target_os = "linux")]
+    {
+        let err = pw.plan_deploy(&profile).await.unwrap_err();
+        assert!(err.to_string().contains("Wine prefix"), "{err}");
+
+        // a Steam compatdata folder is taken to mean the prefix in it
+        let compatdata = tmp.path().join("steamapps/compatdata/1");
+        fs::create_dir_all(compatdata.join("pfx/drive_c/users/steamuser/AppData/Local/My Game"))
+            .unwrap();
+        let resolved = pw
+            .resolve_roots(&DeployTarget::Game("my-game".into()))
+            .unwrap()
+            .unwrap();
+        let (_, appdata) = resolved.iter().next().unwrap();
+        assert_eq!(appdata.origin, deploy::RootOrigin::Prefix);
+        assert!(
+            appdata
+                .path
+                .as_ref()
+                .unwrap()
+                .ends_with("AppData/Local/My Game")
+        );
+
+        let mut install = pw.game_install("my-game").unwrap().unwrap();
+        install.prefix = Some(compatdata.clone());
+        let saved = pw.set_game_install("my-game", install).unwrap();
+        assert_eq!(
+            saved.prefix,
+            Some(compatdata.canonicalize().unwrap().join("pfx"))
+        );
+    }
+
+    let mut install = pw.game_install("my-game").unwrap().unwrap();
+    install
+        .roots
+        .insert(RootId::new("elsewhere").unwrap(), tmp.path().to_owned());
+    let err = pw.set_game_install("my-game", install.clone()).unwrap_err();
+    assert!(
+        err.to_string().contains("no folder called `elsewhere`"),
+        "{err}"
+    );
+    install.roots.clear();
+    install
+        .roots
+        .insert(appdata_id.clone(), tmp.path().join("missing"));
+    assert!(pw.set_game_install("my-game", install.clone()).is_err());
+
+    let appdata = tmp.path().join("appdata");
+    fs::create_dir_all(&appdata).unwrap();
+    fs::write(appdata.join("plugins.txt"), "original").unwrap();
+    install.roots.insert(appdata_id.clone(), appdata.clone());
+    install.link = Some(LinkMethod::Symlink);
+    pw.set_game_install("my-game", install.clone()).unwrap();
+
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    let plugins = appdata.canonicalize().unwrap().join("plugins.txt");
+    assert_eq!(fs::read_to_string(&plugins).unwrap(), "modded");
+    assert!(!plugins.symlink_metadata().unwrap().file_type().is_symlink());
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+
+    // it can't move while something's deployed there
+    install
+        .roots
+        .insert(appdata_id.clone(), tmp.path().to_owned());
+    let err = pw.set_game_install("my-game", install).unwrap_err();
+    assert!(err.to_string().contains("undeploy"), "{err}");
+
+    pw.apply(
+        &pw.plan_undeploy(&DeployTarget::Game("my-game".into()))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(&plugins).unwrap(), "original");
 }

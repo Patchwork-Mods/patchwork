@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::compat::GameVersions;
+use crate::deploy::RootId;
 use crate::relpath::RelPath;
 
 pub const GAME_SCHEMA: u32 = 1;
@@ -37,6 +38,188 @@ pub struct GameDef {
     pub detect: Detect,
     #[serde(default, skip_serializing_if = "Versions::is_empty")]
     pub versions: Versions,
+    /// Folders besides its own that the game reads mods' files from.
+    #[serde(default, skip_serializing_if = "RootDefs::is_empty")]
+    pub roots: RootDefs,
+}
+
+/// A game's roots other than its own folder, by id.
+///
+/// ```toml
+/// [roots.appdata]
+/// # Starts with one of the folders in `Folder`. On Linux, a Windows game's
+/// # folders are inside the Wine prefix it runs in.
+/// path = "{localappdata}/Skyrim Special Edition"
+/// # Used instead of `path` for a native build on these systems.
+/// linux = "{data}/skyrim"
+/// # The only files that may go here, which every root but the game's own
+/// # has to say.
+/// allow = ["plugins.txt", "loadorder.txt"]
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    try_from = "BTreeMap<RootId, RootDef>",
+    into = "BTreeMap<RootId, RootDef>"
+)]
+pub struct RootDefs(BTreeMap<RootId, RootDef>);
+
+impl RootDefs {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn get(&self, id: &RootId) -> Option<&RootDef> {
+        self.0.get(id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&RootId, &RootDef)> {
+        self.0.iter()
+    }
+}
+
+impl TryFrom<BTreeMap<RootId, RootDef>> for RootDefs {
+    type Error = String;
+
+    fn try_from(roots: BTreeMap<RootId, RootDef>) -> Result<Self, String> {
+        for (id, root) in &roots {
+            if id.is_game() {
+                return Err("the `game` root is the game's own folder and can't be moved".into());
+            }
+            if root.allow.is_empty() {
+                return Err(format!(
+                    "root `{id}` has to say which files may go in it, with `allow`"
+                ));
+            }
+            for native in root.linux.iter().chain(&root.macos) {
+                if native.folder.is_windows_only() {
+                    return Err(format!(
+                        "root `{id}`: `{{{}}}` is only for Windows games, so it can't be used for a native build",
+                        native.folder
+                    ));
+                }
+            }
+        }
+        Ok(Self(roots))
+    }
+}
+
+impl From<RootDefs> for BTreeMap<RootId, RootDef> {
+    fn from(roots: RootDefs) -> Self {
+        roots.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootDef {
+    pub path: RootPath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linux: Option<RootPath>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub macos: Option<RootPath>,
+    pub allow: Vec<FilePattern>,
+}
+
+/// Where a root is: a [`Folder`] and, usually, a path inside it, written
+/// like `{documents}/My Games/Skyrim Special Edition`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct RootPath {
+    pub folder: Folder,
+    pub path: Option<RelPath>,
+}
+
+impl TryFrom<String> for RootPath {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, String> {
+        let bad = || {
+            format!(
+                "`{s}` has to start with one of {}",
+                Folder::ALL.map(|f| format!("{{{f}}}")).join(", ")
+            )
+        };
+        let (folder, rest) = s
+            .strip_prefix('{')
+            .and_then(|s| s.split_once('}'))
+            .ok_or_else(bad)?;
+        let folder = Folder::ALL
+            .into_iter()
+            .find(|f| f.name() == folder)
+            .ok_or_else(bad)?;
+        let path = match rest {
+            "" => None,
+            rest => {
+                let rest = rest
+                    .strip_prefix(['/', '\\'])
+                    .ok_or_else(|| format!("`{s}` needs a `/` after `{{{folder}}}`"))?;
+                Some(RelPath::new(rest)?)
+            }
+        };
+        Ok(Self { folder, path })
+    }
+}
+
+impl From<RootPath> for String {
+    fn from(p: RootPath) -> String {
+        match p.path {
+            Some(path) => format!("{{{}}}/{path}", p.folder),
+            None => format!("{{{}}}", p.folder),
+        }
+    }
+}
+
+/// The folders a [`RootPath`] can start from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Folder {
+    /// The user's home folder.
+    Home,
+    /// Their Documents folder, where many games keep saves and settings.
+    Documents,
+    /// `%APPDATA%`: `AppData/Roaming`.
+    AppData,
+    /// `%LOCALAPPDATA%`: `AppData/Local`.
+    LocalAppData,
+    /// Where programs keep their data: `~/.local/share` on Linux,
+    /// `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows.
+    Data,
+    /// Where programs keep their settings: `~/.config` on Linux, and the
+    /// same as `Data` elsewhere.
+    Config,
+}
+
+impl Folder {
+    pub const ALL: [Folder; 6] = [
+        Folder::Home,
+        Folder::Documents,
+        Folder::AppData,
+        Folder::LocalAppData,
+        Folder::Data,
+        Folder::Config,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Folder::Home => "home",
+            Folder::Documents => "documents",
+            Folder::AppData => "appdata",
+            Folder::LocalAppData => "localappdata",
+            Folder::Data => "data",
+            Folder::Config => "config",
+        }
+    }
+
+    /// Whether only Windows has it, so it means nothing to a native build
+    /// on other systems.
+    pub fn is_windows_only(self) -> bool {
+        matches!(self, Folder::AppData | Folder::LocalAppData)
+    }
+}
+
+impl std::fmt::Display for Folder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 /// How a game's versions matter to its mods.

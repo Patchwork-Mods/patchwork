@@ -10,7 +10,7 @@ use std::fmt::Display;
 use std::sync::Mutex;
 
 use base64::prelude::*;
-use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
+use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -405,6 +405,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         link: game.link,
         detect: Default::default(),
         versions: Default::default(),
+        roots: Default::default(),
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
     if let Some(path) = filled(game.install) {
@@ -581,16 +582,56 @@ struct GameSettings {
     default_link: LinkMethod,
     /// The settings the game's deployer takes.
     deployer: Vec<SettingState>,
+    /// The game's other folders, for moving them.
+    roots: Vec<RootInfo>,
+    /// Whether it makes sense to set a Wine prefix: on systems other than
+    /// Windows, for a game with any folders in one.
+    uses_prefix: bool,
+    /// The prefix the folders were looked for in.
+    prefix: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RootInfo {
+    id: String,
+    /// Where it is, if that's known.
+    path: Option<String>,
+    /// Why it couldn't be found, otherwise.
+    problem: Option<String>,
+    origin: RootOrigin,
+    allow: Vec<String>,
 }
 
 #[tauri::command]
 fn game_settings(app: State<'_, App>, game: String) -> CmdResult<GameSettings> {
     let registry = app.pw.registry();
     let def = &registry.game(&game).map_err(msg)?.value;
+    let resolved = app
+        .pw
+        .resolve_roots(&DeployTarget::Game(game.clone()))
+        .map_err(msg)?;
+    let roots = resolved
+        .iter()
+        .flat_map(|r| r.iter())
+        .map(|(id, root)| RootInfo {
+            id: id.to_string(),
+            path: root.path.as_ref().ok().map(|p| p.display().to_string()),
+            problem: root.path.as_ref().err().cloned(),
+            origin: root.origin,
+            allow: root.allow.iter().map(|a| a.as_str().to_owned()).collect(),
+        })
+        .collect();
     Ok(GameSettings {
         install: app.pw.game_install(&game).map_err(msg)?,
         default_link: def.link,
         deployer: app.pw.deployer_settings(&game).map_err(msg)?,
+        roots,
+        uses_prefix: !cfg!(windows) && !def.roots.is_empty(),
+        prefix: resolved
+            .as_ref()
+            .and_then(|r| r.prefix())
+            .map(|p| p.display().to_string()),
     })
 }
 

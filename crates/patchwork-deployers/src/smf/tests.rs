@@ -1,4 +1,4 @@
-use patchwork_core::deploy::{self, DeployState, Roots};
+use patchwork_core::deploy::{self, DeployState, ResolvedRoots, Roots};
 use patchwork_core::event::Silent;
 use patchwork_core::game::{DeployerSpec, GameDef};
 use patchwork_core::registry::Registry;
@@ -192,6 +192,7 @@ impl Env {
             link: Default::default(),
             detect: Default::default(),
             versions: Default::default(),
+            roots: Default::default(),
         };
         let registry = Registry::default();
         let ctx = DeployContext {
@@ -217,7 +218,7 @@ impl Env {
 /// Where the file placed at `dst` is, checked the way a deploy would.
 fn placed(env: &Env, desired: &DesiredState, dst: &str) -> PathBuf {
     let out = env.tmp.path().join("out");
-    let roots = Roots::game(&env.game);
+    let roots = ResolvedRoots::game(&env.game);
     deploy::resolve("smf", desired.placements.clone(), &[], Some(&out), &roots)
         .unwrap()
         .into_iter()

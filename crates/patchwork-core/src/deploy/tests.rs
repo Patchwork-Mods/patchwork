@@ -200,7 +200,7 @@ fn placements_can_only_come_from_mods_and_builds() {
         mod_name: "a".to_owned(),
     };
     let resolve = |src: Src, out: Option<&Path>| {
-        let roots = Roots::game(&env.game);
+        let roots = ResolvedRoots::game(&env.game);
         resolve(
             "test",
             vec![place(src)],
@@ -359,11 +359,16 @@ fn placements_need_a_root_the_target_has() {
         vec![place.clone()],
         std::slice::from_ref(&m),
         None,
-        &Roots::game(&env.game),
+        &ResolvedRoots::game(&env.game),
     )
     .unwrap_err();
     assert!(err.to_string().contains("`appdata`"), "{err}");
-    let roots = with_appdata(&env);
+    let appdata = with_appdata(&env)
+        .get(&RootId::new("appdata").unwrap())
+        .unwrap()
+        .to_owned();
+    let roots =
+        ResolvedRoots::game(&env.game).with(RootId::new("appdata").unwrap(), &appdata, &["*.txt"]);
     assert!(resolve("test", vec![place], std::slice::from_ref(&m), None, &roots).is_ok());
 }
 
@@ -425,4 +430,267 @@ fn states_from_before_roots_still_read() {
     // and write back without any roots of their own
     let back = serde_json::to_value(&state).unwrap();
     assert!(back.get("roots").is_none());
+}
+
+fn root_defs(toml: &str) -> std::result::Result<crate::game::RootDefs, String> {
+    #[derive(Deserialize)]
+    struct Def {
+        roots: crate::game::RootDefs,
+    }
+    toml::from_str::<Def>(toml)
+        .map(|d| d.roots)
+        .map_err(|e| e.to_string())
+}
+
+#[test]
+fn root_definitions_need_an_allowlist_and_a_known_folder() {
+    let roots = root_defs(
+        r#"
+        [roots.appdata]
+        path = "{localappdata}/Skyrim Special Edition"
+        linux = "{data}"
+        allow = ["plugins.txt"]
+        "#,
+    )
+    .unwrap();
+    let appdata = roots.get(&RootId::new("appdata").unwrap()).unwrap();
+    assert_eq!(
+        String::from(appdata.path.clone()),
+        "{localappdata}/Skyrim Special Edition"
+    );
+    assert_eq!(appdata.linux.as_ref().unwrap().path, None);
+
+    for (bad, why) in [
+        (r#"path = "{localappdata}/x""#, "missing field `allow`"),
+        (
+            r#"path = "{localappdata}/x"
+            allow = []"#,
+            "allow",
+        ),
+        (
+            r#"path = "{nowhere}/x"
+            allow = ["a"]"#,
+            "has to start with one of",
+        ),
+        (
+            r#"path = "/abs/x"
+            allow = ["a"]"#,
+            "has to start with one of",
+        ),
+        (
+            r#"path = "{home}/../x"
+            allow = ["a"]"#,
+            "outside",
+        ),
+        (
+            r#"path = "{home}x"
+            allow = ["a"]"#,
+            "needs a `/`",
+        ),
+        (
+            r#"path = "{appdata}/x"
+            linux = "{appdata}/x"
+            allow = ["a"]"#,
+            "only for Windows",
+        ),
+    ] {
+        let err = root_defs(&format!("[roots.other]\n{bad}")).unwrap_err();
+        assert!(err.contains(why), "{bad}: {err}");
+    }
+    let err = root_defs("[roots.game]\npath = \"{home}\"\nallow = [\"a\"]").unwrap_err();
+    assert!(err.contains("game's own folder"), "{err}");
+}
+
+/// A Wine prefix like Proton's, with its user folder made.
+fn wine_prefix(dir: &Path, user: &str) -> PathBuf {
+    let prefix = dir.join("pfx");
+    fs::create_dir_all(prefix.join(format!("drive_c/users/{user}/AppData/Local"))).unwrap();
+    fs::create_dir_all(prefix.join("drive_c/users/Public")).unwrap();
+    prefix
+}
+
+#[test]
+fn roots_are_found_on_the_host_or_in_the_wine_prefix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let roots = root_defs(
+        r#"
+        [roots.appdata]
+        path = "{localappdata}/Game"
+        allow = ["plugins.txt"]
+        [roots.saves]
+        path = "{documents}/My Games/Game"
+        linux = "{data}/game"
+        allow = ["*.sav"]
+        "#,
+    )
+    .unwrap();
+    let host = Folders {
+        local_appdata: Some(tmp.path().join("Local")),
+        documents: Some(tmp.path().join("Documents")),
+        data: Some(tmp.path().join("share")),
+        ..Folders::default()
+    };
+    let prefix = wine_prefix(tmp.path(), "steamuser");
+    let none = BTreeMap::new();
+    let resolve = |os: Os, prefix: Option<&Path>, set: &BTreeMap<RootId, PathBuf>| {
+        let resolved = ResolvedRoots::new(
+            "game-id",
+            &roots,
+            &RootSetup {
+                os,
+                game: Path::new("/game"),
+                host: &host,
+                prefix,
+                set,
+            },
+        );
+        resolved
+            .iter()
+            .map(|(id, r)| {
+                let path = r
+                    .path
+                    .clone()
+                    .map(|p| p.strip_prefix(tmp.path()).unwrap().to_owned());
+                (id.to_string(), (path, r.origin))
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let ok = |p: &str, origin| (Ok(PathBuf::from(p)), origin);
+
+    let windows = resolve(Os::Windows, None, &none);
+    assert_eq!(windows["appdata"], ok("Local/Game", RootOrigin::Definition));
+    assert_eq!(
+        windows["saves"],
+        ok("Documents/My Games/Game", RootOrigin::Definition)
+    );
+
+    // a Windows game in its prefix, unless there's a native path
+    let linux = resolve(Os::Linux, Some(&prefix), &none);
+    assert_eq!(
+        linux["appdata"],
+        ok(
+            "pfx/drive_c/users/steamuser/AppData/Local/Game",
+            RootOrigin::Prefix
+        )
+    );
+    assert_eq!(linux["saves"], ok("share/game", RootOrigin::Definition));
+
+    let (Err(why), _) = &resolve(Os::Linux, None, &none)["appdata"] else {
+        panic!("found without a prefix");
+    };
+    assert!(why.contains("set game-id prefix"), "{why}");
+    let not_a_prefix = tmp.path().join("Documents");
+    let (Err(why), _) = &resolve(Os::Linux, Some(&not_a_prefix), &none)["appdata"] else {
+        panic!("found in something that isn't a prefix");
+    };
+    assert!(why.contains("doesn't look like a Wine prefix"), "{why}");
+    let (Err(why), _) = &resolve(Os::Macos, None, &none)["appdata"] else {
+        panic!("found on macOS without a path for it");
+    };
+    assert!(why.contains("root.appdata"), "{why}");
+
+    // what the user says wins
+    let set = BTreeMap::from([(RootId::new("appdata").unwrap(), tmp.path().join("mine"))]);
+    assert_eq!(
+        resolve(Os::Linux, None, &set)["appdata"],
+        ok("mine", RootOrigin::Set)
+    );
+
+    // only roots that were found are deployed to
+    let resolved = ResolvedRoots::new(
+        "game-id",
+        &roots,
+        &RootSetup {
+            os: Os::Linux,
+            game: Path::new("/game"),
+            host: &host,
+            prefix: None,
+            set: &none,
+        },
+    );
+    let found: Vec<_> = resolved
+        .roots()
+        .iter()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    assert_eq!(found, ["game", "saves"]);
+}
+
+#[test]
+fn wine_prefixes_are_named_after_their_user() {
+    let tmp = tempfile::tempdir().unwrap();
+    let prefix = wine_prefix(tmp.path(), "someone-else");
+    let folders = Folders::wine(&prefix).unwrap();
+    assert_eq!(
+        folders.local_appdata.unwrap(),
+        prefix.join("drive_c/users/someone-else/AppData/Local")
+    );
+    // more than one user and none of them obvious
+    fs::create_dir_all(prefix.join("drive_c/users/a-third")).unwrap();
+    if std::env::var("USER").is_ok_and(|u| u != "someone-else" && u != "a-third") {
+        assert_eq!(Folders::wine(&prefix), None);
+    }
+    assert_eq!(Folders::wine(tmp.path()), None);
+}
+
+#[test]
+fn other_roots_only_take_allowed_files_in_folders_that_exist() {
+    let env = env();
+    let appdata = with_appdata(&env)
+        .get(&RootId::new("appdata").unwrap())
+        .unwrap()
+        .to_owned();
+    let id = RootId::new("appdata").unwrap();
+    let roots =
+        ResolvedRoots::game(&env.game).with(id.clone(), &appdata, &["plugins.txt", "Saves/*.ess"]);
+    let check = |dst: &str| roots.check(&dst.parse().unwrap());
+
+    assert!(check("anything/at/all.dll").is_ok());
+    assert!(check("appdata:plugins.txt").is_ok());
+    assert!(check("appdata:PLUGINS.TXT").is_ok());
+    for bad in [
+        "appdata:other.txt",
+        "appdata:x/plugins.txt",
+        "appdata:Saves/a/b.ess",
+    ] {
+        let (blame, why) = check(bad).unwrap_err();
+        assert!(blame && why.contains("isn't allowed"), "{bad}: {why}");
+    }
+    let (blame, why) = check("elsewhere:plugins.txt").unwrap_err();
+    assert!(blame && why.contains("doesn't have"), "{why}");
+
+    // the folder has to be there already, since it's someone else's
+    let gone = ResolvedRoots::game(&env.game).with(id, &appdata.join("gone"), &["plugins.txt"]);
+    let (blame, why) = gone
+        .check(&"appdata:plugins.txt".parse().unwrap())
+        .unwrap_err();
+    assert!(!blame && why.contains("doesn't exist"), "{why}");
+}
+
+#[cfg(unix)]
+#[test]
+fn other_roots_are_always_copied_to() {
+    let env = env();
+    let roots = with_appdata(&env);
+    let appdata = roots
+        .get(&RootId::new("appdata").unwrap())
+        .unwrap()
+        .to_owned();
+    let mut state = DeployState::empty("g", &roots);
+    let plan = plan(
+        DeployTarget::Game("g".into()),
+        &state,
+        vec![
+            placement(&env, "appdata:plugins.txt", "modded", "a"),
+            placement(&env, "Mods/a.dll", "a", "a"),
+        ],
+        Vec::new(),
+        None,
+        LinkMethod::Symlink,
+    )
+    .unwrap();
+    apply(&plan, &mut state, &env.backups, &Silent).unwrap();
+    let is_link = |p: PathBuf| p.symlink_metadata().unwrap().file_type().is_symlink();
+    assert!(is_link(env.game.join("Mods/a.dll")));
+    assert!(!is_link(appdata.join("plugins.txt")));
 }

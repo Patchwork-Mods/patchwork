@@ -23,7 +23,9 @@ use crate::{Error, Result};
 
 mod roots;
 
-pub use roots::{Dest, RootId, Roots};
+pub use roots::{
+    Dest, Folders, Os, ResolvedRoot, ResolvedRoots, RootId, RootOrigin, RootSetup, Roots,
+};
 
 #[derive(Debug, Clone)]
 pub struct ModFile {
@@ -93,14 +95,14 @@ pub struct Resolved {
 
 /// Finds where each placement's file is, checking that it's one of `mods`'
 /// files or, when `out` is given (for [`Deployer::build`]'s placements), a
-/// file the build made there, and that it goes in one of `roots`. `kind` is
-/// the deployer's, for errors.
+/// file the build made there, and that it goes somewhere `roots` allows.
+/// `kind` is the deployer's, for errors.
 pub fn resolve(
     kind: &str,
     placements: Vec<Placement>,
     mods: &[InstalledMod],
     out: Option<&Path>,
-    roots: &Roots,
+    roots: &ResolvedRoots,
 ) -> Result<Vec<Resolved>> {
     let error = |message: String| Error::Deployer {
         kind: kind.to_owned(),
@@ -117,11 +119,10 @@ pub fn resolve(
     placements
         .into_iter()
         .map(|p| {
-            if roots.get(&p.dst.root).is_none() {
-                return Err(error(format!(
-                    "{} is in a folder called `{}`, which this game doesn't have",
-                    p.dst, p.dst.root
-                )));
+            match roots.check(&p.dst) {
+                Ok(_) => {}
+                Err((true, message)) => return Err(error(message)),
+                Err((false, message)) => return Err(Error::invalid(message)),
             }
             let src = match &p.src {
                 Src::Mod { hash, rel } => files
@@ -600,7 +601,14 @@ pub fn apply(
                 } else if target.symlink_metadata().is_ok() {
                     fs::remove_file(&target).at(&target)?;
                 }
-                link(src, &target, plan.link)?;
+                // Other roots are the user's own folders, where a link
+                // would let the game write through it into the store.
+                let method = if dst.root.is_game() {
+                    plan.link
+                } else {
+                    LinkMethod::Copy
+                };
+                link(src, &target, method)?;
                 state.files.insert(
                     dst.clone(),
                     DeployedFile {

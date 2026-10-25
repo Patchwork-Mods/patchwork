@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use patchwork_core::compat::GameVersions;
-use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
+use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::issue::Severity;
 use patchwork_core::locate::Locator;
@@ -230,10 +230,12 @@ enum GameCommand {
         #[arg(long)]
         set: bool,
     },
-    /// List a game's settings: how mods are linked into it, and its
-    /// deployer's settings.
+    /// List a game's settings: how mods are linked into it, its deployer's
+    /// settings, and where its other folders are.
     Settings { id: String },
-    /// Change one of a game's settings (see `game settings`).
+    /// Change one of a game's settings (see `game settings`). `prefix` is
+    /// the Wine prefix a Windows game runs in, and `root.<id>` moves one of
+    /// its other folders.
     Set {
         id: String,
         key: String,
@@ -725,15 +727,48 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
             for setting in pw.deployer_settings(&id)? {
                 print_setting(&setting);
             }
+            let Some(roots) = pw.resolve_roots(&DeployTarget::Game(id.clone()))? else {
+                return Ok(());
+            };
+            let set_prefix = install.as_ref().and_then(|i| i.prefix.as_ref());
+            if let Some(prefix) = roots.prefix() {
+                let how = if set_prefix.is_some() { "" } else { " (found)" };
+                println!(
+                    "prefix = {}{how}",
+                    toml::Value::from(prefix.display().to_string())
+                );
+            }
+            for (root, resolved) in roots.iter() {
+                let allow: Vec<_> = resolved.allow.iter().map(|a| a.as_str()).collect();
+                let allow = allow.join(", ");
+                match &resolved.path {
+                    Ok(path) => {
+                        let how = match resolved.origin {
+                            RootOrigin::Set => "",
+                            RootOrigin::Definition => " (default)",
+                            RootOrigin::Prefix => " (in the prefix)",
+                        };
+                        let path = toml::Value::from(path.display().to_string());
+                        println!("root.{root} = {path}{how}  # for {allow}");
+                    }
+                    Err(why) => println!("# root.{root} isn't set: {why}"),
+                }
+            }
         }
         GameCommand::Set { id, key, value } => {
             let mut install = game_install(pw, &id)?;
             if key == "link" {
                 install.link = Some(toml::Value::String(value).try_into()?);
+            } else if key == "prefix" {
+                install.prefix = Some(PathBuf::from(value));
+            } else if let Some(root) = key.strip_prefix("root.") {
+                let root = RootId::new(root).map_err(anyhow::Error::msg)?;
+                install.roots.insert(root, PathBuf::from(value));
             } else {
                 let settings = pw.deployer_settings(&id)?;
                 let Some(setting) = settings.iter().find(|s| s.spec.key == key) else {
-                    let keys: Vec<_> = std::iter::once("link")
+                    let keys: Vec<_> = ["link", "prefix", "root.<id>"]
+                        .into_iter()
                         .chain(settings.iter().map(|s| s.spec.key))
                         .collect();
                     bail!("{id} has no setting `{key}`; it has {}", keys.join(", "));
@@ -747,8 +782,17 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
         }
         GameCommand::Unset { id, key } => {
             let mut install = game_install(pw, &id)?;
+            let root = key.strip_prefix("root.").and_then(|r| RootId::new(r).ok());
             if key == "link" {
                 install.link = None;
+            } else if key == "prefix" {
+                if install.prefix.take().is_none() {
+                    bail!("prefix isn't set for {id}");
+                }
+            } else if let Some(root) = root {
+                if install.roots.remove(&root).is_none() {
+                    bail!("{key} isn't set for {id}");
+                }
             } else if install.deployer.remove(&key).is_none() {
                 bail!("{key} isn't set for {id}");
             }

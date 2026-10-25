@@ -108,6 +108,32 @@ impl Locator {
     }
 }
 
+/// The Proton prefix Steam made for `game`, if it's installed at `install`
+/// in a Steam library and has been run through Proton there. It's the
+/// folder with `drive_c` in it.
+///
+/// Apps installed to the same folder count too, since a game can have more
+/// than one (HITMAN 3 and World of Assassination share theirs), and the
+/// prefix is the one that was run.
+pub fn proton_prefix(game: &GameDef, install: &Path) -> Option<PathBuf> {
+    let common = install.parent()?;
+    let steamapps = common.parent()?;
+    if common.file_name()? != "common" || steamapps.file_name()? != "steamapps" {
+        return None;
+    }
+    let sharing = installed_apps(steamapps.parent()?)
+        .into_iter()
+        .filter(|a| a.path == install)
+        .map(|a| a.app);
+    game.detect
+        .steam
+        .iter()
+        .copied()
+        .chain(sharing)
+        .map(|app| steamapps.join(format!("compatdata/{app}/pfx")))
+        .find(|pfx| pfx.join("drive_c").is_dir())
+}
+
 /// Where Steam is usually installed on this platform.
 fn steam_roots() -> Vec<PathBuf> {
     #[cfg(windows)]

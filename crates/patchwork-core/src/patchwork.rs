@@ -12,7 +12,8 @@ use crate::changelog::{self, ChangelogEntry};
 use crate::compat::{self, GameVersions};
 use crate::deploy::{
     self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
-    DesiredState, GameFiles, InstalledMod, Resolved, RootId, Roots,
+    DesiredState, Folders, GameFiles, InstalledMod, Os, Resolved, ResolvedRoots, RootId, RootSetup,
+    Roots,
 };
 use crate::environment::GameEnv;
 use crate::error::IoContext;
@@ -21,7 +22,7 @@ use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, LinkMethod, validate_game_id};
 use crate::hash::ContentHash;
 use crate::issue::Issue;
-use crate::locate::{Found, Locator};
+use crate::locate::{self, Found, Locator};
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
 use crate::matching::{self, ModText};
 use crate::order::{self, ModFacts, Position, SortKey};
@@ -51,6 +52,26 @@ pub struct GameInstall {
     /// definition's `[deployer]`.
     #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
     pub deployer: toml::Table,
+    /// Where the game's other roots are, for any that patchwork gets wrong
+    /// or can't find.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub roots: BTreeMap<RootId, PathBuf>,
+    /// The Wine prefix a Windows game runs in on other systems, when it
+    /// isn't the one Steam made for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<PathBuf>,
+}
+
+impl GameInstall {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            link: None,
+            deployer: toml::Table::new(),
+            roots: BTreeMap::new(),
+            prefix: None,
+        }
+    }
 }
 
 /// A mod's versions as of when they were last fetched.
@@ -339,11 +360,7 @@ impl Patchwork {
                 path: path.to_owned(),
                 ..install
             },
-            None => GameInstall {
-                path: path.to_owned(),
-                link: None,
-                deployer: toml::Table::new(),
-            },
+            None => GameInstall::new(path.to_owned()),
         };
         self.set_game_install(game, install)
     }
@@ -357,20 +374,48 @@ impl Patchwork {
             path,
             link,
             deployer,
+            roots,
+            prefix,
         } = install;
-        let path = path.canonicalize().at(&path)?;
-        if !path.is_dir() {
-            return Err(Error::invalid(format!(
-                "{} isn't a directory",
-                path.display()
-            )));
-        }
+        let path = existing_dir(&path)?;
+        let roots = roots
+            .into_iter()
+            .map(|(id, dir)| {
+                if def.roots.get(&id).is_none() {
+                    let has: Vec<_> = def.roots.iter().map(|(id, _)| id.as_str()).collect();
+                    return Err(Error::invalid(match has.as_slice() {
+                        [] => format!("{} has no folders besides its own", def.name),
+                        has => format!(
+                            "{} has no folder called `{id}`; it has {}",
+                            def.name,
+                            has.join(", ")
+                        ),
+                    }));
+                }
+                Ok((id, existing_dir(&dir)?))
+            })
+            .collect::<Result<_>>()?;
+        // Steam's compatdata folders have the prefix in `pfx`.
+        let prefix = prefix
+            .map(|p| existing_dir(&p))
+            .transpose()?
+            .map(|p| match p.join("pfx") {
+                pfx if !p.join("drive_c").is_dir() && pfx.join("drive_c").is_dir() => pfx,
+                _ => p,
+            });
         let specs = self.deployer(&def.deployer.kind)?.settings();
         for (key, value) in &deployer {
             SettingSpec::find(specs, &format!("{}'s deployer", def.name), key)?.check(value)?;
         }
+        let install = GameInstall {
+            path,
+            link,
+            deployer,
+            roots,
+            prefix,
+        };
         let state = self.deploy_state(&DeployTarget::Game(game.to_owned()))?;
-        let moved = state.roots().with(RootId::game(), &path);
+        let moved = resolve_roots(def, &install).roots();
         if let Some((_, was)) = state.moved_root(&moved) {
             return Err(Error::invalid(format!(
                 "mods are still deployed to {}; run `patchwork undeploy {game}` first",
@@ -380,17 +425,12 @@ impl Patchwork {
         // files already placed stay the way they were placed, so the method
         // can only change while there aren't any
         let was = self.game_install(game)?.and_then(|i| i.link);
-        if was.unwrap_or(def.link) != link.unwrap_or(def.link) && !state.files.is_empty() {
+        if was.unwrap_or(def.link) != install.link.unwrap_or(def.link) && !state.files.is_empty() {
             return Err(Error::invalid(format!(
                 "mods are still deployed to {}; run `patchwork undeploy {game}` before changing how they're linked",
-                path.display()
+                install.path.display()
             )));
         }
-        let install = GameInstall {
-            path,
-            link,
-            deployer,
-        };
         fsutil::write_toml(&self.install_file(game), &install)?;
         Ok(install)
     }
@@ -1805,9 +1845,21 @@ impl Patchwork {
         }
     }
 
-    /// Every folder mods for `target` can go in, if it's been set up.
+    /// Every folder mods for `target` can go in that could be found, if
+    /// it's been set up.
     pub fn target_roots(&self, target: &DeployTarget) -> Result<Option<Roots>> {
-        Ok(self.target_root(target)?.map(|root| Roots::game(&root)))
+        Ok(self.resolve_roots(target)?.map(|roots| roots.roots()))
+    }
+
+    /// Where each of `target`'s roots is, or why it couldn't be found, and
+    /// what may go in it. `None` until it's been set up.
+    pub fn resolve_roots(&self, target: &DeployTarget) -> Result<Option<ResolvedRoots>> {
+        let DeployTarget::Game(game) = target;
+        let Some(install) = self.game_install(game)? else {
+            return Ok(None);
+        };
+        let registry = self.registry();
+        Ok(Some(resolve_roots(&registry.game(game)?.value, &install)))
     }
 
     pub fn deploy_state(&self, target: &DeployTarget) -> Result<DeployState> {
@@ -1835,7 +1887,7 @@ impl Patchwork {
         let entry = registry.game(&loaded.game)?;
         let game = &entry.value;
         let target = self.deploy_target(&loaded)?;
-        let Some(roots) = self.target_roots(&target)? else {
+        let Some(resolved) = self.resolve_roots(&target)? else {
             let fix = match Locator::scan().find(game).as_slice() {
                 [found] => format!(
                     "it looks to be in {}, so run `patchwork game detect {} --set` to use that, or `patchwork game set-path {} <dir>`",
@@ -1850,6 +1902,7 @@ impl Patchwork {
                 game.name
             )));
         };
+        let roots = resolved.roots();
         let root = roots.game_path().to_owned();
         let deployer = self.deployer(&game.deployer.kind)?;
         let (config, link, overrides) = self.deploy_config(game)?;
@@ -1905,14 +1958,14 @@ impl Patchwork {
         let env = GameEnv::detect(game, &root);
         let desired = deployer.plan(&ctx, &mods)?;
         let mut placements =
-            deploy::resolve(deployer.kind(), desired.placements, &mods, None, &roots)?;
+            deploy::resolve(deployer.kind(), desired.placements, &mods, None, &resolved)?;
         let mut warnings = desired.warnings;
         for issue in self.incompatible(&loaded, &lock, &env)? {
             warnings.push(issue.message);
         }
         if deployer.builds(&ctx) {
             let (built, built_warnings) =
-                self.build(deployer, &ctx, &target, inputs, &prev, &mods)?;
+                self.build(deployer, &ctx, &target, inputs, &prev, &mods, &resolved)?;
             placements.extend(built);
             warnings.extend(built_warnings);
         }
@@ -2029,6 +2082,7 @@ impl Patchwork {
     /// Runs `deployer`'s build for a deploy with these `inputs`, or reuses
     /// what an earlier build with the same inputs made. Returns the build's
     /// placements, resolved, and its warnings.
+    #[allow(clippy::too_many_arguments)]
     fn build(
         &self,
         deployer: &dyn Deployer,
@@ -2037,6 +2091,7 @@ impl Patchwork {
         inputs: ContentHash,
         prev: &DeployState,
         mods: &[InstalledMod],
+        roots: &ResolvedRoots,
     ) -> Result<(Vec<Resolved>, Vec<String>)> {
         let dir = self.paths.generated().join(target.key());
         let out = dir.join(inputs.to_string());
@@ -2045,13 +2100,8 @@ impl Patchwork {
         // version, or files that have since been deleted) just means
         // building again.
         if let Ok(Some(built)) = fsutil::read_json::<DesiredState>(&record)
-            && let Ok(placements) = deploy::resolve(
-                deployer.kind(),
-                built.placements,
-                mods,
-                Some(&out),
-                &prev.roots(),
-            )
+            && let Ok(placements) =
+                deploy::resolve(deployer.kind(), built.placements, mods, Some(&out), roots)
         {
             return Ok((placements, built.warnings));
         }
@@ -2080,7 +2130,7 @@ impl Patchwork {
             built.placements.clone(),
             mods,
             Some(&out),
-            &prev.roots(),
+            roots,
         ) {
             Ok(placements) => placements,
             Err(e) => {
@@ -2255,6 +2305,42 @@ fn source_specs(sources: &BTreeMap<String, Arc<dyn Source>>) -> BTreeMap<&str, &
         .map(|(id, s)| (id.as_str(), s.settings()))
         .filter(|(_, specs)| !specs.is_empty())
         .collect()
+}
+
+/// Where `def`'s roots are for `install` on this machine.
+fn resolve_roots(def: &GameDef, install: &GameInstall) -> ResolvedRoots {
+    if def.roots.is_empty() {
+        return ResolvedRoots::game(&install.path);
+    }
+    let os = Os::current();
+    let prefix = match (&install.prefix, os) {
+        (Some(prefix), _) => Some(prefix.clone()),
+        (None, Os::Windows) => None,
+        (None, _) => locate::proton_prefix(def, &install.path),
+    };
+    ResolvedRoots::new(
+        &def.id,
+        &def.roots,
+        &RootSetup {
+            os,
+            game: &install.path,
+            host: &Folders::host(),
+            prefix: prefix.as_deref(),
+            set: &install.roots,
+        },
+    )
+}
+
+/// `path` made absolute, if it's a directory.
+fn existing_dir(path: &Path) -> Result<PathBuf> {
+    let path = path.canonicalize().at(path)?;
+    if !path.is_dir() {
+        return Err(Error::invalid(format!(
+            "{} isn't a directory",
+            path.display()
+        )));
+    }
+    Ok(path)
 }
 
 fn deploy_inputs(

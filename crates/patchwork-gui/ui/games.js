@@ -243,12 +243,34 @@ document.addEventListener("click", (e) => {
 });
 
 // Game settings, sent back to set_game_settings as a GameInstall (see
-// patchwork-core): the folder, how files are linked, and the deployer's
-// settings.
+// patchwork-core): the folder, how files are linked, the deployer's
+// settings, and where the game's other folders are.
 
 const settingsForm = $("#game-settings-form");
 /** The deployer's settings as last shown. */
 let deployerSettings = [];
+/** The game's other roots as last shown. */
+let rootSettings = [];
+
+const rootOrigins = { set: "", definition: "", prefix: " in the Wine prefix" };
+
+function rootField(root, set) {
+  const id = `game-settings-root-${root.id}`;
+  const name = `root-${root.id}`;
+  const found = root.path ? `Found${rootOrigins[root.origin] ?? ""}: ${root.path}` : root.problem;
+  return h(
+    "div",
+    { class: "field" },
+    h("label", { for: id }, root.id, " ", h("small", { class: "muted" }, `for ${root.allow.join(", ")}`)),
+    h(
+      "div",
+      { class: "row" },
+      h("input", { id, name, value: set ?? "", placeholder: root.path ?? "Not found", autocomplete: "off" }),
+      h("button", { type: "button", "data-browse": name }, "Browse…"),
+    ),
+    h("small", { class: "muted" }, root.origin === "set" ? "" : found),
+  );
+}
 
 $("#game-settings").addEventListener("click", async () => {
   const game = gameInfo(state.game);
@@ -265,6 +287,15 @@ $("#game-settings").addEventListener("click", async () => {
   deployerSettings = settings.deployer;
   $("#game-settings-deployer").replaceChildren(
     ...deployerSettings.map((s) => settingField(s, { idPrefix: "game-setting" })),
+  );
+  rootSettings = settings.roots;
+  const install = settings.install ?? {};
+  $("#game-settings-roots").hidden = rootSettings.length === 0;
+  $("#game-settings-prefix").hidden = !settings.usesPrefix;
+  settingsForm.elements.prefix.value = install.prefix ?? "";
+  settingsForm.elements.prefix.placeholder = settings.prefix ?? "Not found";
+  $("#game-settings-root-list").replaceChildren(
+    ...rootSettings.map((r) => rootField(r, install.roots?.[r.id])),
   );
   $("#game-settings-title").textContent = `${game.name} settings`;
   $("#game-settings-env").textContent = env?.summary ? `Installed: ${env.summary}` : "";
@@ -289,10 +320,17 @@ settingsForm.addEventListener("submit", async (e) => {
     const value = readSetting(settingsForm, setting);
     if (value != null) deployer[setting.key] = value;
   }
+  const roots = {};
+  for (const root of rootSettings) {
+    const value = settingsForm.elements[`root-${root.id}`].value.trim();
+    if (value) roots[root.id] = value;
+  }
   const settings = {
     path: settingsForm.elements.path.value,
     link: settingsForm.elements.link.value || null,
     deployer,
+    roots,
+    prefix: settingsForm.elements.prefix.value.trim() || null,
   };
   const submit = settingsForm.querySelector("[type=submit]");
   submit.disabled = true;
