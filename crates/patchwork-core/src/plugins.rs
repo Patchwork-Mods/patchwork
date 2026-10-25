@@ -123,7 +123,12 @@ impl LoadOrder {
         ordered.sort_by_key(|p| !p.plugin.master);
 
         let mut warnings = plugins.warnings;
-        warnings.extend(check(&ordered, &implicit, plugins.implicit.len(), plugins.limit));
+        warnings.extend(check(
+            &ordered,
+            &implicit,
+            plugins.implicit.len(),
+            plugins.limit,
+        ));
         Self {
             plugins: ordered,
             implicit: plugins.implicit,

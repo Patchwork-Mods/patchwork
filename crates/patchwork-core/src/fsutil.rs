@@ -1,5 +1,6 @@
 use std::fs::{self, File};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -8,14 +9,21 @@ use crate::error::IoContext;
 use crate::{Error, Result};
 
 /// Writes via a temporary file and a rename, so a crash never leaves a
-/// half-written state file behind.
+/// half-written state file behind. Each write gets its own temporary file,
+/// so two writing the same path at once can't rename each other's away.
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dir).at(dir)?;
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let tmp = dir.join(format!(".{name}.tmp"));
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
     fs::write(&tmp, contents).at(&tmp)?;
-    fs::rename(&tmp, path).at(path)
+    fs::rename(&tmp, path)
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })
+        .at(path)
 }
 
 /// Copies a directory and everything in it to `dst`, which must not exist.

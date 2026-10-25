@@ -53,7 +53,8 @@ export function renderSourceTabs(sources) {
     h("button", { role: "tab", "data-tab": key, onclick: () => go(() => selectTab(key)) }, label);
   $("#tabs").replaceChildren(
     tab("mods", "Mods"),
-    plugins ? tab("plugins", "Plugins") : null,
+    // replaceChildren would turn a null into a "null" text node
+    ...(plugins ? [tab("plugins", "Plugins")] : []),
     ...sources.map((s) => tab(s, sourceName(s))),
   );
   const still = state.tab === "plugins" ? plugins : sources.includes(state.tab);

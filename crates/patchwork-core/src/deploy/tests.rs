@@ -679,8 +679,14 @@ fn files_the_game_rewrites_are_put_back_and_restored() {
     let id = RootId::new("appdata").unwrap();
     let resolved =
         ResolvedRoots::game(&env.game).with_rewritten(id, &appdata, &["*.txt"], &["plugins.txt"]);
-    assert_eq!(resolved.check(&"appdata:Plugins.txt".parse().unwrap()), Ok(true));
-    assert_eq!(resolved.check(&"appdata:other.txt".parse().unwrap()), Ok(false));
+    assert_eq!(
+        resolved.check(&"appdata:Plugins.txt".parse().unwrap()),
+        Ok(true)
+    );
+    assert_eq!(
+        resolved.check(&"appdata:other.txt".parse().unwrap()),
+        Ok(false)
+    );
 
     let mut state = DeployState::empty("g", &roots);
     let rewritten = |env: &Env| Resolved {
