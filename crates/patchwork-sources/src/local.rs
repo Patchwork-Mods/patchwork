@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, ResolvedMod, Source, SourceContext,
+    ArtifactFormat, ArtifactLocation, ResolvedMod, Source, SourceContext, is_archive_name,
 };
 use patchwork_core::{Error, Result};
 
-/// Mods from the local filesystem: a folder, a `.zip`, or any other single
-/// file (deployed as-is).
+/// Mods from the local filesystem: a folder, an archive (zip, 7z or RAR), or
+/// any other single file (deployed as-is).
 pub struct LocalSource;
 
 #[async_trait]
@@ -34,11 +34,8 @@ impl Source for LocalSource {
             .map_err(|e| error(format!("{id}: {e}")))?;
         let format = if path.is_dir() {
             ArtifactFormat::Dir
-        } else if path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
-        {
-            ArtifactFormat::Zip
+        } else if is_archive_name(&path.to_string_lossy()) {
+            ArtifactFormat::Archive
         } else {
             ArtifactFormat::File
         };

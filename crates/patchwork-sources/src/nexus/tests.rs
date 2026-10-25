@@ -197,7 +197,7 @@ fn converts_api_response() {
     assert_eq!(resolved.id, "12604");
     assert_eq!(resolved.name, "SkyUI");
     assert_eq!(resolved.version.as_deref(), Some("5.2SE"));
-    assert_eq!(resolved.format, ArtifactFormat::Zip);
+    assert_eq!(resolved.format, ArtifactFormat::Archive);
     assert_eq!(
         resolved.artifact,
         ArtifactLocation::Source {

@@ -62,7 +62,7 @@ fn converts_api_response() {
     assert_eq!(resolved.id, "notnotnotswipez-MoreCompany");
     assert_eq!(resolved.name, "notnotnotswipez-MoreCompany");
     assert_eq!(resolved.version.as_deref(), Some("1.14.0"));
-    assert_eq!(resolved.format, ArtifactFormat::Zip);
+    assert_eq!(resolved.format, ArtifactFormat::Archive);
     assert_eq!(
         resolved.artifact,
         ArtifactLocation::Url {

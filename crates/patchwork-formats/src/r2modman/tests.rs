@@ -41,7 +41,7 @@ fn locked(source: &str, id: &str, version: &str, dependencies: &[&str]) -> Locke
         requested: None,
         version: Some(version.to_owned()),
         hash: ContentHash::of(id.as_bytes()),
-        format: ArtifactFormat::Zip,
+        format: ArtifactFormat::Archive,
         artifact: ArtifactLocation::Url {
             url: format!("https://example.com/{id}.zip"),
         },

@@ -31,6 +31,8 @@ pulldown-cmark = { version = "0.13.5", default-features = false, features = ["ht
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_norway = "0.9.42"
+# 0.21 and later need a newer Rust than rust-version above
+sevenz-rust2 = { version = "0.20.2", default-features = false, features = ["bzip2", "deflate", "ppmd"] }
 tauri = "2.12.4"
 tauri-build = "2.7.3"
 tauri-plugin-deep-link = "2.6.2"
@@ -43,6 +45,7 @@ thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread"] }
 toml = "1.1.6"
 unicode-normalization = "0.1.26"
+unrar-ng = { version = "0.7.7", default-features = false }
 uuid = {version = "1.28.0", features = ["serde", "v4"]}
 walkdir = "2.5.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

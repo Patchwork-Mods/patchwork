@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, ResolvedMod, Source, SourceContext,
+    ArtifactFormat, ArtifactLocation, ResolvedMod, Source, SourceContext, is_archive_name,
 };
 use patchwork_core::{Error, Result};
 
 /// Mods downloaded straight from a URL, as in `url:https://example.com/mod.zip`.
-/// A `.zip` is unpacked; anything else is deployed as a single file.
+/// A `.zip`, `.7z` or `.rar` is unpacked; anything else is deployed as a
+/// single file.
 ///
 /// Nothing checks whether what's at the URL changes, other than the lockfile's
 /// hash.
@@ -35,12 +36,14 @@ impl Source for UrlSource {
         }
         let artifact = ArtifactLocation::Url { url: id.to_owned() };
         let file_name = artifact.file_name();
-        let (stem, ext) = file_name.rsplit_once('.').unwrap_or((&file_name, ""));
+        let stem = file_name
+            .rsplit_once('.')
+            .map_or(&*file_name, |(stem, _)| stem);
         if stem.is_empty() {
             return Err(error(format!("{id} doesn't end in a file name")));
         }
-        let format = if ext.eq_ignore_ascii_case("zip") {
-            ArtifactFormat::Zip
+        let format = if is_archive_name(&file_name) {
+            ArtifactFormat::Archive
         } else {
             ArtifactFormat::File
         };

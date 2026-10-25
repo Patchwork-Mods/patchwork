@@ -28,12 +28,16 @@ async fn resolves_without_fetching() {
         .await
         .unwrap();
     assert_eq!(zip.name, "Cool.Mod");
-    assert_eq!(zip.format, ArtifactFormat::Zip);
+    assert_eq!(zip.format, ArtifactFormat::Archive);
     let pak = UrlSource
         .resolve(&ctx, "https://example.com/thing_P.pak", None)
         .await
         .unwrap();
     assert_eq!(pak.format, ArtifactFormat::File);
+    for archive in ["https://example.com/a.7z", "https://example.com/b.RAR"] {
+        let resolved = UrlSource.resolve(&ctx, archive, None).await.unwrap();
+        assert_eq!(resolved.format, ArtifactFormat::Archive, "{archive}");
+    }
 
     for bad in ["ftp://example.com/a.zip", "https://example.com/"] {
         assert!(UrlSource.resolve(&ctx, bad, None).await.is_err(), "{bad}");

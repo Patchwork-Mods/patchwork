@@ -9,7 +9,7 @@ fn locked(id: &str, version: &str, requested: bool, requires: &[(&str, &str)]) -
         requested: requested.then(|| version.to_owned()),
         version: Some(version.to_owned()),
         hash: ContentHash::of(id.as_bytes()),
-        format: ArtifactFormat::Zip,
+        format: ArtifactFormat::Archive,
         artifact: ArtifactLocation::Url {
             url: format!("https://example.com/{id}.zip"),
         },

@@ -17,11 +17,13 @@ keyring.workspace = true
 reqwest = "0.13.5"
 serde.workspace = true
 serde_json.workspace = true
+sevenz-rust2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml.workspace = true
 unicode-normalization.workspace = true
+unrar-ng.workspace = true
 uuid.workspace = true
 walkdir.workspace = true
 zip.workspace = true

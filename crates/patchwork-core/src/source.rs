@@ -56,8 +56,11 @@ impl ArtifactLocation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ArtifactFormat {
-    /// Unpacked into a directory tree.
-    Zip,
+    /// An archive that's unpacked into a directory tree: a zip, 7z or RAR,
+    /// told apart by its contents. Saved as `zip`, which is all it used to
+    /// be, so lockfiles from then still read the same.
+    #[serde(rename = "zip", alias = "archive")]
+    Archive,
     /// A directory, copied as-is.
     Dir,
     /// A single file that's deployed as it is, like a `.pak` or `.ftl`.
@@ -396,3 +399,11 @@ pub fn url_parts(url: &str) -> Option<(&str, Vec<&str>)> {
 
 #[cfg(test)]
 mod tests;
+
+/// Whether a file name looks like an archive patchwork can unpack.
+pub fn is_archive_name(name: &str) -> bool {
+    let ext = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+    ["zip", "7z", "rar"]
+        .iter()
+        .any(|a| ext.eq_ignore_ascii_case(a))
+}

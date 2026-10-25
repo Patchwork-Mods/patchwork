@@ -166,7 +166,7 @@ fn lock(entries: &[(&str, &[&str])]) -> Lockfile {
             requested: None,
             version: None,
             hash: ContentHash::of(id.as_bytes()),
-            format: ArtifactFormat::Zip,
+            format: ArtifactFormat::Archive,
             artifact: ArtifactLocation::Url {
                 url: format!("https://example.com/{id}.zip"),
             },

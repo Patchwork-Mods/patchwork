@@ -1,5 +1,4 @@
-use std::fs::{self, File};
-use std::io;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::deploy::ModFile;
@@ -39,14 +38,14 @@ impl Store {
     /// the directory for directory mods.
     pub fn path(&self, hash: &ContentHash, format: ArtifactFormat) -> PathBuf {
         match format {
-            ArtifactFormat::Zip | ArtifactFormat::File => self.blob(hash),
+            ArtifactFormat::Archive | ArtifactFormat::File => self.blob(hash),
             ArtifactFormat::Dir => self.tree(hash),
         }
     }
 
     pub fn contains(&self, hash: &ContentHash, format: ArtifactFormat) -> bool {
         match format {
-            ArtifactFormat::Zip | ArtifactFormat::File => self.blob(hash).is_file(),
+            ArtifactFormat::Archive | ArtifactFormat::File => self.blob(hash).is_file(),
             ArtifactFormat::Dir => self.tree(hash).is_dir(),
         }
     }
@@ -54,7 +53,7 @@ impl Store {
     /// Copies a local artifact into the store.
     pub fn ingest_path(&self, path: &Path, format: ArtifactFormat) -> Result<ContentHash> {
         match format {
-            ArtifactFormat::Zip | ArtifactFormat::File => self.ingest_file(path),
+            ArtifactFormat::Archive | ArtifactFormat::File => self.ingest_file(path),
             ArtifactFormat::Dir => self.ingest_dir(path),
         }
     }
@@ -111,11 +110,11 @@ impl Store {
                 }]);
             }
             ArtifactFormat::Dir => self.tree(hash),
-            ArtifactFormat::Zip => {
+            ArtifactFormat::Archive => {
                 let tree = self.tree(hash);
                 if !tree.is_dir() {
                     let tmp = self.scratch(&tree)?;
-                    extract_zip(&self.blob(hash), &tmp)?;
+                    unpack::unpack(&self.blob(hash), &tmp)?;
                     fs::rename(&tmp, &tree).at(&tree)?;
                 }
                 tree
@@ -172,26 +171,7 @@ fn list_tree(root: &Path) -> Result<Vec<(RelPath, PathBuf)>> {
     Ok(files)
 }
 
-fn extract_zip(archive: &Path, dest: &Path) -> Result<()> {
-    let bad_zip = |e: zip::result::ZipError| Error::parse(archive, e);
-    let file = File::open(archive).at(archive)?;
-    let mut zip = zip::ZipArchive::new(file).map_err(bad_zip)?;
-    for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(bad_zip)?;
-        if entry.is_dir() {
-            continue;
-        }
-        // Validated ourselves rather than with `enclosed_name`, because plenty
-        // of mod archives use `\` as the separator.
-        let rel = RelPath::new(entry.name())
-            .map_err(|e| Error::parse(archive, format!("bad entry: {e}")))?;
-        let target = rel.under(dest);
-        create_parent(&target)?;
-        let mut out = File::create(&target).at(&target)?;
-        io::copy(&mut entry, &mut out).at(&target)?;
-    }
-    Ok(())
-}
+mod unpack;
 
 #[cfg(test)]
 mod tests;
