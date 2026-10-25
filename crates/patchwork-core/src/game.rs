@@ -55,6 +55,8 @@ pub struct GameDef {
 /// # The only files that may go here, which every root but the game's own
 /// # has to say.
 /// allow = ["plugins.txt", "loadorder.txt"]
+/// # Files among those that the game writes to itself.
+/// rewritten = ["plugins.txt"]
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -118,6 +120,12 @@ pub struct RootDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub macos: Option<RootPath>,
     pub allow: Vec<FilePattern>,
+    /// Files the game writes to itself, like the load order Skyrim keeps.
+    /// What it changes them to doesn't count as the user's: deploying again
+    /// replaces it, and undeploying puts back the file from before the
+    /// first deploy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rewritten: Vec<FilePattern>,
 }
 
 /// Where a root is: a [`Folder`] and, usually, a path inside it, written

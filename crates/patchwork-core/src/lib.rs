@@ -25,6 +25,7 @@ pub mod lock;
 pub mod matching;
 pub mod order;
 pub mod paths;
+pub mod plugins;
 pub mod profile;
 pub mod registry;
 pub mod relpath;

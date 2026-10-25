@@ -11,6 +11,7 @@ import { refresh } from "./profile.js";
 // these only wire up their parts of the page
 import "./games.js";
 import "./browse.js";
+import "./plugins.js";
 import "./toolbar.js";
 import "./deploy.js";
 import "./downloads.js";

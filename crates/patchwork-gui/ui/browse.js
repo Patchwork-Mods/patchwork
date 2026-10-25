@@ -6,6 +6,7 @@ import { renderProfile } from "./profile.js";
 import { cardMain } from "./mods.js";
 import { refreshDetails } from "./details.js";
 import { go } from "./nav.js";
+import { openPlugins } from "./plugins.js";
 
 const SOURCE_NAMES = { thunderstore: "Thunderstore", nexus: "Nexus Mods" };
 const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
@@ -13,15 +14,21 @@ const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice
 /** The search waiting for the user to stop typing. */
 let typing;
 
-/** Opens the Mods tab ("mods") or a source's tab; source tabs all share #tab-browse. */
+/**
+ * Opens the Mods tab ("mods"), the Plugins tab ("plugins") or a source's
+ * tab; source tabs all share #tab-browse.
+ */
 export function selectTab(key) {
-  state.source = key === "mods" ? null : key;
+  state.tab = key;
+  state.source = key === "mods" || key === "plugins" ? null : key;
   for (const tab of document.querySelectorAll("#tabs [role=tab]")) {
-    tab.setAttribute("aria-selected", String((tab.dataset.source ?? "mods") === key));
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
   }
   $("#tab-mods").hidden = key !== "mods";
-  $("#tab-browse").hidden = key === "mods";
+  $("#tab-plugins").hidden = key !== "plugins";
+  $("#tab-browse").hidden = !state.source;
   clearTimeout(typing);
+  if (key === "plugins") openPlugins();
   if (state.source) {
     // the search form is shared, so put back what this tab last searched for
     const last = state.searches[key];
@@ -36,19 +43,21 @@ export function selectTab(key) {
   }
 }
 
-/** Replaces the source tabs, staying on the open one if it's still there. */
+/**
+ * Replaces the tabs after Mods, staying on the open one if it's still there.
+ * The Plugins tab is there for profiles whose game has plugins.
+ */
 export function renderSourceTabs(sources) {
+  const plugins = !!state.profile?.hasPlugins;
+  const tab = (key, label) =>
+    h("button", { role: "tab", "data-tab": key, onclick: () => go(() => selectTab(key)) }, label);
   $("#tabs").replaceChildren(
-    h("button", { role: "tab", onclick: () => go(() => selectTab("mods")) }, "Mods"),
-    ...sources.map((s) =>
-      h(
-        "button",
-        { role: "tab", "data-source": s, onclick: () => go(() => selectTab(s)) },
-        sourceName(s),
-      ),
-    ),
+    tab("mods", "Mods"),
+    plugins ? tab("plugins", "Plugins") : null,
+    ...sources.map((s) => tab(s, sourceName(s))),
   );
-  selectTab(sources.includes(state.source) ? state.source : "mods");
+  const still = state.tab === "plugins" ? plugins : sources.includes(state.tab);
+  selectTab(still ? state.tab : "mods");
 }
 
 /** Each source's latest search, so an older one finishing late is ignored. */

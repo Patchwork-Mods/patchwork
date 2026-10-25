@@ -12,12 +12,13 @@ use patchwork_core::locate::Locator;
 use patchwork_core::lock::mod_key;
 use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
+use patchwork_core::plugins::LoadOrder;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::update;
 use patchwork_core::{GameInstall, ImportOptions, Patchwork};
-use patchwork_deployers::{RulesDeployer, SmfDeployer};
+use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
 
@@ -126,6 +127,10 @@ enum Command {
         #[command(flatten)]
         to: MoveTo,
     },
+    /// Put the plugins in the profile's mods (Skyrim's .esp, .esm and .esl
+    /// files) in the order the game loads them.
+    #[command(subcommand)]
+    Plugins(PluginsCommand),
     /// Sort the profile's mods. Mods that tie keep their order.
     Sort {
         /// name, source, tags, dependencies, dependents or updated, optionally with
@@ -211,6 +216,24 @@ impl MoveTo {
             unreachable!("clap requires one of them")
         }
     }
+}
+
+#[derive(Subcommand)]
+enum PluginsCommand {
+    /// List the plugins in load order, from the profile's locked mods.
+    List,
+    /// Move a plugin in the load order. Masters (.esm and .esl files, and
+    /// plugins flagged as them) always load before the rest, so they stay
+    /// above them.
+    Move {
+        name: String,
+        #[command(flatten)]
+        to: MoveTo,
+    },
+    /// Load a plugin.
+    Enable { name: String },
+    /// Leave a plugin's file in place but don't load it.
+    Disable { name: String },
 }
 
 #[derive(Subcommand)]
@@ -348,6 +371,7 @@ async fn run(cli: Cli) -> Result<()> {
         .source(Nexus::default())
         .source(UrlSource)
         .deployer(RulesDeployer)
+        .deployer(BethesdaDeployer)
         .deployer(SmfDeployer)
         .format(Archive)
         .format(UrlList)
@@ -555,6 +579,42 @@ async fn run(cli: Cli) -> Result<()> {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
             let index = pw.move_mod(&profile, &name, &to.position())?;
             println!("moved {name} to {} of {}", index + 1, loaded.mods.len());
+        }
+        Command::Plugins(command) => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let order = || -> Result<LoadOrder> {
+                pw.load_order(&profile)?.with_context(|| {
+                    format!("{} doesn't have plugins to put in order", loaded.game)
+                })
+            };
+            match command {
+                PluginsCommand::List => {
+                    let order = order()?;
+                    if order.plugins.is_empty() {
+                        println!(
+                            "none of {}'s locked mods have plugins; lock it to include mods added since",
+                            loaded.label()
+                        );
+                    }
+                    print_plugins(&order);
+                }
+                PluginsCommand::Move { name, to } => {
+                    let index = pw.move_plugin(&profile, &name, &to.position())?;
+                    let order = order()?;
+                    println!("moved {name} to {} of {}", index + 1, order.plugins.len());
+                    for warning in &order.warnings {
+                        eprintln!("warning: {warning}");
+                    }
+                }
+                PluginsCommand::Enable { name } => {
+                    pw.set_plugin_enabled(&profile, &name, true)?;
+                    println!("enabled {name}");
+                }
+                PluginsCommand::Disable { name } => {
+                    pw.set_plugin_enabled(&profile, &name, false)?;
+                    println!("disabled {name}");
+                }
+            }
         }
         Command::Sort { by, tags, dry_run } => {
             let (profile, _) = selected(&pw, &cli.profile)?;
@@ -1219,6 +1279,30 @@ fn print_mods<'a>(mods: impl IntoIterator<Item = (usize, &'a ProfileMod)>) {
             m.source,
             m.id
         );
+    }
+}
+
+fn print_plugins(order: &LoadOrder) {
+    if !order.implicit.is_empty() {
+        println!("always loaded first: {}", order.implicit.join(", "));
+    }
+    let width = order.plugins.len().to_string().len();
+    for (i, p) in order.plugins.iter().enumerate() {
+        let mark = if p.enabled { 'x' } else { ' ' };
+        let kind = match (p.plugin.master, p.plugin.light) {
+            (_, true) => " (light)",
+            (true, false) => " (master)",
+            _ => "",
+        };
+        println!(
+            "{:>width$}. [{mark}] {}{kind}  ({})",
+            i + 1,
+            p.plugin.name,
+            p.plugin.mod_name
+        );
+    }
+    for warning in &order.warnings {
+        eprintln!("warning: {warning}");
     }
 }
 

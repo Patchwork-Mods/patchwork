@@ -317,6 +317,7 @@ pub struct ResolvedRoot {
     pub origin: RootOrigin,
     pub allow: Vec<FilePattern>,
     matcher: GlobSet,
+    rewritten: GlobSet,
 }
 
 /// Every root a target has, with what may go in each one.
@@ -337,7 +338,8 @@ impl ResolvedRoots {
                     Some(path) => (Ok(path.clone()), RootOrigin::Set),
                     None => locate(game, id, def, setup),
                 };
-                (id.clone(), ResolvedRoot::new(path, origin, &def.allow))
+                let root = ResolvedRoot::new(path, origin, &def.allow, &def.rewritten);
+                (id.clone(), root)
             })
             .collect();
         Self {
@@ -362,12 +364,31 @@ impl ResolvedRoots {
     }
 
     /// Adds a root at `path` that only files matching `allow` may go in.
-    pub fn with(mut self, id: RootId, path: &Path, allow: &[&str]) -> Self {
-        let allow = allow
-            .iter()
-            .map(|a| FilePattern::try_from(a.to_string()).expect("valid pattern"))
-            .collect::<Vec<_>>();
-        let root = ResolvedRoot::new(Ok(path.to_owned()), RootOrigin::Definition, &allow);
+    pub fn with(self, id: RootId, path: &Path, allow: &[&str]) -> Self {
+        self.with_rewritten(id, path, allow, &[])
+    }
+
+    /// [`ResolvedRoots::with`], where the game rewrites files matching
+    /// `rewritten` itself.
+    pub fn with_rewritten(
+        mut self,
+        id: RootId,
+        path: &Path,
+        allow: &[&str],
+        rewritten: &[&str],
+    ) -> Self {
+        let patterns = |globs: &[&str]| {
+            globs
+                .iter()
+                .map(|a| FilePattern::try_from(a.to_string()).expect("valid pattern"))
+                .collect::<Vec<_>>()
+        };
+        let root = ResolvedRoot::new(
+            Ok(path.to_owned()),
+            RootOrigin::Definition,
+            &patterns(allow),
+            &patterns(rewritten),
+        );
         self.others.insert(id, root);
         self
     }
@@ -386,11 +407,12 @@ impl ResolvedRoots {
             })
     }
 
-    /// Whether a file can go to `dest`. `Err` with whether the deployer was
-    /// at fault for putting it there, and why it can't.
-    pub(crate) fn check(&self, dest: &Dest) -> std::result::Result<(), (bool, String)> {
+    /// Whether a file can go to `dest`, and if so whether the game rewrites
+    /// it. `Err` with whether the deployer was at fault for putting it
+    /// there, and why it can't.
+    pub(crate) fn check(&self, dest: &Dest) -> std::result::Result<bool, (bool, String)> {
         if dest.root.is_game() {
-            return Ok(());
+            return Ok(false);
         }
         let Some(root) = self.others.get(&dest.root) else {
             return Err((
@@ -425,7 +447,7 @@ impl ResolvedRoots {
                 ),
             ));
         }
-        Ok(())
+        Ok(root.rewritten.is_match(dest.path.as_str()))
     }
 }
 
@@ -434,25 +456,31 @@ impl ResolvedRoot {
         path: std::result::Result<PathBuf, String>,
         origin: RootOrigin,
         allow: &[FilePattern],
+        rewritten: &[FilePattern],
     ) -> Self {
-        let mut set = GlobSetBuilder::new();
-        for pattern in allow {
-            // checked when the definition is loaded
-            if let Ok(glob) = GlobBuilder::new(pattern.as_str())
-                .case_insensitive(true)
-                .literal_separator(true)
-                .build()
-            {
-                set.add(glob);
-            }
-        }
         Self {
             path,
             origin,
             allow: allow.to_vec(),
-            matcher: set.build().unwrap_or_else(|_| GlobSet::empty()),
+            matcher: glob_set(allow),
+            rewritten: glob_set(rewritten),
         }
     }
+}
+
+fn glob_set(patterns: &[FilePattern]) -> GlobSet {
+    let mut set = GlobSetBuilder::new();
+    for pattern in patterns {
+        // checked when the definition is loaded
+        if let Ok(glob) = GlobBuilder::new(pattern.as_str())
+            .case_insensitive(true)
+            .literal_separator(true)
+            .build()
+        {
+            set.add(glob);
+        }
+    }
+    set.build().unwrap_or_else(|_| GlobSet::empty())
 }
 
 /// Where the game definition says root `id` is, on this machine.

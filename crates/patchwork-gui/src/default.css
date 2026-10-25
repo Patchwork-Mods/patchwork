@@ -930,7 +930,8 @@ button.link {
   width: 150px;
 }
 
-#mod-problems li {
+#mod-problems li,
+#plugin-problems li {
   padding: 6px 8px;
 }
 
@@ -1340,6 +1341,39 @@ dialog::backdrop {
 
 .warnings li {
   color: var(--pw-danger);
+}
+
+/* The Plugins tab; see plugins.js. Masters and the rest are two lists, each
+   rearranged within itself. */
+.plugin-group {
+  margin: 0;
+  font-size: 13px;
+  color: var(--pw-muted);
+}
+
+.plugin-list {
+  position: relative;
+}
+
+.plugin-list>li.dragging {
+  position: relative;
+  z-index: 1;
+  background: var(--pw-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  will-change: transform;
+}
+
+.plugin-row .row-head {
+  cursor: default;
+}
+
+.plugin-kind {
+  margin-left: 6px;
+  font-weight: 400;
+}
+
+.plugin-row .muted {
+  font-size: 12px;
 }
 
 /* Update and changelog dialogs. Changelogs are markdown, so they get

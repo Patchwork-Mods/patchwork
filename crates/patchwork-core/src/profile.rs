@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::Error;
 use crate::compat::GameVersions;
+use crate::plugins::PluginEntry;
 
 /// Schema 2 added `id` and `name`; profiles used to be identified by their
 /// directory, `<game>/<name>`.
@@ -29,6 +30,10 @@ pub struct Profile {
     /// In load order: later mods win when two provide the same file.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
+    /// The plugins whose place in the load order the user has picked, for
+    /// games that have them; see [`crate::plugins`].
+    #[serde(default, rename = "plugin", skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<PluginEntry>,
 }
 
 impl Profile {
@@ -40,6 +45,7 @@ impl Profile {
             name: name.to_owned(),
             hidden_tags: Vec::new(),
             mods: Vec::new(),
+            plugins: Vec::new(),
         }
     }
 

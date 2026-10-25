@@ -32,6 +32,7 @@ fn placement(env: &Env, dst: &str, contents: &str, mod_name: &str) -> Resolved {
         dst: dst.parse().unwrap(),
         src,
         mod_name: mod_name.to_owned(),
+        rewritten: false,
     }
 }
 
@@ -665,6 +666,44 @@ fn other_roots_only_take_allowed_files_in_folders_that_exist() {
         .check(&"appdata:plugins.txt".parse().unwrap())
         .unwrap_err();
     assert!(!blame && why.contains("doesn't exist"), "{why}");
+}
+
+#[test]
+fn files_the_game_rewrites_are_put_back_and_restored() {
+    let env = env();
+    let roots = with_appdata(&env);
+    let appdata = roots
+        .get(&RootId::new("appdata").unwrap())
+        .unwrap()
+        .to_owned();
+    let id = RootId::new("appdata").unwrap();
+    let resolved =
+        ResolvedRoots::game(&env.game).with_rewritten(id, &appdata, &["*.txt"], &["plugins.txt"]);
+    assert_eq!(resolved.check(&"appdata:Plugins.txt".parse().unwrap()), Ok(true));
+    assert_eq!(resolved.check(&"appdata:other.txt".parse().unwrap()), Ok(false));
+
+    let mut state = DeployState::empty("g", &roots);
+    let rewritten = |env: &Env| Resolved {
+        rewritten: true,
+        ..placement(env, "appdata:plugins.txt", "ours", "built")
+    };
+    deploy(&env, &mut state, vec![rewritten(&env)]);
+    let read = |p: PathBuf| fs::read_to_string(p).unwrap();
+    assert_eq!(read(appdata.join("plugins.txt")), "ours");
+
+    // The game rewriting it doesn't make what it wrote the original, and
+    // deploying again puts ours back.
+    fs::write(appdata.join("plugins.txt"), "the game's").unwrap();
+    let again = deploy(&env, &mut state, vec![rewritten(&env)]);
+    assert_eq!(again.ops.len(), 1);
+    assert_eq!(read(appdata.join("plugins.txt")), "ours");
+    assert!(deploy(&env, &mut state, vec![rewritten(&env)]).is_noop());
+
+    // Undeploying removes it even after the game's changed it.
+    fs::write(appdata.join("plugins.txt"), "the game's").unwrap();
+    deploy(&env, &mut state, Vec::new());
+    assert_eq!(read(appdata.join("plugins.txt")), "original");
+    assert!(state.files.is_empty());
 }
 
 #[cfg(unix)]

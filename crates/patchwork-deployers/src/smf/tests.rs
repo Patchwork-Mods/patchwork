@@ -210,6 +210,7 @@ impl Env {
             out: &out,
             cache: &cache,
             reporter: &Silent,
+            load_order: None,
         };
         SmfDeployer.build(&ctx, &build, mods)
     }

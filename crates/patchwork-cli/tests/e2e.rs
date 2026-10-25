@@ -601,3 +601,133 @@ fn mods_can_be_moved_and_sorted() {
             .contains("unknown sort")
     );
 }
+
+/// A Skyrim plugin's bytes: just the header record, flagged as a master
+/// if `master`, needing `masters`.
+fn plugin(master: bool, masters: &[&str]) -> Vec<u8> {
+    let mut data = Vec::new();
+    for m in masters {
+        data.extend_from_slice(b"MAST");
+        data.extend_from_slice(&(m.len() as u16 + 1).to_le_bytes());
+        data.extend_from_slice(m.as_bytes());
+        data.push(0);
+    }
+    let mut bytes = b"TES4".to_vec();
+    bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&(master as u32).to_le_bytes());
+    bytes.extend_from_slice(&[0; 12]);
+    bytes.extend_from_slice(&data);
+    bytes
+}
+
+#[test]
+fn skyrim_plugins_load_in_the_order_set() {
+    let env = Env::new();
+    let game = env.path("Skyrim Special Edition");
+    fs::create_dir_all(game.join("Data")).unwrap();
+    fs::write(game.join("Data/Skyrim.esm"), plugin(true, &[])).unwrap();
+    let appdata = env.path("AppData/Local/Skyrim Special Edition");
+    fs::create_dir_all(&appdata).unwrap();
+    fs::write(appdata.join("plugins.txt"), "*Mine.esp\r\n").unwrap();
+    env.run(&["game", "set-path", "skyrim-se", game.to_str().unwrap()]);
+    env.run(&[
+        "game",
+        "set",
+        "skyrim-se",
+        "root.appdata",
+        appdata.to_str().unwrap(),
+    ]);
+    env.run(&["profile", "new", "skyrim-se/main"]);
+
+    for (name, files) in [
+        ("base", vec![("Base.esm", plugin(true, &["Skyrim.esm"]))]),
+        (
+            "patches",
+            vec![
+                (
+                    "Data/Patch.esp",
+                    plugin(false, &["Skyrim.esm", "Base.esm", "Required.esp"]),
+                ),
+                ("Data/Required.esp", plugin(false, &[])),
+            ],
+        ),
+    ] {
+        let dir = env.path(&format!("mods/{name}"));
+        for (rel, bytes) in files {
+            let path = dir.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        env.run(&["add", dir.to_str().unwrap(), "--name", name]);
+    }
+    env.run(&["lock"]);
+    let order = |env: &Env| -> Vec<String> {
+        env.run(&["plugins", "list"])
+            .lines()
+            .filter(|l| !l.starts_with("always"))
+            .map(|l| l.split("  (").next().unwrap().trim().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        order(&env),
+        ["1. [x] Base.esm (master)", "2. [x] Patch.esp", "3. [x] Required.esp"]
+    );
+
+    // Patch.esp needs Required.esp first
+    let out = Command::new(env!("CARGO_BIN_EXE_patchwork"))
+        .args(["plugins", "list"])
+        .env("PATCHWORK_HOME", env.path("home"))
+        .output()
+        .unwrap();
+    let warnings = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        warnings.contains("needs Required.esp, which loads after it"),
+        "{warnings}"
+    );
+
+    assert!(
+        env.run(&["plugins", "move", "Required.esp", "--before", "Patch.esp"])
+            .contains("to 2 of 3")
+    );
+    // masters stay on top
+    assert!(
+        env.run(&["plugins", "move", "Required.esp", "--top"])
+            .contains("to 2 of 3")
+    );
+    env.run(&["plugins", "disable", "patch.esp"]);
+    assert_eq!(
+        order(&env),
+        ["1. [x] Base.esm (master)", "2. [x] Required.esp", "3. [ ] Patch.esp"]
+    );
+    assert!(read(env.profile_dir().join("profile.toml")).contains("[[plugin]]"));
+
+    env.run(&["deploy"]);
+    assert!(game.join("Data/Patch.esp").is_file());
+    let lines = |text: String| -> Vec<String> {
+        text.lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(
+        lines(read(appdata.join("plugins.txt"))),
+        ["*Base.esm", "*Required.esp", "Patch.esp"]
+    );
+    assert!(env.run(&["deploy"]).contains("nothing to do"));
+
+    // Changing the order makes the deploy stale, and the game rewriting the
+    // file is undone by deploying again.
+    env.run(&["plugins", "enable", "Patch.esp"]);
+    fs::write(appdata.join("plugins.txt"), "*Base.esm\r\n").unwrap();
+    env.run(&["deploy"]);
+    assert_eq!(
+        lines(read(appdata.join("plugins.txt"))),
+        ["*Base.esm", "*Required.esp", "*Patch.esp"]
+    );
+
+    // the game's own load order comes back, even after the game's changed ours
+    fs::write(appdata.join("plugins.txt"), "*Base.esm\r\n").unwrap();
+    env.run(&["undeploy"]);
+    assert_eq!(read(appdata.join("plugins.txt")), "*Mine.esp\r\n");
+    assert!(!game.join("Data/Patch.esp").exists());
+}

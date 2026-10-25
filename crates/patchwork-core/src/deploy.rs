@@ -16,6 +16,7 @@ use crate::error::IoContext;
 use crate::event::{Event, Reporter};
 use crate::game::{GameDef, LinkMethod};
 use crate::hash::ContentHash;
+use crate::plugins::{LoadOrder, Plugins};
 use crate::registry::Registry;
 use crate::relpath::RelPath;
 use crate::settings::SettingSpec;
@@ -91,6 +92,8 @@ pub struct Resolved {
     pub dst: Dest,
     pub src: PathBuf,
     pub mod_name: String,
+    /// Whether the game rewrites the file itself; see [`RootDef::rewritten`](crate::game::RootDef::rewritten).
+    pub rewritten: bool,
 }
 
 /// Finds where each placement's file is, checking that it's one of `mods`'
@@ -119,11 +122,11 @@ pub fn resolve(
     placements
         .into_iter()
         .map(|p| {
-            match roots.check(&p.dst) {
-                Ok(_) => {}
+            let rewritten = match roots.check(&p.dst) {
+                Ok(rewritten) => rewritten,
                 Err((true, message)) => return Err(error(message)),
                 Err((false, message)) => return Err(Error::invalid(message)),
-            }
+            };
             let src = match &p.src {
                 Src::Mod { hash, rel } => files
                     .get(&(*hash, rel))
@@ -149,6 +152,7 @@ pub fn resolve(
                 dst: p.dst,
                 src,
                 mod_name: p.mod_name,
+                rewritten,
             })
         })
         .collect()
@@ -180,6 +184,19 @@ pub trait Deployer: Send + Sync {
     /// them.
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState>;
 
+    /// The plugins in `mods` that the game loads in an order the user picks
+    /// (see [`crate::plugins`]), or `None` for games without them, which is
+    /// most. Like [`Deployer::build`], this may read the game's files and
+    /// the mods' own, but not write anything.
+    fn plugins(
+        &self,
+        _ctx: &DeployContext<'_>,
+        _game: &GameFiles<'_>,
+        _mods: &[InstalledMod],
+    ) -> Result<Option<Plugins>> {
+        Ok(None)
+    }
+
     /// Whether [`Deployer::build`] has anything to do for this game. Most
     /// deployers only ever place mod files and leave this `false`.
     fn builds(&self, _ctx: &DeployContext<'_>) -> bool {
@@ -198,7 +215,8 @@ pub trait Deployer: Send + Sync {
     /// The result is kept and reused for as long as the deploy's inputs stay
     /// the same, so it has to depend only on `mods`, the game definition and
     /// whatever [`Deployer::fingerprint`] covers. (The game definition here
-    /// includes the user's settings.)
+    /// includes the user's settings, and the profile's plugin order is
+    /// covered too.)
     fn build(
         &self,
         _ctx: &DeployContext<'_>,
@@ -231,6 +249,9 @@ pub struct BuildContext<'a> {
     /// of patchwork's cache it can be deleted at any time.
     pub cache: &'a Path,
     pub reporter: &'a dyn Reporter,
+    /// The order to load the mods' plugins in, if
+    /// [`Deployer::plugins`] found that the game has them.
+    pub load_order: Option<&'a LoadOrder>,
 }
 
 /// The game's own files, as they are without anything patchwork deployed:
@@ -419,6 +440,10 @@ pub struct DeployedFile {
     /// Where the game's original file was moved to, if this replaced one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<PathBuf>,
+    /// The game rewrites this file itself, so it's replaced and removed
+    /// whatever it's been changed to since.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rewritten: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -431,6 +456,7 @@ pub enum DeployOp {
         dst: Dest,
         src: PathBuf,
         mod_name: String,
+        rewritten: bool,
     },
 }
 
@@ -494,19 +520,28 @@ pub fn plan(
 
     let mut unchanged = 0;
     for (dst, placement) in wanted {
-        match prev.files.get(&dst) {
-            Some(existing) if existing.src == placement.src => unchanged += 1,
-            Some(_) => {}
-            None if roots.path(&dst)?.symlink_metadata().is_ok() => {
-                ops.push(DeployOp::Backup { dst: dst.clone() });
+        let current = match prev.files.get(&dst) {
+            // A file the game rewrites is put back if it has been.
+            Some(existing) if placement.rewritten => {
+                existing.src == placement.src
+                    && !changed_since_deployed(&roots.path(&dst)?, existing)
             }
-            None => {}
-        }
-        if prev.files.get(&dst).is_none_or(|e| e.src != placement.src) {
+            Some(existing) => existing.src == placement.src,
+            None => {
+                if roots.path(&dst)?.symlink_metadata().is_ok() {
+                    ops.push(DeployOp::Backup { dst: dst.clone() });
+                }
+                false
+            }
+        };
+        if current {
+            unchanged += 1;
+        } else {
             ops.push(DeployOp::Place {
                 dst,
                 src: placement.src,
                 mod_name: placement.mod_name,
+                rewritten: placement.rewritten,
             });
         }
     }
@@ -626,14 +661,23 @@ pub fn apply(
                         src: PathBuf::new(),
                         hash: ContentHash::of(b""),
                         backup: Some(to),
+                        rewritten: false,
                     },
                 );
             }
-            DeployOp::Place { dst, src, mod_name } => {
+            DeployOp::Place {
+                dst,
+                src,
+                mod_name,
+                rewritten,
+            } => {
                 let target = roots.path(dst)?;
                 create_dirs(roots, dst, &mut state.created_dirs)?;
                 let mut backup = state.files.get(dst).and_then(|e| e.backup.clone());
-                if let Some(entry) = state.files.get(dst)
+                // What the game made of a file it rewrites is never its
+                // original; that was backed up before the first deploy.
+                if !rewritten
+                    && let Some(entry) = state.files.get(dst)
                     && changed_since_deployed(&target, entry)
                 {
                     // Most likely a game update put its own file back, which
@@ -666,6 +710,7 @@ pub fn apply(
                         src: src.clone(),
                         hash: ContentHash::of_file(src)?,
                         backup,
+                        rewritten: *rewritten,
                     },
                 );
             }
@@ -692,7 +737,7 @@ fn backup_path(backups: &Path, dst: &Dest) -> PathBuf {
 /// was changed after deployment.
 fn remove(target: &Path, dst: &Dest, entry: &DeployedFile) -> Result<Option<String>> {
     if target.symlink_metadata().is_ok() {
-        if ContentHash::of_file(target).ok() != Some(entry.hash) {
+        if !entry.rewritten && ContentHash::of_file(target).ok() != Some(entry.hash) {
             return Ok(Some(format!(
                 "{dst} was changed after it was deployed, so it was left in place{}",
                 match &entry.backup {

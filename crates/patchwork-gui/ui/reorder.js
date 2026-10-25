@@ -1,6 +1,7 @@
-// Moving the open profile's mods around by hand, by dragging them by their
-// handles or pressing the arrow keys on one. The mods around the one being
-// moved slide out of its way, and it's saved once it's let go.
+// Moving the open profile's mods (or, on the Plugins tab, its plugins)
+// around by hand, by dragging them by their handles or pressing the arrow
+// keys on one. The ones around the one being moved slide out of its way, and
+// it's saved once it's let go.
 
 import { $, h } from "./dom.js";
 import { run, state, status } from "./state.js";
@@ -17,17 +18,27 @@ export const dragging = () => drag != null;
 const SCROLL_EDGE = 48;
 const SCROLL_SPEED = 16;
 
-/** The handle that moves a mod's card or row. */
-export function dragHandle(m) {
+/**
+ * The handle that moves a mod's card or row, or with `save`, some other
+ * item in a list. `save(after, before, name)` is given the list's
+ * `data-name`s once `name` has moved, and what they were before.
+ */
+export function dragHandle(
+  m,
+  {
+    save = saveMods,
+    title = "Drag to move in the load order. Mods further down win when two change the same file.",
+  } = {},
+) {
   return h(
     "button",
     {
       type: "button",
       class: "drag-handle",
-      title: "Drag to move in the load order. Mods further down win when two change the same file.",
+      title,
       "aria-label": `Move ${m.name}`,
-      onpointerdown: startDrag,
-      onkeydown: moveByKey,
+      onpointerdown: (e) => startDrag(e, save),
+      onkeydown: (e) => moveByKey(e, save),
     },
     gripIcon(),
   );
@@ -56,7 +67,7 @@ const names = (list) => [...list.children].map((el) => el.dataset.name);
 // drawn wherever the pointer has it, so the gap it leaves shows where it'll
 // land. Hovering it over another mod moves it there in the page.
 
-function startDrag(e) {
+function startDrag(e, save) {
   if (e.button !== 0 || drag || saving) return;
   e.preventDefault();
   const handle = e.currentTarget;
@@ -67,6 +78,9 @@ function startDrag(e) {
   drag = {
     item,
     list,
+    save,
+    // the tab that scrolls when it's dragged near an edge
+    scroller: item.closest(".tab"),
     before: names(list),
     // rows only move up and down; cards follow the pointer anywhere
     vertical: getComputedStyle(list).display !== "grid",
@@ -116,7 +130,7 @@ function onMove(e) {
 
 /** Follows the pointer each frame, scrolling the tab when it's near an edge. */
 function frame() {
-  const tab = $("#tab-mods");
+  const tab = drag.scroller;
   const edges = tab.getBoundingClientRect();
   const speed = (into) => Math.min(1, Math.max(0, 1 - into / SCROLL_EDGE)) * SCROLL_SPEED;
   const scroll = speed(edges.bottom - drag.y) - speed(drag.y - edges.top);
@@ -209,7 +223,7 @@ function tick(now) {
 }
 
 function endDrag() {
-  const { item, list, before, dx, dy } = drag;
+  const { item, list, before, dx, dy, save } = drag;
   cancelAnimationFrame(drag.frame);
   drag = null;
   removeEventListener("pointermove", onMove);
@@ -219,11 +233,11 @@ function endDrag() {
   // glides into the gap it left
   item.classList.remove("dragging");
   slide(item, dx ?? 0, dy ?? 0);
-  save(list, before, item.dataset.name).catch(() => {});
+  finish(save, list, before, item.dataset.name);
 }
 
 /** Arrow keys on a handle move its mod one place. */
-function moveByKey(e) {
+function moveByKey(e, save) {
   if (drag || saving || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
   const back = e.key === "ArrowUp" || e.key === "ArrowLeft";
   if (!back && e.key !== "ArrowDown" && e.key !== "ArrowRight") return;
@@ -235,24 +249,35 @@ function moveByKey(e) {
   const before = names(list);
   moveTo(item, next);
   item.scrollIntoView({ block: "nearest" });
-  save(list, before, item.dataset.name).catch(() => {});
+  finish(save, list, before, item.dataset.name);
+}
+
+/** Saves `list` with `save` if `name` moving changed its order from `before`. */
+async function finish(save, list, before, name) {
+  const after = names(list);
+  if (after.every((n, i) => n === before[i])) return;
+  saving = true;
+  try {
+    await save(after, before, name);
+  } catch {
+    // run() has said what went wrong
+  } finally {
+    saving = false;
+  }
 }
 
 /**
- * Saves the order `list` has been rearranged into, which was `before`. A
- * list only shows some of the mods when others are hidden by tag, so the
- * ones it shows are put back in the places they had between the rest.
+ * Saves the order a list of mods has been rearranged into. A list only
+ * shows some of the mods when others are hidden by tag, so the ones it
+ * shows are put back in the places they had between the rest.
  */
-async function save(list, before, name) {
-  const after = names(list);
-  if (after.every((n, i) => n === before[i])) return;
+async function saveMods(after, _before, name) {
   const p = state.profile;
   const { id } = p;
   const shown = new Set(after);
   const old = p.mods.map((m) => m.name);
   let next = 0;
   const order = old.map((n) => (shown.has(n) ? after[next++] : n));
-  saving = true;
   let profile;
   try {
     await run("reorder_mods", { id, names: order });
@@ -260,8 +285,6 @@ async function save(list, before, name) {
   } catch {
     if (state.profile?.id === id) await openProfile(id);
     return;
-  } finally {
-    saving = false;
   }
   if (state.profile?.id !== id) return;
   // the cards and rows on screen were made from these, so keep them up to date

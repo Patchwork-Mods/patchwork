@@ -11,7 +11,7 @@ import { selectTab } from "./browse.js";
 const here = () => ({
   game: state.game,
   profile: state.game ? (state.profile?.id ?? null) : null,
-  tab: state.game ? (state.source ?? "mods") : null,
+  tab: state.game ? (state.tab ?? "mods") : null,
 });
 
 const same = (a, b) => a.game === b.game && a.profile === b.profile && a.tab === b.tab;
@@ -55,7 +55,12 @@ async function restore(place) {
   if (!place.game) return showGames();
   if (state.game !== place.game) await openGame(place.game, place.profile);
   else if (place.profile && state.profile?.id !== place.profile) await switchProfile(place.profile);
-  if (place.tab === "mods" || state.profile?.searchSources.includes(place.tab)) {
+  const p = state.profile;
+  if (
+    place.tab === "mods" ||
+    (place.tab === "plugins" && p?.hasPlugins) ||
+    p?.searchSources.includes(place.tab)
+  ) {
     selectTab(place.tab);
   }
 }

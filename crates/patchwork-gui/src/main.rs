@@ -19,12 +19,13 @@ use patchwork_core::lock::{Lockfile, mod_key};
 use patchwork_core::matching::{self, ModText};
 use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
+use patchwork_core::plugins::{LoadOrder, PluginEntry};
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{ModSpec, SourceFile};
 use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
-use patchwork_deployers::{RulesDeployer, SmfDeployer};
+use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
 use serde::{Deserialize, Serialize};
@@ -161,6 +162,8 @@ struct ProfileDetail {
     mods: Vec<UiMod>,
     /// Mods with any of these tags go in the Mods tab's hidden section.
     hidden_tags: Vec<String>,
+    /// Whether the game has plugins to put in order, on a Plugins tab.
+    has_plugins: bool,
     /// Everything worth warning about, from [`Patchwork::issues`].
     issues: Vec<Issue>,
     install: Option<String>,
@@ -309,6 +312,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .collect();
     let lock = pw.load_lock(&r).map_err(msg)?;
     let issues = pw.issues(&r).map_err(msg)?;
+    let has_plugins = pw.has_plugins(&r).map_err(msg)?;
     let label = loaded.label();
     let name = loaded.name.clone();
     let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
@@ -342,6 +346,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         game: loaded.game,
         mods,
         hidden_tags,
+        has_plugins,
         issues,
         id,
         install,
@@ -787,6 +792,56 @@ fn reorder_mods(app: State<'_, App>, id: String, names: Vec<String>) -> CmdResul
     app.pw.reorder_mods(&profile_ref(&id)?, &names).map_err(msg)
 }
 
+/// What the Plugins tab shows.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiLoadOrder {
+    #[serde(flatten)]
+    order: LoadOrder,
+    /// Enabled mods that haven't been locked, whose plugins aren't known
+    /// until they are; see [`lock_profile`].
+    unlocked: Vec<String>,
+}
+
+fn ui_load_order(pw: &Patchwork, r: &ProfileRef) -> CmdResult<Option<UiLoadOrder>> {
+    let Some(order) = pw.load_order(r).map_err(msg)? else {
+        return Ok(None);
+    };
+    let lock = pw.load_lock(r).map_err(msg)?;
+    let unlocked = pw
+        .load_profile(r)
+        .map_err(msg)?
+        .mods
+        .into_iter()
+        .filter(|m| m.enabled)
+        .filter(|m| {
+            let key = mod_key(&m.source, &m.id);
+            !lock.iter().flat_map(|l| &l.mods).any(|l| l.key() == key)
+        })
+        .map(|m| m.name)
+        .collect();
+    Ok(Some(UiLoadOrder { order, unlocked }))
+}
+
+/// The order the profile's plugins load in, for the Plugins tab.
+#[tauri::command]
+fn load_order(app: State<'_, App>, id: String) -> CmdResult<Option<UiLoadOrder>> {
+    ui_load_order(&app.pw, &profile_ref(&id)?)
+}
+
+/// Saves the Plugins tab's order and switches, returning the load order as
+/// it now is.
+#[tauri::command]
+fn set_load_order(
+    app: State<'_, App>,
+    id: String,
+    plugins: Vec<PluginEntry>,
+) -> CmdResult<Option<UiLoadOrder>> {
+    let r = profile_ref(&id)?;
+    app.pw.set_load_order(&r, plugins).map_err(msg)?;
+    ui_load_order(&app.pw, &r)
+}
+
 /// Starts fetching whatever's out of date about the profile's mods' versions
 /// and summaries in the background; see details.rs.
 #[tauri::command]
@@ -1193,6 +1248,7 @@ fn main() {
                 .source(Nexus::default())
                 .source(UrlSource)
                 .deployer(RulesDeployer)
+                .deployer(BethesdaDeployer)
                 .deployer(SmfDeployer)
                 .format(Archive)
                 .format(UrlList)
@@ -1258,6 +1314,8 @@ fn main() {
             set_hidden_tags,
             sort_mods,
             reorder_mods,
+            load_order,
+            set_load_order,
             refresh_details,
             find_games,
             find_mods,

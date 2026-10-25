@@ -1,7 +1,7 @@
 schema = 1
 id = "skyrim-se"
 name = "The Elder Scrolls V: Skyrim Special Edition"
-description = "Skyrim Special Edition and Anniversary Edition. Plugins (.esp, .esm, .esl) aren't added to the load order yet, so for now only mods without them, or ones you enable in the game's own menu, take effect."
+description = "Skyrim Special Edition and Anniversary Edition. Mods' plugins (.esp, .esm, .esl) are loaded in the order you set on the profile's Plugins tab."
 # A load order is often tens of gigabytes of meshes and textures.
 link = "hardlink"
 
@@ -9,7 +9,7 @@ link = "hardlink"
 game_domain = "skyrimspecialedition"
 
 [deployer]
-kind = "rules"
+kind = "bethesda"
 
 # Mods are packed every which way: from the game folder (`Data/...`), from
 # inside Data (`meshes/...`, `Plugin.esp`), or with a wrapper folder around
@@ -41,9 +41,19 @@ to = "{path}"
 [[deployer.rules]]
 to = "Data/{path}"
 
+# The load order goes in plugins.txt. The game's own masters and the
+# Creation Club content it lists in Skyrim.ccc always load first.
+[deployer.plugins]
+folder = "Data"
+file = "appdata:plugins.txt"
+implicit = ["Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm"]
+ccc = "Skyrim.ccc"
+limit = 254
+
 [roots.appdata]
 path = "{localappdata}/Skyrim Special Edition"
 allow = ["plugins.txt", "loadorder.txt"]
+rewritten = ["plugins.txt"]
 
 [detect]
 steam = [489830]

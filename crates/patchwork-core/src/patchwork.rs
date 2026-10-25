@@ -27,6 +27,7 @@ use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement
 use crate::matching::{self, ModText};
 use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
+use crate::plugins::{self, LoadOrder, PluginEntry};
 use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
 use crate::registry::Registry;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
@@ -1608,6 +1609,7 @@ impl Patchwork {
             id: Some(loaded.id),
             mods: loaded.mods,
             hidden_tags: Some(loaded.hidden_tags),
+            plugins: Some(loaded.plugins),
             ..Default::default()
         };
         if format.needs_lock() {
@@ -1811,6 +1813,9 @@ impl Patchwork {
         if let Some(tags) = shared.hidden_tags {
             profile.hidden_tags = tags;
         }
+        if let Some(plugins) = shared.plugins {
+            profile.plugins = plugins;
+        }
         self.save_profile(&profile_ref, &profile)?;
         if let Some(lock) = &shared.lock {
             fsutil::write_toml(&self.lock_file(&profile_ref), lock)?;
@@ -1938,22 +1943,10 @@ impl Patchwork {
             &overrides,
             &roots,
             &order,
+            &loaded.plugins,
             fingerprint,
         );
-        let mut mods = Vec::new();
-        for locked in order {
-            let files =
-                self.store
-                    .files(&locked.hash, locked.format, &locked.artifact.file_name())?;
-            mods.push(InstalledMod {
-                name: locked.name.clone(),
-                source: locked.source.clone(),
-                id: locked.id.clone(),
-                version: locked.version.clone(),
-                hash: locked.hash,
-                files,
-            });
-        }
+        let mods = self.installed(&order)?;
 
         let env = GameEnv::detect(game, &root);
         let desired = deployer.plan(&ctx, &mods)?;
@@ -1963,9 +1956,23 @@ impl Patchwork {
         for issue in self.incompatible(&loaded, &lock, &env)? {
             warnings.push(issue.message);
         }
+        let load_order = deployer
+            .plugins(&ctx, &GameFiles::new(&root, &prev), &mods)?
+            .map(|found| LoadOrder::new(&loaded.plugins, found));
+        if let Some(load_order) = &load_order {
+            warnings.extend(load_order.warnings.iter().cloned());
+        }
         if deployer.builds(&ctx) {
-            let (built, built_warnings) =
-                self.build(deployer, &ctx, &target, inputs, &prev, &mods, &resolved)?;
+            let (built, built_warnings) = self.build(
+                deployer,
+                &ctx,
+                &target,
+                inputs,
+                &prev,
+                &mods,
+                &resolved,
+                load_order.as_ref(),
+            )?;
             placements.extend(built);
             warnings.extend(built_warnings);
         }
@@ -2038,6 +2045,7 @@ impl Patchwork {
             &overrides,
             &roots,
             &order,
+            &loaded.plugins,
             fingerprint,
         );
         // Not part of the inputs, so that deploys from before it was
@@ -2051,6 +2059,123 @@ impl Patchwork {
         } else {
             DeployStatus::Stale
         })
+    }
+
+    /// `order`'s files, from the store.
+    fn installed(&self, order: &[&LockedMod]) -> Result<Vec<InstalledMod>> {
+        order
+            .iter()
+            .map(|locked| {
+                let files =
+                    self.store
+                        .files(&locked.hash, locked.format, &locked.artifact.file_name())?;
+                Ok(InstalledMod {
+                    name: locked.name.clone(),
+                    source: locked.source.clone(),
+                    id: locked.id.clone(),
+                    version: locked.version.clone(),
+                    hash: locked.hash,
+                    files,
+                })
+            })
+            .collect()
+    }
+
+    /// Whether `profile`'s game has plugins to put in order (see
+    /// [`crate::plugins`]).
+    pub fn has_plugins(&self, profile: &ProfileRef) -> Result<bool> {
+        let loaded = self.load_profile(profile)?;
+        let target = self.deploy_target(&loaded)?;
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
+        let deployer = self.deployer(&game.deployer.kind)?;
+        let (config, _, _) = self.deploy_config(game)?;
+        let ctx = DeployContext {
+            game,
+            config: &config,
+            registry: &registry,
+        };
+        let root = self.target_root(&target)?.unwrap_or_default();
+        let state = self.deploy_state(&target)?;
+        let found = deployer.plugins(&ctx, &GameFiles::new(&root, &state), &[])?;
+        Ok(found.is_some())
+    }
+
+    /// The order `profile`'s plugins will load in, or `None` if its game
+    /// doesn't have plugins. Only mods that have been locked count, without
+    /// locking again, so this never touches the network.
+    pub fn load_order(&self, profile: &ProfileRef) -> Result<Option<LoadOrder>> {
+        let loaded = self.load_profile(profile)?;
+        let target = self.deploy_target(&loaded)?;
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
+        let deployer = self.deployer(&game.deployer.kind)?;
+        let (config, _, _) = self.deploy_config(game)?;
+        let ctx = DeployContext {
+            game,
+            config: &config,
+            registry: &registry,
+        };
+        let lock = self.load_lock(profile)?;
+        let order = lock
+            .as_ref()
+            .map(|lock| deploy_order(&loaded, lock))
+            .unwrap_or_default();
+        let mods = self.installed(&order)?;
+        let root = self.target_root(&target)?.unwrap_or_default();
+        let state = self.deploy_state(&target)?;
+        let found = deployer.plugins(&ctx, &GameFiles::new(&root, &state), &mods)?;
+        Ok(found.map(|found| LoadOrder::new(&loaded.plugins, found)))
+    }
+
+    /// Changes `profile`'s load order with `change`, and saves it.
+    fn change_load_order<T>(
+        &self,
+        profile: &ProfileRef,
+        change: impl FnOnce(&mut LoadOrder) -> Result<T>,
+    ) -> Result<T> {
+        let mut order = self.load_order(profile)?.ok_or_else(|| {
+            Error::invalid(format!(
+                "{profile}'s game doesn't have plugins to put in order"
+            ))
+        })?;
+        let changed = change(&mut order)?;
+        self.set_load_order(profile, order.entries())?;
+        Ok(changed)
+    }
+
+    /// Moves a plugin within `profile`'s load order, returning its new
+    /// (zero-based) position. Masters stay above other plugins, since the
+    /// game loads them first regardless.
+    pub fn move_plugin(&self, profile: &ProfileRef, name: &str, to: &Position) -> Result<usize> {
+        self.change_load_order(profile, |order| order.move_plugin(name, to))
+    }
+
+    pub fn set_plugin_enabled(
+        &self,
+        profile: &ProfileRef,
+        name: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        self.change_load_order(profile, |order| order.set_enabled(name, enabled))
+    }
+
+    /// Saves `plugins` as the profile's load order. This is how a frontend
+    /// saves a list the user has rearranged. Masters are put first when
+    /// it's next worked out, wherever they are here. Plugins that were in
+    /// the saved order but aren't in `plugins` (because their mods are
+    /// disabled, say) keep their places.
+    pub fn set_load_order(&self, profile: &ProfileRef, plugins: Vec<PluginEntry>) -> Result<()> {
+        let mut seen = HashSet::new();
+        if let Some(twice) = plugins.iter().find(|p| !seen.insert(p.name.to_lowercase())) {
+            return Err(Error::invalid(format!(
+                "`{}` is in the load order twice",
+                twice.name
+            )));
+        }
+        let mut loaded = self.load_profile(profile)?;
+        loaded.plugins = plugins::keep_missing(&loaded.plugins, plugins);
+        self.save_profile(profile, &loaded)
     }
 
     /// Works out how to remove everything patchwork deployed to `target`.
@@ -2092,6 +2217,7 @@ impl Patchwork {
         prev: &DeployState,
         mods: &[InstalledMod],
         roots: &ResolvedRoots,
+        load_order: Option<&LoadOrder>,
     ) -> Result<(Vec<Resolved>, Vec<String>)> {
         let dir = self.paths.generated().join(target.key());
         let out = dir.join(inputs.to_string());
@@ -2117,6 +2243,7 @@ impl Patchwork {
             out: &out,
             cache: &cache,
             reporter: self.reporter.as_ref(),
+            load_order,
         };
         let built = match deployer.build(ctx, &build, mods) {
             Ok(built) => built,
@@ -2181,8 +2308,10 @@ impl Patchwork {
         let Some(lock) = self.load_lock(profile)? else {
             return Ok(());
         };
+        let loaded = self.load_profile(profile)?;
         let deployed = Deployed {
-            mods: self.load_profile(profile)?.mods,
+            mods: loaded.mods,
+            plugins: loaded.plugins,
             lock,
         };
         fsutil::write_toml(&self.deployed_file(profile), &deployed)
@@ -2201,7 +2330,8 @@ impl Patchwork {
         let Some(deployed) = self.load_deployed(profile)? else {
             return Ok(false);
         };
-        if self.load_profile(profile)?.mods != deployed.mods {
+        let loaded = self.load_profile(profile)?;
+        if loaded.mods != deployed.mods || loaded.plugins != deployed.plugins {
             return Ok(true);
         }
         let lock = self.load_lock(profile)?;
@@ -2219,6 +2349,7 @@ impl Patchwork {
         })?;
         let mut loaded = self.load_profile(profile)?;
         loaded.mods = deployed.mods;
+        loaded.plugins = deployed.plugins;
         fsutil::write_toml(&self.lock_file(profile), &deployed.lock)?;
         self.save_profile(profile, &loaded)
     }
@@ -2249,6 +2380,8 @@ async fn download(url: &str, dest: &Path) -> Result<()> {
 struct Deployed {
     #[serde(default, rename = "mod")]
     mods: Vec<ProfileMod>,
+    #[serde(default, rename = "plugin", skip_serializing_if = "Vec::is_empty")]
+    plugins: Vec<PluginEntry>,
     lock: Lockfile,
 }
 
@@ -2343,6 +2476,7 @@ fn existing_dir(path: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn deploy_inputs(
     profile: &ProfileRef,
     registry: &Registry,
@@ -2350,6 +2484,7 @@ fn deploy_inputs(
     deployer_settings: &toml::Table,
     roots: &Roots,
     order: &[&LockedMod],
+    plugins: &[PluginEntry],
     fingerprint: Option<ContentHash>,
 ) -> ContentHash {
     let mut hasher = blake3::Hasher::new();
@@ -2389,6 +2524,14 @@ fn deploy_inputs(
         field(m.hash.to_string().as_bytes());
         field(format!("{:?}", m.format).as_bytes());
         field(m.artifact.file_name().as_bytes());
+    }
+    // Only when the user has placed any, like the deployer's settings.
+    if !plugins.is_empty() {
+        field(b"plugins");
+        for p in plugins {
+            field(p.name.as_bytes());
+            field(&[p.enabled as u8]);
+        }
     }
     hasher.finalize().into()
 }
