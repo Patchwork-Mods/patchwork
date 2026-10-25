@@ -3,6 +3,10 @@ use super::*;
 use patchwork_core::game::GameDef;
 use serde_json::json;
 
+fn settings_with_key() -> toml::Table {
+    toml::toml! { api_key = "key" }
+}
+
 // trimmed responses for SkyUI (skyrimspecialedition/12604)
 const MOD: &str = r#"{
     "name": "SkyUI",
@@ -96,9 +100,10 @@ fn urls_round_trip() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        settings: None,
         env: None,
     };
-    let nexus = Nexus::new(None);
+    let nexus = Nexus::default();
     let url = nexus.mod_url(&ctx, "12604", Some("5.2SE")).unwrap();
     assert_eq!(
         url,
@@ -244,13 +249,15 @@ fn parses_nxm_links() {
 #[tokio::test]
 async fn ignores_links_for_other_games() {
     let game = skyrim();
+    let settings = settings_with_key();
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        settings: Some(&settings),
         env: None,
     };
     // nothing is fetched, so this works offline
-    let accepted = Nexus::new(Some("key".to_owned()))
+    let accepted = Nexus::default()
         .accept_link(&ctx, "nxm://fallout4/mods/1/files/2?key=a&expires=1")
         .await
         .unwrap();
@@ -261,12 +268,14 @@ async fn ignores_links_for_other_games() {
 async fn needs_game_domain_config() {
     let mut game = skyrim();
     game.sources.clear();
+    let settings = settings_with_key();
     let ctx = SourceContext {
         game: &game,
         config: None,
+        settings: Some(&settings),
         env: None,
     };
-    let err = Nexus::new(Some("key".to_owned()))
+    let err = Nexus::default()
         .resolve(&ctx, "12604", None)
         .await
         .unwrap_err();
@@ -279,24 +288,27 @@ async fn needs_api_key() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        settings: None,
         env: None,
     };
-    let err = Nexus::new(None)
+    let err = Nexus::default()
         .resolve(&ctx, "12604", None)
         .await
         .unwrap_err();
-    assert!(err.to_string().contains(API_KEY_VAR), "{err}");
+    assert!(err.to_string().contains("needs an API key"), "{err}");
 }
 
 #[tokio::test]
 async fn rejects_non_numeric_ids() {
     let game = skyrim();
+    let settings = settings_with_key();
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        settings: Some(&settings),
         env: None,
     };
-    let err = Nexus::new(Some("key".to_owned()))
+    let err = Nexus::default()
         .resolve(&ctx, "SkyUI", None)
         .await
         .unwrap_err();
@@ -309,15 +321,18 @@ async fn rejects_non_numeric_ids() {
 #[ignore = "needs network and a Nexus API key"]
 async fn test_get_mod() {
     let game = skyrim();
+    let mut settings = toml::Table::new();
+    settings.insert(
+        "api_key".to_owned(),
+        std::env::var("NEXUS_API_KEY").unwrap().into(),
+    );
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        settings: Some(&settings),
         env: None,
     };
-    let resolved = Nexus::from_env()
-        .resolve(&ctx, "12604", None)
-        .await
-        .unwrap();
+    let resolved = Nexus::default().resolve(&ctx, "12604", None).await.unwrap();
     assert_eq!(resolved.id, "12604");
     assert_eq!(resolved.name, "SkyUI");
     assert!(resolved.version.is_some());
@@ -429,9 +444,10 @@ async fn searches() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        settings: None,
         env: None,
     };
-    let nexus = Nexus::new(None);
+    let nexus = Nexus::default();
     let query = SearchQuery {
         text: Some("skyui".to_owned()),
         ..Default::default()
@@ -457,9 +473,10 @@ async fn summarizes_one_mod() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("nexus"),
+        settings: None,
         env: None,
     };
-    let nexus = Nexus::new(None);
+    let nexus = Nexus::default();
     let skyui = nexus.summary(&ctx, "12604").await.unwrap().unwrap();
     assert_eq!(skyui.name, "SkyUI");
     assert!(skyui.icon_url.is_some());

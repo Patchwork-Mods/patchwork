@@ -3,6 +3,7 @@ use patchwork_core::deploy::{
     DeployContext, Deployer, DesiredState, Dest, InstalledMod, Placement,
 };
 use patchwork_core::relpath::RelPath;
+use patchwork_core::settings::{Choice, SettingKind, SettingSpec};
 use patchwork_core::{Error, Result};
 use serde::Deserialize;
 
@@ -29,6 +30,24 @@ use serde::Deserialize;
 /// ruleset = "bepinex"        # a ruleset's rules, at this point in the list
 /// ```
 pub struct RulesDeployer;
+
+const UNMATCHED: SettingSpec = SettingSpec::new(
+    "unmatched",
+    "Files no rule matches",
+    SettingKind::Choice {
+        choices: &[
+            Choice {
+                value: "warn",
+                label: "Leave them out and warn",
+            },
+            Choice {
+                value: "error",
+                label: "Stop the deploy",
+            },
+        ],
+    },
+)
+.help("What to do with files in mods that the game's rules don't say where to put.");
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -244,6 +263,10 @@ fn place(rules: &[CompiledRule], mod_name: &str, rel: &RelPath) -> Result<Outcom
 impl Deployer for RulesDeployer {
     fn kind(&self) -> &str {
         "rules"
+    }
+
+    fn settings(&self) -> &[SettingSpec] {
+        &[UNMATCHED]
     }
 
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState> {

@@ -26,6 +26,10 @@
           <button id="install-cli" type="button" title="Put the patchwork command on your PATH, to use Patchwork from a terminal" hidden>
             Install command-line tool
           </button>
+          <!-- Sources' settings, such as API keys; see settings.js. -->
+          <button id="app-settings" type="button" title="Accounts and settings for where mods come from">
+            Settings
+          </button>
           <!-- Marked with a "!" while a newer patchwork is out; see
                selfupdate.js. -->
           <button id="self-update" type="button" title="Check for a newer version of Patchwork">
@@ -274,9 +278,8 @@
       </form>
     </dialog>
 
-    <!-- This machine's settings for a game. Each input is named after a field
-         of GameInstall in patchwork-core, and the form is sent as one; see
-         set_game_settings in main.rs. -->
+    <!-- This machine's settings for a game, sent as a GameInstall (see
+         patchwork-core); see games.js. -->
     <dialog id="game-settings-dialog">
       <form id="game-settings-form" method="dialog" class="stack">
         <h2 id="game-settings-title">Game settings</h2>
@@ -289,9 +292,43 @@
           <small class="muted">Undeploy first to move a game that has mods deployed.</small>
         </div>
         <p id="game-settings-env" class="muted" hidden></p>
+        <!-- Filled in from what the game's deployer takes; see
+             settingField() in settings.js. -->
+        <fieldset class="stack">
+          <legend>Deploying</legend>
+          <label class="field">
+            <span>Put files in the game folder by</span>
+            <select name="link">
+              <option value="">Default</option>
+              <option value="copy">Copying (safest)</option>
+              <option value="hardlink">Hard linking (saves space)</option>
+              <option value="symlink">Symlinking</option>
+            </select>
+            <small class="muted">Undeploy first to change this for a game that has mods deployed.</small>
+          </label>
+          <div id="game-settings-deployer" class="stack"></div>
+        </fieldset>
+        <p class="muted hint">
+          Accounts for sources like Nexus Mods are in
+          <button type="button" id="game-settings-app" class="link">Settings</button>.
+        </p>
         <p id="game-settings-error" class="error" hidden></p>
         <div class="row end">
           <button type="button" value="cancel" formnovalidate>Cancel</button>
+          <button type="submit" value="save" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Settings for every game: one section per source that takes any;
+         see settings.js. -->
+    <dialog id="settings-dialog">
+      <form id="settings-form" method="dialog" class="stack">
+        <h2>Settings</h2>
+        <div id="settings-sources" class="stack"></div>
+        <p id="settings-error" class="error" hidden></p>
+        <div class="row end">
+          <button type="button" value="cancel" formnovalidate>Close</button>
           <button type="submit" value="save" class="primary">Save</button>
         </div>
       </form>

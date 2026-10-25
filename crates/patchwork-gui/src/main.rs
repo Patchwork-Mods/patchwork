@@ -21,6 +21,7 @@ use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
+use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{ModSpec, SourceFile};
 use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{RulesDeployer, SmfDeployer};
@@ -546,11 +547,71 @@ fn set_game_path(app: State<'_, App>, game: String, path: String) -> CmdResult<(
         .map_err(msg)
 }
 
-/// A game's settings on this machine, for the game settings dialog. `None`
-/// until it's been set up.
+/// A game's settings on this machine, for the game settings dialog.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameSettings {
+    /// `None` until it's been set up.
+    install: Option<GameInstall>,
+    /// What the game's definition says, for when `install` doesn't.
+    default_link: LinkMethod,
+    /// The settings the game's deployer takes.
+    deployer: Vec<SettingState>,
+}
+
 #[tauri::command]
-fn game_settings(app: State<'_, App>, game: String) -> CmdResult<Option<GameInstall>> {
-    app.pw.game_install(&game).map_err(msg)
+fn game_settings(app: State<'_, App>, game: String) -> CmdResult<GameSettings> {
+    let registry = app.pw.registry();
+    let def = &registry.game(&game).map_err(msg)?.value;
+    Ok(GameSettings {
+        install: app.pw.game_install(&game).map_err(msg)?,
+        default_link: def.link,
+        deployer: app.pw.deployer_settings(&game).map_err(msg)?,
+    })
+}
+
+/// A source's settings, for the settings dialog.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceSettings {
+    id: String,
+    name: String,
+    settings: Vec<SettingState>,
+}
+
+/// Every source that takes settings, with what they're set to.
+#[tauri::command]
+fn source_settings(app: State<'_, App>) -> CmdResult<Vec<SourceSettings>> {
+    app.pw
+        .configurable_sources()
+        .into_iter()
+        .map(|(id, name)| {
+            Ok(SourceSettings {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                settings: app.pw.source_settings(id).map_err(msg)?,
+            })
+        })
+        .collect()
+}
+
+/// Sets one of a source's settings, or clears it if `value` is `None`.
+/// Returns where it was saved.
+#[tauri::command]
+fn set_source_setting(
+    app: State<'_, App>,
+    source: String,
+    key: String,
+    value: Option<toml::Value>,
+) -> CmdResult<Option<Origin>> {
+    app.pw.set_source_setting(&source, &key, value).map_err(msg)
+}
+
+/// What a source makes of its settings, such as the account an API key
+/// signs in to.
+#[tauri::command]
+async fn check_source_settings(app: State<'_, App>, source: String) -> CmdResult<Option<String>> {
+    app.pw.check_source_settings(&source).await.map_err(msg)
 }
 
 /// What patchwork can tell about a game's install, such as its version, for
@@ -1064,7 +1125,7 @@ fn main() {
             let pw = Patchwork::builder(Paths::from_env()?)
                 .source(LocalSource)
                 .source(Thunderstore)
-                .source(Nexus::from_env())
+                .source(Nexus::default())
                 .source(UrlSource)
                 .deployer(RulesDeployer)
                 .deployer(SmfDeployer)
@@ -1122,6 +1183,9 @@ fn main() {
             game_settings,
             game_env,
             set_game_settings,
+            source_settings,
+            set_source_setting,
+            check_source_settings,
             set_enabled,
             remove_mod,
             revert_profile,

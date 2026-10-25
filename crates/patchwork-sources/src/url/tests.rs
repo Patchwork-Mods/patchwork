@@ -20,6 +20,7 @@ async fn resolves_without_fetching() {
     let ctx = SourceContext {
         game: &game,
         config: None,
+        settings: None,
         env: None,
     };
     let zip = UrlSource

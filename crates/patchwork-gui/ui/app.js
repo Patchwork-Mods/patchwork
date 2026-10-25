@@ -16,6 +16,7 @@ import "./deploy.js";
 import "./downloads.js";
 import "./selfupdate.js";
 import "./cli.js";
+import "./settings.js";
 
 setModsView(modsView);
 refresh().catch(() => {});

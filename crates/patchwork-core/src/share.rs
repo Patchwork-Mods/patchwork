@@ -16,6 +16,7 @@ use crate::game::GameDef;
 use crate::hash::ContentHash;
 use crate::lock::Lockfile;
 use crate::profile::ProfileMod;
+use crate::settings::Settings;
 use crate::source::{Source, SourceContext};
 use crate::{Error, Result};
 
@@ -55,6 +56,8 @@ pub struct FormatContext<'a> {
     /// or the only one the format supports.
     pub game: Option<&'a GameDef>,
     pub sources: &'a BTreeMap<String, Arc<dyn Source>>,
+    /// The user's settings for `sources`.
+    pub settings: Arc<Settings>,
     pub reporter: &'a dyn Reporter,
     /// An empty directory for unpacking bundled artifacts into on import.
     pub scratch: &'a Path,
@@ -75,6 +78,7 @@ impl FormatContext<'_> {
             let ctx = SourceContext {
                 game,
                 config: game.sources.get(id),
+                settings: self.settings.source(id),
                 env: None,
             };
             (source.as_ref(), ctx)

@@ -59,6 +59,7 @@ async fn r2z_round_trips() {
     let ctx = FormatContext {
         game: Some(&game),
         sources: &sources,
+        settings: Default::default(),
         reporter: &Silent,
         scratch: scratch.path(),
     };

@@ -26,6 +26,7 @@ directories = "6.0.0"
 futures-util = "0.3.34"
 globset = "0.4.20"
 jiff = { version = "0.2.38", features = ["serde"] }
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
 pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

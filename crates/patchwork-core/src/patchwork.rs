@@ -18,7 +18,7 @@ use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
 use crate::fsutil::{self, StateLock};
-use crate::game::{GAME_SCHEMA, GameDef, validate_game_id};
+use crate::game::{GAME_SCHEMA, GameDef, LinkMethod, validate_game_id};
 use crate::hash::ContentHash;
 use crate::issue::Issue;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
@@ -28,6 +28,7 @@ use crate::paths::Paths;
 use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
 use crate::registry::Registry;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
+use crate::settings::{Origin, SettingSpec, SettingState, Settings};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{
     ArtifactFormat, ArtifactLocation, Download, ModSpec, PendingDownload, Source, SourceContext,
@@ -42,6 +43,13 @@ use crate::{Error, Result};
 pub struct GameInstall {
     /// Where the game is installed.
     pub path: PathBuf,
+    /// Overrides the definition's [`GameDef::link`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<LinkMethod>,
+    /// The user's [`Deployer::settings`] for this game, on top of the
+    /// definition's `[deployer]`.
+    #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
+    pub deployer: toml::Table,
 }
 
 /// A mod's versions as of when they were last fetched.
@@ -191,9 +199,14 @@ impl Builder {
     pub fn open(self) -> Result<Patchwork> {
         let lock = StateLock::acquire(&self.paths.lock_file())?;
         let registry = Registry::load(&self.paths)?;
+        let settings = Settings::load(&self.paths, &source_specs(&self.sources))?;
+        for problem in &settings.problems {
+            self.reporter.report(Event::Warning(problem.clone()));
+        }
         let patchwork = Patchwork {
             store: Store::new(self.paths.store()),
             registry: RwLock::new(Arc::new(registry)),
+            settings: RwLock::new(Arc::new(settings)),
             paths: self.paths,
             sources: self.sources,
             deployers: self.deployers,
@@ -214,6 +227,8 @@ pub struct Patchwork {
     /// Swapped out whole when game definitions change, so anything already
     /// working from the old one carries on undisturbed.
     registry: RwLock<Arc<Registry>>,
+    /// Swapped out whole when they change, like the registry.
+    settings: RwLock<Arc<Settings>>,
     store: Store,
     sources: BTreeMap<String, Arc<dyn Source>>,
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
@@ -261,32 +276,97 @@ impl Patchwork {
         self.sources.contains_key(id)
     }
 
+    // Settings
+
+    /// The user's settings for sources as they are now.
+    fn settings(&self) -> Arc<Settings> {
+        self.settings.read().unwrap().clone()
+    }
+
+    /// Sources that take settings, as `(id, name)`.
+    pub fn configurable_sources(&self) -> Vec<(&str, &str)> {
+        self.sources
+            .iter()
+            .filter(|(_, s)| !s.settings().is_empty())
+            .map(|(id, s)| (id.as_str(), s.name()))
+            .collect()
+    }
+
+    pub fn source_settings(&self, source: &str) -> Result<Vec<SettingState>> {
+        let specs = self.source(source)?.settings();
+        Ok(self.settings().states(source, specs))
+    }
+
+    /// Sets one of a source's settings, or clears it if `value` is `None`.
+    /// Returns where it was saved: secrets go in the system keychain if
+    /// there is one. An environment variable for it still takes its place.
+    pub fn set_source_setting(
+        &self,
+        source: &str,
+        key: &str,
+        value: Option<toml::Value>,
+    ) -> Result<Option<Origin>> {
+        let found = self.source(source)?;
+        let spec = SettingSpec::find(found.settings(), found.name(), key)?;
+        let origin = Settings::save(&self.paths, source, spec, value)?;
+        let settings = Settings::load(&self.paths, &source_specs(&self.sources))?;
+        *self.settings.write().unwrap() = Arc::new(settings);
+        // what a source can see may depend on who it's signed in as
+        self.categories.lock().unwrap().clear();
+        Ok(origin)
+    }
+
+    /// Asks a source whether its settings work, and what they amount to
+    /// (the account an API key is for, say).
+    pub async fn check_source_settings(&self, source: &str) -> Result<Option<String>> {
+        let settings = self.settings();
+        self.source(source)?
+            .check_settings(settings.source(source))
+            .await
+    }
+
     // Games
 
     pub fn game_install(&self, game: &str) -> Result<Option<GameInstall>> {
         fsutil::read_toml(&self.install_file(game))
     }
 
+    /// Sets where a game is installed, keeping the rest of its settings.
     pub fn set_game_path(&self, game: &str, path: &Path) -> Result<GameInstall> {
-        self.set_game_install(
-            game,
-            GameInstall {
+        let install = match self.game_install(game)? {
+            Some(install) => GameInstall {
                 path: path.to_owned(),
+                ..install
             },
-        )
+            None => GameInstall {
+                path: path.to_owned(),
+                link: None,
+                deployer: toml::Table::new(),
+            },
+        };
+        self.set_game_install(game, install)
     }
 
     /// Replaces a game's settings, after checking them. Returns them as
     /// saved, with the path made absolute.
     pub fn set_game_install(&self, game: &str, install: GameInstall) -> Result<GameInstall> {
-        self.registry().game(game)?;
-        let GameInstall { path } = install;
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
+        let GameInstall {
+            path,
+            link,
+            deployer,
+        } = install;
         let path = path.canonicalize().at(&path)?;
         if !path.is_dir() {
             return Err(Error::invalid(format!(
                 "{} isn't a directory",
                 path.display()
             )));
+        }
+        let specs = self.deployer(&def.deployer.kind)?.settings();
+        for (key, value) in &deployer {
+            SettingSpec::find(specs, &format!("{}'s deployer", def.name), key)?.check(value)?;
         }
         let state = self.deploy_state(&DeployTarget::Game(game.to_owned()))?;
         let moved = state.roots().with(RootId::game(), &path);
@@ -296,9 +376,64 @@ impl Patchwork {
                 was.display()
             )));
         }
-        let install = GameInstall { path };
+        // files already placed stay the way they were placed, so the method
+        // can only change while there aren't any
+        let was = self.game_install(game)?.and_then(|i| i.link);
+        if was.unwrap_or(def.link) != link.unwrap_or(def.link) && !state.files.is_empty() {
+            return Err(Error::invalid(format!(
+                "mods are still deployed to {}; run `patchwork undeploy {game}` before changing how they're linked",
+                path.display()
+            )));
+        }
+        let install = GameInstall {
+            path,
+            link,
+            deployer,
+        };
         fsutil::write_toml(&self.install_file(game), &install)?;
         Ok(install)
+    }
+
+    /// The settings `game`'s deployer takes, with what's set for this game
+    /// and what the game's definition says otherwise.
+    pub fn deployer_settings(&self, game: &str) -> Result<Vec<SettingState>> {
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
+        let set = self
+            .game_install(game)?
+            .map(|i| i.deployer)
+            .unwrap_or_default();
+        Ok(self
+            .deployer(&def.deployer.kind)?
+            .settings()
+            .iter()
+            .map(|spec| SettingState {
+                spec: *spec,
+                value: set.get(spec.key).cloned(),
+                default: def.deployer.config.get(spec.key).cloned(),
+                origin: set.get(spec.key).map(|_| Origin::File),
+            })
+            .collect())
+    }
+
+    /// The deployer config and link method to deploy `game` with: the
+    /// definition's, with the user's settings on top. Also returns the
+    /// user's deployer settings on their own.
+    fn deploy_config(&self, game: &GameDef) -> Result<(toml::Table, LinkMethod, toml::Table)> {
+        let install = self.game_install(&game.id)?;
+        let mut config = game.deployer.config.clone();
+        let (link, overrides) = match install {
+            Some(i) => (i.link.unwrap_or(game.link), i.deployer),
+            None => (game.link, toml::Table::new()),
+        };
+        // only settings the deployer still takes, in case it's changed since
+        let specs = self.deployer(&game.deployer.kind)?.settings();
+        let overrides: toml::Table = overrides
+            .into_iter()
+            .filter(|(k, v)| specs.iter().any(|s| s.key == k && s.check(v).is_ok()))
+            .collect();
+        config.extend(overrides.clone());
+        Ok((config, link, overrides))
     }
 
     fn install_file(&self, game: &str) -> PathBuf {
@@ -610,9 +745,11 @@ impl Patchwork {
     pub async fn versions(&self, game: &str, source: &str, id: &str) -> Result<Vec<String>> {
         let registry = self.registry();
         let def = &registry.game(game)?.value;
+        let settings = self.settings();
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
+            settings: settings.source(source),
             env: None,
         };
         let versions = self.source(source)?.versions(&ctx, id).await?;
@@ -645,9 +782,11 @@ impl Patchwork {
     pub async fn summary(&self, game: &str, source: &str, id: &str) -> Result<Option<ModSummary>> {
         let registry = self.registry();
         let def = &registry.game(game)?.value;
+        let settings = self.settings();
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
+            settings: settings.source(source),
             env: None,
         };
         let summary = self.source(source)?.summary(&ctx, id).await?;
@@ -685,9 +824,11 @@ impl Patchwork {
     ) -> Result<Vec<ChangelogEntry>> {
         let registry = self.registry();
         let def = &registry.game(game)?.value;
+        let settings = self.settings();
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
+            settings: settings.source(source),
             env: None,
         };
         self.source(source)?.changelog(&ctx, id, version).await
@@ -713,12 +854,21 @@ impl Patchwork {
     pub fn mod_url(&self, game: &str, source: &str, id: &str) -> Option<String> {
         let registry = self.registry();
         let def = &registry.game(game).ok()?.value;
+        let settings = self.settings();
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
+            settings: settings.source(source),
             env: None,
         };
         self.source(source).ok()?.mod_url(&ctx, id, None)
+    }
+
+    fn deployer(&self, kind: &str) -> Result<&dyn Deployer> {
+        self.deployers
+            .get(kind)
+            .map(|d| d.as_ref())
+            .ok_or_else(|| Error::UnknownDeployer(kind.to_owned()))
     }
 
     fn source(&self, id: &str) -> Result<&dyn Source> {
@@ -733,9 +883,11 @@ impl Patchwork {
         let env = self.game_env(&DeployTarget::Game(game.to_owned()))?;
         let registry = self.registry();
         let game = &registry.game(game)?.value;
+        let settings = self.settings();
         let ctx = SourceContext {
             game,
             config: game.sources.get(&spec.source),
+            settings: settings.source(&spec.source),
             env: env.as_ref(),
         };
         source
@@ -773,9 +925,11 @@ impl Patchwork {
         let source = self.searchable(source)?;
         let registry = self.registry();
         let game = &registry.game(game)?.value;
+        let settings = self.settings();
         let ctx = SourceContext {
             game,
             config: game.sources.get(source.id()),
+            settings: settings.source(source.id()),
             env: None,
         };
         let known = source.search_categories(&ctx).await?;
@@ -806,9 +960,11 @@ impl Patchwork {
         }
         let registry = self.registry();
         let game = &registry.game(game)?.value;
+        let settings = self.settings();
         let ctx = SourceContext {
             game,
             config: game.sources.get(source.id()),
+            settings: settings.source(source.id()),
             env: None,
         };
         if query.categories.is_empty() && query.excluded_categories.is_empty() {
@@ -1241,9 +1397,11 @@ impl Patchwork {
                 }
                 let registry = self.registry();
                 let game = &registry.game(game)?.value;
+                let settings = self.settings();
                 let ctx = SourceContext {
                     game,
                     config: game.sources.get(source),
+                    settings: settings.source(source),
                     env: None,
                 };
                 match self.source(source)?.download(&ctx, id, &file.file).await? {
@@ -1309,9 +1467,11 @@ impl Patchwork {
                 let Some(config) = game.sources.get(source_id) else {
                     continue;
                 };
+                let settings = self.settings();
                 let ctx = SourceContext {
                     game,
                     config: Some(config),
+                    settings: settings.source(source_id),
                     env: None,
                 };
                 let Some(handoff) = source.accept_link(&ctx, link).await? else {
@@ -1374,6 +1534,7 @@ impl Patchwork {
         FormatContext {
             game,
             sources: &self.sources,
+            settings: self.settings(),
             reporter: self.reporter.as_ref(),
             scratch,
         }
@@ -1673,14 +1834,12 @@ impl Patchwork {
             ))
         })?;
         let root = roots.game_path().to_owned();
-        let deployer = self
-            .deployers
-            .get(&game.deployer.kind)
-            .ok_or_else(|| Error::UnknownDeployer(game.deployer.kind.clone()))?;
+        let deployer = self.deployer(&game.deployer.kind)?;
+        let (config, link, overrides) = self.deploy_config(game)?;
 
         let ctx = DeployContext {
             game,
-            config: &game.deployer.config,
+            config: &config,
             registry: &registry,
         };
         let mut prev = self.deploy_state(&target)?;
@@ -1702,7 +1861,15 @@ impl Patchwork {
 
         let order = deploy_order(&loaded, &lock);
         let fingerprint = deployer.fingerprint(&ctx, &GameFiles::new(&root, &prev))?;
-        let inputs = deploy_inputs(profile, &registry, entry.hash, &roots, &order, fingerprint);
+        let inputs = deploy_inputs(
+            profile,
+            &registry,
+            entry.hash,
+            &overrides,
+            &roots,
+            &order,
+            fingerprint,
+        );
         let mut mods = Vec::new();
         for locked in order {
             let files =
@@ -1728,7 +1895,7 @@ impl Patchwork {
         }
         if deployer.builds(&ctx) {
             let (built, built_warnings) =
-                self.build(deployer.as_ref(), &ctx, &target, inputs, &prev, &mods)?;
+                self.build(deployer, &ctx, &target, inputs, &prev, &mods)?;
             placements.extend(built);
             warnings.extend(built_warnings);
         }
@@ -1738,7 +1905,7 @@ impl Patchwork {
             placements,
             warnings,
             Some(profile.to_string()),
-            game.link,
+            link,
         )?;
         plan.inputs = Some(inputs);
         plan.env = Some(env);
@@ -1784,19 +1951,25 @@ impl Patchwork {
         let registry = self.registry();
         let entry = registry.game(&loaded.game)?;
         let game = &entry.value;
-        let deployer = self
-            .deployers
-            .get(&game.deployer.kind)
-            .ok_or_else(|| Error::UnknownDeployer(game.deployer.kind.clone()))?;
+        let deployer = self.deployer(&game.deployer.kind)?;
+        let (config, _, overrides) = self.deploy_config(game)?;
         let ctx = DeployContext {
             game,
-            config: &game.deployer.config,
+            config: &config,
             registry: &registry,
         };
         let root = roots.game_path();
         let fingerprint = deployer.fingerprint(&ctx, &GameFiles::new(root, &state))?;
         let order = deploy_order(&loaded, &lock);
-        let inputs = deploy_inputs(profile, &registry, entry.hash, &roots, &order, fingerprint);
+        let inputs = deploy_inputs(
+            profile,
+            &registry,
+            entry.hash,
+            &overrides,
+            &roots,
+            &order,
+            fingerprint,
+        );
         // Not part of the inputs, so that deploys from before it was
         // recorded don't all look stale.
         let same_game = state
@@ -1812,7 +1985,8 @@ impl Patchwork {
 
     /// Works out how to remove everything patchwork deployed to `target`.
     pub fn plan_undeploy(&self, target: &DeployTarget) -> Result<DeployPlan> {
-        let link = self.registry().game(target.game())?.value.link;
+        let registry = self.registry();
+        let (_, link, _) = self.deploy_config(&registry.game(target.game())?.value)?;
         let prev = self.deploy_state(target)?;
         deploy::plan(target.clone(), &prev, Vec::new(), Vec::new(), None, link)
     }
@@ -2057,10 +2231,20 @@ fn deploy_order<'a>(loaded: &Profile, lock: &'a Lockfile) -> Vec<&'a LockedMod> 
 /// Deployers can read any registry data, so all of it is included rather
 /// than only what this game uses. Patchwork's version stands in for changes
 /// to the deployers themselves.
+/// The settings each source takes, by id.
+fn source_specs(sources: &BTreeMap<String, Arc<dyn Source>>) -> BTreeMap<&str, &[SettingSpec]> {
+    sources
+        .iter()
+        .map(|(id, s)| (id.as_str(), s.settings()))
+        .filter(|(_, specs)| !specs.is_empty())
+        .collect()
+}
+
 fn deploy_inputs(
     profile: &ProfileRef,
     registry: &Registry,
     game: ContentHash,
+    deployer_settings: &toml::Table,
     roots: &Roots,
     order: &[&LockedMod],
     fingerprint: Option<ContentHash>,
@@ -2073,6 +2257,11 @@ fn deploy_inputs(
     field(env!("CARGO_PKG_VERSION").as_bytes());
     field(profile.to_string().as_bytes());
     field(game.to_string().as_bytes());
+    // Only when there are any, so deploys from before they existed don't
+    // all look stale.
+    if !deployer_settings.is_empty() {
+        field(deployer_settings.to_string().as_bytes());
+    }
     // The game root on its own, as it was before there were others, so
     // existing deploys don't all look stale.
     for (id, path) in roots.iter() {

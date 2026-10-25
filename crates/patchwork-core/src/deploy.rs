@@ -18,6 +18,7 @@ use crate::game::{GameDef, LinkMethod};
 use crate::hash::ContentHash;
 use crate::registry::Registry;
 use crate::relpath::RelPath;
+use crate::settings::SettingSpec;
 use crate::{Error, Result};
 
 mod roots;
@@ -45,7 +46,8 @@ pub struct InstalledMod {
 
 pub struct DeployContext<'a> {
     pub game: &'a GameDef,
-    /// The deployer's settings from the game definition.
+    /// The deployer's settings from the game definition, with the user's
+    /// own for this game (see [`Deployer::settings`]) on top.
     pub config: &'a toml::Table,
     /// For shared data such as rulesets.
     pub registry: &'a Registry,
@@ -166,6 +168,13 @@ pub struct DesiredState {
 pub trait Deployer: Send + Sync {
     fn kind(&self) -> &str;
 
+    /// The keys of its config that users can set for themselves, for each
+    /// game. What they set replaces what the game definition says in
+    /// [`DeployContext::config`].
+    fn settings(&self) -> &[SettingSpec] {
+        &[]
+    }
+
     /// `mods` are in load order, with dependencies before the mods that need
     /// them.
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState>;
@@ -187,7 +196,8 @@ pub trait Deployer: Send + Sync {
     ///
     /// The result is kept and reused for as long as the deploy's inputs stay
     /// the same, so it has to depend only on `mods`, the game definition and
-    /// whatever [`Deployer::fingerprint`] covers.
+    /// whatever [`Deployer::fingerprint`] covers. (The game definition here
+    /// includes the user's settings.)
     fn build(
         &self,
         _ctx: &DeployContext<'_>,

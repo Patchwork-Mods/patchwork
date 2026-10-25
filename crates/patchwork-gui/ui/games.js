@@ -5,6 +5,7 @@ import { $, h, initials, pickFolder } from "./dom.js";
 import { refresh, renderProfile, renderSidebar, switchProfile } from "./profile.js";
 import { selectTab } from "./browse.js";
 import { go } from "./nav.js";
+import { openSettings, readSetting, settingField } from "./settings.js";
 
 function showScreen(screen) {
   document.body.dataset.screen = screen;
@@ -241,10 +242,13 @@ document.addEventListener("click", (e) => {
   if (button) pickFolder(button.form.elements[button.dataset.browse]);
 });
 
-// Game settings. The form's fields are named after GameInstall's in core, so
-// it's filled in from game_settings and sent back to set_game_settings as is.
+// Game settings, sent back to set_game_settings as a GameInstall (see
+// patchwork-core): the folder, how files are linked, and the deployer's
+// settings.
 
 const settingsForm = $("#game-settings-form");
+/** The deployer's settings as last shown. */
+let deployerSettings = [];
 
 $("#game-settings").addEventListener("click", async () => {
   const game = gameInfo(state.game);
@@ -253,9 +257,15 @@ $("#game-settings").addEventListener("click", async () => {
     run("game_env", { game: game.id }),
   ]);
   settingsForm.reset();
-  for (const [key, value] of Object.entries(settings ?? {})) {
-    if (settingsForm.elements[key]) settingsForm.elements[key].value = value;
-  }
+  settingsForm.elements.path.value = settings.install?.path ?? "";
+  const link = settingsForm.elements.link;
+  const defaultLabel = [...link.options].find((o) => o.value === settings.defaultLink)?.text;
+  link.options[0].text = `Default (${defaultLabel ?? settings.defaultLink})`;
+  link.value = settings.install?.link ?? "";
+  deployerSettings = settings.deployer;
+  $("#game-settings-deployer").replaceChildren(
+    ...deployerSettings.map((s) => settingField(s, { idPrefix: "game-setting" })),
+  );
   $("#game-settings-title").textContent = `${game.name} settings`;
   $("#game-settings-env").textContent = env?.summary ? `Installed: ${env.summary}` : "";
   $("#game-settings-env").hidden = !env?.summary;
@@ -267,9 +277,23 @@ settingsForm.querySelector("[value=cancel]").addEventListener("click", () => {
   $("#game-settings-dialog").close();
 });
 
+$("#game-settings-app").addEventListener("click", () => {
+  $("#game-settings-dialog").close();
+  openSettings().catch(() => {});
+});
+
 settingsForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const settings = Object.fromEntries(new FormData(settingsForm));
+  const deployer = {};
+  for (const setting of deployerSettings) {
+    const value = readSetting(settingsForm, setting);
+    if (value != null) deployer[setting.key] = value;
+  }
+  const settings = {
+    path: settingsForm.elements.path.value,
+    link: settingsForm.elements.link.value || null,
+    deployer,
+  };
   const submit = settingsForm.querySelector("[type=submit]");
   submit.disabled = true;
   try {

@@ -15,6 +15,10 @@ pub struct Paths {
     /// top of installed registries. Meant for working on definitions without
     /// rebuilding, e.g. pointing at this repo's `registry/`.
     pub extra_registries: Vec<PathBuf>,
+    /// Whether secrets can go in the system keychain. Not for installs under
+    /// `$PATCHWORK_HOME`, which keep everything in one place (and so that
+    /// tests never touch the real keychain).
+    pub keychain: bool,
 }
 
 impl Paths {
@@ -32,6 +36,7 @@ impl Paths {
                     data: dirs.data_dir().to_owned(),
                     cache: dirs.cache_dir().to_owned(),
                     extra_registries: Vec::new(),
+                    keychain: true,
                 }
             }
         };
@@ -49,6 +54,7 @@ impl Paths {
             data: root.join("data"),
             cache: root.join("cache"),
             extra_registries: Vec::new(),
+            keychain: false,
         }
     }
 

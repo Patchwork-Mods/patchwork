@@ -13,8 +13,9 @@ use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
+use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::update;
-use patchwork_core::{ImportOptions, Patchwork};
+use patchwork_core::{GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
@@ -38,6 +39,9 @@ enum Command {
     /// Manage profiles.
     #[command(subcommand)]
     Profile(ProfileCommand),
+    /// Settings for sources, such as API keys.
+    #[command(subcommand)]
+    Config(ConfigCommand),
     /// Add a mod to the profile, as `source:id` or a path to a local mod.
     Add {
         spec: String,
@@ -216,6 +220,31 @@ enum GameCommand {
     Show { id: String },
     /// Tell patchwork where a game is installed.
     SetPath { id: String, path: PathBuf },
+    /// List a game's settings: how mods are linked into it, and its
+    /// deployer's settings.
+    Settings { id: String },
+    /// Change one of a game's settings (see `game settings`).
+    Set {
+        id: String,
+        key: String,
+        value: String,
+    },
+    /// Go back to what the game's definition says for a setting.
+    Unset { id: String, key: String },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// List the settings sources take, and what they're set to.
+    List,
+    /// Change a setting, given as <source>.<key>, e.g. `nexus.api_key`.
+    /// Leave out the value to type it in instead, which keeps secrets out
+    /// of your shell's history.
+    Set { name: String, value: Option<String> },
+    /// Clear a setting.
+    Unset { name: String },
+    /// Check that a source's settings work, e.g. that its API key is valid.
+    Check { source: String },
 }
 
 #[derive(Subcommand)]
@@ -304,7 +333,7 @@ async fn run(cli: Cli) -> Result<()> {
     let pw = Patchwork::builder(Paths::from_env()?)
         .source(LocalSource)
         .source(Thunderstore)
-        .source(Nexus::from_env())
+        .source(Nexus::default())
         .source(UrlSource)
         .deployer(RulesDeployer)
         .deployer(SmfDeployer)
@@ -320,6 +349,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Command::Game(command) => game(&pw, command)?,
+        Command::Config(command) => config(&pw, command).await?,
         Command::Profile(command) => profile(&pw, command, &cli.profile).await?,
         Command::Add {
             spec,
@@ -613,8 +643,131 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
             let install = pw.set_game_path(&id, &path)?;
             println!("{id} is installed at {}", install.path.display());
         }
+        GameCommand::Settings { id } => {
+            let registry = pw.registry();
+            let def = &registry.game(&id)?.value;
+            let install = pw.game_install(&id)?;
+            let link = install.as_ref().and_then(|i| i.link);
+            let set = if link.is_some() { "" } else { " (default)" };
+            let link = toml::Value::try_from(link.unwrap_or(def.link))?;
+            println!("link = {link}{set}");
+            for setting in pw.deployer_settings(&id)? {
+                print_setting(&setting);
+            }
+        }
+        GameCommand::Set { id, key, value } => {
+            let mut install = game_install(pw, &id)?;
+            if key == "link" {
+                install.link = Some(toml::Value::String(value).try_into()?);
+            } else {
+                let settings = pw.deployer_settings(&id)?;
+                let Some(setting) = settings.iter().find(|s| s.spec.key == key) else {
+                    let keys: Vec<_> = std::iter::once("link")
+                        .chain(settings.iter().map(|s| s.spec.key))
+                        .collect();
+                    bail!("{id} has no setting `{key}`; it has {}", keys.join(", "));
+                };
+                install
+                    .deployer
+                    .insert(key.clone(), setting.spec.parse(&value)?);
+            }
+            pw.set_game_install(&id, install)?;
+            println!("set {key} for {id}");
+        }
+        GameCommand::Unset { id, key } => {
+            let mut install = game_install(pw, &id)?;
+            if key == "link" {
+                install.link = None;
+            } else if install.deployer.remove(&key).is_none() {
+                bail!("{key} isn't set for {id}");
+            }
+            pw.set_game_install(&id, install)?;
+            println!("{key} is back to {id}'s default");
+        }
     }
     Ok(())
+}
+
+fn game_install(pw: &Patchwork, id: &str) -> Result<GameInstall> {
+    pw.game_install(id)?.with_context(|| {
+        format!("patchwork doesn't know where {id} is installed; run `patchwork game set-path {id} <dir>` first")
+    })
+}
+
+async fn config(pw: &Patchwork, command: ConfigCommand) -> Result<()> {
+    match command {
+        ConfigCommand::List => {
+            for (id, name) in pw.configurable_sources() {
+                println!("# {name}");
+                for setting in pw.source_settings(id)? {
+                    print!("{id}.");
+                    print_setting(&setting);
+                }
+            }
+        }
+        ConfigCommand::Set { name, value } => {
+            let (source, key) = split_setting(&name)?;
+            let spec = pw
+                .source_settings(source)?
+                .into_iter()
+                .find(|s| s.spec.key == key)
+                .with_context(|| format!("{source} has no setting `{key}`"))?
+                .spec;
+            let value = match value {
+                Some(value) => value,
+                None => {
+                    eprint!("{}: ", spec.label);
+                    std::io::stderr().flush()?;
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line)?;
+                    line
+                }
+            };
+            let origin = pw.set_source_setting(source, key, Some(spec.parse(&value)?))?;
+            match origin {
+                Some(Origin::Keychain) => println!("saved {name} in the system keychain"),
+                _ => println!("saved {name}"),
+            }
+            if let Some(var) = spec.env.filter(|v| std::env::var_os(v).is_some()) {
+                println!("note: {var} is set, and is used instead");
+            }
+        }
+        ConfigCommand::Unset { name } => {
+            let (source, key) = split_setting(&name)?;
+            pw.set_source_setting(source, key, None)?;
+            println!("cleared {name}");
+        }
+        ConfigCommand::Check { source } => match pw.check_source_settings(&source).await? {
+            Some(status) => println!("{status}"),
+            None => println!("{source} has nothing set to check"),
+        },
+    }
+    Ok(())
+}
+
+/// Splits `<source>.<key>`.
+fn split_setting(name: &str) -> Result<(&str, &str)> {
+    name.split_once('.').with_context(|| {
+        format!("settings are named <source>.<key>, like nexus.api_key, not `{name}`")
+    })
+}
+
+fn print_setting(setting: &SettingState) {
+    let key = setting.spec.key;
+    let shown = match (&setting.value, setting.origin) {
+        (_, None) => match &setting.default {
+            Some(default) => format!("{default} (default)"),
+            None => "(not set)".to_owned(),
+        },
+        (Some(value), _) => value.to_string(),
+        (None, _) => "(set)".to_owned(),
+    };
+    let from = match setting.origin {
+        Some(Origin::Env(var)) => format!(" from {var}"),
+        Some(Origin::Keychain) => " in the system keychain".to_owned(),
+        _ => String::new(),
+    };
+    println!("{key} = {shown}{from}");
 }
 
 async fn profile(pw: &Patchwork, command: ProfileCommand, explicit: &Option<String>) -> Result<()> {

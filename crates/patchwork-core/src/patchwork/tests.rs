@@ -872,3 +872,184 @@ async fn mods_for_other_versions_of_the_game_are_issues() {
     pw.set_game_versions(&profile, "plugin", None).unwrap();
     assert_eq!(pw.issues(&profile).unwrap().len(), 1);
 }
+
+const TOKEN: SettingSpec = SettingSpec::new("token", "Token", crate::settings::SettingKind::Secret);
+
+/// Takes a token, and says what it is when its settings are checked.
+struct Keyed;
+
+#[async_trait::async_trait]
+impl Source for Keyed {
+    fn id(&self) -> &str {
+        "keyed"
+    }
+
+    fn settings(&self) -> &[SettingSpec] {
+        &[TOKEN]
+    }
+
+    async fn check_settings(&self, settings: Option<&toml::Table>) -> Result<Option<String>> {
+        Ok(settings
+            .and_then(|s| s.get("token"))
+            .and_then(|t| t.as_str())
+            .map(|t| format!("token {t}")))
+    }
+
+    async fn resolve(
+        &self,
+        _: &SourceContext<'_>,
+        _: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        unreachable!()
+    }
+}
+
+#[tokio::test]
+async fn source_settings_are_saved_and_kept_secret() {
+    let tmp = tempfile::tempdir().unwrap();
+    let open = || {
+        Patchwork::builder(Paths::rooted(tmp.path()))
+            .source(Keyed)
+            .open()
+            .unwrap()
+    };
+    let pw = open();
+    assert_eq!(pw.configurable_sources(), vec![("keyed", "keyed")]);
+    assert_eq!(pw.check_source_settings("keyed").await.unwrap(), None);
+
+    // there's no keychain for rooted paths, so it goes in the file
+    let origin = pw
+        .set_source_setting("keyed", "token", Some("abc".into()))
+        .unwrap();
+    assert_eq!(origin, Some(Origin::File));
+    assert_eq!(
+        pw.check_source_settings("keyed").await.unwrap().as_deref(),
+        Some("token abc")
+    );
+    let states = pw.source_settings("keyed").unwrap();
+    assert_eq!(states[0].origin, Some(Origin::File));
+    assert_eq!(states[0].value, None, "secrets aren't handed back out");
+
+    assert!(
+        pw.set_source_setting("keyed", "other", Some("x".into()))
+            .is_err()
+    );
+    assert!(
+        pw.set_source_setting("keyed", "token", Some("  ".into()))
+            .is_err()
+    );
+
+    drop(pw);
+    let pw = open();
+    assert_eq!(
+        pw.check_source_settings("keyed").await.unwrap().as_deref(),
+        Some("token abc")
+    );
+    pw.set_source_setting("keyed", "token", None).unwrap();
+    assert_eq!(pw.source_settings("keyed").unwrap()[0].origin, None);
+    assert_eq!(pw.check_source_settings("keyed").await.unwrap(), None);
+}
+
+const GREETING: SettingSpec =
+    SettingSpec::new("greeting", "Greeting", crate::settings::SettingKind::Text);
+
+/// Builds `hello.txt` saying its config's `greeting`.
+struct Greeter;
+
+impl Deployer for Greeter {
+    fn kind(&self) -> &str {
+        "greeter"
+    }
+
+    fn settings(&self) -> &[SettingSpec] {
+        &[GREETING]
+    }
+
+    fn plan(&self, _: &DeployContext<'_>, _: &[InstalledMod]) -> Result<deploy::DesiredState> {
+        Ok(Default::default())
+    }
+
+    fn builds(&self, _: &DeployContext<'_>) -> bool {
+        true
+    }
+
+    fn build(
+        &self,
+        ctx: &DeployContext<'_>,
+        build: &BuildContext<'_>,
+        _: &[InstalledMod],
+    ) -> Result<deploy::DesiredState> {
+        let greeting = ctx.config["greeting"].as_str().unwrap();
+        fs::write(build.out.join("hello.txt"), greeting).unwrap();
+        let dst = crate::relpath::RelPath::new("hello.txt").unwrap();
+        Ok(deploy::DesiredState {
+            placements: vec![deploy::Placement {
+                dst: deploy::Dest::game(dst.clone()),
+                src: deploy::Src::Built(dst),
+                mod_name: "built".to_owned(),
+            }],
+            warnings: Vec::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn game_settings_override_the_definition() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(Greeter)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "greeter");
+    def.deployer
+        .config
+        .insert("greeting".to_owned(), "hello".into());
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let hello = || fs::read_to_string(game.join("hello.txt")).unwrap();
+
+    let settings = pw.deployer_settings("my-game").unwrap();
+    assert_eq!(settings[0].default, Some("hello".into()));
+    assert_eq!(settings[0].value, None);
+
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(hello(), "hello");
+
+    let mut install = pw.game_install("my-game").unwrap().unwrap();
+    install.deployer.insert("rules".to_owned(), "x".into());
+    let err = pw.set_game_install("my-game", install.clone()).unwrap_err();
+    assert!(err.to_string().contains("no setting `rules`"), "{err}");
+    install.deployer.clear();
+    install.deployer.insert("greeting".to_owned(), "hi".into());
+    pw.set_game_install("my-game", install.clone()).unwrap();
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Stale);
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(hello(), "hi");
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+
+    // setting the path again keeps the rest
+    pw.set_game_path("my-game", &game).unwrap();
+    assert_eq!(
+        pw.deployer_settings("my-game").unwrap()[0].value,
+        Some("hi".into())
+    );
+
+    // files already placed can't change how they're linked
+    install.link = Some(LinkMethod::Symlink);
+    let err = pw.set_game_install("my-game", install.clone()).unwrap_err();
+    assert!(err.to_string().contains("undeploy"), "{err}");
+    pw.apply(
+        &pw.plan_undeploy(&DeployTarget::Game("my-game".into()))
+            .unwrap(),
+    )
+    .unwrap();
+    pw.set_game_install("my-game", install).unwrap();
+    assert_eq!(
+        pw.plan_deploy(&profile).await.unwrap().link,
+        LinkMethod::Symlink
+    );
+}

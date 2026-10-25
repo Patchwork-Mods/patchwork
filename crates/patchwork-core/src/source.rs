@@ -14,6 +14,7 @@ use crate::compat::GameVersions;
 use crate::environment::GameEnv;
 use crate::game::GameDef;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
+use crate::settings::SettingSpec;
 
 /// Where the host should fetch an artifact from. Sources only describe this;
 /// the host does the fetching, hashing and storing.
@@ -247,6 +248,9 @@ pub struct SourceContext<'a> {
     pub game: &'a GameDef,
     /// This source's table from the game definition's `[sources]`, if any.
     pub config: Option<&'a toml::Table>,
+    /// What the user has set of the source's [`Source::settings`], if
+    /// anything.
+    pub settings: Option<&'a toml::Table>,
     /// The game install mods are being resolved for, when there is one, so
     /// sources with a file for each version of the game can pick the right
     /// one.
@@ -258,6 +262,23 @@ pub struct SourceContext<'a> {
 pub trait Source: Send + Sync {
     /// The prefix users write, as in `local:~/mod.zip`.
     fn id(&self) -> &str;
+
+    /// What to call it in a UI.
+    fn name(&self) -> &str {
+        self.id()
+    }
+
+    /// The settings users can give it, which apply to every game. It gets
+    /// what's been set in [`SourceContext::settings`].
+    fn settings(&self) -> &[SettingSpec] {
+        &[]
+    }
+
+    /// Checks that `settings` work (that an API key is valid, say) and
+    /// describes what they amount to, such as the account they sign in to.
+    async fn check_settings(&self, _settings: Option<&toml::Table>) -> Result<Option<String>> {
+        Ok(None)
+    }
 
     /// Works out exactly which artifact `id` at `version` refers to.
     async fn resolve(

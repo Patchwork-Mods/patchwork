@@ -95,6 +95,7 @@ fn urls_round_trip() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        settings: None,
         env: None,
     };
     let url = Thunderstore
@@ -256,6 +257,7 @@ async fn needs_community_config() {
     let ctx = SourceContext {
         game: &game,
         config: None,
+        settings: None,
         env: None,
     };
     let err = Thunderstore
@@ -274,6 +276,7 @@ async fn test_get_mod() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        settings: None,
         env: None,
     };
 
@@ -318,6 +321,7 @@ async fn summarizes_one_mod() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        settings: None,
         env: None,
     };
     let summary = Thunderstore
@@ -337,6 +341,7 @@ async fn searches() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        settings: None,
         env: None,
     };
 
@@ -409,6 +414,7 @@ async fn rejects_other_communities() {
     let ctx = SourceContext {
         game: &game,
         config: game.sources.get("thunderstore"),
+        settings: None,
         env: None,
     };
     let err = Thunderstore

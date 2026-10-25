@@ -4,6 +4,7 @@ use patchwork_core::changelog::ChangelogEntry;
 use patchwork_core::compat::{self, GameVersions};
 use patchwork_core::game::GameDef;
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
+use patchwork_core::settings::{SettingKind, SettingSpec};
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, Download, Handoff, ModSpec, ResolvedMod, Source,
     SourceContext, compare_dotted, url_parts,
@@ -16,37 +17,46 @@ mod search;
 mod tests;
 
 const API: &str = "https://api.nexusmods.com/v1";
-const API_KEY_VAR: &str = "NEXUS_API_KEY";
+
+const API_KEY: SettingSpec = SettingSpec::new("api_key", "API key", SettingKind::Secret)
+    .help(
+        "Needed for anything but searching. Only Premium accounts can download \
+         through it; without Premium, downloads start on the mod's page.",
+    )
+    .link("https://www.nexusmods.com/settings/api-keys")
+    .env("NEXUS_API_KEY");
 
 /// Mods from Nexus Mods. Ids are the numeric mod id from the mod's page, e.g.
 /// `nexus:266` for nexusmods.com/skyrimspecialedition/mods/266. Versions are
 /// matched against the version of the mod's files.
 ///
-/// Everything but searching needs a personal API key, which is read from
-/// `NEXUS_API_KEY` (get one from https://www.nexusmods.com/settings/api-keys).
-/// Only premium accounts can download through the API; everyone else is sent
-/// to the file's page to start the download there.
+/// Everything but searching needs a personal API key, the `api_key` setting
+/// (or `NEXUS_API_KEY`; get one from
+/// https://www.nexusmods.com/settings/api-keys). Only premium accounts can
+/// download through the API; everyone else is sent to the file's page to
+/// start the download there.
 pub struct Nexus {
-    api_key: Option<String>,
     client: reqwest::Client,
 }
 
-impl Nexus {
-    pub fn new(api_key: Option<String>) -> Self {
+impl Default for Nexus {
+    fn default() -> Self {
         let client = reqwest::Client::builder()
             .user_agent(concat!("patchwork/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("reqwest client should build");
-        Nexus { api_key, client }
-    }
-
-    /// Reads the API key from `NEXUS_API_KEY`.
-    pub fn from_env() -> Self {
-        Self::new(std::env::var(API_KEY_VAR).ok().filter(|k| !k.is_empty()))
+        Nexus { client }
     }
 }
 
 // --- API Responses ---
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NexusUser {
+    pub name: String,
+    #[serde(default)]
+    pub is_premium: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NexusMod {
     pub mod_id: u64,
@@ -330,6 +340,34 @@ impl Source for Nexus {
         "nexus"
     }
 
+    fn name(&self) -> &str {
+        "Nexus Mods"
+    }
+
+    fn settings(&self) -> &[SettingSpec] {
+        &[API_KEY]
+    }
+
+    async fn check_settings(&self, settings: Option<&toml::Table>) -> Result<Option<String>> {
+        let Some(api_key) = api_key(settings) else {
+            return Ok(None);
+        };
+        let url = format!("{API}/users/validate.json");
+        let response = self.get(&url, api_key).await?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(error("Nexus doesn't accept this API key".to_owned()));
+        }
+        let user: NexusUser = decode(&url, response).await?;
+        Ok(Some(if user.is_premium {
+            format!("Signed in as {} (Premium)", user.name)
+        } else {
+            format!(
+                "Signed in as {}; without Premium, downloads start on the mod's page",
+                user.name
+            )
+        }))
+    }
+
     async fn resolve(
         &self,
         ctx: &SourceContext<'_>,
@@ -479,15 +517,16 @@ impl Source for Nexus {
 impl Nexus {
     /// The API URL for mod `id` in the game's domain, and the API key that
     /// requests for it need.
-    fn mod_api(&self, ctx: &SourceContext<'_>, id: &str) -> Result<(String, &str)> {
+    fn mod_api<'a>(&self, ctx: &SourceContext<'a>, id: &str) -> Result<(String, &'a str)> {
         let config = config(ctx)?;
         let mod_id: u64 = id
             .parse()
             .map_err(|_| error(format!("`{id}` should be a numeric Nexus mod id")))?;
-        let api_key = self.api_key.as_deref().ok_or_else(|| {
-            error(format!(
-                "Nexus needs an API key; set {API_KEY_VAR} (get one from https://www.nexusmods.com/settings/api-keys)"
-            ))
+        let api_key = api_key(ctx.settings).ok_or_else(|| {
+            error(
+                "Nexus needs an API key; add one in Settings, or with `patchwork config set nexus.api_key <key>` (get one from https://www.nexusmods.com/settings/api-keys)"
+                    .to_owned(),
+            )
         })?;
         Ok((
             format!("{API}/games/{}/mods/{mod_id}", config.game_domain),
@@ -511,6 +550,11 @@ impl Nexus {
                 result,
             })
     }
+}
+
+/// The user's API key, if they've set one.
+fn api_key(settings: Option<&toml::Table>) -> Option<&str> {
+    settings?.get(API_KEY.key)?.as_str()
 }
 
 fn first_link(links: Vec<NexusDownloadLink>, id: &str) -> Result<String> {
