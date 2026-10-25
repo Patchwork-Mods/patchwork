@@ -11,6 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::game::{GameDef, VersionProbe};
+use crate::vdf;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -204,13 +205,11 @@ fn steam_build(root: &Path, app: u32) -> Option<String> {
     let steamapps = root.parent()?.parent()?;
     let manifest = steamapps.join(format!("appmanifest_{app}.acf"));
     let text = std::fs::read_to_string(manifest).ok()?;
-    // Lines like `"buildid"		"13190634"`.
-    text.lines().find_map(|line| {
-        let mut quoted = line.split('"').skip(1).step_by(2);
-        let key = quoted.next()?;
-        let value = quoted.next()?;
-        (key.eq_ignore_ascii_case("buildid") && !value.is_empty()).then(|| value.to_owned())
-    })
+    let build = vdf::parse(&text)?
+        .get("AppState")?
+        .get_str("buildid")?
+        .to_owned();
+    (!build.is_empty()).then_some(build)
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ pub mod fsutil;
 pub mod game;
 pub mod hash;
 pub mod issue;
+pub mod locate;
 pub mod lock;
 pub mod matching;
 pub mod order;
@@ -33,6 +34,7 @@ pub mod share;
 pub mod source;
 pub mod store;
 pub mod update;
+mod vdf;
 
 mod builtin;
 mod patchwork;

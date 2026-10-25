@@ -24,6 +24,7 @@ impl Env {
         let out = Command::new(env!("CARGO_BIN_EXE_patchwork"))
             .args(args)
             .env("PATCHWORK_HOME", self.path("home"))
+            .env("PATCHWORK_STEAM_PATH", self.path("Steam"))
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -49,6 +50,7 @@ impl Env {
         let out = Command::new(env!("CARGO_BIN_EXE_patchwork"))
             .args(args)
             .env("PATCHWORK_HOME", self.path("home"))
+            .env("PATCHWORK_STEAM_PATH", self.path("Steam"))
             .output()
             .unwrap();
         assert!(
@@ -226,6 +228,41 @@ to = "Content/Paks/~mods/{file}"
     fs::write(&txt, "?").unwrap();
     env.run(&["add", txt.to_str().unwrap()]);
     assert!(env.fails(&["deploy"]).contains("no rule for notes.txt"));
+}
+
+#[test]
+fn games_are_found_in_steam() {
+    let env = Env::new();
+    let steamapps = env.path("Steam/steamapps");
+    let game = steamapps.join("common/Lethal Company");
+    fs::create_dir_all(&game).unwrap();
+    fs::write(
+        steamapps.join("appmanifest_1966720.acf"),
+        "\"AppState\" { \"appid\" \"1966720\" \"installdir\" \"Lethal Company\" }",
+    )
+    .unwrap();
+    let game = game.canonicalize().unwrap();
+
+    env.run(&["profile", "new", "lethal-company/main"]);
+    let err = env.fails(&["deploy"]);
+    assert!(err.contains("game detect lethal-company --set"), "{err}");
+
+    let out = env.run(&["game", "detect"]);
+    assert!(
+        out.contains(&format!("lethal-company  {}", game.display())),
+        "{out}"
+    );
+    assert!(!out.contains("(set up)"), "{out}");
+    env.run(&["game", "detect", "lethal-company", "--set"]);
+    assert!(env.run(&["game", "detect"]).contains("(set up)"));
+    assert!(
+        env.run(&["game", "list"])
+            .contains(&game.display().to_string())
+    );
+    assert!(
+        env.fails(&["game", "detect", "risk-of-rain-2"])
+            .contains("couldn't find where Risk of Rain 2 is installed")
+    );
 }
 
 #[test]

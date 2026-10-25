@@ -8,6 +8,7 @@ use patchwork_core::compat::GameVersions;
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::issue::Severity;
+use patchwork_core::locate::Locator;
 use patchwork_core::lock::mod_key;
 use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
@@ -220,6 +221,15 @@ enum GameCommand {
     Show { id: String },
     /// Tell patchwork where a game is installed.
     SetPath { id: String, path: PathBuf },
+    /// Look for where games are installed, in every Steam library. Give a
+    /// game to look for only that one.
+    Detect {
+        id: Option<String>,
+        /// Use what's found, if it's in one place. Without a game, this sets
+        /// up every game that's found and isn't set up yet.
+        #[arg(long)]
+        set: bool,
+    },
     /// List a game's settings: how mods are linked into it, and its
     /// deployer's settings.
     Settings { id: String },
@@ -642,6 +652,67 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
         GameCommand::SetPath { id, path } => {
             let install = pw.set_game_path(&id, &path)?;
             println!("{id} is installed at {}", install.path.display());
+        }
+        GameCommand::Detect { id: Some(id), set } => {
+            let registry = pw.registry();
+            let def = &registry.game(&id)?.value;
+            let found = Locator::scan().find(def);
+            if found.is_empty() {
+                bail!(
+                    "couldn't find where {} is installed; run `patchwork game set-path {id} <dir>` to say",
+                    def.name
+                );
+            }
+            for found in &found {
+                println!("{}  ({})", found.path.display(), found.origin);
+            }
+            if set {
+                let [found] = found.as_slice() else {
+                    bail!(
+                        "{} is in more than one place; pick one with `patchwork game set-path {id} <dir>`",
+                        def.name
+                    );
+                };
+                let install = pw.set_game_path(&id, &found.path)?;
+                println!("{id} is installed at {}", install.path.display());
+            }
+        }
+        GameCommand::Detect { id: None, set } => {
+            let locator = Locator::scan();
+            let mut any = false;
+            for entry in pw.registry().games().filter(|e| !e.value.hidden) {
+                let game = &entry.value;
+                let found = locator.find(game);
+                if found.is_empty() {
+                    continue;
+                }
+                any = true;
+                let current = pw.game_install(&game.id)?.map(|i| i.path);
+                for found in &found {
+                    let mark = if current.as_ref() == Some(&found.path) {
+                        "  (set up)"
+                    } else {
+                        ""
+                    };
+                    println!(
+                        "{}  {}  ({}){mark}",
+                        game.id,
+                        found.path.display(),
+                        found.origin
+                    );
+                }
+                // never moves a game that's already set up
+                if set
+                    && current.is_none()
+                    && let [found] = found.as_slice()
+                {
+                    pw.set_game_path(&game.id, &found.path)?;
+                    println!("  set up {}", game.name);
+                }
+            }
+            if !any {
+                println!("no known games were found");
+            }
         }
         GameCommand::Settings { id } => {
             let registry = pw.registry();

@@ -114,9 +114,11 @@
       <section id="tab-mods" class="tab">
         <form id="game-path" class="row" hidden>
           <span>Where is this game installed?</span>
-          <input name="path" placeholder="/path/to/game" required />
+          <input name="path" placeholder="/path/to/game" list="game-path-found-list" required />
+          <datalist id="game-path-found-list"></datalist>
           <button type="button" data-browse="path">Browse…</button>
           <button type="submit">Set</button>
+          <small id="game-path-found" class="muted hint"></small>
         </form>
         <ul id="mod-problems" class="warnings"></ul>
         <div id="mods-toolbar" class="row">

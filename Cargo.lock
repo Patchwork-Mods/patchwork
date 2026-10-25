@@ -4329,6 +4329,7 @@ dependencies = [
  "unicode-normalization",
  "uuid",
  "walkdir",
+ "windows-registry",
  "zip 8.6.0",
 ]
 

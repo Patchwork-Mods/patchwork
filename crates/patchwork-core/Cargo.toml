@@ -26,6 +26,9 @@ uuid.workspace = true
 walkdir.workspace = true
 zip.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6.1"
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio.workspace = true

@@ -105,7 +105,7 @@ export function renderProfile({ keepMods = false } = {}) {
     $("#mod-problems").replaceChildren();
     $("#mods-empty").hidden = true;
     $("#mods-toolbar").hidden = true;
-    $("#game-path").hidden = !!game.install;
+    renderGamePath(!!game.install);
     renderSourceTabs([]);
     return;
   }
@@ -115,7 +115,7 @@ export function renderProfile({ keepMods = false } = {}) {
   $("#profile-title").textContent = p.name;
   const enabled = p.mods.filter((m) => m.enabled).length;
   $("#profile-meta").textContent = `${enabled} of ${p.mods.length} mods enabled`;
-  $("#game-path").hidden = !!p.install;
+  renderGamePath(!!p.install);
 
   if (!keepMods) renderMods(p.mods);
   $("#mods-toolbar").hidden = !p.mods.length;
@@ -436,6 +436,36 @@ function confirmDelete(profile) {
     dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete"), {
       once: true,
     }),
+  );
+}
+
+/**
+ * Asks where the game is installed if patchwork doesn't know, with the folder
+ * filled in if it can be found. Looks once each time a game is opened, not
+ * on every render.
+ */
+function renderGamePath(installed) {
+  const form = $("#game-path");
+  form.hidden = installed;
+  if (installed || form.dataset.game === state.game) return;
+  const game = (form.dataset.game = state.game);
+  form.elements.path.value = "";
+  $("#game-path-found").textContent = "";
+  $("#game-path-found-list").replaceChildren();
+  invoke("find_installs", { game }).then(
+    (found) => {
+      // not if the user has moved on or started typing
+      if (state.game !== game || !found.length || form.elements.path.value) return;
+      form.elements.path.value = found[0].path;
+      $("#game-path-found").textContent =
+        found.length === 1
+          ? `Found in ${found[0].origin}`
+          : `Found in ${found.length} places; this one's in ${found[0].origin}`;
+      $("#game-path-found-list").replaceChildren(
+        ...found.map((f) => h("option", { value: f.path }, f.origin)),
+      );
+    },
+    (e) => console.warn(e),
   );
 }
 

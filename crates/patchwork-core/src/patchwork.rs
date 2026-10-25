@@ -21,6 +21,7 @@ use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, LinkMethod, validate_game_id};
 use crate::hash::ContentHash;
 use crate::issue::Issue;
+use crate::locate::{Found, Locator};
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
 use crate::matching::{self, ModText};
 use crate::order::{self, ModFacts, Position, SortKey};
@@ -434,6 +435,13 @@ impl Patchwork {
             .collect();
         config.extend(overrides.clone());
         Ok((config, link, overrides))
+    }
+
+    /// Where `game` looks to be installed on this machine, so it can be set
+    /// up without the user having to find it.
+    pub fn find_installs(&self, game: &str) -> Result<Vec<Found>> {
+        let registry = self.registry();
+        Ok(Locator::scan().find(&registry.game(game)?.value))
     }
 
     fn install_file(&self, game: &str) -> PathBuf {
@@ -1827,12 +1835,21 @@ impl Patchwork {
         let entry = registry.game(&loaded.game)?;
         let game = &entry.value;
         let target = self.deploy_target(&loaded)?;
-        let roots = self.target_roots(&target)?.ok_or_else(|| {
-            Error::invalid(format!(
-                "patchwork doesn't know where {} is installed; run `patchwork game set-path {} <dir>`",
-                game.name, game.id
-            ))
-        })?;
+        let Some(roots) = self.target_roots(&target)? else {
+            let fix = match Locator::scan().find(game).as_slice() {
+                [found] => format!(
+                    "it looks to be in {}, so run `patchwork game detect {} --set` to use that, or `patchwork game set-path {} <dir>`",
+                    found.path.display(),
+                    game.id,
+                    game.id
+                ),
+                _ => format!("run `patchwork game set-path {} <dir>`", game.id),
+            };
+            return Err(Error::invalid(format!(
+                "patchwork doesn't know where {} is installed; {fix}",
+                game.name
+            )));
+        };
         let root = roots.game_path().to_owned();
         let deployer = self.deployer(&game.deployer.kind)?;
         let (config, link, overrides) = self.deploy_config(game)?;

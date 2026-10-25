@@ -547,6 +547,30 @@ fn set_game_path(app: State<'_, App>, game: String, path: String) -> CmdResult<(
         .map_err(msg)
 }
 
+/// Somewhere a game looks to be installed, for offering it as the game's
+/// folder.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FoundInstall {
+    path: String,
+    /// What found it, e.g. `Steam library /home/me/.local/share/Steam`.
+    origin: String,
+}
+
+#[tauri::command]
+fn find_installs(app: State<'_, App>, game: String) -> CmdResult<Vec<FoundInstall>> {
+    Ok(app
+        .pw
+        .find_installs(&game)
+        .map_err(msg)?
+        .into_iter()
+        .map(|f| FoundInstall {
+            path: f.path.display().to_string(),
+            origin: f.origin.to_string(),
+        })
+        .collect())
+}
+
 /// A game's settings on this machine, for the game settings dialog.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1180,6 +1204,7 @@ fn main() {
             export_profile,
             import_profile,
             set_game_path,
+            find_installs,
             game_settings,
             game_env,
             set_game_settings,
