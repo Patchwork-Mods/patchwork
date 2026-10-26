@@ -941,6 +941,60 @@ button.link {
   cursor: help;
 }
 
+/* Says a mod shares files with others; opens #conflicts-dialog. Muted when
+   its copies win, since that's usually intended, and in the danger colour
+   when none of them do. */
+.mod-conflict {
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid var(--pw-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--pw-muted);
+  cursor: pointer;
+}
+
+.mod-conflict:hover {
+  color: var(--pw-text);
+}
+
+.mod-conflict.lost {
+  color: var(--pw-danger);
+  border-color: currentColor;
+}
+
+/* On a card, under its details rather than beside its name. */
+.result > .mod-conflict {
+  align-self: flex-start;
+  margin: 0 10px 8px;
+}
+
+#conflicts-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+#conflicts-body h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.conflict-mod > summary {
+  display: flex;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.conflict-files {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .result-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

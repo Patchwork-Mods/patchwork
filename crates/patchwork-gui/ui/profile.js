@@ -5,6 +5,7 @@ import { $, h } from "./dom.js";
 import { showGames } from "./games.js";
 import { renderMods } from "./mods.js";
 import { refreshDetails } from "./details.js";
+import { loadConflicts } from "./conflicts.js";
 import { modSearch } from "./toolbar.js";
 import { renderSourceTabs } from "./browse.js";
 import { markUpdates } from "./deploy.js";
@@ -70,6 +71,7 @@ export function showProfile(profile, { keepMods = false } = {}) {
   renderSidebar();
   renderProfile({ keepMods });
   refreshDetails();
+  loadConflicts();
 }
 
 /**

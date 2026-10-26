@@ -10,6 +10,7 @@ use std::fmt::Display;
 use std::sync::Mutex;
 
 use base64::prelude::*;
+use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter};
@@ -842,6 +843,31 @@ fn set_load_order(
     ui_load_order(&app.pw, &r)
 }
 
+/// One mod's conflicts, for the Mods tab.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiModConflicts {
+    name: String,
+    #[serde(flatten)]
+    conflicts: ModConflicts,
+}
+
+/// Which of the profile's mods provide the same files, and whose copies
+/// win, in load order; see conflicts.rs in core. Only locked mods count.
+/// Async so unpacking and comparing files happens off the main thread.
+#[tauri::command]
+async fn conflicts(app: State<'_, App>, id: String) -> CmdResult<Vec<UiModConflicts>> {
+    let conflicts = app.pw.conflicts(&profile_ref(&id)?).map_err(msg)?;
+    Ok(conflicts
+        .by_mod()
+        .into_iter()
+        .map(|(name, conflicts)| UiModConflicts {
+            name: name.to_owned(),
+            conflicts,
+        })
+        .collect())
+}
+
 /// Starts fetching whatever's out of date about the profile's mods' versions
 /// and summaries in the background; see details.rs.
 #[tauri::command]
@@ -1316,6 +1342,7 @@ fn main() {
             reorder_mods,
             load_order,
             set_load_order,
+            conflicts,
             refresh_details,
             find_games,
             find_mods,

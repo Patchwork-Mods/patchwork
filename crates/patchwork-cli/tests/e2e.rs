@@ -731,3 +731,47 @@ fn skyrim_plugins_load_in_the_order_set() {
     assert_eq!(read(appdata.join("plugins.txt")), "*Mine.esp\r\n");
     assert!(!game.join("Data/Patch.esp").exists());
 }
+
+#[test]
+fn conflicts_show_which_mod_wins() {
+    let env = Env::new();
+    env.run(&["profile", "new", "skyrim-se/main"]);
+    for (name, files) in [
+        (
+            "textures",
+            [("Data/Textures/Sky.dds", "a"), ("Data/readme.txt", "same")],
+        ),
+        (
+            "better",
+            [("data/textures/sky.DDS", "b"), ("Data/readme.txt", "same")],
+        ),
+    ] {
+        let dir = env.path(&format!("mods/{name}"));
+        for (rel, contents) in files {
+            let path = dir.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+        env.run(&["add", dir.to_str().unwrap(), "--name", name]);
+    }
+    // nothing's known about mods that haven't been locked
+    assert!(env.run(&["conflicts"]).contains("no two mods"));
+    env.run(&["lock"]);
+
+    let out = env.run(&["conflicts"]);
+    assert!(
+        out.contains("textures  (other mods' copies of all of these are deployed)\n  overridden by better (1 file)"),
+        "{out}"
+    );
+    assert!(out.contains("better\n  overrides textures (1 file)"), "{out}");
+    assert!(out.contains("1 more file is the same"), "{out}");
+
+    // spelled the way the first mod in the load order spells it
+    env.run(&["move", "better", "--top"]);
+    let out = env.run(&["conflicts", "textures"]);
+    assert!(
+        out.contains("textures\n  overrides better (1 file)\n    Data/textures/sky.DDS"),
+        "{out}"
+    );
+    assert!(env.fails(&["conflicts", "nope"]).contains("no mod named"));
+}

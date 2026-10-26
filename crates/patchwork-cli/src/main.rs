@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use patchwork_core::compat::GameVersions;
+use patchwork_core::conflicts::Conflicts;
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::issue::Severity;
@@ -131,6 +132,13 @@ enum Command {
     /// files) in the order the game loads them.
     #[command(subcommand)]
     Plugins(PluginsCommand),
+    /// Show which mods provide the same files, and whose copy of each is
+    /// deployed: the one latest in the load order. Only locked mods count.
+    Conflicts {
+        /// List this mod's files that clash with other mods', rather than
+        /// how many each mod has.
+        name: Option<String>,
+    },
     /// Sort the profile's mods. Mods that tie keep their order.
     Sort {
         /// name, source, tags, dependencies, dependents or updated, optionally with
@@ -615,6 +623,16 @@ async fn run(cli: Cli) -> Result<()> {
                     println!("disabled {name}");
                 }
             }
+        }
+        Command::Conflicts { name } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            if let Some(name) = &name
+                && !loaded.mods.iter().any(|m| m.name == *name)
+            {
+                bail!("{} has no mod named `{name}`", loaded.label());
+            }
+            let conflicts = pw.conflicts(&profile)?;
+            print_conflicts(&conflicts, name.as_deref());
         }
         Command::Sort { by, tags, dry_run } => {
             let (profile, _) = selected(&pw, &cli.profile)?;
@@ -1303,6 +1321,67 @@ fn print_plugins(order: &LoadOrder) {
     }
     for warning in &order.warnings {
         eprintln!("warning: {warning}");
+    }
+}
+
+/// Each mod's conflicts, in load order, as how many files it shares with
+/// each other mod, or every file of `only`'s.
+fn print_conflicts(conflicts: &Conflicts, only: Option<&str>) {
+    let files = |n: usize| {
+        if n == 1 {
+            "1 file".to_owned()
+        } else {
+            format!("{n} files")
+        }
+    };
+    let by_mod = conflicts.by_mod();
+    let shown: Vec<_> = by_mod
+        .iter()
+        .filter(|(name, _)| only.is_none_or(|only| only == *name))
+        .collect();
+    if shown.is_empty() {
+        match only {
+            Some(only) => println!("{only} doesn't provide any of the same files as other mods"),
+            None => println!("no two mods provide the same file"),
+        }
+        return;
+    }
+    for (name, of) in &shown {
+        if !of.matters() {
+            continue;
+        }
+        let lost = if of.lost() {
+            "  (other mods' copies of all of these are deployed)"
+        } else {
+            ""
+        };
+        println!("{name}{lost}");
+        for (verb, list) in [
+            ("overrides", &of.overrides),
+            ("overridden by", &of.overridden_by),
+        ] {
+            for other in list {
+                println!("  {verb} {} ({})", other.mod_name, files(other.files.len()));
+                if only.is_some() {
+                    for file in &other.files {
+                        println!("    {file}");
+                    }
+                }
+            }
+        }
+    }
+    let identical = match shown.as_slice() {
+        [(_, of)] if only.is_some() => of.identical,
+        _ => conflicts.files.iter().filter(|f| f.identical).count(),
+    };
+    if identical > 0 {
+        println!(
+            "{} the same in every mod that has them, so they aren't listed",
+            match identical {
+                1 => "1 more file is".to_owned(),
+                n => format!("{n} more files are"),
+            }
+        );
     }
 }
 

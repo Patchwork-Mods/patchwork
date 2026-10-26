@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::changelog::{self, ChangelogEntry};
 use crate::compat::{self, GameVersions};
+use crate::conflicts::{self, Conflicts};
 use crate::deploy::{
     self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
     DesiredState, Folders, GameFiles, InstalledMod, Os, Resolved, ResolvedRoots, RootId, RootSetup,
@@ -2172,6 +2173,29 @@ impl Patchwork {
         let state = self.deploy_state(&target)?;
         let found = deployer.plugins(&ctx, &GameFiles::new(&root, &state), &mods)?;
         Ok(found.map(|found| LoadOrder::new(&loaded.plugins, found)))
+    }
+
+    /// The files that more than one of `profile`'s enabled mods provide,
+    /// and whose copy of each deploying would use. Like
+    /// [`Patchwork::load_order`], only mods that have been locked count, so
+    /// this never touches the network.
+    pub fn conflicts(&self, profile: &ProfileRef) -> Result<Conflicts> {
+        let loaded = self.load_profile(profile)?;
+        let Some(lock) = self.load_lock(profile)? else {
+            return Ok(Conflicts::default());
+        };
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
+        let deployer = self.deployer(&game.deployer.kind)?;
+        let (config, _, _) = self.deploy_config(game)?;
+        let ctx = DeployContext {
+            game,
+            config: &config,
+            registry: &registry,
+        };
+        let mods = self.installed(&deploy_order(&loaded, &lock))?;
+        let desired = deployer.plan(&ctx, &mods)?;
+        Ok(conflicts::find(&mods, &desired.placements))
     }
 
     /// Changes `profile`'s load order with `change`, and saves it.

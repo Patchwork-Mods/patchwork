@@ -499,16 +499,26 @@ pub fn plan(
     let placements = match_case(&roots, placements)?;
     // Later placements win, which is what makes load order meaningful.
     let mut wanted: BTreeMap<Dest, Resolved> = BTreeMap::new();
+    // One warning for them all, since big profiles have hundreds; see
+    // `crate::conflicts` for which mod wins each.
+    let mut contested = BTreeSet::new();
     for placement in placements {
         if let Some(old) = wanted.get(&placement.dst)
             && old.mod_name != placement.mod_name
         {
-            warnings.push(format!(
-                "{} is provided by both `{}` and `{}`; using `{}`",
-                placement.dst, old.mod_name, placement.mod_name, placement.mod_name
-            ));
+            contested.insert(placement.dst.clone());
         }
         wanted.insert(placement.dst.clone(), placement);
+    }
+    match contested.len() {
+        0 => {}
+        1 => warnings.push(format!(
+            "{} is provided by more than one mod; using the copy from the one latest in the load order (`patchwork conflicts` lists them)",
+            contested.first().expect("one file")
+        )),
+        n => warnings.push(format!(
+            "{n} files are provided by more than one mod; using the copies from the ones latest in the load order (`patchwork conflicts` lists them)"
+        )),
     }
 
     let mut ops = Vec::new();

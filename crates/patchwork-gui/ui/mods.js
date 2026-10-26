@@ -7,6 +7,7 @@ import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
 import { showChangelog } from "./changelog.js";
 import { dragHandle, dragging } from "./reorder.js";
+import { conflictMark } from "./conflicts.js";
 
 // The Mods tab shows mods either as cards, like a source's search results,
 // or as a denser list of rows that each expand to show the rest.
@@ -61,7 +62,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
       h(
         "div",
         { class: "row-title" },
-        h("span", { class: "mod-name" }, item.name, issueMark(m)),
+        h("span", { class: "mod-name" }, item.name, issueMark(m), conflictMark(m)),
         item.author && h("span", { class: "author" }, item.author),
       ),
     );
@@ -207,6 +208,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
     { class: m.enabled ? "result" : "result disabled", "data-name": m.name },
     main,
     issueMark(m),
+    conflictMark(m),
     movable && dragHandle(m),
     h(
       "button",

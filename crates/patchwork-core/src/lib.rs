@@ -12,6 +12,7 @@
 
 pub mod changelog;
 pub mod compat;
+pub mod conflicts;
 pub mod deploy;
 pub mod environment;
 pub mod error;
