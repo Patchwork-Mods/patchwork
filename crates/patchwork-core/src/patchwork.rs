@@ -2385,57 +2385,6 @@ impl Patchwork {
             };
         }
     }
-
-    /// Remembers the profile as it is now, as what was last deployed.
-    fn save_deployed(&self, profile: &ProfileRef) -> Result<()> {
-        let Some(lock) = self.load_lock(profile)? else {
-            return Ok(());
-        };
-        let loaded = self.load_profile(profile)?;
-        let deployed = Deployed {
-            mods: loaded.mods,
-            plugins: loaded.plugins,
-            lock,
-        };
-        fsutil::write_toml(&self.deployed_file(profile), &deployed)
-    }
-
-    fn load_deployed(&self, profile: &ProfileRef) -> Result<Option<Deployed>> {
-        fsutil::read_toml(&self.deployed_file(profile))
-    }
-
-    /// Whether the profile's mods or their locked versions have changed
-    /// since it was last deployed, so [`Patchwork::revert`] would do
-    /// anything. Always false for a profile that's never been deployed.
-    ///
-    /// Hidden tags don't count, since they don't change what's deployed.
-    pub fn has_changes(&self, profile: &ProfileRef) -> Result<bool> {
-        let Some(deployed) = self.load_deployed(profile)? else {
-            return Ok(false);
-        };
-        let loaded = self.load_profile(profile)?;
-        if loaded.mods != deployed.mods || loaded.plugins != deployed.plugins {
-            return Ok(true);
-        }
-        let lock = self.load_lock(profile)?;
-        Ok(lock.map(|l| toml_eq(&l, &deployed.lock)) != Some(true))
-    }
-
-    /// Puts the profile's mods and lockfile back how they were when it was
-    /// last deployed, undoing everything done to it since. Nothing in the
-    /// game changes; the profile just matches what's deployed again.
-    pub fn revert(&self, profile: &ProfileRef) -> Result<()> {
-        let deployed = self.load_deployed(profile)?.ok_or_else(|| {
-            Error::invalid(format!(
-                "{profile} hasn't been deployed, so there's nothing to revert to"
-            ))
-        })?;
-        let mut loaded = self.load_profile(profile)?;
-        loaded.mods = deployed.mods;
-        loaded.plugins = deployed.plugins;
-        fsutil::write_toml(&self.lock_file(profile), &deployed.lock)?;
-        self.save_profile(profile, &loaded)
-    }
 }
 
 /// Streams `url` into the file at `dest`.
@@ -2456,25 +2405,6 @@ async fn download(url: &str, dest: &Path) -> Result<()> {
         file.write_all(&chunk).at(dest)?;
     }
     Ok(())
-}
-
-/// A profile's mods and lockfile at its last deploy.
-#[derive(Debug, Serialize, Deserialize)]
-struct Deployed {
-    #[serde(default, rename = "mod")]
-    mods: Vec<ProfileMod>,
-    #[serde(default, rename = "plugin", skip_serializing_if = "Vec::is_empty")]
-    plugins: Vec<PluginEntry>,
-    lock: Lockfile,
-}
-
-/// Whether two values serialize the same, for types that can't be compared
-/// directly.
-fn toml_eq<T: Serialize>(a: &T, b: &T) -> bool {
-    match (toml::to_string(a), toml::to_string(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    }
 }
 
 /// Where a profile stands against what's deployed to its
@@ -2672,7 +2602,10 @@ fn dedupe_names(mods: Vec<ProfileMod>) -> Vec<ProfileMod> {
         .collect()
 }
 
+mod history;
 mod profiles;
+
+pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 
 #[cfg(test)]
 mod tests;

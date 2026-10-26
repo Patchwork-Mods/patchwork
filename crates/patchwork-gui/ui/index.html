@@ -1,570 +1,572 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Patchwork</title>
-    <!-- The built-in look, then <config>/themes/user.css, then the selected
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Patchwork</title>
+		<!-- The built-in look, then <config>/themes/user.css, then the selected
          game's theme on top; see theme() in main.rs. -->
-    <style id="theme-builtin"></style>
-    <style id="theme-user"></style>
-    <style id="theme-game"></style>
-    <script type="module" src="app.js"></script>
-  </head>
-  <body data-screen="games">
-    <!-- The first screen: every known game, installed ones first, plus a
+		<style id="theme-builtin"></style>
+		<style id="theme-user"></style>
+		<style id="theme-game"></style>
+		<script type="module" src="app.js"></script>
+	</head>
+	<body data-screen="games">
+		<!-- The first screen: every known game, installed ones first, plus a
          way to add one. See renderGames() in games.js. -->
-    <section id="games-screen">
-      <header class="games-header">
-        <div>
-          <h1 class="brand">Patchwork</h1>
-          <p class="muted">Pick a game to manage its profiles and mods.</p>
-        </div>
-        <div class="games-actions">
-          <!-- Only on macOS and AppImages, whose installs can't put the
+		<section id="games-screen">
+			<header class="games-header">
+				<div>
+					<h1 class="brand">Patchwork</h1>
+					<p class="muted">Pick a game to manage its profiles and mods.</p>
+				</div>
+				<div class="games-actions">
+					<!-- Only on macOS and AppImages, whose installs can't put the
                bundled CLI on PATH themselves; see cli.js. -->
-          <button id="install-cli" type="button" title="Put the patchwork command on your PATH, to use Patchwork from a terminal" hidden>
-            Install command-line tool
-          </button>
-          <!-- Sources' settings, such as API keys; see settings.js. -->
-          <button id="app-settings" type="button" title="Accounts and settings for where mods come from">
-            Settings
-          </button>
-          <!-- Marked with a "!" while a newer patchwork is out; see
+					<button id="install-cli" type="button" title="Put the patchwork command on your PATH, to use Patchwork from a terminal" hidden>
+						Install command-line tool
+					</button>
+					<!-- Sources' settings, such as API keys; see settings.js. -->
+					<button id="app-settings" type="button" title="Accounts and settings for where mods come from">
+						Settings
+					</button>
+					<!-- Marked with a "!" while a newer patchwork is out; see
                selfupdate.js. -->
-          <button id="self-update" type="button" title="Check for a newer version of Patchwork">
-            Check for updates
-            <span class="update-mark" aria-label="An update is available" hidden>!</span>
-          </button>
-          <!-- Narrows the games down to the ones matching, best first; see
+					<button id="self-update" type="button" title="Check for a newer version of Patchwork">
+						Check for updates
+						<span class="update-mark" aria-label="An update is available" hidden>!</span>
+					</button>
+					<!-- Narrows the games down to the ones matching, best first; see
                find_games in main.rs. -->
-          <input
-            id="game-search"
-            type="search"
-            placeholder="Search games"
-            aria-label="Search games"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </div>
-      </header>
-      <section id="installed-games" class="game-section" aria-labelledby="installed-games-title">
-        <h2 id="installed-games-title">Installed <span class="count muted"></span></h2>
-        <ul class="game-grid"></ul>
-      </section>
-      <section id="other-games" class="game-section" aria-labelledby="other-games-title">
-        <h2 id="other-games-title">Not installed <span class="count muted"></span></h2>
-        <ul class="game-grid"></ul>
-      </section>
-      <p id="games-empty" class="empty" hidden></p>
-    </section>
+					<input id="game-search" type="search" placeholder="Search games" aria-label="Search games" autocomplete="off" spellcheck="false">
+				</div>
+			</header>
+			<section id="installed-games" class="game-section" aria-labelledby="installed-games-title">
+				<h2 id="installed-games-title">Installed <span class="count muted"></span></h2>
+				<ul class="game-grid"></ul>
+			</section>
+			<section id="other-games" class="game-section" aria-labelledby="other-games-title">
+				<h2 id="other-games-title">Not installed <span class="count muted"></span></h2>
+				<ul class="game-grid"></ul>
+			</section>
+			<p id="games-empty" class="empty" hidden></p>
+		</section>
 
-    <!-- One game: its profiles on the left, the selected one on the right. -->
-    <aside id="sidebar" hidden>
-      <button id="back" class="back">← All games</button>
-      <div class="game-heading">
-        <h1 id="game-title" class="brand"></h1>
-        <button id="game-settings" title="Game settings" aria-label="Game settings">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
-          </svg>
-        </button>
-      </div>
-      <nav id="profiles" aria-label="Profiles"></nav>
-      <form id="new-profile" class="stack">
-        <h2>New profile</h2>
-        <input name="name" placeholder="Name" required pattern="[A-Za-z0-9._\-]+" />
-        <button type="submit">Create</button>
-        <button type="button" id="import-profile">Import…</button>
-      </form>
-    </aside>
+		<!-- One game: its profiles on the left, the selected one on the right. -->
+		<aside id="sidebar" hidden>
+			<button id="back" class="back">← All games</button>
+			<div class="game-heading">
+				<h1 id="game-title" class="brand"></h1>
+				<button id="game-settings" title="Game settings" aria-label="Game settings">
+					<svg viewBox="0 0 24 24" aria-hidden="true">
+						<circle cx="12" cy="12" r="3"/>
+						<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+					</svg>
+				</button>
+			</div>
+			<nav id="profiles" aria-label="Profiles"></nav>
+			<form id="new-profile" class="stack">
+				<h2>New profile</h2>
+				<input name="name" placeholder="Name" required pattern="[A-Za-z0-9._\-]+">
+				<button type="submit">Create</button>
+				<button type="button" id="import-profile">Import…</button>
+			</form>
+		</aside>
 
-    <main id="main" hidden>
-      <header id="profile-header">
-        <div>
-          <h2 id="profile-title">No profile yet</h2>
-          <p id="profile-meta" class="muted"></p>
-        </div>
-        <!-- Mods, Plugins for games that have them, then one tab per source
+		<main id="main" hidden>
+			<header id="profile-header">
+				<div>
+					<h2 id="profile-title">No profile yet</h2>
+					<p id="profile-meta" class="muted"></p>
+				</div>
+				<!-- Mods, Plugins for games that have them, then one tab per source
              the game can be searched on; see renderSourceTabs() in
              browse.js. -->
-        <div id="tabs" class="tabs" role="tablist">
-          <button role="tab" data-tab="mods" aria-selected="true">Mods</button>
-        </div>
-        <!-- Only shown while the profile differs from what was last deployed. -->
-        <button id="revert" title="Revert changes made since the last deploy" aria-label="Revert changes" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8M3 3v5h5" /></svg>
-        </button>
-        <button id="update" title="Update all mods that are set to Auto" disabled>Update</button>
-        <!-- Deploy, with the less common things to do in a menu joined on
+				<div id="tabs" class="tabs" role="tablist">
+					<button role="tab" data-tab="mods" aria-selected="true">Mods</button>
+				</div>
+				<!-- Only shown while the profile differs from what was last deployed. -->
+				<button id="revert" title="Revert changes made since the last deploy" aria-label="Revert changes" hidden>
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8M3 3v5h5"/></svg>
+				</button>
+				<button id="update" title="Update all mods that are set to Auto" disabled>Update</button>
+				<!-- Deploy, with the less common things to do in a menu joined on
              its right; see deploy.js. -->
-        <div class="split">
-          <button id="deploy" disabled>Deploy</button>
-          <details id="deploy-menu" class="menu">
-            <summary title="More deploy options" aria-label="More deploy options"></summary>
-            <div class="menu-items" role="menu">
-              <button type="button" role="menuitem" id="undeploy" class="danger-text">
-                Undeploy <span id="undeploy-note" class="muted"></span>
-              </button>
-            </div>
-          </details>
-        </div>
-        <!-- Play, with the other ways to start the game in a menu joined on
+				<div class="split">
+					<button id="deploy" disabled>Deploy</button>
+					<details id="deploy-menu" class="menu">
+						<summary title="More deploy options" aria-label="More deploy options"></summary>
+						<div class="menu-items" role="menu">
+							<button type="button" role="menuitem" id="history">History…</button>
+							<button type="button" role="menuitem" id="undeploy" class="danger-text">
+								Undeploy <span id="undeploy-note" class="muted"></span>
+							</button>
+						</div>
+					</details>
+				</div>
+				<!-- Play, with the other ways to start the game in a menu joined on
              its right; see play.js. Hidden until the game's folder is known. -->
-        <div class="split" id="play-split" hidden>
-          <button id="play">Play</button>
-          <details id="play-menu" class="menu">
-            <summary title="Launch options" aria-label="Launch options"></summary>
-            <div id="play-options" class="menu-items" role="menu"></div>
-          </details>
-        </div>
-      </header>
+				<div class="split" id="play-split" hidden>
+					<button id="play">Play</button>
+					<details id="play-menu" class="menu">
+						<summary title="Launch options" aria-label="Launch options"></summary>
+						<div id="play-options" class="menu-items" role="menu"></div>
+					</details>
+				</div>
+			</header>
 
-      <section id="tab-mods" class="tab">
-        <form id="game-path" class="row" hidden>
-          <span>Where is this game installed?</span>
-          <input name="path" placeholder="/path/to/game" list="game-path-found-list" required />
-          <datalist id="game-path-found-list"></datalist>
-          <button type="button" data-browse="path">Browse…</button>
-          <button type="submit">Set</button>
-          <small id="game-path-found" class="muted hint"></small>
-        </form>
-        <ul id="mod-problems" class="warnings"></ul>
-        <div id="mods-toolbar" class="row">
-          <div class="row">
-            <!-- Sorting rearranges the mods once; it doesn't keep them sorted.
+			<section id="tab-mods" class="tab">
+				<form id="game-path" class="row" hidden>
+					<span>Where is this game installed?</span>
+					<input name="path" placeholder="/path/to/game" list="game-path-found-list" required>
+					<datalist id="game-path-found-list"></datalist>
+					<button type="button" data-browse="path">Browse…</button>
+					<button type="submit">Set</button>
+					<small id="game-path-found" class="muted hint"></small>
+				</form>
+				<ul id="mod-problems" class="warnings"></ul>
+				<div id="mods-toolbar" class="row">
+					<div class="row">
+						<!-- Sorting rearranges the mods once; it doesn't keep them sorted.
                  Each item's data-keys go to sort_mods in main.rs. -->
-            <details id="sort-menu" class="menu">
-              <summary title="Rearrange the load order. Mods further down win when two change the same file.">Sort</summary>
-              <div class="menu-items" role="menu">
-                <button type="button" role="menuitem" data-keys="name">
-                  Name <span class="muted">A to Z</span>
-                </button>
-                <button type="button" role="menuitem" data-keys="name:desc">
-                  Name <span class="muted">Z to A</span>
-                </button>
-                <button type="button" role="menuitem" data-keys="tags name">
-                  Category <span class="muted">grouped by their tags</span>
-                </button>
-                <button type="button" role="menuitem" data-keys="source name">
-                  Source <span class="muted">grouped by where they're from</span>
-                </button>
-                <button type="button" role="menuitem" data-keys="updated:desc name">
-                  Last updated <span class="muted">most recently updated on top</span>
-                </button>
-                <button type="button" role="menuitem" data-keys="dependents:desc name">
-                  Libraries first <span class="muted">mods that others need on top</span>
-                </button>
-                <button type="button" role="menuitem" data-keys="dependencies:desc name">
-                  Most dependencies first <span class="muted">mods that need the most on top</span>
-                </button>
-              </div>
-            </details>
-            <!-- Mods with a ticked tag move to #hidden-mods below. The tags
+						<details id="sort-menu" class="menu">
+							<summary title="Rearrange the load order. Mods further down win when two change the same file.">Sort</summary>
+							<div class="menu-items" role="menu">
+								<button type="button" role="menuitem" data-keys="name">
+									Name <span class="muted">A to Z</span>
+								</button>
+								<button type="button" role="menuitem" data-keys="name:desc">
+									Name <span class="muted">Z to A</span>
+								</button>
+								<button type="button" role="menuitem" data-keys="tags name">
+									Category <span class="muted">grouped by their tags</span>
+								</button>
+								<button type="button" role="menuitem" data-keys="source name">
+									Source <span class="muted">grouped by where they're from</span>
+								</button>
+								<button type="button" role="menuitem" data-keys="updated:desc name">
+									Last updated <span class="muted">most recently updated on top</span>
+								</button>
+								<button type="button" role="menuitem" data-keys="dependents:desc name">
+									Libraries first <span class="muted">mods that others need on top</span>
+								</button>
+								<button type="button" role="menuitem" data-keys="dependencies:desc name">
+									Most dependencies first <span class="muted">mods that need the most on top</span>
+								</button>
+							</div>
+						</details>
+						<!-- Mods with a ticked tag move to #hidden-mods below. The tags
                  are filled in each time it opens; see renderFilterMenu(). -->
-            <details id="filter-menu" class="menu">
-              <summary title="Move mods with some tags, like libraries, out of the way">Filter</summary>
-              <div class="menu-items"></div>
-            </details>
-            <!-- Narrows the mods down to the ones matching, best first; see
+						<details id="filter-menu" class="menu">
+							<summary title="Move mods with some tags, like libraries, out of the way">Filter</summary>
+							<div class="menu-items"></div>
+						</details>
+						<!-- Narrows the mods down to the ones matching, best first; see
                  find_mods in main.rs. -->
-            <input
-              id="mod-search"
-              type="search"
-              placeholder="Search mods"
-              aria-label="Search this profile's mods"
-              title="Searches names, authors and descriptions. Best matches go first; the load order stays the same."
-              autocomplete="off"
-              spellcheck="false"
-            />
-          </div>
-          <!-- Cards look like a source's search results; the list is denser,
+						<input id="mod-search" type="search" placeholder="Search mods" aria-label="Search this profile's mods" title="Searches names, authors and descriptions. Best matches go first; the load order stays the same." autocomplete="off" spellcheck="false">
+					</div>
+					<!-- Cards look like a source's search results; the list is denser,
                with rows that expand to show the rest. See setModsView() in
                mods.js. -->
-          <div id="mods-view" class="segmented" role="group" aria-label="Layout">
-            <button type="button" data-view="cards" aria-pressed="true">Cards</button>
-            <button type="button" data-view="list" aria-pressed="false">List</button>
-          </div>
-        </div>
-        <ul id="mods" class="result-grid"></ul>
-        <details id="hidden-mods" hidden>
-          <summary></summary>
-          <p class="muted">These are only out of the way here; they're still deployed while they're enabled.</p>
-          <ul id="hidden-mods-list" class="result-grid"></ul>
-        </details>
-        <p id="mods-empty" class="empty" hidden>No mods yet. Find some in the tabs above.</p>
-      </section>
+					<div id="mods-view" class="segmented" role="group" aria-label="Layout">
+						<button type="button" data-view="cards" aria-pressed="true">Cards</button>
+						<button type="button" data-view="list" aria-pressed="false">List</button>
+					</div>
+				</div>
+				<ul id="mods" class="result-grid"></ul>
+				<details id="hidden-mods" hidden>
+					<summary></summary>
+					<p class="muted">These are only out of the way here; they're still deployed while they're enabled.</p>
+					<ul id="hidden-mods-list" class="result-grid"></ul>
+				</details>
+				<p id="mods-empty" class="empty" hidden>No mods yet. Find some in the tabs above.</p>
+			</section>
 
-      <!-- The order the game loads plugins in; see plugins.js. -->
-      <section id="tab-plugins" class="tab" hidden>
-        <p class="muted">
-          The game loads these one after another, and later plugins win when two change the same thing.
-          This order is separate from the mods' order, and it's written for the game when you deploy.
-        </p>
-        <ul id="plugin-problems" class="warnings"></ul>
-        <div id="plugins-unlocked" class="row" hidden>
-          <span id="plugins-unlocked-text"></span>
-          <button type="button" id="plugins-lock">Download them</button>
-        </div>
-        <details id="plugins-implicit" hidden>
-          <summary></summary>
-          <p id="plugins-implicit-list" class="muted"></p>
-        </details>
-        <h3 id="plugin-masters-title" class="plugin-group" title="Masters always load before other plugins, wherever they're put" hidden>Masters</h3>
-        <ul id="plugin-masters" class="mod-list plugin-list" hidden></ul>
-        <h3 id="plugin-others-title" class="plugin-group" hidden>Plugins</h3>
-        <ul id="plugin-others" class="mod-list plugin-list" hidden></ul>
-        <p id="plugins-empty" class="empty" hidden>None of this profile's mods have plugins.</p>
-      </section>
+			<!-- The order the game loads plugins in; see plugins.js. -->
+			<section id="tab-plugins" class="tab" hidden>
+				<p class="muted">
+					The game loads these one after another, and later plugins win when two change the same thing.
+					This order is separate from the mods' order, and it's written for the game when you deploy.
+				</p>
+				<ul id="plugin-problems" class="warnings"></ul>
+				<div id="plugins-unlocked" class="row" hidden>
+					<span id="plugins-unlocked-text"></span>
+					<button type="button" id="plugins-lock">Download them</button>
+				</div>
+				<details id="plugins-implicit" hidden>
+					<summary></summary>
+					<p id="plugins-implicit-list" class="muted"></p>
+				</details>
+				<h3 id="plugin-masters-title" class="plugin-group" title="Masters always load before other plugins, wherever they're put" hidden>Masters</h3>
+				<ul id="plugin-masters" class="mod-list plugin-list" hidden></ul>
+				<h3 id="plugin-others-title" class="plugin-group" hidden>Plugins</h3>
+				<ul id="plugin-others" class="mod-list plugin-list" hidden></ul>
+				<p id="plugins-empty" class="empty" hidden>None of this profile's mods have plugins.</p>
+			</section>
 
-      <section id="tab-browse" class="tab" hidden>
-        <form id="search" class="row">
-          <input name="text" type="search" placeholder="Search mods" />
-          <select name="sort">
-            <option value="">Default order</option>
-            <option value="relevance">Relevance</option>
-            <option value="downloads">Downloads</option>
-            <option value="updated">Updated</option>
-            <option value="newest">Newest</option>
-            <option value="rating">Rating</option>
-          </select>
-          <!-- Narrows the search down by the source's categories. Its rows
+			<section id="tab-browse" class="tab" hidden>
+				<form id="search" class="row">
+					<input name="text" type="search" placeholder="Search mods">
+					<select name="sort">
+						<option value="">Default order</option>
+						<option value="relevance">Relevance</option>
+						<option value="downloads">Downloads</option>
+						<option value="updated">Updated</option>
+						<option value="newest">Newest</option>
+						<option value="rating">Rating</option>
+					</select>
+					<!-- Narrows the search down by the source's categories. Its rows
                are filled in each time it opens; see renderSourceFilter(). -->
-          <details id="source-filter" class="menu">
-            <summary title="Only show, or hide, mods in some categories, like libraries">Filter</summary>
-            <div class="menu-items"></div>
-          </details>
-        </form>
-        <ul id="results" class="result-grid"></ul>
-        <!-- Scrolling near this loads the next page; see showMore() in browse.js. -->
-        <p id="more" class="muted" hidden>Loading more…</p>
-      </section>
-    </main>
+					<details id="source-filter" class="menu">
+						<summary title="Only show, or hide, mods in some categories, like libraries">Filter</summary>
+						<div class="menu-items"></div>
+					</details>
+				</form>
+				<ul id="results" class="result-grid"></ul>
+				<!-- Scrolling near this loads the next page; see showMore() in browse.js. -->
+				<p id="more" class="muted" hidden>Loading more…</p>
+			</section>
+		</main>
 
-    <footer id="statusbar">
-      <span id="status" class="muted">Ready</span>
-      <!-- Shown after a sort; see sortMods() in toolbar.js. -->
-      <button id="undo" hidden>Undo</button>
-    </footer>
+		<footer id="statusbar">
+			<span id="status" class="muted">Ready</span>
+			<!-- Shown after a sort; see sortMods() in toolbar.js. -->
+			<button id="undo" hidden>Undo</button>
+		</footer>
 
-    <dialog id="plan-dialog">
-      <!-- Also confirms undeploying, worded for it; see deploy.js. -->
-      <form method="dialog" class="stack">
-        <h2 id="plan-title">Deploy</h2>
-        <p id="plan-summary"></p>
-        <ul id="plan-warnings" class="warnings"></ul>
-        <ul id="plan-ops" class="plan-ops"></ul>
-        <div class="row end">
-          <button value="cancel">Cancel</button>
-          <button value="apply" class="primary">Apply</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="plan-dialog">
+			<!-- Also confirms undeploying, worded for it; see deploy.js. -->
+			<form method="dialog" class="stack">
+				<h2 id="plan-title">Deploy</h2>
+				<p id="plan-summary"></p>
+				<ul id="plan-warnings" class="warnings"></ul>
+				<ul id="plan-ops" class="plan-ops"></ul>
+				<div class="row end">
+					<button value="cancel">Cancel</button>
+					<button value="apply" class="primary">Apply</button>
+				</div>
+			</form>
+		</dialog>
 
-    <dialog id="game-dialog">
-      <form id="new-game" method="dialog" class="stack">
-        <h2>Add a game</h2>
-        <label class="field">
-          <span>Name</span>
-          <input name="name" required placeholder="Lethal Company" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Id <small class="muted">used in profile names and file names</small></span>
-          <input name="id" required pattern="[a-z0-9][a-z0-9\-]*" placeholder="lethal-company" autocomplete="off" />
-        </label>
-        <div class="field">
-          <label for="new-game-install">Install folder <small class="muted">optional; can be set later</small></label>
-          <div class="row">
-            <input id="new-game-install" name="install" placeholder="/path/to/game" autocomplete="off" />
-            <button type="button" data-browse="install">Browse…</button>
-          </div>
-        </div>
-        <fieldset class="stack">
-          <legend>Where its mods come from</legend>
-          <label class="field">
-            <span>Thunderstore community <small class="muted">from thunderstore.io/c/<b>community</b>/</small></span>
-            <input name="thunderstore" placeholder="lethal-company" autocomplete="off" />
-          </label>
-          <label class="field">
-            <span>Nexus Mods game <small class="muted">from nexusmods.com/<b>game</b>/</small></span>
-            <input name="nexus" placeholder="skyrimspecialedition" autocomplete="off" />
-          </label>
-          <p class="muted hint">Local files and URLs work for every game.</p>
-        </fieldset>
-        <fieldset class="stack">
-          <legend>How mods are installed</legend>
-          <div id="new-game-rulesets" class="stack"></div>
-          <label class="field">
-            <span>Put files in the game folder by</span>
-            <select name="link">
-              <option value="copy">Copying (safest)</option>
-              <option value="hardlink">Hard linking (saves space)</option>
-              <option value="symlink">Symlinking</option>
-            </select>
-          </label>
-        </fieldset>
-        <p id="new-game-error" class="error" hidden></p>
-        <div class="row end">
-          <button type="button" value="cancel" formnovalidate>Cancel</button>
-          <button type="submit" value="create" class="primary">Add game</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="game-dialog">
+			<form id="new-game" method="dialog" class="stack">
+				<h2>Add a game</h2>
+				<label class="field">
+					<span>Name</span>
+					<input name="name" required placeholder="Lethal Company" autocomplete="off">
+				</label>
+				<label class="field">
+					<span>Id <small class="muted">used in profile names and file names</small></span>
+					<input name="id" required pattern="[a-z0-9][a-z0-9\-]*" placeholder="lethal-company" autocomplete="off">
+				</label>
+				<div class="field">
+					<label for="new-game-install">Install folder <small class="muted">optional; can be set later</small></label>
+					<div class="row">
+						<input id="new-game-install" name="install" placeholder="/path/to/game" autocomplete="off">
+						<button type="button" data-browse="install">Browse…</button>
+					</div>
+				</div>
+				<fieldset class="stack">
+					<legend>Where its mods come from</legend>
+					<label class="field">
+						<span>Thunderstore community <small class="muted">from thunderstore.io/c/<b>community</b>/</small></span>
+						<input name="thunderstore" placeholder="lethal-company" autocomplete="off">
+					</label>
+					<label class="field">
+						<span>Nexus Mods game <small class="muted">from nexusmods.com/<b>game</b>/</small></span>
+						<input name="nexus" placeholder="skyrimspecialedition" autocomplete="off">
+					</label>
+					<p class="muted hint">Local files and URLs work for every game.</p>
+				</fieldset>
+				<fieldset class="stack">
+					<legend>How mods are installed</legend>
+					<div id="new-game-rulesets" class="stack"></div>
+					<label class="field">
+						<span>Put files in the game folder by</span>
+						<select name="link">
+							<option value="copy">Copying (safest)</option>
+							<option value="hardlink">Hard linking (saves space)</option>
+							<option value="symlink">Symlinking</option>
+						</select>
+					</label>
+				</fieldset>
+				<p id="new-game-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" value="create" class="primary">Add game</button>
+				</div>
+			</form>
+		</dialog>
 
-    <!-- This machine's settings for a game, sent as a GameInstall (see
+		<!-- This machine's settings for a game, sent as a GameInstall (see
          patchwork-core); see games.js. -->
-    <dialog id="game-settings-dialog">
-      <form id="game-settings-form" method="dialog" class="stack">
-        <h2 id="game-settings-title">Game settings</h2>
-        <div class="field">
-          <label for="game-settings-path">Install folder</label>
-          <div class="row">
-            <input id="game-settings-path" name="path" required placeholder="/path/to/game" autocomplete="off" />
-            <button type="button" data-browse="path">Browse…</button>
-          </div>
-          <small class="muted">Undeploy first to move a game that has mods deployed.</small>
-        </div>
-        <p id="game-settings-env" class="muted" hidden></p>
-        <!-- Filled in from what the game's deployer takes; see
+		<dialog id="game-settings-dialog">
+			<form id="game-settings-form" method="dialog" class="stack">
+				<h2 id="game-settings-title">Game settings</h2>
+				<div class="field">
+					<label for="game-settings-path">Install folder</label>
+					<div class="row">
+						<input id="game-settings-path" name="path" required placeholder="/path/to/game" autocomplete="off">
+						<button type="button" data-browse="path">Browse…</button>
+					</div>
+					<small class="muted">Undeploy first to move a game that has mods deployed.</small>
+				</div>
+				<p id="game-settings-env" class="muted" hidden></p>
+				<!-- Filled in from what the game's deployer takes; see
              settingField() in settings.js. -->
-        <fieldset class="stack">
-          <legend>Deploying</legend>
-          <label class="field">
-            <span>Put files in the game folder by</span>
-            <select name="link">
-              <option value="">Default</option>
-              <option value="copy">Copying (safest)</option>
-              <option value="hardlink">Hard linking (saves space)</option>
-              <option value="symlink">Symlinking</option>
-            </select>
-            <small class="muted">Undeploy first to change this for a game that has mods deployed.</small>
-          </label>
-          <div id="game-settings-deployer" class="stack"></div>
-        </fieldset>
-        <!-- Filled in from the game's other roots; see games.js. -->
-        <fieldset id="game-settings-roots" class="stack" hidden>
-          <legend>Other folders</legend>
-          <small class="muted">
-            Folders outside the game's own that patchwork puts a few files in. Leave them empty to use
-            where patchwork finds them. Undeploy first to move one that has files deployed.
-          </small>
-          <div id="game-settings-prefix" class="field" hidden>
-            <label for="game-settings-prefix-input">Wine prefix</label>
-            <div class="row">
-              <input id="game-settings-prefix-input" name="prefix" autocomplete="off" />
-              <button type="button" data-browse="prefix">Browse…</button>
-            </div>
-            <small class="muted">Where a Windows game keeps its files when it runs through Proton or Wine.</small>
-          </div>
-          <div id="game-settings-root-list" class="stack"></div>
-        </fieldset>
-        <p class="muted hint">
-          Accounts for sources like Nexus Mods are in
-          <button type="button" id="game-settings-app" class="link">Settings</button>.
-        </p>
-        <p id="game-settings-error" class="error" hidden></p>
-        <div class="row end">
-          <button type="button" value="cancel" formnovalidate>Cancel</button>
-          <button type="submit" value="save" class="primary">Save</button>
-        </div>
-      </form>
-    </dialog>
+				<fieldset class="stack">
+					<legend>Deploying</legend>
+					<label class="field">
+						<span>Put files in the game folder by</span>
+						<select name="link">
+							<option value="">Default</option>
+							<option value="copy">Copying (safest)</option>
+							<option value="hardlink">Hard linking (saves space)</option>
+							<option value="symlink">Symlinking</option>
+						</select>
+						<small class="muted">Undeploy first to change this for a game that has mods deployed.</small>
+					</label>
+					<div id="game-settings-deployer" class="stack"></div>
+				</fieldset>
+				<!-- Filled in from the game's other roots; see games.js. -->
+				<fieldset id="game-settings-roots" class="stack" hidden>
+					<legend>Other folders</legend>
+					<small class="muted">
+						Folders outside the game's own that patchwork puts a few files in. Leave them empty to use
+						where patchwork finds them. Undeploy first to move one that has files deployed.
+					</small>
+					<div id="game-settings-prefix" class="field" hidden>
+						<label for="game-settings-prefix-input">Wine prefix</label>
+						<div class="row">
+							<input id="game-settings-prefix-input" name="prefix" autocomplete="off">
+							<button type="button" data-browse="prefix">Browse…</button>
+						</div>
+						<small class="muted">Where a Windows game keeps its files when it runs through Proton or Wine.</small>
+					</div>
+					<div id="game-settings-root-list" class="stack"></div>
+				</fieldset>
+				<p class="muted hint">
+					Accounts for sources like Nexus Mods are in
+					<button type="button" id="game-settings-app" class="link">Settings</button>.
+				</p>
+				<p id="game-settings-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" value="save" class="primary">Save</button>
+				</div>
+			</form>
+		</dialog>
 
-    <!-- Settings for every game: one section per source that takes any;
+		<!-- Settings for every game: one section per source that takes any;
          see settings.js. -->
-    <dialog id="settings-dialog">
-      <form id="settings-form" method="dialog" class="stack">
-        <h2>Settings</h2>
-        <div id="settings-sources" class="stack"></div>
-        <p id="settings-error" class="error" hidden></p>
-        <div class="row end">
-          <button type="button" value="cancel" formnovalidate>Close</button>
-          <button type="submit" value="save" class="primary">Save</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="settings-dialog">
+			<form id="settings-form" method="dialog" class="stack">
+				<h2>Settings</h2>
+				<div id="settings-sources" class="stack"></div>
+				<p id="settings-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Close</button>
+					<button type="submit" value="save" class="primary">Save</button>
+				</div>
+			</form>
+		</dialog>
 
-    <!-- Opened by right-clicking a profile in the sidebar; see profile.js. -->
-    <div id="profile-menu" class="menu-items context-menu" role="menu" hidden>
-      <button type="button" role="menuitem" id="rename-profile">Rename…</button>
-      <button type="button" role="menuitem" id="duplicate-profile">Duplicate…</button>
-      <button type="button" role="menuitem" id="export-profile">Export…</button>
-      <hr />
-      <button type="button" role="menuitem" id="delete-profile" class="danger-text">Delete</button>
-    </div>
+		<!-- Opened by right-clicking a profile in the sidebar; see profile.js. -->
+		<div id="profile-menu" class="menu-items context-menu" role="menu" hidden>
+			<button type="button" role="menuitem" id="rename-profile">Rename…</button>
+			<button type="button" role="menuitem" id="duplicate-profile">Duplicate…</button>
+			<button type="button" role="menuitem" id="export-profile">Export…</button>
+			<hr>
+			<button type="button" role="menuitem" id="delete-profile" class="danger-text">Delete</button>
+		</div>
 
-    <!-- Names a profile, for renaming or duplicating one; see profile.js. -->
-    <dialog id="profile-name-dialog">
-      <form id="profile-name-form" method="dialog" class="stack">
-        <h2 id="profile-name-title"></h2>
-        <label class="field">
-          <span>Name <small class="muted">letters, digits, <code>-</code>, <code>_</code> or <code>.</code></small></span>
-          <input name="name" required pattern="[A-Za-z0-9._\-]+" autocomplete="off" />
-        </label>
-        <p id="profile-name-error" class="error" hidden></p>
-        <div class="row end">
-          <button type="button" value="cancel" formnovalidate>Cancel</button>
-          <button type="submit" id="profile-name-submit" class="primary"></button>
-        </div>
-      </form>
-    </dialog>
+		<!-- Names a profile, for renaming or duplicating one; see profile.js. -->
+		<dialog id="profile-name-dialog">
+			<form id="profile-name-form" method="dialog" class="stack">
+				<h2 id="profile-name-title"></h2>
+				<label class="field">
+					<span>Name <small class="muted">letters, digits, <code>-</code>, <code>_</code>
+							or <code>.</code></small></span>
+					<input name="name" required pattern="[A-Za-z0-9._\-]+" autocomplete="off">
+				</label>
+				<p id="profile-name-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" id="profile-name-submit" class="primary"></button>
+				</div>
+			</form>
+		</dialog>
 
-    <dialog id="export-dialog">
-      <form id="export-form" method="dialog" class="stack">
-        <h2 id="export-title">Export profile</h2>
-        <label class="field">
-          <span>Format</span>
-          <select name="format"></select>
-          <small id="export-description" class="muted"></small>
-        </label>
-        <!-- Text formats (codes, links) are shown here to copy. -->
-        <div id="export-text" class="field" hidden>
-          <textarea name="text" readonly rows="4"></textarea>
-        </div>
-        <p id="export-error" class="error" hidden></p>
-        <div class="row end">
-          <button type="button" value="cancel" formnovalidate>Close</button>
-          <button type="button" id="export-copy" hidden>Copy</button>
-          <button type="submit" id="export-submit" class="primary">Export</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="export-dialog">
+			<form id="export-form" method="dialog" class="stack">
+				<h2 id="export-title">Export profile</h2>
+				<label class="field">
+					<span>Format</span>
+					<select name="format"></select>
+					<small id="export-description" class="muted"></small>
+				</label>
+				<!-- Text formats (codes, links) are shown here to copy. -->
+				<div id="export-text" class="field" hidden>
+					<textarea name="text" readonly rows="4"></textarea>
+				</div>
+				<p id="export-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Close</button>
+					<button type="button" id="export-copy" hidden>Copy</button>
+					<button type="submit" id="export-submit" class="primary">Export</button>
+				</div>
+			</form>
+		</dialog>
 
-    <dialog id="import-dialog">
-      <form id="import-form" method="dialog" class="stack">
-        <h2 id="import-title">Import a profile</h2>
-        <div class="field">
-          <label for="import-text">Paste a code or a list of links</label>
-          <textarea id="import-text" name="text" rows="4" autocomplete="off"></textarea>
-        </div>
-        <div class="row">
-          <button type="button" id="import-file">Choose a file…</button>
-          <span id="import-file-name" class="muted">or a profile exported to a file</span>
-        </div>
-        <label class="field">
-          <span>Name <small class="muted">optional; defaults to the name it was shared with</small></span>
-          <input name="name" pattern="[A-Za-z0-9._\-]+" autocomplete="off" />
-        </label>
-        <label class="row">
-          <input type="checkbox" name="replace" />
-          <span>Update the profile if it's already here, rather than failing</span>
-        </label>
-        <p id="import-error" class="error" hidden></p>
-        <div class="row end">
-          <button type="button" value="cancel" formnovalidate>Cancel</button>
-          <button type="submit" class="primary">Import</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="import-dialog">
+			<form id="import-form" method="dialog" class="stack">
+				<h2 id="import-title">Import a profile</h2>
+				<div class="field">
+					<label for="import-text">Paste a code or a list of links</label>
+					<textarea id="import-text" name="text" rows="4" autocomplete="off"></textarea>
+				</div>
+				<div class="row">
+					<button type="button" id="import-file">Choose a file…</button>
+					<span id="import-file-name" class="muted">or a profile exported to a file</span>
+				</div>
+				<label class="field">
+					<span>Name <small class="muted">optional; defaults to the name it was shared with</small></span>
+					<input name="name" pattern="[A-Za-z0-9._\-]+" autocomplete="off">
+				</label>
+				<label class="row">
+					<input type="checkbox" name="replace">
+					<span>Update the profile if it's already here, rather than failing</span>
+				</label>
+				<p id="import-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" class="primary">Import</button>
+				</div>
+			</form>
+		</dialog>
 
-    <dialog id="delete-profile-dialog">
-      <form method="dialog" class="stack">
-        <h2>Delete profile</h2>
-        <p id="delete-profile-summary"></p>
-        <div class="row end">
-          <button value="cancel">Cancel</button>
-          <button value="delete" class="danger">Delete</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="delete-profile-dialog">
+			<form method="dialog" class="stack">
+				<h2>Delete profile</h2>
+				<p id="delete-profile-summary"></p>
+				<div class="row end">
+					<button value="cancel">Cancel</button>
+					<button value="delete" class="danger">Delete</button>
+				</div>
+			</form>
+		</dialog>
 
-    <dialog id="remove-dialog">
-      <form method="dialog" class="stack">
-        <h2>Remove mod</h2>
-        <p id="remove-summary"></p>
-        <div class="row end">
-          <button value="cancel">Cancel</button>
-          <button value="remove" class="danger">Remove</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="remove-dialog">
+			<form method="dialog" class="stack">
+				<h2>Remove mod</h2>
+				<p id="remove-summary"></p>
+				<div class="row end">
+					<button value="cancel">Cancel</button>
+					<button value="remove" class="danger">Remove</button>
+				</div>
+			</form>
+		</dialog>
 
-    <dialog id="revert-dialog">
-      <form method="dialog" class="stack">
-        <h2>Revert changes</h2>
-        <p id="revert-summary"></p>
-        <div class="row end">
-          <button value="cancel">Cancel</button>
-          <button value="revert" class="danger">Revert</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="revert-dialog">
+			<form method="dialog" class="stack">
+				<h2>Revert changes</h2>
+				<p id="revert-summary"></p>
+				<div class="row end">
+					<button value="cancel">Cancel</button>
+					<button value="revert" class="danger">Revert</button>
+				</div>
+			</form>
+		</dialog>
 
-    <!-- See downloads.js. -->
-    <dialog id="downloads-dialog">
-      <form method="dialog" class="stack">
-        <h2>Download from the browser</h2>
-        <p class="hint">
-          These mods' site only lets you start their downloads yourself. Open each one's page and
-          click <b>Mod Manager Download</b>, and patchwork takes the file from there. Or download it
-          however you like and choose the file.
-        </p>
-        <ul id="downloads-list" class="downloads"></ul>
-        <div class="row end">
-          <button value="close">Close</button>
-        </div>
-      </form>
-    </dialog>
+		<!-- The profile's past deploys, to roll back to; see history.js. -->
+		<dialog id="history-dialog">
+			<form method="dialog" class="stack">
+				<h2>History</h2>
+				<p class="muted">
+					Patchwork saves the states of the files whenever it makes changes. This allows you to roll
+					back to previous versions easily
+				</p>
+				<ol id="history-list" class="history"></ol>
+				<div class="row end">
+					<button value="close" autofocus>Close</button>
+				</div>
+			</form>
+		</dialog>
 
-    <!-- Confirms an update, with what it changes; see deploy.js. -->
-    <dialog id="update-dialog">
-      <form method="dialog" class="stack">
-        <h2 id="update-title">Update</h2>
-        <p id="update-summary" class="hint"></p>
-        <ul id="update-warnings" class="warnings"></ul>
-        <ul id="update-list" class="update-list"></ul>
-        <div class="row end">
-          <button value="cancel">Cancel</button>
-          <button value="update" class="primary">Update</button>
-        </div>
-      </form>
-    </dialog>
+		<!-- See downloads.js. -->
+		<dialog id="downloads-dialog">
+			<form method="dialog" class="stack">
+				<h2>Download from the browser</h2>
+				<p class="hint">
+					These mods' site only lets you start their downloads yourself. Open each one's page and
+					click <b>Mod Manager Download</b>, and patchwork takes the file from there. Or download it
+					however you like and choose the file.
+				</p>
+				<ul id="downloads-list" class="downloads"></ul>
+				<div class="row end">
+					<button value="close">Close</button>
+				</div>
+			</form>
+		</dialog>
 
-    <!-- Offers a newer patchwork; see selfupdate.js. -->
-    <dialog id="self-update-dialog">
-      <form method="dialog" class="stack">
-        <h2>Update Patchwork</h2>
-        <p id="self-update-summary"></p>
-        <p id="self-update-manual" class="hint" hidden>
-          This copy wasn't installed by Patchwork's installer, so it can't update itself. Update it
-          the way you installed it, or download the new version.
-        </p>
-        <div id="self-update-progress" class="stack" hidden>
-          <progress id="self-update-bar"></progress>
-          <p id="self-update-progress-text" class="hint"></p>
-        </div>
-        <p id="self-update-error" class="error" hidden></p>
-        <div class="row end">
-          <button value="cancel" id="self-update-later">Not now</button>
-          <button type="button" id="self-update-stop" hidden>Cancel</button>
-          <button type="button" id="self-update-download" hidden>Open download page</button>
-          <button type="button" id="self-update-install" class="primary" hidden>Update and restart</button>
-        </div>
-      </form>
-    </dialog>
+		<!-- Confirms an update, with what it changes; see deploy.js. -->
+		<dialog id="update-dialog">
+			<form method="dialog" class="stack">
+				<h2 id="update-title">Update</h2>
+				<p id="update-summary" class="hint"></p>
+				<ul id="update-warnings" class="warnings"></ul>
+				<ul id="update-list" class="update-list"></ul>
+				<div class="row end">
+					<button value="cancel">Cancel</button>
+					<button value="update" class="primary">Update</button>
+				</div>
+			</form>
+		</dialog>
 
-    <!-- See changelog.js. -->
-    <!-- Which files a mod shares with others, and whose copies win; see
+		<!-- Offers a newer patchwork; see selfupdate.js. -->
+		<dialog id="self-update-dialog">
+			<form method="dialog" class="stack">
+				<h2>Update Patchwork</h2>
+				<p id="self-update-summary"></p>
+				<p id="self-update-manual" class="hint" hidden>
+					This copy wasn't installed by Patchwork's installer, so it can't update itself. Update it
+					the way you installed it, or download the new version.
+				</p>
+				<div id="self-update-progress" class="stack" hidden>
+					<progress id="self-update-bar"></progress>
+					<p id="self-update-progress-text" class="hint"></p>
+				</div>
+				<p id="self-update-error" class="error" hidden></p>
+				<div class="row end">
+					<button value="cancel" id="self-update-later">Not now</button>
+					<button type="button" id="self-update-stop" hidden>Cancel</button>
+					<button type="button" id="self-update-download" hidden>Open download page</button>
+					<button type="button" id="self-update-install" class="primary" hidden>Update and restart</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- See changelog.js. -->
+		<!-- Which files a mod shares with others, and whose copies win; see
          conflicts.js. -->
-    <dialog id="conflicts-dialog">
-      <form method="dialog" class="stack">
-        <h2 id="conflicts-title">Conflicts</h2>
-        <div id="conflicts-body" class="stack"></div>
-        <div class="row end">
-          <button value="close" autofocus>Close</button>
-        </div>
-      </form>
-    </dialog>
+		<dialog id="conflicts-dialog">
+			<form method="dialog" class="stack">
+				<h2 id="conflicts-title">Conflicts</h2>
+				<div id="conflicts-body" class="stack"></div>
+				<div class="row end">
+					<button value="close" autofocus>Close</button>
+				</div>
+			</form>
+		</dialog>
 
-    <dialog id="changelog-dialog">
-      <form method="dialog" class="stack">
-        <h2 id="changelog-title">Changelog</h2>
-        <div id="changelog-body" class="changelog"></div>
-        <div class="row end">
-          <button value="close">Close</button>
-        </div>
-      </form>
-    </dialog>
-  </body>
+		<dialog id="changelog-dialog">
+			<form method="dialog" class="stack">
+				<h2 id="changelog-title">Changelog</h2>
+				<div id="changelog-body" class="changelog"></div>
+				<div class="row end">
+					<button value="close">Close</button>
+				</div>
+			</form>
+		</dialog>
+	</body>
 </html>

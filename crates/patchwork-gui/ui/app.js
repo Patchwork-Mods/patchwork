@@ -14,6 +14,7 @@ import "./browse.js";
 import "./plugins.js";
 import "./toolbar.js";
 import "./deploy.js";
+import "./history.js";
 import "./play.js";
 import "./downloads.js";
 import "./selfupdate.js";

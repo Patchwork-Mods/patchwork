@@ -4318,6 +4318,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "clap",
+ "jiff",
  "patchwork-core",
  "patchwork-deployers",
  "patchwork-formats",

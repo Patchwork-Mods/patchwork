@@ -26,7 +26,7 @@ use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{ModSpec, SourceFile};
-use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
+use patchwork_core::{DeployStatus, GameInstall, HistoryEntry, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
@@ -744,6 +744,21 @@ fn revert_profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
     profile_detail(&app.pw, id)
 }
 
+/// The profile's past deploys, newest first.
+#[tauri::command]
+fn profile_history(app: State<'_, App>, id: String) -> CmdResult<Vec<HistoryEntry>> {
+    let mut history = app.pw.history(&profile_ref(&id)?).map_err(msg)?;
+    history.reverse();
+    Ok(history)
+}
+
+/// Puts the profile back how it was at deploy `number` of its history.
+#[tauri::command]
+fn rollback_profile(app: State<'_, App>, id: String, number: u32) -> CmdResult<ProfileDetail> {
+    app.pw.rollback(&profile_ref(&id)?, number).map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
 #[tauri::command]
 fn remove_mod(app: State<'_, App>, id: String, name: String) -> CmdResult<()> {
     app.pw.remove_mod(&profile_ref(&id)?, &name).map_err(msg)
@@ -1394,6 +1409,8 @@ fn main() {
             set_enabled,
             remove_mod,
             revert_profile,
+            profile_history,
+            rollback_profile,
             set_hidden_tags,
             sort_mods,
             reorder_mods,

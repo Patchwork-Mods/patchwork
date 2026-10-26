@@ -166,6 +166,18 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// List the profile's past deploys and what changed in each.
+    History,
+    /// Put the profile's mods and their versions back how they were at a
+    /// past deploy, from `patchwork history`. Deploy afterwards to apply it.
+    Rollback {
+        /// Which deploy. Defaults to the last one, undoing every change
+        /// since.
+        number: Option<u32>,
+        /// Show what would change without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Start the profile's game, deploying the profile first if it isn't
     /// deployed as it is now.
     Launch {
@@ -669,6 +681,55 @@ async fn run(cli: Cli) -> Result<()> {
             let (profile, _) = selected(&pw, &cli.profile)?;
             let plan = pw.plan_deploy(&profile).await?;
             finish(&pw, &plan, dry_run)?;
+        }
+        Command::History => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let history = pw.history(&profile)?;
+            if history.is_empty() {
+                println!("{} has no deploys in its history yet", loaded.label());
+            }
+            for entry in history {
+                let when = match entry.deployed_at {
+                    Some(at) => at
+                        .to_zoned(jiff::tz::TimeZone::system())
+                        .strftime("%Y-%m-%d %H:%M")
+                        .to_string(),
+                    None => "?".to_owned(),
+                };
+                let current = if entry.current { "  (current)" } else { "" };
+                println!(
+                    "#{}  {when}  {} mods enabled{current}",
+                    entry.number, entry.enabled
+                );
+                for change in &entry.changes {
+                    println!("    {change}");
+                }
+            }
+        }
+        Command::Rollback { number, dry_run } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let number = match number {
+                Some(number) => number,
+                None => match pw.history(&profile)?.last() {
+                    Some(newest) => newest.number,
+                    None => bail!("{} hasn't been deployed yet", loaded.label()),
+                },
+            };
+            let changes = pw.rollback_changes(&profile, number)?;
+            if changes.is_empty() {
+                println!("{} is already like deploy #{number}", loaded.label());
+                return Ok(());
+            }
+            for change in &changes {
+                println!("{change}");
+            }
+            if !dry_run {
+                pw.rollback(&profile, number)?;
+                println!(
+                    "rolled {} back to deploy #{number}; run `patchwork deploy` to apply it",
+                    loaded.label()
+                );
+            }
         }
         Command::Launch {
             option,

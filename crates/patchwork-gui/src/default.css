@@ -996,6 +996,35 @@ button.link {
   font-size: 14px;
 }
 
+.history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.history > li {
+  padding: 8px 0;
+  border-top: 1px solid var(--pw-border);
+}
+
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-head button {
+  margin-left: auto;
+}
+
+.history-changes {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
 .conflict-mod > summary {
   display: flex;
   gap: 8px;

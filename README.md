@@ -84,6 +84,7 @@ All state is files (set `PATCHWORK_HOME` to put it all in one place):
 - `$PATCHWORK_REGISTRY_PATH`: extra registry directories (`:`-separated, like `$PATH`), loaded above installed registries; set it to this repo's `registry/` to try definition changes without rebuilding
 - `<data>/profiles/<id>/profile.toml`: what you want
 - `<data>/profiles/<id>/profile.lock`: exactly what that resolved to
+- `<data>/profiles/<id>/history/<n>.toml`: the profile and its lockfile at each of its last 50 deploys that changed something, for `patchwork rollback`
 - `<data>/store/`: content-addressed (BLAKE3) mod artifacts
 - `<data>/source-files/`: which store entry each file a source downloads (or you downloaded for it, with `patchwork provide` or `patchwork link`) is
 - `<data>/deployments/<game>.json`: every file patchwork put in a game directory

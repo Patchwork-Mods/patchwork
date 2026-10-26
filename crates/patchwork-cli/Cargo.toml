@@ -17,6 +17,7 @@ patchwork-deployers.workspace = true
 patchwork-formats.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+jiff.workspace = true
 tokio.workspace = true
 toml.workspace = true
 

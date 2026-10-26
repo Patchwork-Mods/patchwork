@@ -554,6 +554,151 @@ async fn reverting_undoes_changes_since_the_last_deploy() {
 }
 
 #[tokio::test]
+async fn history_keeps_each_different_deploy_to_roll_back_to() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("mods");
+    fs::create_dir_all(&dir).unwrap();
+    let source = std::sync::Arc::new(Versioned {
+        dir,
+        version: std::sync::Mutex::new("1.0".to_owned()),
+    });
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(SharedSource(source.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let spec = |id: &str| ModSpec {
+        source: "versioned".to_owned(),
+        id: id.to_owned(),
+        version: None,
+    };
+    let deploy = async || pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert!(pw.history(&profile).unwrap().is_empty());
+    assert!(pw.rollback(&profile, 1).is_err());
+
+    pw.add_mod(&profile, spec("a"), None, true).await.unwrap();
+    pw.add_mod(&profile, spec("b"), None, true).await.unwrap();
+    deploy().await;
+    // deploying the same thing again doesn't add to the history
+    deploy().await;
+    assert_eq!(pw.history(&profile).unwrap().len(), 1);
+
+    *source.version.lock().unwrap() = "2.0".to_owned();
+    pw.lock(&profile, true).await.unwrap();
+    pw.set_enabled(&profile, "b", false).unwrap();
+    pw.add_mod(&profile, spec("c"), None, true).await.unwrap();
+    assert_eq!(
+        pw.rollback_changes(&profile, 1).unwrap(),
+        vec![
+            Change::Updated {
+                name: "a".to_owned(),
+                from: Some("2.0".to_owned()),
+                to: Some("1.0".to_owned()),
+            },
+            Change::Updated {
+                name: "b".to_owned(),
+                from: Some("2.0".to_owned()),
+                to: Some("1.0".to_owned()),
+            },
+            // not locked yet, so its version isn't known
+            Change::Removed {
+                name: "c".to_owned(),
+                version: None,
+            },
+            Change::Enabled {
+                name: "b".to_owned()
+            },
+        ]
+    );
+    deploy().await;
+
+    let history = pw.history(&profile).unwrap();
+    assert_eq!(history.len(), 2);
+    assert!(history[0].changes.is_empty());
+    assert!(!history[0].current);
+    assert_eq!(history[0].enabled, 2);
+    assert_eq!(history[1].number, 2);
+    assert_eq!(history[1].changes.len(), 4);
+    assert!(history[1].current);
+    assert!(history[1].deployed_at.is_some());
+
+    pw.rollback(&profile, 1).unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    assert_eq!(loaded.mods.len(), 2);
+    assert!(loaded.mods.iter().all(|m| m.enabled));
+    let lock = pw.load_lock(&profile).unwrap().unwrap();
+    assert!(
+        lock.mods
+            .iter()
+            .all(|m| m.version.as_deref() == Some("1.0"))
+    );
+    // locking again keeps the old versions rather than updating them
+    pw.lock(&profile, false).await.unwrap();
+    let lock = pw.load_lock(&profile).unwrap().unwrap();
+    assert!(
+        lock.mods
+            .iter()
+            .all(|m| m.version.as_deref() == Some("1.0"))
+    );
+    assert!(pw.history(&profile).unwrap()[0].current);
+    // rolling back is undone like any other change
+    assert!(pw.has_changes(&profile).unwrap());
+    pw.revert(&profile).unwrap();
+    assert_eq!(pw.load_profile(&profile).unwrap().mods.len(), 3);
+
+    pw.rollback(&profile, 1).unwrap();
+    deploy().await;
+    let numbers: Vec<u32> = pw
+        .history(&profile)
+        .unwrap()
+        .iter()
+        .map(|e| e.number)
+        .collect();
+    assert_eq!(numbers, [1, 2, 3]);
+}
+
+#[tokio::test]
+async fn history_drops_the_oldest_deploys() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("mods");
+    fs::create_dir_all(&dir).unwrap();
+    let source = std::sync::Arc::new(Versioned {
+        dir,
+        version: std::sync::Mutex::new("0".to_owned()),
+    });
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(SharedSource(source.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let spec = ModSpec {
+        source: "versioned".to_owned(),
+        id: "a".to_owned(),
+        version: None,
+    };
+    pw.add_mod(&profile, spec, None, true).await.unwrap();
+    for n in 0..HISTORY_LIMIT + 2 {
+        *source.version.lock().unwrap() = n.to_string();
+        pw.lock(&profile, true).await.unwrap();
+        pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    }
+    let history = pw.history(&profile).unwrap();
+    assert_eq!(history.len(), HISTORY_LIMIT);
+    assert_eq!(history[0].number, 3);
+    assert_eq!(history.last().unwrap().number as usize, HISTORY_LIMIT + 2);
+}
+
+#[tokio::test]
 async fn removing_a_profile_needs_it_undeployed_first() {
     let tmp = tempfile::tempdir().unwrap();
     let pw = Patchwork::builder(Paths::rooted(tmp.path()))

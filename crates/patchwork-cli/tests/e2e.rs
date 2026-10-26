@@ -751,6 +751,67 @@ fn skyrim_plugins_load_in_the_order_set() {
 }
 
 #[test]
+fn profiles_roll_back_to_earlier_deploys() {
+    let env = Env::new();
+    let games = env.path("home/config/games");
+    fs::create_dir_all(&games).unwrap();
+    fs::write(
+        games.join("my-game.toml"),
+        r#"
+schema = 1
+id = "my-game"
+name = "My Game"
+
+[deployer]
+kind = "rules"
+
+[[deployer.rules]]
+files = "*.txt"
+to = "mods/{file}"
+"#,
+    )
+    .unwrap();
+    let game = env.path("game");
+    fs::create_dir_all(&game).unwrap();
+    env.run(&["game", "set-path", "my-game", game.to_str().unwrap()]);
+    env.run(&["profile", "new", "my-game/default"]);
+    assert!(env.run(&["history"]).contains("no deploys"));
+    assert!(env.fails(&["rollback"]).contains("hasn't been deployed"));
+
+    let a = env.path("a.txt");
+    fs::write(&a, "old").unwrap();
+    env.run(&["add", a.to_str().unwrap()]);
+    env.run(&["deploy"]);
+
+    fs::write(&a, "new").unwrap();
+    let b = env.path("b.txt");
+    fs::write(&b, "b").unwrap();
+    env.run(&["add", b.to_str().unwrap()]);
+    env.run(&["lock", "--update"]);
+    env.run(&["deploy"]);
+    assert_eq!(read(game.join("mods/a.txt")), "new");
+
+    let out = env.run(&["history"]);
+    assert!(out.contains("#1  "), "{out}");
+    assert!(out.contains("1 mods enabled\n#2  "), "{out}");
+    assert!(out.contains("2 mods enabled  (current)\n"), "{out}");
+    assert!(out.contains("    + b "), "{out}");
+    assert!(out.contains("    ~ a "), "{out}");
+
+    let out = env.run(&["rollback", "1", "--dry-run"]);
+    assert!(out.contains("- b "), "{out}");
+    assert!(!out.contains("rolled"), "{out}");
+    env.run(&["rollback", "1"]);
+    // the old copy comes from the store, even though the file has changed
+    env.run(&["deploy"]);
+    assert_eq!(read(game.join("mods/a.txt")), "old");
+    assert!(!game.join("mods/b.txt").exists());
+    assert!(env.run(&["history"]).contains("#3  "));
+    assert!(env.run(&["rollback"]).contains("already like deploy #3"));
+    assert!(env.fails(&["rollback", "9"]).contains("no deploy 9"));
+}
+
+#[test]
 fn conflicts_show_which_mod_wins() {
     let env = Env::new();
     env.run(&["profile", "new", "skyrim-se/main"]);
