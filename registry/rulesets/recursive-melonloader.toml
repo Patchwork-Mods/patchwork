@@ -1,0 +1,21 @@
+# Install rules for games that use MelonLoader 0.7 or later, following what
+# r2modman does for Thunderstore packages (its RecursiveMelonLoaderInstaller
+# and RecursiveMelonLoaderPluginInstaller). MelonLoader 0.7 looks for mods in
+# subfolders of Mods, so each mod keeps its whole layout in a folder of its
+# own. See rulesets/bepinex.toml for what each field means.
+
+# The loader itself.
+[[rules]]
+ruleset = "recursive-melonloader-loader"
+
+# A UserData folder at the top of the package is the mod's own data.
+[[rules]]
+files = "UserData/**"
+strip = 1
+to = "UserData/{mod}/{path}"
+
+# Everything else, including the package's manifest.json, icon.png and
+# README.md, goes in the mod's folder as it is.
+[[rules]]
+files = "**"
+to = "Mods/{mod}/{path}"

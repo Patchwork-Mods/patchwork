@@ -4,6 +4,15 @@ fn registry_ruleset(id: &str) -> Option<toml::Table> {
     let text = match id {
         "bepinex" => include_str!("../../../../registry/rulesets/bepinex.toml"),
         "bepinex-loader" => include_str!("../../../../registry/rulesets/bepinex-loader.toml"),
+        "recursive-melonloader" => {
+            include_str!("../../../../registry/rulesets/recursive-melonloader.toml")
+        }
+        "recursive-melonloader-loader" => {
+            include_str!("../../../../registry/rulesets/recursive-melonloader-loader.toml")
+        }
+        "melonloader-loader" => {
+            include_str!("../../../../registry/rulesets/melonloader-loader.toml")
+        }
         _ => return None,
     };
     Some(toml::from_str(text).unwrap())
@@ -11,10 +20,16 @@ fn registry_ruleset(id: &str) -> Option<toml::Table> {
 
 fn parse(text: &str) -> Result<Vec<CompiledRule>> {
     let ruleset: Ruleset = toml::from_str(text).unwrap();
-    let tables: Vec<_> = ["bepinex", "bepinex-loader"]
-        .into_iter()
-        .map(|id| (id, registry_ruleset(id).unwrap()))
-        .collect();
+    let tables: Vec<_> = [
+        "bepinex",
+        "bepinex-loader",
+        "recursive-melonloader",
+        "recursive-melonloader-loader",
+        "melonloader-loader",
+    ]
+    .into_iter()
+    .map(|id| (id, registry_ruleset(id).unwrap()))
+    .collect();
     let lookup = |id: &str| tables.iter().find(|(t, _)| *t == id).map(|(_, t)| t);
     let mut out = Vec::new();
     RulesDeployer.expand(&lookup, ruleset.rules, &mut out, 0)?;
@@ -126,6 +141,72 @@ fn bepinex_loader_packs() {
             "{mod_name}: {path}"
         );
     }
+}
+
+#[test]
+fn recursive_melonloader_layout() {
+    let rules = parse("[[rules]]\nruleset = \"recursive-melonloader\"\n").unwrap();
+    let cases = [
+        // Mods keep their layout in a folder of their own.
+        ("Cool.dll", Some("Mods/Author-Cool/Cool.dll")),
+        ("Mods/Cool.dll", Some("Mods/Author-Cool/Mods/Cool.dll")),
+        ("manifest.json", Some("Mods/Author-Cool/manifest.json")),
+        // Except the mod's UserData, at the top only.
+        ("UserData/cool.cfg", Some("UserData/Author-Cool/cool.cfg")),
+        (
+            "Sub/UserData/x.cfg",
+            Some("Mods/Author-Cool/Sub/UserData/x.cfg"),
+        ),
+    ];
+    for (path, expected) in cases {
+        assert_eq!(
+            dst(&rules, "Author-Cool", path).as_deref(),
+            expected,
+            "{path}"
+        );
+    }
+
+    // The loader brings only its own files.
+    let cases = [
+        ("version.dll", Some("version.dll")),
+        ("winhttp.dll", Some("winhttp.dll")),
+        (
+            "MelonLoader/net6/MelonLoader.dll",
+            Some("MelonLoader/net6/MelonLoader.dll"),
+        ),
+        ("manifest.json", None),
+        ("NOTICE.txt", None),
+    ];
+    for (path, expected) in cases {
+        assert_eq!(
+            dst(&rules, "LavaGang-MelonLoader", path).as_deref(),
+            expected,
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn melonloader_loader_pack() {
+    let rules = parse("[[rules]]\nruleset = \"melonloader-loader\"\n").unwrap();
+    let cases = [
+        ("version.dll", Some("version.dll")),
+        (
+            "MelonLoader/MelonLoader.dll",
+            Some("MelonLoader/MelonLoader.dll"),
+        ),
+        ("NOTICE.txt", Some("NOTICE.txt")),
+        ("manifest.json", None),
+        ("readme.md", None),
+    ];
+    for (path, expected) in cases {
+        assert_eq!(
+            dst(&rules, "LavaGang-MelonLoader", path).as_deref(),
+            expected,
+            "{path}"
+        );
+    }
+    assert_eq!(dst(&rules, "Author-Cool", "x.dll"), None);
 }
 
 #[test]

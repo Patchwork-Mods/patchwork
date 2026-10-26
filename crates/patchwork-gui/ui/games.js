@@ -179,7 +179,9 @@ function openGameDialog() {
         h("span", {}, r),
         r === "bepinex"
           ? h("small", { class: "muted" }, "most Thunderstore games")
-          : null,
+          : r === "recursive-melonloader"
+            ? h("small", { class: "muted" }, "Thunderstore games on MelonLoader 0.7+")
+            : null,
       ),
     ),
   );

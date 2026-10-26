@@ -12,9 +12,9 @@ arrays like `rules`) replace what was there.
 
 ## Generated files
 
-Every BepInEx game on Thunderstore, and `rulesets/bepinex-loader.toml`, are
-generated from Thunderstore's ecosystem schema (the data r2modman uses for its
-game list). Regenerate them with:
+Every BepInEx and MelonLoader game on Thunderstore, and the
+`rulesets/*-loader.toml` files, are generated from Thunderstore's ecosystem
+schema (the data r2modman uses for its game list). Regenerate them with:
 
 ```
 cargo run -p registry-gen
@@ -26,6 +26,9 @@ add a file without the header (the generator leaves those alone, and deletes
 generated games that have left the schema). `rulesets/bepinex.toml` is
 hand-written, and a test checks that it matches what the generator would
 produce for the usual BepInEx layout.
+`rulesets/recursive-melonloader.toml` is hand-written too: games on
+MelonLoader 0.7 and later all use it, as r2modman puts every mod in a folder
+of its own for them whatever the schema's install rules say.
 
 ## Other data
 

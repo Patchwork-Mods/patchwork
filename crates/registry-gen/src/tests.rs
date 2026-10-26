@@ -10,6 +10,29 @@ fn route(route: &str, tracking: &str, exts: &[&str], default: bool) -> serde_jso
     })
 }
 
+/// Routes like the MelonLoader games' that have an in-game mod manager.
+fn mod_manager_routes() -> Vec<serde_json::Value> {
+    let mut loader = route("MelonLoader", "state", &[], false);
+    loader["subRoutes"] = serde_json::json!([
+        route("Managed", "state", &[".managed.dll"], false),
+        route("Libs", "state", &[], false),
+    ]);
+    vec![
+        route("Mods", "state", &[".dll"], false),
+        route("UserData/ModManager", "subdir-no-flatten", &[], true),
+        route("UserLibs", "state", &[".lib.dll"], false),
+        loader,
+    ]
+}
+
+fn melon(name: &str, loader: &str, routes: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut game = r2(name, "game", routes);
+    game["packageLoader"] = loader.into();
+    game["relativeFileExclusions"] =
+        serde_json::json!(["manifest.json", "icon.png", "README.md", "LICENCE"]);
+    game
+}
+
 fn standard_routes() -> Vec<serde_json::Value> {
     vec![
         route("BepInEx/plugins", "subdir", &[".dll"], true),
@@ -55,11 +78,13 @@ fn schema() -> Schema {
                 r2("Outward Definitive", "game", standard_routes()),
             ]},
             "h3vr": { "r2modman": [r2("H3VR", "game", sideloader)] },
-            "not-bepinex": { "r2modman": [{
+            "backpack-hero": { "r2modman": [melon("Backpack Hero", "melonloader", mod_manager_routes())] },
+            "schedule-i": { "r2modman": [melon("Schedule I", "recursive-melonloader", Vec::new())] },
+            "unsupported": { "r2modman": [{
                 "meta": { "displayName": "Other" },
                 "distributions": [],
                 "gameInstanceType": "game",
-                "packageLoader": "melonloader",
+                "packageLoader": "northstar",
                 "installRules": [],
             }]},
             "no-r2modman": { "r2modman": null },
@@ -70,6 +95,8 @@ fn schema() -> Schema {
             { "packageId": "1F31A-BepInEx_Valheim_Full", "rootFolder": "BepInEx_Valheim_Full", "loader": "bepinex" },
             { "packageId": "bbepis-BepInEx_Rogue_Tower", "rootFolder": "", "loader": "bepinex" },
             { "packageId": "LavaGang-MelonLoader", "rootFolder": "", "loader": "melonloader" },
+            { "packageId": "LavaGang-MelonLoader", "rootFolder": "", "loader": "recursive-melonloader" },
+            { "packageId": "SHMCD_Modding-MelonLoader_SHMCD", "rootFolder": "", "loader": "recursive-melonloader" },
         ],
     }))
     .unwrap()
@@ -101,11 +128,13 @@ fn ids_are_stable_and_variants_get_their_own() {
     assert_eq!(
         ids,
         [
+            "backpack-hero",
             "h3vr",
             "outward",
             "outward-definitive",
             "risk-of-rain-2",
             "risk-of-rain-2-server",
+            "schedule-i",
         ]
     );
 }
@@ -212,10 +241,113 @@ fn loader_ruleset_covers_every_pack() {
 }
 
 #[test]
+fn melonloader_games() {
+    let games = games();
+    let schedule = &games["schedule-i"].deployer.config;
+    assert_eq!(
+        schedule["rulesets"].as_array().unwrap(),
+        &[toml::Value::from("recursive-melonloader")]
+    );
+    assert!(schedule.get("rules").is_none());
+
+    let rules: Vec<Rule> = games["backpack-hero"].deployer.config["rules"]
+        .clone()
+        .try_into()
+        .unwrap();
+    let rule = |folder: Option<&str>, files: Option<&str>, to: &str| Rule {
+        folder: folder.map(str::to_owned),
+        files: files.map(str::to_owned),
+        to: Some(to.to_owned()),
+        ..Rule::default()
+    };
+    assert_eq!(
+        rules,
+        [
+            Rule {
+                ruleset: Some("melonloader-loader".to_owned()),
+                ..Rule::default()
+            },
+            // The package's metadata isn't left out: it goes to the default
+            // route, which isn't tracked by `state`.
+            rule(Some("Mods"), None, "Mods/{path}"),
+            rule(Some("ModManager"), None, "UserData/ModManager/{mod}/{path}"),
+            rule(Some("UserLibs"), None, "UserLibs/{path}"),
+            rule(Some("MelonLoader"), None, "MelonLoader/{path}"),
+            // Sub-routes are under their parent.
+            rule(Some("Managed"), None, "MelonLoader/Managed/{path}"),
+            rule(Some("Libs"), None, "MelonLoader/Libs/{path}"),
+            rule(None, Some("**/*.managed.dll"), "MelonLoader/Managed/{file}"),
+            rule(None, Some("**/*.lib.dll"), "UserLibs/{file}"),
+            rule(None, Some("**/*.dll"), "Mods/{file}"),
+            // Not flattened.
+            rule(None, Some("**"), "UserData/ModManager/{mod}/{path}"),
+        ]
+    );
+}
+
+#[test]
+fn exclusions_only_apply_to_state_routes() {
+    let mut routes = mod_manager_routes();
+    routes[0]["isDefaultLocation"] = true.into();
+    routes[1]["isDefaultLocation"] = false.into();
+    routes.push(route("UserData/Skins", "state", &[".png"], false));
+    let game: R2Game = serde_json::from_value(melon("Game", "melonloader", routes)).unwrap();
+    let rules = mod_rules(&game).unwrap();
+    assert_eq!(
+        rules[0],
+        Rule {
+            files: Some("{manifest.json,icon.png,README.md,LICENCE}".to_owned()),
+            skip: true,
+            ..Rule::default()
+        }
+    );
+}
+
+#[test]
+fn melonloader_rulesets_list_their_packs() {
+    #[derive(Deserialize)]
+    struct Ruleset {
+        rules: Vec<toml::Table>,
+    }
+    let rulesets: BTreeMap<_, _> = generate_loader_rulesets(&schema())
+        .unwrap()
+        .into_iter()
+        .collect();
+    let rules = |id: &str| toml::from_str::<Ruleset>(&rulesets[id]).unwrap().rules;
+
+    let old = rules("melonloader-loader");
+    assert_eq!(old[0]["mods"].as_str(), Some("LavaGang-MelonLoader"));
+    assert_eq!(old[0]["skip"].as_bool(), Some(true));
+    assert_eq!(old[1]["files"].as_str(), Some("**"));
+
+    let recursive = rules("recursive-melonloader-loader");
+    let mods: Vec<_> = recursive[0]["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        mods,
+        ["LavaGang-MelonLoader", "SHMCD_Modding-MelonLoader_SHMCD"]
+    );
+    assert!(recursive[0].get("skip").is_none());
+    assert_eq!(recursive[1]["skip"].as_bool(), Some(true));
+}
+
+#[test]
 fn unsupported_tracking_is_an_error() {
     let mut routes = standard_routes();
     routes.push(route("BepInEx/Zips", "package-zip", &[], false));
     let game: R2Game = serde_json::from_value(r2("Zippy", "game", routes)).unwrap();
+    assert!(mod_rules(&game).is_err());
+}
+
+#[test]
+fn ambiguous_folders_are_an_error() {
+    let mut routes = standard_routes();
+    routes.push(route("Other/plugins", "state", &[], false));
+    let game: R2Game = serde_json::from_value(r2("Twice", "game", routes)).unwrap();
     assert!(mod_rules(&game).is_err());
 }
 
