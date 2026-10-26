@@ -280,7 +280,8 @@ impl Registry {
 
 /// Game fields that don't affect deploying, so changing them doesn't make a
 /// profile look like it was locked against a different definition.
-const COSMETIC_GAME_FIELDS: &[&str] = &["name", "description", "image", "hidden", "detect"];
+const COSMETIC_GAME_FIELDS: &[&str] =
+    &["name", "description", "image", "hidden", "detect", "launch"];
 
 /// Merges `overlay` into `base`: tables merge key by key, and any other value
 /// replaces the old one.

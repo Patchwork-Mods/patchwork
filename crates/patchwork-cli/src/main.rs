@@ -9,6 +9,7 @@ use patchwork_core::conflicts::Conflicts;
 use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::issue::Severity;
+use patchwork_core::launch::{self, LaunchOption};
 use patchwork_core::locate::Locator;
 use patchwork_core::lock::mod_key;
 use patchwork_core::order::{Position, SortKey};
@@ -18,7 +19,7 @@ use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::update;
-use patchwork_core::{GameInstall, ImportOptions, Patchwork};
+use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
@@ -164,6 +165,22 @@ enum Command {
         /// Show what would change without changing anything.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Start the profile's game, deploying the profile first if it isn't
+    /// deployed as it is now.
+    Launch {
+        /// Which way to start it, from `--list`. Defaults to the game's
+        /// default one.
+        option: Option<String>,
+        /// List the ways the game can be started.
+        #[arg(long, conflicts_with_all = ["option", "dry_run", "no_deploy"])]
+        list: bool,
+        /// Show the command that would start the game without running it.
+        #[arg(long)]
+        dry_run: bool,
+        /// Start the game with whatever's deployed now.
+        #[arg(long)]
+        no_deploy: bool,
     },
     /// Remove everything patchwork deployed to a game.
     Undeploy {
@@ -652,6 +669,64 @@ async fn run(cli: Cli) -> Result<()> {
             let (profile, _) = selected(&pw, &cli.profile)?;
             let plan = pw.plan_deploy(&profile).await?;
             finish(&pw, &plan, dry_run)?;
+        }
+        Command::Launch {
+            option,
+            list,
+            dry_run,
+            no_deploy,
+        } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let options = pw.launch_options(&loaded.game)?.with_context(|| {
+                format!(
+                    "patchwork doesn't know where {} is installed; run `patchwork game set-path {} <dir>`",
+                    loaded.game, loaded.game
+                )
+            })?;
+            if list {
+                print_launch_options(&options);
+                return Ok(());
+            }
+            if !no_deploy && pw.deploy_status(&profile)? != DeployStatus::Deployed {
+                if dry_run {
+                    println!("would deploy {} first", loaded.label());
+                } else {
+                    let plan = pw.plan_deploy(&profile).await?;
+                    finish(&pw, &plan, false)?;
+                }
+            }
+            let launch = pw.plan_launch(&loaded.game, option.as_deref())?;
+            let name = options
+                .iter()
+                .find(|o| o.id == launch.option)
+                .map_or(launch.option.as_str(), |o| o.name.as_str());
+            if dry_run {
+                println!(
+                    "would start {name} {}, in {}:",
+                    launch.via,
+                    launch.cwd.display()
+                );
+                println!("{launch}");
+                if let Some(o) = &launch.prefix_overrides {
+                    println!(
+                        "after making sure Wine in {} loads the game's own {}",
+                        o.prefix.display(),
+                        o.dlls.join(", ")
+                    );
+                }
+                return Ok(());
+            }
+            if launch.needs_steam() && launch::steam_running() == Some(false) {
+                eprintln!("warning: Steam doesn't look to be running, and the game may need it");
+            }
+            let started = launch.spawn(&pw.paths().launch_log(&loaded.game))?;
+            if !started.added_overrides.is_empty() {
+                println!(
+                    "told Wine in the game's prefix to load the game's own {}",
+                    started.added_overrides.join(", ")
+                );
+            }
+            println!("started {name} {}", launch.via);
         }
         Command::Undeploy { game, dry_run } => {
             let game = match game {
@@ -1246,6 +1321,16 @@ fn finish(pw: &Patchwork, plan: &DeployPlan, dry_run: bool) -> Result<()> {
         in_place(plan.unchanged)
     );
     Ok(())
+}
+
+fn print_launch_options(options: &[LaunchOption]) {
+    for option in options {
+        let default = if option.default { " (default)" } else { "" };
+        match &option.unavailable {
+            Some(why) => println!("{}  {}  [unavailable: {why}]", option.id, option.name),
+            None => println!("{}  {}{default}", option.id, option.name),
+        }
+    }
 }
 
 fn severity(severity: Severity) -> &'static str {

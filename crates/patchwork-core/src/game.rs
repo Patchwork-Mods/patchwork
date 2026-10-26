@@ -41,6 +41,9 @@ pub struct GameDef {
     /// Folders besides its own that the game reads mods' files from.
     #[serde(default, skip_serializing_if = "RootDefs::is_empty")]
     pub roots: RootDefs,
+    /// Ways to start the game besides the usual one.
+    #[serde(default, skip_serializing_if = "LaunchDefs::is_empty")]
+    pub launch: LaunchDefs,
 }
 
 /// A game's roots other than its own folder, by id.
@@ -228,6 +231,114 @@ impl std::fmt::Display for Folder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
     }
+}
+
+/// The ways a game can be started, by id. There's always `game`, which
+/// starts it the way it usually starts: through Steam if it's installed
+/// from there, and otherwise with the first of its `detect.exe` that's
+/// there. A `[launch.game]` entry changes how that one starts.
+///
+/// ```toml
+/// [launch.skse]
+/// name = "Skyrim with SKSE"
+/// # Relative to the game's folder. Only offered when it's there, which for
+/// # a loader a mod installs means once that mod is deployed.
+/// exe = "skse64_loader.exe"
+/// args = ["-forcesteamloader"]
+/// env = { DXVK_HUD = "fps" }
+/// # DLLs the game's folder has its own copies of, for Wine to load instead
+/// # of its own. Patchwork adds the usual ones mods replace (`winhttp`,
+/// # `dxgi`, ...) by itself when it deploys them next to the exe.
+/// dll_overrides = ["d3dcompiler_47"]
+/// # Used when nothing else is asked for, if it's available.
+/// default = true
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    try_from = "BTreeMap<String, LaunchDef>",
+    into = "BTreeMap<String, LaunchDef>"
+)]
+pub struct LaunchDefs(BTreeMap<String, LaunchDef>);
+
+impl LaunchDefs {
+    /// The id of the usual way to start a game.
+    pub const GAME: &str = "game";
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn get(&self, id: &str) -> Option<&LaunchDef> {
+        self.0.get(id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &LaunchDef)> {
+        self.0.iter().map(|(id, def)| (id.as_str(), def))
+    }
+}
+
+impl TryFrom<BTreeMap<String, LaunchDef>> for LaunchDefs {
+    type Error = String;
+
+    fn try_from(launch: BTreeMap<String, LaunchDef>) -> Result<Self, String> {
+        for (id, def) in &launch {
+            let valid = !id.is_empty()
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            if !valid {
+                return Err(format!(
+                    "`{id}` isn't a valid launch id; use lowercase letters, digits and `-`"
+                ));
+            }
+            if let Some(dll) = def
+                .dll_overrides
+                .iter()
+                .find(|d| d.is_empty() || d.contains(['=', ';', ',', '/', '\\']))
+            {
+                return Err(format!(
+                    "launch `{id}`: `{dll}` isn't a DLL name; leave out `.dll` and `=n,b`"
+                ));
+            }
+        }
+        let defaults: Vec<&str> = launch
+            .iter()
+            .filter(|(_, d)| d.default)
+            .map(|(id, _)| id.as_str())
+            .collect();
+        if defaults.len() > 1 {
+            return Err(format!(
+                "only one way to launch can be the default, not {}",
+                defaults.join(" and ")
+            ));
+        }
+        Ok(Self(launch))
+    }
+}
+
+impl From<LaunchDefs> for BTreeMap<String, LaunchDef> {
+    fn from(launch: LaunchDefs) -> Self {
+        launch.0
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchDef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// What to run instead of the game's usual exe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exe: Option<RelPath>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// Wine DLL overrides, by name without `.dll`, set to native first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dll_overrides: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default: bool,
 }
 
 /// How a game's versions matter to its mods.

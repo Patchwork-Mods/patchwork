@@ -193,6 +193,7 @@ impl Env {
             detect: Default::default(),
             versions: Default::default(),
             roots: Default::default(),
+            launch: Default::default(),
         };
         let registry = Registry::default();
         let ctx = DeployContext {

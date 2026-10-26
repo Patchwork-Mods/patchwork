@@ -7,9 +7,9 @@ use std::sync::Mutex;
 use futures_util::future::{AbortHandle, abortable};
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
 use tauri::utils::config::BundleType;
 use tauri::utils::platform::bundle_type;
+use tauri::{AppHandle, State};
 use tauri_plugin_updater::UpdaterExt;
 
 use crate::{App, CmdResult, msg};

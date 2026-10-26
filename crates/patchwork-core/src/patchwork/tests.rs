@@ -114,6 +114,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         detect: Default::default(),
         versions: Default::default(),
         roots: Default::default(),
+        launch: Default::default(),
     }
 }
 

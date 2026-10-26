@@ -23,6 +23,7 @@ use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, LinkMethod, validate_game_id};
 use crate::hash::ContentHash;
 use crate::issue::Issue;
+use crate::launch::{self, Launch, LaunchOption};
 use crate::locate::{self, Found, Locator};
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
 use crate::matching::{self, ModText};
@@ -492,6 +493,30 @@ impl Patchwork {
     pub fn find_installs(&self, game: &str) -> Result<Vec<Found>> {
         let registry = self.registry();
         Ok(Locator::scan().find(&registry.game(game)?.value))
+    }
+
+    /// The ways `game` can be started, the default one marked. `None` if
+    /// it hasn't been set up.
+    pub fn launch_options(&self, game: &str) -> Result<Option<Vec<LaunchOption>>> {
+        let Some(install) = self.game_install(game)? else {
+            return Ok(None);
+        };
+        let registry = self.registry();
+        Ok(Some(launch::options(
+            &registry.game(game)?.value,
+            &install.path,
+        )))
+    }
+
+    /// How to start `game` the way `option` says (by id), or the default
+    /// way, with whatever's deployed to it now. Deploying a profile first
+    /// is up to the caller.
+    pub fn plan_launch(&self, game: &str, option: Option<&str>) -> Result<Launch> {
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
+        let install = self.game_install(game)?.ok_or_else(|| not_installed(def))?;
+        let state = self.deploy_state(&DeployTarget::Game(game.to_owned()))?;
+        launch::plan(def, option, &launch::Setup::find(def, &install, &state))
     }
 
     fn install_file(&self, game: &str) -> PathBuf {
@@ -1940,19 +1965,7 @@ impl Patchwork {
         let game = &entry.value;
         let target = self.deploy_target(&loaded)?;
         let Some(resolved) = self.resolve_roots(&target)? else {
-            let fix = match Locator::scan().find(game).as_slice() {
-                [found] => format!(
-                    "it looks to be in {}, so run `patchwork game detect {} --set` to use that, or `patchwork game set-path {} <dir>`",
-                    found.path.display(),
-                    game.id,
-                    game.id
-                ),
-                _ => format!("run `patchwork game set-path {} <dir>`", game.id),
-            };
-            return Err(Error::invalid(format!(
-                "patchwork doesn't know where {} is installed; {fix}",
-                game.name
-            )));
+            return Err(not_installed(game));
         };
         let roots = resolved.roots();
         let root = roots.game_path().to_owned();
@@ -2532,6 +2545,23 @@ fn resolve_roots(def: &GameDef, install: &GameInstall) -> ResolvedRoots {
             set: &install.roots,
         },
     )
+}
+
+/// The error for a game that hasn't been set up, saying how to.
+fn not_installed(game: &GameDef) -> Error {
+    let fix = match Locator::scan().find(game).as_slice() {
+        [found] => format!(
+            "it looks to be in {}, so run `patchwork game detect {} --set` to use that, or `patchwork game set-path {} <dir>`",
+            found.path.display(),
+            game.id,
+            game.id
+        ),
+        _ => format!("run `patchwork game set-path {} <dir>`", game.id),
+    };
+    Error::invalid(format!(
+        "patchwork doesn't know where {} is installed; {fix}",
+        game.name
+    ))
 }
 
 /// `path` made absolute, if it's a directory.

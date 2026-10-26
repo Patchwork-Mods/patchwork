@@ -59,13 +59,7 @@ impl Locator {
     /// Looks in every Steam install on this machine, or only the ones in
     /// `$PATCHWORK_STEAM_PATH` (separated like `$PATH`) if it's set.
     pub fn scan() -> Self {
-        let roots = match std::env::var_os("PATCHWORK_STEAM_PATH") {
-            Some(list) => std::env::split_paths(&list)
-                .filter(|p| !p.as_os_str().is_empty())
-                .collect(),
-            None => steam_roots(),
-        };
-        Self::steam(roots)
+        Self::steam(steam_search_roots())
     }
 
     /// Looks in the Steam installs in `roots` (the folders with `steamapps`
@@ -116,11 +110,7 @@ impl Locator {
 /// than one (HITMAN 3 and World of Assassination share theirs), and the
 /// prefix is the one that was run.
 pub fn proton_prefix(game: &GameDef, install: &Path) -> Option<PathBuf> {
-    let common = install.parent()?;
-    let steamapps = common.parent()?;
-    if common.file_name()? != "common" || steamapps.file_name()? != "steamapps" {
-        return None;
-    }
+    let steamapps = steamapps_of(install)?;
     let sharing = installed_apps(steamapps.parent()?)
         .into_iter()
         .filter(|a| a.path == install)
@@ -132,6 +122,105 @@ pub fn proton_prefix(game: &GameDef, install: &Path) -> Option<PathBuf> {
         .chain(sharing)
         .map(|app| steamapps.join(format!("compatdata/{app}/pfx")))
         .find(|pfx| pfx.join("drive_c").is_dir())
+}
+
+/// A game Steam installed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SteamInstall {
+    pub app: u32,
+    /// The library it's in.
+    pub library: PathBuf,
+}
+
+/// Which Steam app `install` is, if Steam installed `game` there: one of
+/// the game's own app ids if Steam has a manifest for it there, or else
+/// any app installed to the same folder.
+pub fn steam_install(game: &GameDef, install: &Path) -> Option<SteamInstall> {
+    let library = steamapps_of(install)?.parent()?.to_owned();
+    let apps: Vec<u32> = installed_apps(&library)
+        .into_iter()
+        .filter(|a| a.path == install)
+        .map(|a| a.app)
+        .collect();
+    let app = game
+        .detect
+        .steam
+        .iter()
+        .find(|app| apps.contains(app))
+        .or(apps.first())
+        .copied()?;
+    Some(SteamInstall { app, library })
+}
+
+/// The Steam install `library` belongs to: the folder Steam itself is in,
+/// which Proton needs to be told about. Looked for the same way as
+/// [`Locator::scan`] does.
+pub fn steam_client(library: &Path) -> Option<PathBuf> {
+    let library = library.canonicalize().ok()?;
+    steam_search_roots().into_iter().find_map(|root| {
+        let root = root.canonicalize().ok()?;
+        let owns = root == library
+            || library_folders(&root)
+                .iter()
+                .any(|l| l.canonicalize().is_ok_and(|l| l == library));
+        owns.then_some(root)
+    })
+}
+
+/// The Proton that last ran the prefix in `compat_data` (the folder with
+/// `pfx` in it): the folder with its `proton` script. Proton lists files
+/// from its own install in the prefix's `config_info` every time it runs.
+pub fn proton_install(compat_data: &Path) -> Option<PathBuf> {
+    let info = std::fs::read_to_string(compat_data.join("config_info")).ok()?;
+    info.lines().skip(1).find_map(|line| {
+        // older Protons keep their files in `dist` rather than `files`
+        let (proton, _) = line
+            .split_once("/files/")
+            .or_else(|| line.split_once("/dist/"))?;
+        let proton = PathBuf::from(proton);
+        proton.join("proton").is_file().then_some(proton)
+    })
+}
+
+/// The app id of the Steam Linux Runtime that the Proton in `proton` has to
+/// run inside, from its `toolmanifest.vdf`. `None` for older Protons, which
+/// run on their own.
+pub fn proton_runtime_app(proton: &Path) -> Option<u32> {
+    let text = std::fs::read_to_string(proton.join("toolmanifest.vdf")).ok()?;
+    vdf::parse(&text)?
+        .get("manifest")?
+        .get_str("require_tool_appid")?
+        .parse()
+        .ok()
+}
+
+/// Where Steam app `app` is installed, in any library of the Steam install
+/// at `client`.
+pub fn steam_app_path(client: &Path, app: u32) -> Option<PathBuf> {
+    std::iter::once(client.to_owned())
+        .chain(library_folders(client))
+        .flat_map(|library| installed_apps(&library))
+        .find(|a| a.app == app)
+        .map(|a| a.path)
+}
+
+/// The `steamapps` folder `install` is in, if it's laid out like a game
+/// folder in a Steam library: `steamapps/common/<game>`.
+fn steamapps_of(install: &Path) -> Option<&Path> {
+    let common = install.parent()?;
+    let steamapps = common.parent()?;
+    (common.file_name()? == "common" && steamapps.file_name()? == "steamapps").then_some(steamapps)
+}
+
+/// The Steam installs to look in: the ones in `$PATCHWORK_STEAM_PATH`
+/// (separated like `$PATH`) if it's set, or wherever Steam usually is.
+fn steam_search_roots() -> Vec<PathBuf> {
+    match std::env::var_os("PATCHWORK_STEAM_PATH") {
+        Some(list) => std::env::split_paths(&list)
+            .filter(|p| !p.as_os_str().is_empty())
+            .collect(),
+        None => steam_roots(),
+    }
 }
 
 /// Where Steam is usually installed on this platform.

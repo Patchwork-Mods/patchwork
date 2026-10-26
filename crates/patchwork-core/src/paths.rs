@@ -121,6 +121,11 @@ impl Paths {
         self.cache.join("deployers").join(kind)
     }
 
+    /// What a game printed the last time patchwork started it.
+    pub fn launch_log(&self, game: &str) -> PathBuf {
+        self.data.join("logs").join(format!("launch-{game}.log"))
+    }
+
     pub fn state_file(&self) -> PathBuf {
         self.data.join("state.toml")
     }

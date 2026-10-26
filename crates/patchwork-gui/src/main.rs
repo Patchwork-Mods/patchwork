@@ -16,6 +16,7 @@ use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
+use patchwork_core::launch::{self, LaunchOption, Via};
 use patchwork_core::lock::{Lockfile, mod_key};
 use patchwork_core::matching::{self, ModText};
 use patchwork_core::order::SortKey;
@@ -180,6 +181,9 @@ struct ProfileDetail {
     /// can be reverted.
     has_changes: bool,
     search_sources: Vec<String>,
+    /// The ways the game can be started, for the Play button; none until
+    /// it's known where it's installed.
+    launch_options: Vec<LaunchOption>,
 }
 
 #[derive(Serialize)]
@@ -314,6 +318,10 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let lock = pw.load_lock(&r).map_err(msg)?;
     let issues = pw.issues(&r).map_err(msg)?;
     let has_plugins = pw.has_plugins(&r).map_err(msg)?;
+    let launch_options = pw
+        .launch_options(&loaded.game)
+        .map_err(msg)?
+        .unwrap_or_default();
     let label = loaded.label();
     let name = loaded.name.clone();
     let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
@@ -356,6 +364,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         deploy_status,
         has_changes,
         search_sources,
+        launch_options,
     })
 }
 
@@ -412,6 +421,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         detect: Default::default(),
         versions: Default::default(),
         roots: Default::default(),
+        launch: Default::default(),
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
     if let Some(path) = filled(game.install) {
@@ -1111,6 +1121,53 @@ fn apply_plan(app: State<'_, App>) -> CmdResult<usize> {
     Ok(state.files.len())
 }
 
+/// Starts `game` the way `option` says (by id), or the default way, like
+/// `patchwork launch --no-deploy`; deploying first is up to the UI. Says
+/// how it was started, with a warning if Steam is needed and isn't running.
+#[tauri::command]
+async fn launch_game(
+    app: State<'_, App>,
+    game: String,
+    option: Option<String>,
+) -> CmdResult<String> {
+    let _work = app.work.start()?;
+    let launch = app.pw.plan_launch(&game, option.as_deref()).map_err(msg)?;
+    let name = app
+        .pw
+        .launch_options(&game)
+        .map_err(msg)?
+        .into_iter()
+        .flatten()
+        .find(|o| o.id == launch.option)
+        .map_or(launch.option.clone(), |o| o.name);
+    let log = app.pw.paths().launch_log(&game);
+    // it watches the game start for a few seconds
+    let (launch, started) = tauri::async_runtime::spawn_blocking(move || {
+        let started = launch.spawn(&log);
+        (launch, started)
+    })
+    .await
+    .map_err(msg)?;
+    let started = started.map_err(msg)?;
+    let how = match launch.via {
+        Via::Steam { .. } => " through Steam",
+        Via::Direct => "",
+        Via::Proton { .. } => " with Proton",
+        Via::Wine { .. } => " with Wine",
+    };
+    let mut said = format!("Started {name}{how}");
+    if !started.added_overrides.is_empty() {
+        said.push_str(&format!(
+            ", after telling Wine to load its own {}",
+            started.added_overrides.join(", ")
+        ));
+    }
+    if launch.needs_steam() && launch::steam_running() == Some(false) {
+        said.push_str("; Steam doesn't look to be running, and the game may need it");
+    }
+    Ok(said)
+}
+
 // Downloads the user has to start themselves (see `patchwork://pending`).
 
 /// Locks the profile, e.g. once the user has seen to its pending downloads.
@@ -1356,6 +1413,7 @@ fn main() {
             plan_deploy,
             plan_undeploy,
             apply_plan,
+            launch_game,
             lock_profile,
             provide_download,
             handle_links,

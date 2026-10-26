@@ -9,6 +9,7 @@ import { loadConflicts } from "./conflicts.js";
 import { modSearch } from "./toolbar.js";
 import { renderSourceTabs } from "./browse.js";
 import { markUpdates } from "./deploy.js";
+import { renderPlay } from "./play.js";
 import { go } from "./nav.js";
 
 /** Reloads everything, staying on whichever screen and profile is open. */
@@ -90,6 +91,7 @@ export function renderDeploy(p) {
     : p.deployStatus === "otherProfile"
       ? "another profile's mods"
       : `${files} file${files === 1 ? "" : "s"}`;
+  renderPlay(p);
 }
 
 export function renderProfile({ keepMods = false } = {}) {

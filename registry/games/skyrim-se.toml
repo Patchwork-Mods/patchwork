@@ -55,6 +55,13 @@ path = "{localappdata}/Skyrim Special Edition"
 allow = ["plugins.txt", "loadorder.txt"]
 rewritten = ["plugins.txt"]
 
+# Once SKSE is deployed, the game starts through its loader. On Linux that
+# means Proton is run directly, since Steam only starts SkyrimSE.exe.
+[launch.skse]
+name = "Skyrim with SKSE"
+exe = "skse64_loader.exe"
+default = true
+
 [detect]
 steam = [489830]
 folder = "Skyrim Special Edition"

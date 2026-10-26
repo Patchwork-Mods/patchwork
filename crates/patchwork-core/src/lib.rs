@@ -21,6 +21,7 @@ pub mod fsutil;
 pub mod game;
 pub mod hash;
 pub mod issue;
+pub mod launch;
 pub mod locate;
 pub mod lock;
 pub mod matching;

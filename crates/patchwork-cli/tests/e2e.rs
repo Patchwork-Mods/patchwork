@@ -20,11 +20,20 @@ impl Env {
         self.tmp.path().join(rel)
     }
 
+    /// `$PATH` with the env's `bin` first, so programs patchwork runs (like
+    /// `steam`) can be stood in for.
+    fn search_path(&self) -> std::ffi::OsString {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        std::env::join_paths(std::iter::once(self.path("bin")).chain(std::env::split_paths(&path)))
+            .unwrap()
+    }
+
     fn run(&self, args: &[&str]) -> String {
         let out = Command::new(env!("CARGO_BIN_EXE_patchwork"))
             .args(args)
             .env("PATCHWORK_HOME", self.path("home"))
             .env("PATCHWORK_STEAM_PATH", self.path("Steam"))
+            .env("PATH", self.search_path())
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -51,6 +60,7 @@ impl Env {
             .args(args)
             .env("PATCHWORK_HOME", self.path("home"))
             .env("PATCHWORK_STEAM_PATH", self.path("Steam"))
+            .env("PATH", self.search_path())
             .output()
             .unwrap();
         assert!(
@@ -670,7 +680,11 @@ fn skyrim_plugins_load_in_the_order_set() {
     };
     assert_eq!(
         order(&env),
-        ["1. [x] Base.esm (master)", "2. [x] Patch.esp", "3. [x] Required.esp"]
+        [
+            "1. [x] Base.esm (master)",
+            "2. [x] Patch.esp",
+            "3. [x] Required.esp"
+        ]
     );
 
     // Patch.esp needs Required.esp first
@@ -697,7 +711,11 @@ fn skyrim_plugins_load_in_the_order_set() {
     env.run(&["plugins", "disable", "patch.esp"]);
     assert_eq!(
         order(&env),
-        ["1. [x] Base.esm (master)", "2. [x] Required.esp", "3. [ ] Patch.esp"]
+        [
+            "1. [x] Base.esm (master)",
+            "2. [x] Required.esp",
+            "3. [ ] Patch.esp"
+        ]
     );
     assert!(read(env.profile_dir().join("profile.toml")).contains("[[plugin]]"));
 
@@ -763,7 +781,10 @@ fn conflicts_show_which_mod_wins() {
         out.contains("textures  (other mods' copies of all of these are deployed)\n  overridden by better (1 file)"),
         "{out}"
     );
-    assert!(out.contains("better\n  overrides textures (1 file)"), "{out}");
+    assert!(
+        out.contains("better\n  overrides textures (1 file)"),
+        "{out}"
+    );
     assert!(out.contains("1 more file is the same"), "{out}");
 
     // spelled the way the first mod in the load order spells it
@@ -774,4 +795,97 @@ fn conflicts_show_which_mod_wins() {
         "{out}"
     );
     assert!(env.fails(&["conflicts", "nope"]).contains("no mod named"));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn games_launch_through_steam_or_proton() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::new();
+    let steamapps = env.path("Steam/steamapps");
+    let game = steamapps.join("common/Lethal Company");
+    fs::create_dir_all(&game).unwrap();
+    fs::write(game.join("Lethal Company.exe"), "").unwrap();
+    fs::write(
+        steamapps.join("appmanifest_1966720.acf"),
+        "\"AppState\" { \"appid\" \"1966720\" \"installdir\" \"Lethal Company\" }",
+    )
+    .unwrap();
+    // the prefix Proton made the last time Steam ran the game, and the
+    // Proton that made it
+    let compat = steamapps.join("compatdata/1966720");
+    fs::create_dir_all(compat.join("pfx/drive_c")).unwrap();
+    fs::write(compat.join("pfx/user.reg"), "WINE REGISTRY Version 2\n").unwrap();
+    let proton = steamapps.join("common/Proton 9.0");
+    fs::create_dir_all(&proton).unwrap();
+    fs::write(proton.join("proton"), "").unwrap();
+    fs::write(
+        compat.join("config_info"),
+        format!("9.0-203\n{}/files/share/fonts/\n", proton.display()),
+    )
+    .unwrap();
+    // Steam, which here writes down how it was run
+    let ran = env.path("ran");
+    fs::create_dir_all(env.path("bin")).unwrap();
+    fs::write(
+        env.path("bin/steam"),
+        format!(
+            "#!/bin/sh\necho \"$@\" > '{0}.tmp'\nmv '{0}.tmp' '{0}'\n",
+            ran.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(env.path("bin/steam"), fs::Permissions::from_mode(0o755)).unwrap();
+
+    env.run(&["game", "detect", "lethal-company", "--set"]);
+    env.run(&["profile", "new", "lethal-company/main"]);
+    let list = env.run(&["launch", "--list"]);
+    assert_eq!(list, "game  Lethal Company (default)\n");
+
+    // nothing to change, so Steam starts it
+    let dry = env.run(&["launch", "--dry-run"]);
+    assert!(
+        dry.contains("would deploy lethal-company/main first"),
+        "{dry}"
+    );
+    assert!(dry.contains("Steam (app 1966720)"), "{dry}");
+    assert!(dry.contains("steam -applaunch 1966720"), "{dry}");
+
+    // BepInEx needs Wine to load its winhttp.dll, which Steam can't be
+    // told, so it's put in the prefix's registry for Steam to start it
+    let pack = env.path("BepInEx-BepInExPack-5.4.2100.zip");
+    write_zip(
+        &pack,
+        &[
+            ("BepInExPack/winhttp.dll", "loader"),
+            ("BepInExPack/doorstop_config.ini", "modded"),
+        ],
+    );
+    env.run(&[
+        "add",
+        pack.to_str().unwrap(),
+        "--name",
+        "BepInEx-BepInExPack",
+    ]);
+    let out = env.run(&["launch"]);
+    assert!(out.contains("load the game's own winhttp"), "{out}");
+    assert_eq!(read(ran.clone()), "-applaunch 1966720\n");
+    assert_eq!(read(game.join("winhttp.dll")), "loader");
+    let reg = read(compat.join("pfx/user.reg"));
+    assert!(reg.ends_with("\n\"winhttp\"=\"native,builtin\"\n"), "{reg}");
+
+    let dry = env.run(&["launch", "--dry-run"]);
+    assert!(!dry.contains("would deploy"), "{dry}");
+    assert!(dry.contains("loads the game's own winhttp"), "{dry}");
+
+    // the second time it's already there
+    let out = env.run(&["launch"]);
+    assert!(!out.contains("winhttp"), "{out}");
+    assert_eq!(read(compat.join("pfx/user.reg")), reg);
+
+    assert!(
+        env.fails(&["launch", "skse"])
+            .contains("can't be launched as `skse`; it can be game")
+    );
 }

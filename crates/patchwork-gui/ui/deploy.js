@@ -8,6 +8,36 @@ import { renderEntries } from "./changelog.js";
 /** Whether #plan-dialog is confirming a deploy or an undeploy. */
 let planKind = "deploy";
 
+/**
+ * While play.js is waiting on a deploy being confirmed, settles it with
+ * whether it was applied.
+ */
+let afterDeploy = null;
+
+/**
+ * Deploys profile `id` before playing: straight away if nothing would
+ * change, otherwise once the user has confirmed the plan. Resolves to
+ * whether it was deployed.
+ */
+export async function deployFirst(id) {
+  status("Working out what to deploy first…");
+  const plan = await run("plan_deploy", { id });
+  const changes = plan.ops.length;
+  if (!changes) {
+    await run("apply_plan");
+    await openProfile(id);
+    return true;
+  }
+  showPlan(
+    "deploy",
+    plan,
+    `${changes} change${changes === 1 ? "" : "s"} to deploy before playing, ` +
+      `${plan.unchanged} files already in place.`,
+  );
+  $("#plan-dialog [value=apply]").textContent = "Deploy and play";
+  return new Promise((resolve) => (afterDeploy = resolve));
+}
+
 /** Fills in #plan-dialog for `plan`, worded for `kind`, and opens it. */
 function showPlan(kind, plan, summary) {
   planKind = kind;
@@ -67,17 +97,25 @@ $("#undeploy").addEventListener("click", async () => {
 });
 
 $("#plan-dialog").addEventListener("close", async () => {
-  if ($("#plan-dialog").returnValue !== "apply") return;
-  if (planKind === "undeploy") {
-    status("Undeploying…");
-    await run("apply_plan");
-    status(`Undeployed everything from ${gameInfo(state.game).name}`);
-  } else {
-    status("Deploying…");
-    const files = await run("apply_plan");
-    status(`Deployed ${files} files`);
+  const settle = afterDeploy ?? (() => {});
+  afterDeploy = null;
+  if ($("#plan-dialog").returnValue !== "apply") return settle(false);
+  let applied = false;
+  try {
+    if (planKind === "undeploy") {
+      status("Undeploying…");
+      await run("apply_plan");
+      status(`Undeployed everything from ${gameInfo(state.game).name}`);
+    } else {
+      status("Deploying…");
+      const files = await run("apply_plan");
+      status(`Deployed ${files} files`);
+    }
+    applied = true;
+    await openProfile(state.profile.id);
+  } finally {
+    settle(applied);
   }
-  await openProfile(state.profile.id);
 });
 
 function opRow(op) {

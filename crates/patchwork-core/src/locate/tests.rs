@@ -154,3 +154,55 @@ fn proton_prefixes_are_next_to_the_steam_install() {
         )
     );
 }
+
+#[test]
+fn steam_installs_prefer_the_games_own_app() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = install(tmp.path(), 30, "Game");
+    install(tmp.path(), 20, "Game");
+    let library = tmp.path().canonicalize().unwrap();
+    assert_eq!(
+        steam_install(&game("[20]"), &path),
+        Some(SteamInstall {
+            app: 20,
+            library: library.clone()
+        })
+    );
+    // another app in the same folder will do
+    assert_eq!(
+        steam_install(&game("[99]"), &path),
+        Some(SteamInstall { app: 20, library })
+    );
+    assert_eq!(steam_install(&game("[20]"), tmp.path()), None);
+}
+
+#[test]
+fn proton_is_found_from_the_prefix_it_ran() {
+    let tmp = tempfile::tempdir().unwrap();
+    let compat = tmp.path().join("compatdata/10");
+    std::fs::create_dir_all(&compat).unwrap();
+    assert_eq!(proton_install(&compat), None);
+
+    let proton = tmp.path().join("common/Proton 9.0 (Beta)");
+    std::fs::create_dir_all(&proton).unwrap();
+    std::fs::write(
+        compat.join("config_info"),
+        format!(
+            "9.0-203\n{0}/files/share/fonts/\n{0}/files/lib/wine/\n",
+            proton.display()
+        ),
+    )
+    .unwrap();
+    // only once it's really there
+    assert_eq!(proton_install(&compat), None);
+    std::fs::write(proton.join("proton"), "").unwrap();
+    assert_eq!(proton_install(&compat), Some(proton.clone()));
+
+    // older Protons
+    std::fs::write(
+        compat.join("config_info"),
+        format!("5.0-10\n{}/dist/share/fonts/\n", proton.display()),
+    )
+    .unwrap();
+    assert_eq!(proton_install(&compat), Some(proton));
+}

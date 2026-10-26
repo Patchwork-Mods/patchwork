@@ -204,6 +204,21 @@ button:focus-visible {
   color: inherit;
 }
 
+/* Launch options, with a tick by the one Play uses. */
+#play-options button {
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+#play-options .tick {
+  width: 1em;
+}
+
+#play-options button .muted {
+  margin-left: auto;
+  padding-left: 16px;
+}
+
 /* Opens leftwards, as it's at the right edge of the window. */
 .split .menu-items {
   left: auto;
