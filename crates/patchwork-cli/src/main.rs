@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
-use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
+use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::issue::Severity;
 use patchwork_core::launch::{self, LaunchOption};
@@ -165,6 +165,11 @@ enum Command {
         /// Show what would change without changing anything.
         #[arg(long)]
         dry_run: bool,
+        /// Read every deployed file to check it hasn't changed, rather than
+        /// just that it's there and the right size, and put back any that
+        /// have.
+        #[arg(long)]
+        verify: bool,
     },
     /// List the profile's past deploys and what changed in each.
     History,
@@ -677,9 +682,10 @@ async fn run(cli: Cli) -> Result<()> {
             let lock = pw.lock(&profile, update).await?;
             println!("locked {} mods for {}", lock.mods.len(), loaded.label());
         }
-        Command::Deploy { dry_run } => {
+        Command::Deploy { dry_run, verify } => {
             let (profile, _) = selected(&pw, &cli.profile)?;
-            let plan = pw.plan_deploy(&profile).await?;
+            let check = if verify { Check::Full } else { Check::Quick };
+            let plan = pw.plan_deploy_checked(&profile, check).await?;
             finish(&pw, &plan, dry_run)?;
         }
         Command::History => {

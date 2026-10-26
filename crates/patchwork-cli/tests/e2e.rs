@@ -812,6 +812,56 @@ to = "mods/{file}"
 }
 
 #[test]
+fn files_a_game_update_replaced_are_put_back() {
+    let env = Env::new();
+    let games = env.path("home/config/games");
+    fs::create_dir_all(&games).unwrap();
+    fs::write(
+        games.join("my-game.toml"),
+        r#"
+schema = 1
+id = "my-game"
+name = "My Game"
+
+[deployer]
+kind = "rules"
+
+[[deployer.rules]]
+files = "*.txt"
+to = "mods/{file}"
+"#,
+    )
+    .unwrap();
+    let game = env.path("game");
+    fs::create_dir_all(&game).unwrap();
+    env.run(&["game", "set-path", "my-game", game.to_str().unwrap()]);
+    env.run(&["profile", "new", "my-game/default"]);
+    for name in ["a", "b"] {
+        let file = env.path(&format!("{name}.txt"));
+        fs::write(&file, name).unwrap();
+        env.run(&["add", file.to_str().unwrap()]);
+    }
+    env.run(&["deploy"]);
+    assert!(!env.run(&["status"]).contains("warning"));
+
+    fs::remove_file(game.join("mods/a.txt")).unwrap();
+    let out = env.run(&["status"]);
+    assert!(
+        out.contains("1 file patchwork deployed is missing"),
+        "{out}"
+    );
+    env.run(&["deploy"]);
+    assert_eq!(read(game.join("mods/a.txt")), "a");
+
+    // the same size, so only reading it shows it's changed
+    fs::write(game.join("mods/b.txt"), "B").unwrap();
+    assert!(!env.run(&["status"]).contains("warning"));
+    assert!(env.run(&["deploy"]).contains("nothing to do"));
+    env.run(&["deploy", "--verify"]);
+    assert_eq!(read(game.join("mods/b.txt")), "b");
+}
+
+#[test]
 fn conflicts_show_which_mod_wins() {
     let env = Env::new();
     env.run(&["profile", "new", "skyrim-se/main"]);

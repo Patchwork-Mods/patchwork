@@ -5,6 +5,7 @@
 use serde::Serialize;
 
 use crate::compat::GameVersions;
+use crate::deploy::{Dest, Drift};
 use crate::environment::GameEnv;
 use crate::lock::UnmetRequirement;
 use crate::source::VersionReq;
@@ -47,6 +48,10 @@ pub enum IssueKind {
     /// The game install isn't what it was when the profile was deployed,
     /// most likely because the game updated.
     GameChanged { from: GameEnv, to: GameEnv },
+    /// Files patchwork deployed aren't there any more, or something else is
+    /// in their place, most likely because the game updated. Deploying
+    /// puts them back.
+    FilesChanged { missing: usize, changed: usize },
     /// A mod says it doesn't work with the installed version of the game.
     IncompatibleGame {
         version: String,
@@ -100,6 +105,44 @@ impl Issue {
                  deploy again, and check that its mods work with this version"
             ),
             kind: IssueKind::GameChanged { from, to },
+        }
+    }
+
+    pub fn files_changed(drifted: &[(Dest, Drift)]) -> Self {
+        let missing = drifted.iter().filter(|(_, d)| *d == Drift::Missing).count();
+        let changed = drifted.len() - missing;
+        let files = |n: usize| {
+            if n == 1 {
+                "1 file".to_owned()
+            } else {
+                format!("{n} files")
+            }
+        };
+        let what = match (missing, changed) {
+            (0, n) => format!(
+                "{} patchwork deployed {} been replaced",
+                files(n),
+                if n == 1 { "has" } else { "have" }
+            ),
+            (n, 0) => format!(
+                "{} patchwork deployed {} missing",
+                files(n),
+                if n == 1 { "is" } else { "are" }
+            ),
+            (m, c) => format!(
+                "{} patchwork deployed {} missing and {c} replaced",
+                files(m),
+                if m == 1 { "is" } else { "are" }
+            ),
+        };
+        Issue {
+            severity: Severity::Warning,
+            mods: Vec::new(),
+            message: format!(
+                "{what}, most likely by a game update or a check of the game's files; \
+                 deploy again to put them back"
+            ),
+            kind: IssueKind::FilesChanged { missing, changed },
         }
     }
 }

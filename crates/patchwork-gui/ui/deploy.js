@@ -53,12 +53,17 @@ function showPlan(kind, plan, summary) {
   $("#plan-dialog").showModal();
 }
 
-$("#deploy").addEventListener("click", async () => {
+/**
+ * Deploys the open profile once the plan's confirmed. With `verify`, every
+ * deployed file is read to check nothing's changed it since, rather than
+ * just that it's there and the right size.
+ */
+async function deploy(verify) {
   const id = state.profile.id;
   $("#deploy").disabled = true;
-  status("Working out what to deploy…");
+  status(verify ? "Checking deployed files…" : "Working out what to deploy…");
   try {
-    const plan = await run("plan_deploy", { id });
+    const plan = await run("plan_deploy", { id, verify });
     const changes = plan.ops.length;
     showPlan(
       "deploy",
@@ -76,6 +81,13 @@ $("#deploy").addEventListener("click", async () => {
   } finally {
     renderDeploy(state.profile);
   }
+}
+
+$("#deploy").addEventListener("click", () => deploy(false));
+
+$("#verify-deploy").addEventListener("click", () => {
+  $("#deploy-menu").open = false;
+  deploy(true);
 });
 
 // Undeploy. Takes every file patchwork put in the game folder back out and

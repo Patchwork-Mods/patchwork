@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use base64::prelude::*;
 use patchwork_core::conflicts::ModConflicts;
-use patchwork_core::deploy::{DeployOp, DeployPlan, DeployTarget, RootOrigin};
+use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -1088,12 +1088,24 @@ async fn search_categories(
     app.pw.search_categories(&game, &source).await.map_err(msg)
 }
 
+/// With `verify`, every deployed file is read to check it hasn't changed,
+/// like `patchwork deploy --verify`.
 #[tauri::command]
-async fn plan_deploy(handle: AppHandle, app: State<'_, App>, id: String) -> CmdResult<PlanSummary> {
+async fn plan_deploy(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+    verify: Option<bool>,
+) -> CmdResult<PlanSummary> {
     let _work = app.work.start()?;
+    let check = if verify == Some(true) {
+        Check::Full
+    } else {
+        Check::Quick
+    };
     let plan = app
         .pw
-        .plan_deploy(&profile_ref(&id)?)
+        .plan_deploy_checked(&profile_ref(&id)?, check)
         .await
         .map_err(lock_msg(&handle))?;
     Ok(hold_plan(&app, plan))

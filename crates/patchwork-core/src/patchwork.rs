@@ -12,7 +12,7 @@ use crate::changelog::{self, ChangelogEntry};
 use crate::compat::{self, GameVersions};
 use crate::conflicts::{self, Conflicts};
 use crate::deploy::{
-    self, BuildContext, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
+    self, BuildContext, Check, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
     DesiredState, Folders, GameFiles, InstalledMod, Os, Resolved, ResolvedRoots, RootId, RootSetup,
     Roots,
 };
@@ -1251,13 +1251,19 @@ impl Patchwork {
             None => Vec::new(),
         };
         let state = self.deploy_state(&target)?;
-        if state.profile.as_deref() == Some(profile.to_string().as_str())
-            && let Some(deployed) = state.env
+        if state.profile.as_deref() != Some(profile.to_string().as_str()) {
+            return Ok(issues);
+        }
+        let drifted = deploy::check_files(&state, Check::Quick)?;
+        if let Some(deployed) = state.env
             && let Some(now) = env
             && deployed != now
         {
             let name = self.registry().game(&loaded.game)?.value.name.clone();
             issues.push(Issue::game_changed(&name, deployed, now));
+        }
+        if !drifted.is_empty() {
+            issues.push(Issue::files_changed(&drifted));
         }
         Ok(issues)
     }
@@ -1958,6 +1964,17 @@ impl Patchwork {
     /// Locks the profile if needed and works out what deploying it would
     /// change, without changing anything.
     pub async fn plan_deploy(&self, profile: &ProfileRef) -> Result<DeployPlan> {
+        self.plan_deploy_checked(profile, Check::Quick).await
+    }
+
+    /// Like [`Patchwork::plan_deploy`], checking that files already
+    /// deployed are still as they were as closely as `check` says, so any
+    /// that aren't are put back.
+    pub async fn plan_deploy_checked(
+        &self,
+        profile: &ProfileRef,
+        check: Check,
+    ) -> Result<DeployPlan> {
         let lock = self.lock(profile, false).await?;
         let loaded = self.load_profile(profile)?;
         let registry = self.registry();
@@ -2043,6 +2060,7 @@ impl Patchwork {
             warnings,
             Some(profile.to_string()),
             link,
+            check,
         )?;
         plan.inputs = Some(inputs);
         plan.env = Some(env);
@@ -2056,8 +2074,9 @@ impl Patchwork {
     /// Anything that might change what's deployed (enabling, reordering or
     /// updating mods, or a changed game definition or ruleset) makes it
     /// [`DeployStatus::Stale`], even when the files would come out the same.
-    /// So does the game changing, as far as [`GameEnv`] can tell. Other
-    /// changes made to the game directory aren't noticed.
+    /// So does the game changing, as far as [`GameEnv`] can tell, and
+    /// deployed files changing or going missing, as far as a
+    /// [`Check::Quick`] can tell.
     pub fn deploy_status(&self, profile: &ProfileRef) -> Result<DeployStatus> {
         let loaded = self.load_profile(profile)?;
         let target = self.deploy_target(&loaded)?;
@@ -2114,11 +2133,16 @@ impl Patchwork {
             .env
             .as_ref()
             .is_none_or(|env| *env == GameEnv::detect(game, root));
-        Ok(if inputs == recorded && same_game {
-            DeployStatus::Deployed
-        } else {
-            DeployStatus::Stale
-        })
+        Ok(
+            if inputs == recorded
+                && same_game
+                && deploy::check_files(&state, Check::Quick)?.is_empty()
+            {
+                DeployStatus::Deployed
+            } else {
+                DeployStatus::Stale
+            },
+        )
     }
 
     /// `order`'s files, from the store.
@@ -2266,7 +2290,15 @@ impl Patchwork {
         let registry = self.registry();
         let (_, link, _) = self.deploy_config(&registry.game(target.game())?.value)?;
         let prev = self.deploy_state(target)?;
-        deploy::plan(target.clone(), &prev, Vec::new(), Vec::new(), None, link)
+        deploy::plan(
+            target.clone(),
+            &prev,
+            Vec::new(),
+            Vec::new(),
+            None,
+            link,
+            Check::Quick,
+        )
     }
 
     pub fn apply(&self, plan: &DeployPlan) -> Result<DeployState> {

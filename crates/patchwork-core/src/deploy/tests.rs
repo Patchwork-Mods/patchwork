@@ -37,6 +37,15 @@ fn placement(env: &Env, dst: &str, contents: &str, mod_name: &str) -> Resolved {
 }
 
 fn deploy(env: &Env, state: &mut DeployState, placements: Vec<Resolved>) -> DeployPlan {
+    deploy_checked(env, state, placements, Check::Quick)
+}
+
+fn deploy_checked(
+    env: &Env,
+    state: &mut DeployState,
+    placements: Vec<Resolved>,
+    check: Check,
+) -> DeployPlan {
     let plan = plan(
         DeployTarget::Game("g".into()),
         state,
@@ -44,6 +53,7 @@ fn deploy(env: &Env, state: &mut DeployState, placements: Vec<Resolved>) -> Depl
         Vec::new(),
         None,
         LinkMethod::Copy,
+        check,
     )
     .unwrap();
     apply(&plan, state, &env.backups, &Silent).unwrap();
@@ -403,6 +413,7 @@ fn roots_with_files_deployed_cant_move() {
         Vec::new(),
         None,
         LinkMethod::Copy,
+        Check::Quick,
     )
     .unwrap();
     plan.roots = elsewhere;
@@ -732,6 +743,7 @@ fn other_roots_are_always_copied_to() {
         Vec::new(),
         None,
         LinkMethod::Symlink,
+        Check::Quick,
     )
     .unwrap();
     apply(&plan, &mut state, &env.backups, &Silent).unwrap();
@@ -788,4 +800,93 @@ fn spellings_of_one_file_conflict() {
         fs::read_to_string(env.game.join("Mods/x.cfg")).unwrap(),
         "second"
     );
+}
+
+#[test]
+fn files_changed_since_deploying_are_put_back() {
+    let env = env();
+    let read = |rel: &str| fs::read_to_string(env.game.join(rel)).unwrap();
+    let mut state = DeployState::empty("g", &Roots::game(&env.game));
+    let placements = || {
+        let mut placements = vec![
+            placement(&env, "Mods/a.dll", "a", "a"),
+            placement(&env, "Mods/b.dll", "b", "a"),
+            placement(&env, "Mods/c.dll", "c", "a"),
+            placement(&env, "plugins.txt", "list", "a"),
+        ];
+        placements[3].rewritten = true;
+        placements
+    };
+    deploy(&env, &mut state, placements());
+    assert!(check_files(&state, Check::Full).unwrap().is_empty());
+
+    // say a game update deletes one, puts its own file over another, and
+    // changes one without changing its size
+    fs::remove_file(env.game.join("Mods/a.dll")).unwrap();
+    fs::write(env.game.join("Mods/b.dll"), "the game's").unwrap();
+    fs::write(env.game.join("Mods/c.dll"), "C").unwrap();
+    // and the game rewrote its plugin list, which is expected
+    fs::write(env.game.join("plugins.txt"), "the game's list").unwrap();
+    let drifted = |check| {
+        check_files(&state, check)
+            .unwrap()
+            .into_iter()
+            .map(|(dst, drift)| (dst.to_string(), drift))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        drifted(Check::Quick),
+        [
+            ("Mods/a.dll".to_owned(), Drift::Missing),
+            ("Mods/b.dll".to_owned(), Drift::Changed),
+        ]
+    );
+    assert_eq!(drifted(Check::Full).len(), 3);
+
+    let plan = deploy(&env, &mut state, placements());
+    // plugins.txt is put back too, as before
+    assert_eq!(plan.ops.len(), 3);
+    assert!(
+        plan.warnings[0].starts_with("2 deployed files were changed"),
+        "{:?}",
+        plan.warnings
+    );
+    assert_eq!(read("Mods/a.dll"), "a");
+    assert_eq!(read("Mods/b.dll"), "b");
+    assert_eq!(read("Mods/c.dll"), "C");
+    // the game's new file is kept as the original to put back on undeploy
+    assert_eq!(
+        fs::read_to_string(env.backups.join("game/Mods/b.dll")).unwrap(),
+        "the game's"
+    );
+
+    let plan = deploy_checked(&env, &mut state, placements(), Check::Full);
+    assert_eq!(plan.ops.len(), 1);
+    assert_eq!(read("Mods/c.dll"), "c");
+    assert!(check_files(&state, Check::Full).unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn links_are_checked_by_where_they_point() {
+    let env = env();
+    let mut state = DeployState::empty("g", &Roots::game(&env.game));
+    let plan = plan(
+        DeployTarget::Game("g".into()),
+        &state,
+        vec![placement(&env, "Mods/a.dll", "a", "a")],
+        Vec::new(),
+        None,
+        LinkMethod::Symlink,
+        Check::Quick,
+    )
+    .unwrap();
+    apply(&plan, &mut state, &env.backups, &Silent).unwrap();
+    assert!(check_files(&state, Check::Quick).unwrap().is_empty());
+
+    let dll = env.game.join("Mods/a.dll");
+    fs::remove_file(&dll).unwrap();
+    std::os::unix::fs::symlink(env.game.join("elsewhere"), &dll).unwrap();
+    let drifted = check_files(&state, Check::Quick).unwrap();
+    assert_eq!(drifted[0].1, Drift::Changed);
 }

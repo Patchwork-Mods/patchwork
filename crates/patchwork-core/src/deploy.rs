@@ -494,6 +494,7 @@ pub fn plan(
     mut warnings: Vec<String>,
     profile: Option<String>,
     link: LinkMethod,
+    check: Check,
 ) -> Result<DeployPlan> {
     let roots = prev.roots();
     let placements = match_case(&roots, placements)?;
@@ -529,6 +530,7 @@ pub fn plan(
     }
 
     let mut unchanged = 0;
+    let mut drifted = 0;
     for (dst, placement) in wanted {
         let current = match prev.files.get(&dst) {
             // A file the game rewrites is put back if it has been.
@@ -536,7 +538,14 @@ pub fn plan(
                 existing.src == placement.src
                     && !changed_since_deployed(&roots.path(&dst)?, existing)
             }
-            Some(existing) => existing.src == placement.src,
+            Some(existing) if existing.src == placement.src => {
+                let intact = drift(&roots.path(&dst)?, existing, check).is_none();
+                if !intact {
+                    drifted += 1;
+                }
+                intact
+            }
+            Some(_) => false,
             None => {
                 if roots.path(&dst)?.symlink_metadata().is_ok() {
                     ops.push(DeployOp::Backup { dst: dst.clone() });
@@ -554,6 +563,19 @@ pub fn plan(
                 rewritten: placement.rewritten,
             });
         }
+    }
+
+    match drifted {
+        0 => {}
+        1 => warnings.push(
+            "1 deployed file was changed or deleted since it was deployed, \
+             most likely by a game update or a check of the game's files; it'll be put back"
+                .to_owned(),
+        ),
+        n => warnings.push(format!(
+            "{n} deployed files were changed or deleted since they were deployed, \
+             most likely by a game update or a check of the game's files; they'll be put back"
+        )),
     }
 
     Ok(DeployPlan {
@@ -731,6 +753,81 @@ pub fn apply(
     state.inputs = plan.inputs;
     state.env = plan.env.clone();
     Ok(())
+}
+
+/// How closely [`drift`] looks at deployed files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Check {
+    /// Only what a file's metadata says: whether it's there, whether a link
+    /// still is one to the file it was made from, and whether a copy is
+    /// the same size as that file. Cheap enough to do every time.
+    Quick,
+    /// Hashes every file as well, which catches a copy that was changed
+    /// without changing its size, but reads everything.
+    Full,
+}
+
+/// What happened to a deployed file since it was deployed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Drift {
+    Missing,
+    /// Something else is there now, most likely the game's own file put
+    /// back by an update.
+    Changed,
+}
+
+/// What's happened to the file deployed as `entry`, which belongs at
+/// `path`, since it was deployed, as far as `check` can tell.
+pub fn drift(path: &Path, entry: &DeployedFile, check: Check) -> Option<Drift> {
+    let Ok(meta) = path.symlink_metadata() else {
+        return Some(Drift::Missing);
+    };
+    if meta.file_type().is_symlink() {
+        if fs::read_link(path).ok().as_ref() != Some(&entry.src) {
+            return Some(Drift::Changed);
+        }
+    } else if !meta.is_file() {
+        return Some(Drift::Changed);
+    } else if check == Check::Quick
+        && let Ok(src) = entry.src.metadata()
+    {
+        // A hardlink is still the file it was made from; a copy at least
+        // has to be the same size.
+        return (!same_file(&meta, &src) && meta.len() != src.len()).then_some(Drift::Changed);
+    }
+    if check == Check::Quick {
+        return None;
+    }
+    (ContentHash::of_file(path).ok() != Some(entry.hash)).then_some(Drift::Changed)
+}
+
+#[cfg(unix)]
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &fs::Metadata, _: &fs::Metadata) -> bool {
+    false
+}
+
+/// The files in `state` that aren't as they were deployed, as far as
+/// `check` can tell. Files the game rewrites are expected to change, so
+/// they're left out.
+pub fn check_files(state: &DeployState, check: Check) -> Result<Vec<(Dest, Drift)>> {
+    let roots = state.roots();
+    let mut drifted = Vec::new();
+    for (dst, entry) in &state.files {
+        if entry.rewritten {
+            continue;
+        }
+        if let Some(drift) = drift(&roots.path(dst)?, entry, check) {
+            drifted.push((dst.clone(), drift));
+        }
+    }
+    Ok(drifted)
 }
 
 /// Whether the file at `path` is there but isn't what was deployed to it.
