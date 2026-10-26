@@ -445,6 +445,65 @@ async fn updating_some_mods_leaves_the_rest_locked() {
     assert_eq!(version("b"), "1.0");
 }
 
+/// Lists the same versions for every mod, counting how often it's asked.
+struct SlowVersions(std::sync::Arc<AtomicUsize>);
+
+#[async_trait::async_trait]
+impl Source for SlowVersions {
+    fn id(&self) -> &str {
+        "slow"
+    }
+
+    async fn resolve(
+        &self,
+        _: &SourceContext<'_>,
+        _: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        unimplemented!()
+    }
+
+    fn lists_versions(&self) -> bool {
+        true
+    }
+
+    async fn versions(&self, _: &SourceContext<'_>, _: &str) -> Result<Vec<String>> {
+        self.0.fetch_add(1, SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        Ok(vec!["2.0".to_owned(), "1.0".to_owned()])
+    }
+}
+
+#[tokio::test]
+async fn versions_being_fetched_are_waited_on_not_fetched_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fetches = std::sync::Arc::new(AtomicUsize::new(0));
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(SlowVersions(fetches.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+
+    let (a, b) = futures_util::future::join(
+        pw.versions("my-game", "slow", "a"),
+        pw.versions("my-game", "slow", "a"),
+    )
+    .await;
+    assert_eq!(a.unwrap(), ["2.0", "1.0"]);
+    assert_eq!(b.unwrap(), ["2.0", "1.0"]);
+    assert_eq!(fetches.load(SeqCst), 1);
+
+    // ones fetched recently enough are used as they are
+    let since = Timestamp::now() - SignedDuration::from_mins(5);
+    pw.versions_since("my-game", "slow", "a", since)
+        .await
+        .unwrap();
+    assert_eq!(fetches.load(SeqCst), 1);
+    pw.versions("my-game", "slow", "a").await.unwrap();
+    assert_eq!(fetches.load(SeqCst), 2);
+}
+
 #[tokio::test]
 async fn reverting_undoes_changes_since_the_last_deploy() {
     let tmp = tempfile::tempdir().unwrap();

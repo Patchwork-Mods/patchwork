@@ -7,6 +7,7 @@
 //! links to them). ui/changelog.js opens the links in the browser.
 
 use futures_util::{StreamExt, stream};
+use jiff::{SignedDuration, Timestamp};
 use patchwork_core::Patchwork;
 use patchwork_core::changelog::ChangelogEntry;
 use patchwork_core::lock::mod_key;
@@ -18,6 +19,11 @@ use crate::{App, CmdResult, msg, profile_ref};
 
 /// How many mods' versions and changelogs a preview fetches at once.
 const PREVIEW_CONCURRENCY: usize = 8;
+
+/// How recently a mod's versions must have been fetched for a preview to
+/// trust them rather than fetch them again, as when opening the profile has
+/// just refreshed them.
+const PREVIEW_MAX_AGE: SignedDuration = SignedDuration::from_mins(5);
 
 /// One version's notes, ready to show.
 #[derive(Serialize)]
@@ -65,7 +71,8 @@ pub struct UpdatePreview {
 /// (dependencies included) and has a newer one out, with the changelog
 /// entries in between. Only the mods in `keys` are checked, if given.
 ///
-/// Versions are fetched fresh, which also refreshes what the profile shows.
+/// Versions are fetched unless they were just fetched (see
+/// [`PREVIEW_MAX_AGE`]), which also refreshes what the profile shows.
 #[tauri::command]
 pub async fn preview_updates(
     app: State<'_, App>,
@@ -81,6 +88,7 @@ pub async fn preview_updates(
             failures: Vec::new(),
         });
     };
+    let since = Timestamp::now() - PREVIEW_MAX_AGE;
     let candidates: Vec<_> = lock
         .mods
         .into_iter()
@@ -92,7 +100,7 @@ pub async fn preview_updates(
             let game = &game;
             async move {
                 let versions = pw
-                    .versions(game, &m.source, &m.id)
+                    .versions_since(game, &m.source, &m.id, since)
                     .await
                     .map_err(|e| format!("{}: {e}", m.name))?;
                 let Some(newest) = versions.into_iter().next() else {

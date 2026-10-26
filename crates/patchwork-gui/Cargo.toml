@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 base64.workspace = true
 futures-util.workspace = true
+jiff.workspace = true
 patchwork-core.workspace = true
 patchwork-sources.workspace = true
 patchwork-deployers.workspace = true

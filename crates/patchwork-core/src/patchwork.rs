@@ -106,6 +106,9 @@ fn cache_file(dir: &Path, game: &str, source: &str, id: &str) -> PathBuf {
         .join(format!("{}.json", ContentHash::of(id.as_bytes())))
 }
 
+/// Held while something is fetched, so others after the same thing wait.
+type FetchLock = Arc<tokio::sync::Mutex<()>>;
+
 /// What [`Patchwork::lock_mod`] made of a mod.
 enum Locking {
     /// Locked, along with its key if it had to be resolved.
@@ -236,6 +239,7 @@ impl Builder {
             formats: self.formats,
             reporter: self.reporter,
             categories: Mutex::default(),
+            fetching_versions: Mutex::default(),
             _lock: lock,
         };
         patchwork.migrate_profiles()?;
@@ -261,6 +265,10 @@ pub struct Patchwork {
     /// They hardly ever change, and a search by category needs them, so
     /// they're only fetched once.
     categories: Mutex<HashMap<(String, String), Vec<Category>>>,
+    /// A lock for each mod whose versions are being fetched, by `(game,
+    /// source, id)`, so a fetch already underway is waited on rather than
+    /// repeated.
+    fetching_versions: Mutex<HashMap<(String, String, String), FetchLock>>,
     _lock: StateLock,
 }
 
@@ -792,6 +800,44 @@ impl Patchwork {
     /// Every version of a mod that can be pinned, newest first, fetched from
     /// its source. The list is remembered for [`Patchwork::known_versions`].
     pub async fn versions(&self, game: &str, source: &str, id: &str) -> Result<Vec<String>> {
+        self.versions_since(game, source, id, Timestamp::now())
+            .await
+    }
+
+    /// Like [`Patchwork::versions`], but versions fetched at or after
+    /// `since` are used as they are. A fetch for the same mod that's already
+    /// underway is waited on instead of being made again.
+    pub async fn versions_since(
+        &self,
+        game: &str,
+        source: &str,
+        id: &str,
+        since: Timestamp,
+    ) -> Result<Vec<String>> {
+        let key = (game.to_owned(), source.to_owned(), id.to_owned());
+        let lock = self
+            .fetching_versions
+            .lock()
+            .unwrap()
+            .entry(key.clone())
+            .or_default()
+            .clone();
+        let result = {
+            let _fetching = lock.lock().await;
+            match self.known_versions(game, source, id) {
+                Some(known) if known.fetched >= since => Ok(known.versions),
+                _ => self.fetch_versions(game, source, id).await,
+            }
+        };
+        // the last one done with the lock takes it out of the map
+        let mut fetching = self.fetching_versions.lock().unwrap();
+        if Arc::strong_count(&lock) == 2 {
+            fetching.remove(&key);
+        }
+        result
+    }
+
+    async fn fetch_versions(&self, game: &str, source: &str, id: &str) -> Result<Vec<String>> {
         let registry = self.registry();
         let def = &registry.game(game)?.value;
         let settings = self.settings();
