@@ -71,6 +71,7 @@ existing installs can't be updated.
 | `patchwork-deployers` | built-in deployers (`rules`) |
 | `patchwork-cli` | the `patchwork` binary, a thin layer over core |
 | `patchwork-gui` | the Patchwork app (Tauri), also a thin layer over core |
+| `patchwork-sync` | keeping profiles in step between machines with iroh; core has no networking of its own |
 | `registry-gen` | regenerates `registry/` from Thunderstore's ecosystem schema (a dev tool, not released) |
 
 `registry/` holds the built-in game definitions and rulesets; see its README.
@@ -85,6 +86,8 @@ All state is files (set `PATCHWORK_HOME` to put it all in one place):
 - `<data>/profiles/<id>/profile.toml`: what you want
 - `<data>/profiles/<id>/profile.lock`: exactly what that resolved to
 - `<data>/profile-state/<id>/history/<n>.toml`: the profile and its lockfile at each of its last 50 deploys that changed something, for `patchwork rollback`. Only what's the same on every machine (the two files above) is kept in `profiles/<id>/`; anything about this machine goes here
+- `<data>/profile-state/<id>/synced.json`: the profile as it was last synced, so changes made here since can be told from changes made elsewhere
+- `<data>/sync/`: this machine's iroh key (`secret.key`), which profiles it syncs (`profiles.toml`), and iroh's documents and blobs
 - `<data>/local-mods.toml`: where each local mod was added from on this machine. A local mod's id is the hash its file had when it was added, so it means the same thing anywhere
 - `<data>/store/`: content-addressed (BLAKE3) mod artifacts
 - `<data>/source-files/`: which store entry each file a source downloads (or you downloaded for it, with `patchwork provide` or `patchwork link`) is

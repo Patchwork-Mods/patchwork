@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use futures_util::{StreamExt, TryStreamExt, stream};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 
 use crate::changelog::{self, ChangelogEntry};
 use crate::compat::{self, GameVersions};
@@ -40,6 +41,7 @@ use crate::source::{
     SourceFile,
 };
 use crate::store::Store;
+use crate::sync::dedupe_names;
 use crate::{Error, Result};
 use local::LOCAL;
 
@@ -99,6 +101,10 @@ impl KnownVersions {
 
 /// How many mods locking resolves or downloads at once.
 const LOCK_CONCURRENCY: usize = 6;
+
+/// How many profile changes a slow [`Patchwork::watch_profiles`] listener can
+/// fall behind by before it misses some (and is told it has).
+const CHANGES_BUFFERED: usize = 64;
 
 /// Where a cache under `dir` keeps what it knows about a mod. Ids can be
 /// paths or have characters that don't belong in file names, so the file is
@@ -243,6 +249,7 @@ impl Builder {
             reporter: self.reporter,
             categories: Mutex::default(),
             fetching_versions: Mutex::default(),
+            changed: broadcast::channel(CHANGES_BUFFERED).0,
             _lock: lock,
         };
         patchwork.migrate_profiles()?;
@@ -273,6 +280,9 @@ pub struct Patchwork {
     /// source, id)`, so a fetch already underway is waited on rather than
     /// repeated.
     fetching_versions: Mutex<HashMap<(String, String, String), FetchLock>>,
+    /// Told about every change to a profile or its lockfile; see
+    /// [`Patchwork::watch_profiles`].
+    changed: broadcast::Sender<ProfileChange>,
     _lock: StateLock,
 }
 
@@ -1246,7 +1256,7 @@ impl Patchwork {
         for u in unmet {
             self.reporter.report(Event::Warning(u.to_string()));
         }
-        fsutil::write_toml(&self.lock_file(profile), &lock)?;
+        self.save_lock(profile, &lock)?;
         Ok(lock)
     }
 
@@ -1931,7 +1941,7 @@ impl Patchwork {
         }
         self.save_profile(&profile_ref, &profile)?;
         if let Some(lock) = &shared.lock {
-            fsutil::write_toml(&self.lock_file(&profile_ref), lock)?;
+            self.save_lock(&profile_ref, lock)?;
         }
         Ok(Imported {
             label: profile.label(),
@@ -2652,28 +2662,13 @@ fn visit<'a>(
     order.push(locked);
 }
 
-/// Mod names have to be unique within a profile, which nothing guarantees for
-/// an import.
-fn dedupe_names(mods: Vec<ProfileMod>) -> Vec<ProfileMod> {
-    let mut taken = HashSet::new();
-    mods.into_iter()
-        .map(|mut m| {
-            let base = m.name.clone();
-            let mut n = 2;
-            while !taken.insert(m.name.clone()) {
-                m.name = format!("{base}-{n}");
-                n += 1;
-            }
-            m
-        })
-        .collect()
-}
-
 mod history;
 mod local;
 mod profiles;
+mod sync;
 
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
+pub use sync::{Applied as SyncApplied, ProfileChange};
 
 #[cfg(test)]
 mod tests;

@@ -150,7 +150,7 @@ fn create_parent(path: &Path) -> Result<()> {
 }
 
 /// Every regular file under `root`, sorted by relative path.
-fn list_tree(root: &Path) -> Result<Vec<(RelPath, PathBuf)>> {
+pub fn list_tree(root: &Path) -> Result<Vec<(RelPath, PathBuf)>> {
     let mut files = Vec::new();
     for entry in walkdir::WalkDir::new(root).sort_by_file_name() {
         let entry = entry.map_err(|e| Error::Io {

@@ -1,0 +1,141 @@
+//! Keeping profiles in step with other machines. While patchwork's open,
+//! and once there's anything to sync, the iroh node runs in the background
+//! and tells the window `patchwork://synced` whenever a sync changes a
+//! profile, so it can show it. Synced changes are never deployed.
+
+use patchwork_sync::{Node, Outcome};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::OnceCell;
+
+use crate::{App, CmdResult, msg, profile_ref};
+
+/// How long joining waits for the profile to arrive.
+const JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+#[derive(Default)]
+pub struct Sync {
+    node: OnceCell<Node>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Synced {
+    profile: Option<String>,
+    changed: bool,
+    warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    /// Whether this machine can change the profile, or only follows it.
+    writable: bool,
+}
+
+/// Starts the node if any profile is synced; otherwise it waits until one
+/// is shared or joined.
+pub fn start_if_synced(handle: &AppHandle) {
+    let app = handle.state::<App>();
+    let synced = patchwork_sync::synced_profiles(&app.pw.paths().sync());
+    if synced.is_ok_and(|s| !s.is_empty()) {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = node(&handle).await {
+                emit(&handle, Err(e));
+            }
+        });
+    }
+}
+
+/// The node, started (along with its background syncing) the first time.
+async fn node(handle: &AppHandle) -> Result<&Node, String> {
+    let app = handle.state::<App>().inner();
+    let mut started = false;
+    let node = app
+        .sync
+        .node
+        .get_or_try_init(|| async {
+            started = true;
+            Node::spawn(&app.pw.paths().sync()).await.map_err(msg)
+        })
+        .await?;
+    if started {
+        let handle = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let app = handle.state::<App>();
+            let node = app.sync.node.get().expect("started above");
+            if let Err(e) = node.run(&app.pw, |outcome| emit(&handle, outcome)).await {
+                emit(&handle, Err(e));
+            }
+        });
+    }
+    Ok(node)
+}
+
+fn emit(handle: &AppHandle, outcome: Result<Outcome, impl std::fmt::Display>) {
+    let synced = match outcome {
+        Ok(o) => Synced {
+            profile: Some(o.profile.to_string()),
+            changed: o.applied.is_some_and(|a| a.changed),
+            warnings: o.warnings,
+        },
+        Err(e) => Synced {
+            profile: None,
+            changed: false,
+            warnings: vec![format!("sync failed: {e}")],
+        },
+    };
+    let _ = handle.emit("patchwork://synced", synced);
+}
+
+/// Whether the profile is synced, and how.
+#[tauri::command]
+pub fn sync_status(app: State<'_, App>, id: String) -> CmdResult<Option<SyncStatus>> {
+    let r = profile_ref(&id)?;
+    let synced = patchwork_sync::synced_profiles(&app.pw.paths().sync()).map_err(msg)?;
+    Ok(synced
+        .into_iter()
+        .find(|s| s.profile == r.uuid)
+        .map(|s| SyncStatus {
+            writable: s.writable,
+        }))
+}
+
+/// A ticket another machine can join the profile with.
+#[tauri::command]
+pub async fn sync_share(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+    writable: bool,
+) -> CmdResult<String> {
+    let node = node(&handle).await?;
+    node.share(&app.pw, &profile_ref(&id)?, writable)
+        .await
+        .map_err(msg)
+}
+
+/// Joins a profile shared from another machine, returning its id.
+#[tauri::command]
+pub async fn sync_join(
+    handle: AppHandle,
+    app: State<'_, App>,
+    ticket: String,
+) -> CmdResult<String> {
+    let node = node(&handle).await?;
+    let outcome = node
+        .join(&app.pw, &ticket, JOIN_TIMEOUT)
+        .await
+        .map_err(msg)?;
+    let id = outcome.profile.to_string();
+    emit(&handle, Ok::<_, String>(outcome));
+    Ok(id)
+}
+
+/// Stops syncing the profile here.
+#[tauri::command]
+pub async fn sync_leave(handle: AppHandle, app: State<'_, App>, id: String) -> CmdResult<()> {
+    let node = node(&handle).await?;
+    node.leave(&app.pw, &profile_ref(&id)?).await.map_err(msg)
+}

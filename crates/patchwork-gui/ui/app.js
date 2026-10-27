@@ -20,6 +20,7 @@ import "./downloads.js";
 import "./selfupdate.js";
 import "./cli.js";
 import "./settings.js";
+import "./sync.js";
 
 setModsView(modsView);
 refresh().catch(() => {});

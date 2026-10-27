@@ -1647,3 +1647,75 @@ async fn games_deploy_to_their_other_roots() {
     .unwrap();
     assert_eq!(fs::read_to_string(&plugins).unwrap(), "original");
 }
+
+#[tokio::test]
+async fn synced_profiles_are_taken_as_they_are_and_keep_local_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("mods/Cool.pak");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "v1").unwrap();
+    let a = with_local_files(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    a.add_mod(&profile, local_spec(&file), None, true)
+        .await
+        .unwrap();
+    a.lock(&profile, false).await.unwrap();
+    let mut doc = a.start_sync(&profile).unwrap();
+    assert!(a.unsynced_changes(&profile).unwrap().is_empty());
+
+    let b = with_local_files(&tmp.path().join("b"));
+    let mut changed = b.watch_profiles();
+    let applied = b.apply_synced(&doc, true).unwrap();
+    assert!(applied.created && applied.changed);
+    assert_eq!(applied.profile, profile);
+    assert_eq!(
+        changed.try_recv().unwrap(),
+        ProfileChange {
+            profile: profile.clone(),
+            synced: true
+        }
+    );
+    // nothing was resolved: the lockfile is a's
+    let lock = b.load_lock(&profile).unwrap().unwrap();
+    assert_eq!(lock.mods[0].hash, ContentHash::of(b"v1"));
+
+    // the local mod's file has to come from a
+    let missing = b.missing_local_files(&profile).unwrap();
+    assert_eq!(missing.len(), 1);
+    assert!(a.missing_local_files(&profile).unwrap().is_empty());
+    let from_a = a.stored_file(&missing[0]).unwrap();
+    let wrong = tmp.path().join("wrong.pak");
+    fs::write(&wrong, "v2").unwrap();
+    let err = b.add_synced_file(&missing[0], &wrong).unwrap_err();
+    assert!(err.to_string().contains("isn't the one"), "{err}");
+    b.add_synced_file(&missing[0], &from_a).unwrap();
+    assert!(b.missing_local_files(&profile).unwrap().is_empty());
+    b.download_locked(&profile).await.unwrap();
+
+    // a change on each side: b's isn't published yet when a's arrives
+    b.set_enabled(&profile, "Cool", false).unwrap();
+    assert_eq!(
+        changed.try_recv().unwrap(),
+        ProfileChange {
+            profile: profile.clone(),
+            synced: false
+        }
+    );
+    a.set_hidden_tags(&profile, &["library".to_owned()])
+        .unwrap();
+    doc.extend(a.unsynced_changes(&profile).unwrap());
+    let applied = b.apply_synced(&doc, true).unwrap();
+    assert_eq!(applied.unpublished.len(), 1);
+    let loaded = b.load_profile(&profile).unwrap();
+    assert_eq!(loaded.hidden_tags, ["library"]);
+    assert!(!loaded.mods[0].enabled);
+    // until it's been published, it's still to be
+    assert_eq!(b.unsynced_changes(&profile).unwrap(), applied.unpublished);
+    doc.extend(applied.unpublished);
+    assert!(b.apply_synced(&doc, true).unwrap().unpublished.is_empty());
+
+    // a profile that's only followed always ends up as it was synced
+    b.set_enabled(&profile, "Cool", true).unwrap();
+    b.apply_synced(&doc, false).unwrap();
+    assert!(!b.load_profile(&profile).unwrap().mods[0].enabled);
+}

@@ -36,6 +36,7 @@ pub mod settings;
 pub mod share;
 pub mod source;
 pub mod store;
+pub mod sync;
 pub mod update;
 mod vdf;
 
@@ -48,7 +49,7 @@ use std::time::Duration;
 pub use error::{Error, Result};
 pub use patchwork::{
     Builder, Change, DeployStatus, GameInstall, HISTORY_LIMIT, HistoryEntry, ImportOptions,
-    Imported, KnownSummary, KnownVersions, Patchwork,
+    Imported, KnownSummary, KnownVersions, Patchwork, ProfileChange, SyncApplied,
 };
 
 /// The HTTP client every request shares, so connections to a host are kept

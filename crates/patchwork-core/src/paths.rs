@@ -113,6 +113,12 @@ impl Paths {
         self.data.join("local-mods.toml")
     }
 
+    /// What keeping profiles in step with other machines needs: this
+    /// machine's key, and what's been synced.
+    pub fn sync(&self) -> PathBuf {
+        self.data.join("sync")
+    }
+
     pub fn game_installs(&self) -> PathBuf {
         self.data.join("games")
     }

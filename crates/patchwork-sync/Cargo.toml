@@ -1,0 +1,27 @@
+[package]
+name = "patchwork-sync"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+patchwork-core.workspace = true
+anyhow.workspace = true
+futures-util.workspace = true
+iroh.workspace = true
+iroh-blobs.workspace = true
+iroh-docs.workspace = true
+iroh-gossip.workspace = true
+iroh-tickets.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "fs", "macros"] }
+toml.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+patchwork-sources.workspace = true
+patchwork-deployers.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

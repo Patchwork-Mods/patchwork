@@ -23,6 +23,7 @@ use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
+use patchwork_sync::Node;
 
 #[derive(Parser)]
 #[command(name = "patchwork", version, about = "A universal mod manager")]
@@ -218,6 +219,12 @@ enum Command {
     Link { link: String },
     /// Show the current profile and what's deployed.
     Status,
+    /// Keep profiles in step with your other machines. On its own, syncs
+    /// every synced profile once with whichever of them are online.
+    Sync {
+        #[command(subcommand)]
+        command: Option<SyncCommand>,
+    },
     /// Update patchwork to the newest release.
     SelfUpdate {
         /// Only say whether there's a newer release.
@@ -308,6 +315,28 @@ enum GameCommand {
     },
     /// Go back to what the game's definition says for a setting.
     Unset { id: String, key: String },
+}
+
+#[derive(Subcommand)]
+enum SyncCommand {
+    /// Print a ticket another machine can join the profile with, then keep
+    /// it in step until stopped with Ctrl-C.
+    Share {
+        /// Let whoever has the ticket only follow the profile, not change
+        /// it. Write access can't be taken back once it's given.
+        #[arg(long)]
+        read_only: bool,
+    },
+    /// Join a profile shared from another machine, which has to be sharing
+    /// it at the time. Its mods are downloaded, but not deployed.
+    Join { ticket: String },
+    /// List the profiles this machine syncs.
+    List,
+    /// Stop syncing the profile here. It stays as it is.
+    Leave,
+    /// Keep every synced profile in step until stopped with Ctrl-C. Changes
+    /// from other machines are saved and downloaded, never deployed.
+    Run,
 }
 
 #[derive(Subcommand)]
@@ -428,6 +457,7 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Game(command) => game(&pw, command)?,
         Command::Config(command) => config(&pw, command).await?,
+        Command::Sync { command } => sync(&pw, command, &cli.profile).await?,
         Command::Profile(command) => profile(&pw, command, &cli.profile).await?,
         Command::Add {
             spec,
@@ -1544,6 +1574,116 @@ fn print_conflicts(conflicts: &Conflicts, only: Option<&str>) {
                 n => format!("{n} more files are"),
             }
         );
+    }
+}
+
+async fn sync(
+    pw: &Patchwork,
+    command: Option<SyncCommand>,
+    explicit: &Option<String>,
+) -> Result<()> {
+    let node = Node::spawn(&pw.paths().sync()).await?;
+    let result = sync_with(pw, &node, command, explicit).await;
+    node.shutdown().await?;
+    result
+}
+
+async fn sync_with(
+    pw: &Patchwork,
+    node: &Node,
+    command: Option<SyncCommand>,
+    explicit: &Option<String>,
+) -> Result<()> {
+    let Some(command) = command else {
+        if node.synced()?.is_empty() {
+            bail!("no profiles are synced; share one with `patchwork sync share`");
+        }
+        for outcome in node.sync_once(pw, patchwork_sync::SYNC_TIMEOUT).await? {
+            print_sync(pw, &Ok(outcome), false);
+        }
+        return Ok(());
+    };
+    match command {
+        SyncCommand::Share { read_only } => {
+            let (profile, loaded) = selected(pw, explicit)?;
+            let ticket = node.share(pw, &profile, !read_only).await?;
+            println!("{ticket}");
+            eprintln!(
+                "\nRun `patchwork sync join <ticket>` on the other machine with that ticket.\n\
+                 Keeping {} in step until Ctrl-C.",
+                loaded.label()
+            );
+            run_sync(pw, node).await?;
+        }
+        SyncCommand::Join { ticket } => {
+            eprintln!("waiting for the other machine...");
+            let outcome = node.join(pw, &ticket, JOIN_TIMEOUT).await?;
+            let loaded = pw.load_profile(&outcome.profile)?;
+            print_sync(pw, &Ok(outcome), false);
+            println!(
+                "joined {}; `patchwork sync` keeps it in step, and `patchwork -p {} deploy` deploys it",
+                loaded.label(),
+                loaded.label()
+            );
+        }
+        SyncCommand::List => {
+            for synced in node.synced()? {
+                let label = pw
+                    .load_profile(&synced.reference())
+                    .map(|p| p.label())
+                    .unwrap_or_else(|_| synced.profile.to_string());
+                let access = if synced.writable { "" } else { " (following)" };
+                println!("{label}{access}");
+            }
+        }
+        SyncCommand::Leave => {
+            let (profile, loaded) = selected(pw, explicit)?;
+            node.leave(pw, &profile).await?;
+            println!("stopped syncing {}", loaded.label());
+        }
+        SyncCommand::Run => run_sync(pw, node).await?,
+    }
+    Ok(())
+}
+
+/// How long `sync join` waits for the profile to arrive.
+const JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+async fn run_sync(pw: &Patchwork, node: &Node) -> Result<()> {
+    tokio::select! {
+        result = node.run(pw, |outcome| print_sync(pw, &outcome, true)) => result,
+        _ = tokio::signal::ctrl_c() => Ok(()),
+    }
+}
+
+/// Says what a sync did. Running, only changes are worth a mention.
+fn print_sync(pw: &Patchwork, outcome: &Result<patchwork_sync::Outcome>, running: bool) {
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            eprintln!("warning: sync failed: {e:#}");
+            return;
+        }
+    };
+    let label = pw
+        .load_profile(&outcome.profile)
+        .map(|p| p.label())
+        .unwrap_or_else(|_| outcome.profile.to_string());
+    match &outcome.applied {
+        Some(applied) if applied.created => println!("{label}: added"),
+        Some(applied) if applied.changed => println!("{label}: updated"),
+        _ if running => {}
+        None => println!("{label}: nothing from other machines yet"),
+        Some(_) => println!("{label}: up to date"),
+    }
+    if outcome.received_files > 0 {
+        println!(
+            "{label}: got {} local mod file(s) from other machines",
+            outcome.received_files
+        );
+    }
+    for warning in &outcome.warnings {
+        eprintln!("warning: {label}: {warning}");
     }
 }
 

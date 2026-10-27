@@ -7,7 +7,8 @@ exclude = ["vendor"]
 [workspace.package]
 version = "0.1.0-alpha.1"
 edition = "2024"
-rust-version = "1.89"
+# iroh needs 1.91
+rust-version = "1.91"
 license = "MIT"
 
 [workspace.dependencies]
@@ -15,6 +16,7 @@ patchwork-core = { path = "crates/patchwork-core" }
 patchwork-sources = { path = "crates/patchwork-sources" }
 patchwork-deployers = { path = "crates/patchwork-deployers" }
 patchwork-formats = { path = "crates/patchwork-formats" }
+patchwork-sync = { path = "crates/patchwork-sync" }
 
 anyhow = "1.0.104"
 axoupdater = { version = "0.10.2", default-features = false, features = ["github_releases", "tokio"] }
@@ -25,6 +27,13 @@ clap = { version = "4.6.7", features = ["derive"] }
 directories = "6.0.0"
 futures-util = "0.3.34"
 globset = "0.4.20"
+# iroh-docs pins which iroh, iroh-blobs and iroh-gossip it works with, so
+# these move together
+iroh = "=1.4.1"
+iroh-blobs = "=0.103.1"
+iroh-docs = "=0.101.0"
+iroh-gossip = "=0.101.0"
+iroh-tickets = "=1.0.0"
 jiff = { version = "0.2.38", features = ["serde"] }
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
 pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }

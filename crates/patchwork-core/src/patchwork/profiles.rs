@@ -11,6 +11,7 @@ use super::Patchwork;
 use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::fsutil;
+use crate::lock::Lockfile;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileRef, validate_name};
 use crate::{Error, Result};
 
@@ -68,14 +69,14 @@ impl Patchwork {
         let lock = self.load_lock(profile)?;
         self.save_profile(&copy_ref, &copy)?;
         if let Some(lock) = lock {
-            fsutil::write_toml(&self.lock_file(&copy_ref), &lock)?;
+            self.save_lock(&copy_ref, &lock)?;
         }
         Ok(copy_ref)
     }
 
     /// Fails unless `profile`'s name is valid and no other profile for its
     /// game already has it.
-    fn check_new_name(&self, profile: &Profile) -> Result<()> {
+    pub(super) fn check_new_name(&self, profile: &Profile) -> Result<()> {
         validate_name(&profile.name)?;
         if self
             .profiles()?
@@ -258,7 +259,15 @@ impl Patchwork {
     }
 
     pub(super) fn save_profile(&self, profile: &ProfileRef, value: &Profile) -> Result<()> {
-        fsutil::write_toml(&self.profile_file(profile), value)
+        fsutil::write_toml(&self.profile_file(profile), value)?;
+        self.profile_changed(profile, false);
+        Ok(())
+    }
+
+    pub(super) fn save_lock(&self, profile: &ProfileRef, lock: &Lockfile) -> Result<()> {
+        fsutil::write_toml(&self.lock_file(profile), lock)?;
+        self.profile_changed(profile, false);
+        Ok(())
     }
 
     pub(super) fn profile_dir(&self, profile: &ProfileRef) -> PathBuf {

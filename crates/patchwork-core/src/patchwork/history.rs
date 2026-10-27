@@ -244,7 +244,7 @@ impl Patchwork {
         let mut loaded = self.load_profile(profile)?;
         loaded.mods = deployed.mods;
         loaded.plugins = deployed.plugins;
-        fsutil::write_toml(&self.lock_file(profile), &deployed.lock)?;
+        self.save_lock(profile, &deployed.lock)?;
         self.save_profile(profile, &loaded)
     }
 

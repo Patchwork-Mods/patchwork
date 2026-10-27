@@ -5,6 +5,7 @@ mod changelog;
 mod cli;
 mod details;
 mod selfupdate;
+mod sync;
 
 use std::fmt::Display;
 use std::sync::Mutex;
@@ -66,6 +67,7 @@ struct App {
     /// What an update has to wait for. Commands that write to games or
     /// download hold a guard from it while they run.
     work: selfupdate::Work,
+    sync: sync::Sync,
 }
 
 /// Forwards core progress to the window as `patchwork://event`.
@@ -1374,7 +1376,9 @@ fn main() {
                 plan: Mutex::new(None),
                 work: Default::default(),
                 details: details::Details::default(),
+                sync: Default::default(),
             });
+            sync::start_if_synced(app.handle());
 
             use tauri_plugin_deep_link::DeepLinkExt;
             let handle = app.handle().clone();
@@ -1455,6 +1459,10 @@ fn main() {
             selfupdate::cancel_update,
             cli::cli_status,
             cli::install_cli,
+            sync::sync_status,
+            sync::sync_share,
+            sync::sync_join,
+            sync::sync_leave,
         ])
         .run(tauri::generate_context!())
         .expect("error while running patchwork");

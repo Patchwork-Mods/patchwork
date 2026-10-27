@@ -147,7 +147,7 @@ impl Patchwork {
         if changed {
             self.remember_local_origins(added)?;
             if let Some(lock) = &lock {
-                fsutil::write_toml(&self.lock_file(profile), lock)?;
+                self.save_lock(profile, lock)?;
             }
             self.save_profile(profile, &loaded)?;
         }
