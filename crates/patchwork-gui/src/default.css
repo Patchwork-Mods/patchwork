@@ -1680,6 +1680,45 @@ legend {
   border-bottom: 1px solid var(--pw-border);
 }
 
+/* Offering background sync once something's shared or linked. */
+.daemon-offer {
+  padding: 10px var(--pw-gap);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  background: var(--pw-bg);
+}
+
+.daemon-offer p {
+  margin: 0;
+}
+
+/* Profiles background sync changed while patchwork was closed. */
+.missed-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.missed-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-gap);
+}
+
+.missed-list li>div {
+  flex: 1;
+  min-width: 0;
+}
+
+.missed-list p {
+  margin: 0;
+}
+
 /* What the sync daemon's done lately, newest first. */
 .daemon-activity {
   margin: 0;

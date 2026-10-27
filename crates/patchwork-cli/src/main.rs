@@ -1439,11 +1439,51 @@ async fn self_update(check: bool) -> Result<()> {
         println!("run `patchwork self-update` to update");
         return Ok(());
     }
-    match update::install(DIST_APP, true).await? {
+    // the daemon would carry on running the old version until the next
+    // login, so it's stopped while updating and started again from the new
+    // one; worked out first, since where this program is changes once it's
+    // been replaced
+    let program = service::Program::current(&["daemon", "run"])?;
+    let stopped = stop_own_daemon();
+    let installed = update::install(DIST_APP, true).await;
+    if stopped {
+        match service::start(&program) {
+            Ok(()) => println!("restarted the sync daemon"),
+            Err(e) => eprintln!(
+                "warning: couldn't restart the sync daemon ({e:#}); `patchwork daemon start` starts it"
+            ),
+        }
+    }
+    match installed? {
         Some(new) => println!("updated patchwork {current} -> {new}"),
         None => println!("patchwork {current} is up to date"),
     }
     Ok(())
+}
+
+/// Stops the sync daemon if it's running from this program, so it can be
+/// updated. True if it was. A daemon the app runs is left to the app, which
+/// restarts it when it's updated.
+fn stop_own_daemon() -> bool {
+    let Ok(paths) = Paths::from_env() else {
+        return false;
+    };
+    let dir = paths.sync();
+    let Ok(Some(status)) = daemon::status(&dir) else {
+        return false;
+    };
+    let ours = std::env::current_exe().and_then(|e| e.canonicalize()).ok();
+    let theirs = status.exe.and_then(|e| e.canonicalize().ok());
+    if ours.is_none() || ours != theirs {
+        return false;
+    }
+    match daemon::stop(&dir) {
+        Ok(stopped) => stopped,
+        Err(e) => {
+            eprintln!("warning: couldn't stop the sync daemon to update it: {e:#}");
+            false
+        }
+    }
 }
 
 fn finish(pw: &Patchwork, plan: &DeployPlan, dry_run: bool) -> Result<()> {

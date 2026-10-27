@@ -11,6 +11,7 @@ import { $, copyText } from "./dom.js";
 import { closeProfileMenu, menuTarget, openProfile, refresh, renderSidebar } from "./profile.js";
 import { openGame } from "./games.js";
 import { go } from "./nav.js";
+import { offerDaemon, offerDaemonAfterJoining } from "./daemon.js";
 
 listen("patchwork://synced", ({ payload: e }) => {
   for (const warning of e.warnings) status(warning, true);
@@ -45,6 +46,7 @@ $("#share-profile").addEventListener("click", async () => {
     ? "You follow this profile, so you can only pass it on read only. Mods you add stay on this computer."
     : "This profile is already synced; a new ticket lets more people join.";
   $("#share-leave").hidden = !sharingStatus;
+  $("#share-offer").replaceChildren();
   showTicket(null);
   $("#share-dialog").showModal();
 });
@@ -93,6 +95,7 @@ shareForm.addEventListener("submit", async (e) => {
   status(`Sharing ${profile.label}; keep Patchwork open until they've joined`);
   state.overview = await run("overview");
   renderSidebar();
+  await offerDaemon($("#share-offer"));
 });
 
 $("#share-copy").addEventListener("click", () => copyText(shareForm.elements.ticket));
@@ -163,6 +166,7 @@ joinForm.addEventListener("submit", async (e) => {
   renderSidebar();
   if (warnings.length) status(warnings.join("; "), true);
   else status(`Joined ${profile.label}; deploy it to install its mods`);
+  await offerDaemonAfterJoining(profile.label);
 });
 
 // My computers, in Settings: linking this computer to the user's others, by
@@ -173,6 +177,7 @@ joinForm.addEventListener("submit", async (e) => {
 export async function renderComputers() {
   $("#computers-text").value = "";
   $("#computers-paste").value = "";
+  $("#computers-offer").replaceChildren();
   showComputers(await run("sync_linked"), null);
 }
 
@@ -216,6 +221,7 @@ $("#computers-create").addEventListener("click", async () => {
   showComputers(true, ticket);
   status("Keep Patchwork open until your other computer has linked");
   await refresh().catch(() => {});
+  await offerDaemon($("#computers-offer"));
 });
 
 $("#computers-copy").addEventListener("click", () => copyText($("#computers-text")));
@@ -242,7 +248,8 @@ $("#computers-submit").addEventListener("click", async () => {
   $("#computers-paste").value = "";
   if (joined.kind === "devices") {
     showComputers(true, null);
-    linked(joined);
+    await linked(joined);
+    await offerDaemon($("#computers-offer"));
   } else {
     // a ticket from Share… works here too, for just that profile
     showComputers(false, null);

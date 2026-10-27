@@ -8,6 +8,7 @@
 
 import { modsView, setModsView } from "./mods.js";
 import { refresh } from "./profile.js";
+import { showMissed } from "./daemon.js";
 // these only wire up their parts of the page
 import "./games.js";
 import "./browse.js";
@@ -23,4 +24,7 @@ import "./settings.js";
 import "./sync.js";
 
 setModsView(modsView);
-refresh().catch(() => {});
+refresh()
+  .catch(() => {})
+  .then(showMissed)
+  .catch(() => {});

@@ -397,6 +397,7 @@
 						<label for="computers-paste">Or paste a ticket from your other computer</label>
 						<textarea id="computers-paste" rows="3" autocomplete="off" spellcheck="false"></textarea>
 					</div>
+					<div id="computers-offer"></div>
 					<p id="computers-error" class="error" hidden></p>
 					<div class="row end">
 						<button type="button" id="computers-unlink" class="danger-text" hidden>Unlink</button>
@@ -534,6 +535,7 @@
 					<textarea id="share-text" name="ticket" readonly rows="4"></textarea>
 					<small id="share-note" class="muted"></small>
 				</div>
+				<div id="share-offer"></div>
 				<p id="share-error" class="error" hidden></p>
 				<div class="row end">
 					<button type="button" id="share-leave" class="danger-text" hidden>Stop syncing</button>
@@ -557,6 +559,29 @@
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Cancel</button>
 					<button type="submit" id="join-submit" class="primary">Join</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- After joining a profile, offering to keep it in step while
+         Patchwork is closed; see offerDaemon() in daemon.js. -->
+		<dialog id="daemon-offer-dialog">
+			<form method="dialog" class="stack">
+				<h2 id="daemon-offer-title">Joined</h2>
+				<div id="daemon-offer-slot"></div>
+			</form>
+		</dialog>
+
+		<!-- What background sync changed while Patchwork was closed, shown
+         when it opens; see showMissed() in daemon.js. -->
+		<dialog id="missed-dialog">
+			<form method="dialog" class="stack">
+				<h2>While Patchwork was closed</h2>
+				<p class="muted">Background sync brought these up to date. Nothing has been deployed: open one and deploy it to
+					apply the changes to the game.</p>
+				<ul id="missed-list" class="missed-list"></ul>
+				<div class="row end">
+					<button value="close" class="primary">Close</button>
 				</div>
 			</form>
 		</dialog>

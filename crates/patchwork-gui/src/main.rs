@@ -1503,6 +1503,7 @@ fn main() {
             selfupdate::cancel_update,
             cli::cli_status,
             daemon::daemon_status,
+            daemon::daemon_missed,
             daemon::daemon_install,
             daemon::daemon_restart,
             daemon::daemon_uninstall,

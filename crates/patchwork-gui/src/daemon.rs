@@ -5,8 +5,10 @@
 
 use std::sync::Mutex;
 
+use jiff::Timestamp;
 use patchwork_core::Patchwork;
 use patchwork_core::paths::Paths;
+use patchwork_core::profile::ProfileRef;
 use patchwork_sync::daemon::{self, Paused, Status, service};
 use serde::Serialize;
 use tauri::State;
@@ -139,6 +141,60 @@ pub async fn daemon_uninstall(app: State<'_, App>) -> CmdResult<()> {
     tauri::async_runtime::spawn_blocking(move || daemon::uninstall(&dir).map_err(msg))
         .await
         .map_err(msg)?
+}
+
+/// What the daemon did to a profile while the app was closed.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Missed {
+    id: String,
+    label: String,
+    /// When it last changed it.
+    at: Timestamp,
+    /// It arrived on this computer.
+    created: bool,
+    changed: bool,
+    warnings: Vec<String>,
+}
+
+/// What the daemon did while the app was closed, a profile at a time, most
+/// recent first. Each is only returned once.
+#[tauri::command]
+pub fn daemon_missed(app: State<'_, App>) -> CmdResult<Vec<Missed>> {
+    let mut missed: Vec<Missed> = Vec::new();
+    for m in daemon::take_missed(&app.pw.paths().sync()).map_err(msg)? {
+        let profile = ProfileRef { uuid: m.profile };
+        // removed since, so there's nothing to show
+        let Ok(loaded) = app.pw.load_profile(&profile) else {
+            continue;
+        };
+        let id = profile.to_string();
+        let i = match missed.iter().position(|s| s.id == id) {
+            Some(i) => i,
+            None => {
+                missed.push(Missed {
+                    id,
+                    label: loaded.label(),
+                    at: m.at,
+                    created: false,
+                    changed: false,
+                    warnings: Vec::new(),
+                });
+                missed.len() - 1
+            }
+        };
+        let seen = &mut missed[i];
+        seen.at = seen.at.max(m.at);
+        seen.created |= m.created;
+        seen.changed |= m.changed;
+        for warning in m.warnings {
+            if !seen.warnings.contains(&warning) {
+                seen.warnings.push(warning);
+            }
+        }
+    }
+    missed.sort_by_key(|m| std::cmp::Reverse(m.at));
+    Ok(missed)
 }
 
 /// Pauses a daemon that's only just been started, once it's listening.
