@@ -129,7 +129,7 @@ function rowDetails(m, item, onRemove) {
       h("span", { title: new Date(item.updated).toLocaleString() }, `Updated ${ago(item.updated)}`),
     count(item.downloads, "downloads"),
     count(item.rating, "likes"),
-    h("span", {}, `${m.source}:${m.id}`),
+    h("span", {}, `${m.source}:${m.shownId}`),
   ].filter(Boolean);
   const urlButton = (url, text) =>
     url && h("button", { type: "button", title: url, onclick: () => openExternal(url) }, text);
@@ -188,7 +188,7 @@ export function cardMain(item) {
 }
 
 /** What a profile's mod shows on its card: its summary, once that's been fetched. */
-const cardItem = (m) => m.summary ?? { name: m.name, summary: `${m.source}:${m.id}` };
+const cardItem = (m) => m.summary ?? { name: m.name, summary: `${m.source}:${m.shownId}` };
 
 // An added mod's card: an on/off switch and its version along the bottom,
 // a note when there's a newer version, and a remove button and a handle to

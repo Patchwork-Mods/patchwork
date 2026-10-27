@@ -8,8 +8,9 @@ use crate::compat::GameVersions;
 use crate::hash::ContentHash;
 use crate::source::{ArtifactFormat, ArtifactLocation, VersionReq};
 
-/// Schema 2 added [`ArtifactLocation::Source`] artifacts.
-pub const LOCK_SCHEMA: u32 = 2;
+/// Schema 2 added [`ArtifactLocation::Source`] artifacts, and schema 3
+/// [`ArtifactLocation::Local`] ones, which replaced paths.
+pub const LOCK_SCHEMA: u32 = 3;
 
 /// Exactly what a profile resolved to. Together with the profile, this is
 /// enough to reproduce a setup on another machine.

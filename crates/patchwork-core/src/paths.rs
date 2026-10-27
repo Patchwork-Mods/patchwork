@@ -95,8 +95,22 @@ impl Paths {
         self.data.join("source-files")
     }
 
+    /// Each profile's own files, `profiles/<id>/`: only what describes the
+    /// profile and is the same on every machine that has it.
     pub fn profiles(&self) -> PathBuf {
         self.data.join("profiles")
+    }
+
+    /// What only this machine knows about each profile, `profile-state/<id>/`:
+    /// what was deployed from it here, and when.
+    pub fn profile_state(&self) -> PathBuf {
+        self.data.join("profile-state")
+    }
+
+    /// Where on this machine each local mod was added from, so it can be
+    /// read again when it's relocked.
+    pub fn local_mods(&self) -> PathBuf {
+        self.data.join("local-mods.toml")
     }
 
     pub fn game_installs(&self) -> PathBuf {

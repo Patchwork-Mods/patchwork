@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, ResolvedMod, Source, SourceContext, is_archive_name,
+    ArtifactFormat, ArtifactLocation, ResolvedMod, Source, SourceContext,
 };
 use patchwork_core::{Error, Result};
 
@@ -32,13 +32,7 @@ impl Source for LocalSource {
         let path = expand_home(id)
             .canonicalize()
             .map_err(|e| error(format!("{id}: {e}")))?;
-        let format = if path.is_dir() {
-            ArtifactFormat::Dir
-        } else if is_archive_name(&path.to_string_lossy()) {
-            ArtifactFormat::Archive
-        } else {
-            ArtifactFormat::File
-        };
+        let format = ArtifactFormat::of_path(&path);
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())

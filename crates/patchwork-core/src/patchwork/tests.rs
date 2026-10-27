@@ -869,8 +869,58 @@ fn renaming_a_profile_keeps_its_id_and_checks_the_name() {
     assert!(pw.rename_profile(&profile, "has spaces").is_err());
 }
 
+/// Local files, like the real `local` source.
+struct LocalFiles;
+
+#[async_trait::async_trait]
+impl Source for LocalFiles {
+    fn id(&self) -> &str {
+        "local"
+    }
+
+    async fn resolve(
+        &self,
+        _: &SourceContext<'_>,
+        id: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        let path = PathBuf::from(id);
+        if !path.exists() {
+            return Err(Error::invalid(format!("{id} isn't there")));
+        }
+        Ok(crate::source::ResolvedMod {
+            id: id.to_owned(),
+            name: path.file_stem().unwrap().to_string_lossy().into_owned(),
+            version: None,
+            format: ArtifactFormat::of_path(&path),
+            artifact: ArtifactLocation::Path { path },
+            dependencies: Vec::new(),
+            game_versions: None,
+        })
+    }
+}
+
+/// patchwork with the `local` source, rooted at `root`.
+fn with_local_files(root: &Path) -> Patchwork {
+    let pw = Patchwork::builder(Paths::rooted(root))
+        .source(LocalFiles)
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    pw
+}
+
+fn local_spec(path: &Path) -> ModSpec {
+    ModSpec {
+        source: "local".to_owned(),
+        id: path.to_string_lossy().into_owned(),
+        version: None,
+    }
+}
+
 #[test]
-fn duplicating_a_profile_copies_its_local_files() {
+fn duplicating_a_profile_copies_its_mods_and_lockfile() {
     let tmp = tempfile::tempdir().unwrap();
     let pw = Patchwork::builder(Paths::rooted(tmp.path()))
         .deployer(NoDeployer)
@@ -878,37 +928,243 @@ fn duplicating_a_profile_copies_its_local_files() {
         .unwrap();
     pw.add_game(new_game("my-game", "none")).unwrap();
     let profile = pw.create_profile("my-game", "default").unwrap();
-    // as if it had been imported with a local mod
-    let file = pw.profile_dir(&profile).join("files/abc/mod.zip");
-    fs::create_dir_all(file.parent().unwrap()).unwrap();
-    fs::write(&file, b"mod bytes").unwrap();
     let mut loaded = pw.load_profile(&profile).unwrap();
     loaded.mods.push(ProfileMod {
         name: "mod".to_owned(),
         source: "local".to_owned(),
-        id: file.to_string_lossy().into_owned(),
+        id: ContentHash::of(b"mod bytes").to_string(),
         version: None,
         enabled: false,
         game_versions: None,
     });
     loaded.hidden_tags = vec!["library".to_owned()];
     pw.save_profile(&profile, &loaded).unwrap();
+    let lock = Lockfile {
+        schema: LOCK_SCHEMA,
+        game: LockedGame {
+            id: "my-game".to_owned(),
+            definition: ContentHash::of(b"game"),
+        },
+        mods: Vec::new(),
+    };
+    fsutil::write_toml(&pw.lock_file(&profile), &lock).unwrap();
 
     let copy = pw.duplicate_profile(&profile, "copy").unwrap();
     assert_ne!(copy, profile);
     assert_eq!(pw.find_profile("my-game/copy").unwrap(), copy);
     let copied = pw.load_profile(&copy).unwrap();
     assert_eq!(copied.hidden_tags, loaded.hidden_tags);
-    assert!(!copied.mods[0].enabled);
-    let copied_file = pw.profile_dir(&copy).join("files/abc/mod.zip");
-    assert_eq!(copied.mods[0].id, copied_file.to_string_lossy());
-    assert_eq!(fs::read(&copied_file).unwrap(), b"mod bytes");
+    assert_eq!(copied.mods, loaded.mods);
+    assert!(pw.lock_file(&copy).is_file());
 
     // the copy stands on its own
     pw.remove_profile(&profile).unwrap();
-    assert!(copied_file.is_file());
+    assert!(pw.load_profile(&copy).is_ok());
     let taken = pw.duplicate_profile(&copy, "copy").unwrap_err();
     assert!(taken.to_string().contains("already exists"), "{taken}");
+}
+
+#[tokio::test]
+async fn local_mods_are_known_by_their_hash() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("mods/Cool.pak");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "v1").unwrap();
+    let pw = with_local_files(&tmp.path().join("a"));
+    let profile = pw.create_profile("my-game", "default").unwrap();
+
+    let added = pw
+        .add_mod(&profile, local_spec(&file), None, true)
+        .await
+        .unwrap();
+    let v1 = ContentHash::of(b"v1");
+    assert_eq!(added.id, v1.to_string());
+    assert_eq!(added.name, "Cool");
+    // the same file twice is the same mod
+    let again = pw
+        .add_mod(&profile, local_spec(&file), Some("other".to_owned()), true)
+        .await
+        .unwrap_err();
+    assert!(
+        again.to_string().contains("already has that mod"),
+        "{again}"
+    );
+    // it's shown by its file's name, not its hash
+    assert_eq!(pw.display_id(None, &added), "Cool.pak");
+
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lock.mods[0].id, v1.to_string());
+    assert_eq!(lock.mods[0].hash, v1);
+    assert_eq!(
+        lock.mods[0].artifact,
+        ArtifactLocation::Local {
+            name: "Cool.pak".to_owned()
+        }
+    );
+    // nothing about where it is on this machine is in the profile
+    for file in [pw.profile_file(&profile), pw.lock_file(&profile)] {
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(!text.contains(&*tmp.path().to_string_lossy()), "{text}");
+    }
+
+    // changes to the file are picked up when it's updated, like any mod,
+    // and it keeps its id
+    fs::write(&file, "v2").unwrap();
+    assert_eq!(pw.lock(&profile, false).await.unwrap().mods[0].hash, v1);
+    let lock = pw.lock(&profile, true).await.unwrap();
+    assert_eq!(lock.mods[0].hash, ContentHash::of(b"v2"));
+    assert_eq!(lock.mods[0].id, v1.to_string());
+}
+
+#[tokio::test]
+async fn local_mods_from_another_machine_come_from_the_store() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("mods/Cool.pak");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "v1").unwrap();
+    let a = with_local_files(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    a.add_mod(&profile, local_spec(&file), None, true)
+        .await
+        .unwrap();
+    a.lock(&profile, false).await.unwrap();
+
+    // the profile's own folder is all another machine gets
+    let b = with_local_files(&tmp.path().join("b"));
+    fs::create_dir_all(b.profile_dir(&profile)).unwrap();
+    for name in ["profile.toml", "profile.lock"] {
+        fs::copy(
+            a.profile_dir(&profile).join(name),
+            b.profile_dir(&profile).join(name),
+        )
+        .unwrap();
+    }
+    for update in [false, true] {
+        let err = b.lock(&profile, update).await.unwrap_err();
+        assert!(err.to_string().contains("isn't on this one"), "{err}");
+    }
+
+    // the lockfile still has its name
+    let loaded = b.load_profile(&profile).unwrap();
+    let lock = b.load_lock(&profile).unwrap();
+    assert_eq!(b.display_id(lock.as_ref(), &loaded.mods[0]), "Cool.pak");
+    assert_eq!(
+        b.display_id(None, &loaded.mods[0]),
+        &loaded.mods[0].id[..12]
+    );
+
+    b.store.ingest_path(&file, ArtifactFormat::File).unwrap();
+    // there's nothing to update it from here, so it stays as it was
+    for update in [false, true] {
+        let lock = b.lock(&profile, update).await.unwrap();
+        assert_eq!(lock.mods[0].hash, ContentHash::of(b"v1"));
+    }
+}
+
+#[tokio::test]
+async fn profiles_from_before_local_mod_ids_are_migrated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("mods/Cool.pak");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "cool").unwrap();
+    let unlocked = tmp.path().join("mods/New.pak");
+    fs::write(&unlocked, "new").unwrap();
+
+    let pw = with_local_files(&tmp.path().join("root"));
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let dir = pw.profile_dir(&profile);
+    let imported = dir.join("files/abc/Imported.pak");
+    fs::create_dir_all(imported.parent().unwrap()).unwrap();
+    fs::write(&imported, "imported").unwrap();
+    let cool = ContentHash::of(b"cool");
+    let imported_hash = ContentHash::of(b"imported");
+    pw.store.ingest_path(&file, ArtifactFormat::File).unwrap();
+
+    // how it was: ids and artifacts were paths, and everything was in the
+    // profile's own folder
+    let local_mod = |path: &Path| ProfileMod {
+        name: path.file_stem().unwrap().to_string_lossy().into_owned(),
+        source: "local".to_owned(),
+        id: path.to_string_lossy().into_owned(),
+        version: None,
+        enabled: true,
+        game_versions: None,
+    };
+    let locked = |path: &Path, hash| LockedMod {
+        name: path.file_stem().unwrap().to_string_lossy().into_owned(),
+        source: "local".to_owned(),
+        id: path.to_string_lossy().into_owned(),
+        requested: None,
+        version: None,
+        hash,
+        format: ArtifactFormat::File,
+        artifact: ArtifactLocation::Path {
+            path: path.to_owned(),
+        },
+        dependencies: Vec::new(),
+        requires: BTreeMap::new(),
+        game_versions: None,
+    };
+    let mut loaded = pw.load_profile(&profile).unwrap();
+    loaded.mods = vec![local_mod(&file), local_mod(&imported), local_mod(&unlocked)];
+    pw.save_profile(&profile, &loaded).unwrap();
+    let lock = Lockfile {
+        schema: 2,
+        game: LockedGame {
+            id: "my-game".to_owned(),
+            definition: ContentHash::of(b"game"),
+        },
+        mods: vec![locked(&file, cool), locked(&imported, imported_hash)],
+    };
+    fsutil::write_toml(&pw.lock_file(&profile), &lock).unwrap();
+    let mut deployed = toml::Table::new();
+    deployed.insert(
+        "mod".to_owned(),
+        toml::Value::try_from(&loaded.mods[..2]).unwrap(),
+    );
+    deployed.insert("lock".to_owned(), toml::Value::try_from(&lock).unwrap());
+    fsutil::write_toml(&dir.join("deployed.toml"), &deployed).unwrap();
+    fsutil::write_toml(&dir.join("history/1.toml"), &deployed).unwrap();
+    drop(pw);
+
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("root")))
+        .source(LocalFiles)
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    let ids: Vec<&str> = loaded.mods.iter().map(|m| m.id.as_str()).collect();
+    let new = ContentHash::of(b"new").to_string();
+    assert_eq!(
+        ids,
+        [cool.to_string(), imported_hash.to_string(), new.clone()]
+    );
+    let lock = pw.load_lock(&profile).unwrap().unwrap();
+    assert_eq!(lock.schema, LOCK_SCHEMA);
+    assert!(
+        lock.mods
+            .iter()
+            .all(|m| matches!(m.artifact, ArtifactLocation::Local { .. }))
+    );
+
+    // imported files are in the store instead of the profile's folder
+    assert!(!dir.join("files").exists());
+    assert!(pw.store.contains(&imported_hash, ArtifactFormat::File));
+    assert_eq!(pw.local_origin(&cool.to_string()).unwrap(), Some(file));
+    assert_eq!(pw.local_origin(&new).unwrap(), Some(unlocked));
+    assert_eq!(pw.local_origin(&imported_hash.to_string()).unwrap(), None);
+
+    // and what was deployed moved out, with the same ids
+    assert!(!dir.join("deployed.toml").exists());
+    assert!(!dir.join("history").exists());
+    let entries = pw.history(&profile).unwrap();
+    assert_eq!(entries.len(), 1);
+    pw.revert(&profile).unwrap();
+    let reverted = pw.load_profile(&profile).unwrap();
+    assert_eq!(reverted.mods[0].id, cool.to_string());
+
+    // it all still locks
+    pw.lock(&profile, false).await.unwrap();
 }
 
 #[tokio::test]

@@ -332,8 +332,8 @@ enum ProfileCommand {
     List,
     /// Switch to a profile.
     Use { profile: String },
-    /// Delete a profile, along with its lockfile and any local mods imported
-    /// with it. A deployed profile has to be undeployed first.
+    /// Delete a profile, along with its lockfile and its deploy history. A
+    /// deployed profile has to be undeployed first.
     Remove { profile: String },
     /// Rename a profile; it stays for the same game.
     Rename { profile: String, name: String },
@@ -604,17 +604,20 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Command::List { query } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
+            // only for showing ids, so a broken one isn't an error here
+            let lock = pw.load_lock(&profile).ok().flatten();
+            let ids = |m: &ProfileMod| pw.display_id(lock.as_ref(), m);
             if loaded.mods.is_empty() {
                 println!("{} has no mods", loaded.label());
             } else if query.is_empty() {
-                print_mods(loaded.mods.iter().enumerate());
+                print_mods(loaded.mods.iter().enumerate(), ids);
             } else {
                 let query = query.join(" ");
                 let found = pw.find_mods(&profile, &query)?;
                 if found.is_empty() {
                     println!("no mods in {} match \"{query}\"", loaded.label());
                 }
-                print_mods(found.iter().map(|(i, m)| (*i, m)));
+                print_mods(found.iter().map(|(i, m)| (*i, m)), ids);
             }
         }
         Command::Move { name, to } => {
@@ -671,7 +674,11 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Sort { by, tags, dry_run } => {
             let (profile, _) = selected(&pw, &cli.profile)?;
             let sorted = pw.sorted_mods(&profile, &by, &tags).await?;
-            print_mods(sorted.iter().enumerate());
+            // only for showing ids, so a broken one isn't an error here
+            let lock = pw.load_lock(&profile).ok().flatten();
+            print_mods(sorted.iter().enumerate(), |m| {
+                pw.display_id(lock.as_ref(), m)
+            });
             if !dry_run {
                 let names: Vec<String> = sorted.into_iter().map(|m| m.name).collect();
                 pw.reorder_mods(&profile, &names)?;
@@ -1425,8 +1432,11 @@ fn print_op(op: &DeployOp) {
 
 /// Numbered, so positions can be given to `move --to`.
 /// Prints mods numbered by their places in the load order, which are given
-/// as indices.
-fn print_mods<'a>(mods: impl IntoIterator<Item = (usize, &'a ProfileMod)>) {
+/// as indices, with `ids` saying what to show for their ids.
+fn print_mods<'a>(
+    mods: impl IntoIterator<Item = (usize, &'a ProfileMod)>,
+    ids: impl Fn(&ProfileMod) -> String,
+) {
     let mods: Vec<_> = mods.into_iter().collect();
     let width = mods
         .iter()
@@ -1447,7 +1457,7 @@ fn print_mods<'a>(mods: impl IntoIterator<Item = (usize, &'a ProfileMod)>) {
             i + 1,
             m.name,
             m.source,
-            m.id
+            ids(m)
         );
     }
 }

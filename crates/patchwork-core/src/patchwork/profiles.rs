@@ -12,7 +12,6 @@ use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::fsutil;
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileRef, validate_name};
-use crate::source::ArtifactLocation;
 use crate::{Error, Result};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -57,48 +56,16 @@ impl Patchwork {
         self.save_profile(profile, &loaded)
     }
 
-    /// Copies a profile to `<game>/<name>` with a new id: its mods, its
-    /// lockfile and any local mods imported with it. The copy hasn't been
-    /// deployed, so it has nothing to revert to.
+    /// Copies a profile to `<game>/<name>` with a new id: its mods and its
+    /// lockfile. The copy hasn't been deployed, so it has nothing to revert
+    /// to.
     pub fn duplicate_profile(&self, profile: &ProfileRef, name: &str) -> Result<ProfileRef> {
         let mut copy = self.load_profile(profile)?;
         copy.id = Uuid::new_v4();
         copy.name = name.to_owned();
         self.check_new_name(&copy)?;
         let copy_ref = copy.reference();
-
-        // Local mods imported with the profile are kept in its folder, and
-        // their ids are their paths, so they have to move with the copy.
-        let old_files = self.profile_dir(profile).join("files");
-        let new_files = self.profile_dir(&copy_ref).join("files");
-        if old_files.is_dir() {
-            fsutil::copy_dir(&old_files, &new_files)?;
-        }
-        let moved = |path: &str| {
-            std::path::Path::new(path)
-                .strip_prefix(&old_files)
-                .ok()
-                .map(|rest| new_files.join(rest).to_string_lossy().into_owned())
-        };
-        for m in &mut copy.mods {
-            if let Some(id) = moved(&m.id) {
-                m.id = id;
-            }
-        }
-        let lock = self.load_lock(profile)?.map(|mut lock| {
-            for m in &mut lock.mods {
-                if let Some(id) = moved(&m.id) {
-                    m.id = id;
-                }
-                if let ArtifactLocation::Path { path } = &mut m.artifact
-                    && let Some(new) = moved(&path.to_string_lossy())
-                {
-                    *path = new.into();
-                }
-            }
-            lock
-        });
-
+        let lock = self.load_lock(profile)?;
         self.save_profile(&copy_ref, &copy)?;
         if let Some(lock) = lock {
             fsutil::write_toml(&self.lock_file(&copy_ref), &lock)?;
@@ -123,8 +90,8 @@ impl Patchwork {
         Ok(())
     }
 
-    /// Removes the profile and everything kept with it: its lockfile, what
-    /// was recorded at its last deploy, and local mods imported with it.
+    /// Removes the profile and everything kept with it: its lockfile and
+    /// what was recorded when it was deployed.
     /// Its mods have to be undeployed first, so they aren't left in the game
     /// with nothing keeping track of them. If it was the current profile,
     /// there's no current profile afterwards.
@@ -141,6 +108,10 @@ impl Patchwork {
         }
         let dir = self.profile_dir(profile);
         fs::remove_dir_all(&dir).at(&dir)?;
+        let state = self.profile_state_dir(profile);
+        if state.exists() {
+            fs::remove_dir_all(&state).at(&state)?;
+        }
         let mut state: State = fsutil::read_toml(&self.paths.state_file())?.unwrap_or_default();
         if state.current_profile.as_deref() == Some(profile.to_string().as_str()) {
             state.current_profile = None;
@@ -237,6 +208,40 @@ impl Patchwork {
         Ok(())
     }
 
+    /// Moves what only this machine knows about each profile out of the
+    /// profile's folder, and gives local mods ids that work anywhere; both
+    /// came about so profiles could be kept in step between machines.
+    pub(super) fn migrate_profile_state(&self) -> Result<()> {
+        let Ok(entries) = fs::read_dir(self.paths.profiles()) else {
+            return Ok(());
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let Ok(profile) = entry.file_name().to_string_lossy().parse::<ProfileRef>() else {
+                continue;
+            };
+            if !self.profile_file(&profile).is_file() {
+                continue;
+            }
+            let old_dir = self.profile_dir(&profile);
+            let new_dir = self.profile_state_dir(&profile);
+            let mut moved = false;
+            for name in ["deployed.toml", "history"] {
+                let old = old_dir.join(name);
+                if old.exists() {
+                    let new = new_dir.join(name);
+                    fs::create_dir_all(&new_dir).at(&new_dir)?;
+                    fs::rename(&old, &new).at(&old)?;
+                    moved = true;
+                }
+            }
+            if moved {
+                self.migrate_history_local_mods(&profile)?;
+            }
+            self.migrate_local_mods(&profile)?;
+        }
+        Ok(())
+    }
+
     pub fn load_profile(&self, profile: &ProfileRef) -> Result<Profile> {
         let path = self.profile_file(profile);
         let loaded: Profile = fsutil::read_toml(&path)?
@@ -268,9 +273,14 @@ impl Patchwork {
         self.profile_dir(profile).join("profile.lock")
     }
 
+    /// Where what only this machine knows about the profile is kept.
+    pub(super) fn profile_state_dir(&self, profile: &ProfileRef) -> PathBuf {
+        self.paths.profile_state().join(profile.uuid.to_string())
+    }
+
     /// The profile's mods and lockfile as they were at its last deploy, for
     /// [`Patchwork::revert`].
     pub(super) fn deployed_file(&self, profile: &ProfileRef) -> PathBuf {
-        self.profile_dir(profile).join("deployed.toml")
+        self.profile_state_dir(profile).join("deployed.toml")
     }
 }

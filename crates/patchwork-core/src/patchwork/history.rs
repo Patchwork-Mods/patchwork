@@ -4,7 +4,8 @@
 //!
 //! Each deploy saves the profile's mods, plugins and lockfile to
 //! `deployed.toml` and, unless they're the same as the newest entry, to
-//! `history/<n>.toml`. Mods are content-addressed in the store, so going
+//! `history/<n>.toml`, both kept with what only this machine knows about the
+//! profile. Mods are content-addressed in the store, so going
 //! back doesn't download anything that's still there.
 
 use std::collections::{HashMap, HashSet};
@@ -14,7 +15,7 @@ use std::path::PathBuf;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use super::Patchwork;
+use super::{Patchwork, local};
 use crate::error::IoContext;
 use crate::fsutil;
 use crate::hash::ContentHash;
@@ -248,7 +249,26 @@ impl Patchwork {
     }
 
     fn history_dir(&self, profile: &ProfileRef) -> PathBuf {
-        self.profile_dir(profile).join("history")
+        self.profile_state_dir(profile).join("history")
+    }
+
+    /// Gives local mods in what was deployed the ids they have now; see
+    /// [`local::portable_ids`].
+    pub(super) fn migrate_history_local_mods(&self, profile: &ProfileRef) -> Result<()> {
+        let files = self
+            .history_numbers(profile)?
+            .into_iter()
+            .map(|n| self.history_file(profile, n))
+            .chain([self.deployed_file(profile)]);
+        for file in files {
+            let Some(mut deployed) = fsutil::read_toml::<Deployed>(&file)? else {
+                continue;
+            };
+            if !local::portable_ids(&mut deployed.mods, &mut deployed.lock).is_empty() {
+                fsutil::write_toml(&file, &deployed)?;
+            }
+        }
+        Ok(())
     }
 
     fn history_file(&self, profile: &ProfileRef, number: u32) -> PathBuf {

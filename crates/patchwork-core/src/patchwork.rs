@@ -41,6 +41,7 @@ use crate::source::{
 };
 use crate::store::Store;
 use crate::{Error, Result};
+use local::LOCAL;
 
 /// A game's settings on this machine, as opposed to its [`GameDef`], which is
 /// the same everywhere. Saved to `<data>/games/<id>.toml`.
@@ -245,6 +246,7 @@ impl Builder {
             _lock: lock,
         };
         patchwork.migrate_profiles()?;
+        patchwork.migrate_profile_state()?;
         Ok(patchwork)
     }
 }
@@ -579,9 +581,9 @@ impl Patchwork {
                 version,
             });
         }
-        if self.sources.contains_key("local") && Path::new(spec).exists() {
+        if self.sources.contains_key(LOCAL) && Path::new(spec).exists() {
             return Ok(ModSpec {
-                source: "local".to_owned(),
+                source: LOCAL.to_owned(),
                 id: spec.to_owned(),
                 version,
             });
@@ -605,6 +607,11 @@ impl Patchwork {
     ) -> Result<ProfileMod> {
         let mut loaded = self.load_profile(profile)?;
         let resolved = self.resolve(&loaded.game, &spec).await?;
+        let id = if spec.source == LOCAL {
+            self.add_local(&resolved)?
+        } else {
+            resolved.id
+        };
         let name = name.unwrap_or(resolved.name);
         if loaded.mods.iter().any(|m| m.name == name) {
             return Err(Error::invalid(format!(
@@ -615,7 +622,7 @@ impl Patchwork {
         if loaded
             .mods
             .iter()
-            .any(|m| m.source == spec.source && m.id == resolved.id)
+            .any(|m| m.source == spec.source && m.id == id)
         {
             return Err(Error::invalid(format!(
                 "{} already has that mod",
@@ -625,7 +632,7 @@ impl Patchwork {
         let added = ProfileMod {
             name,
             source: spec.source,
-            id: resolved.id,
+            id,
             version: spec.version,
             enabled,
             game_versions: None,
@@ -999,8 +1006,17 @@ impl Patchwork {
             .ok_or_else(|| Error::UnknownSource(id.to_owned()))
     }
 
+    /// Resolves a mod with its source. Local mods are resolved from where
+    /// they were added from, but keep their own ids.
     async fn resolve(&self, game: &str, spec: &ModSpec) -> Result<crate::source::ResolvedMod> {
         let source = self.source(&spec.source)?;
+        let origin = match spec.source == LOCAL && local::is_local_id(&spec.id) {
+            true => Some(
+                self.local_origin(&spec.id)?
+                    .ok_or_else(|| local::not_here(&spec.id))?,
+            ),
+            false => None,
+        };
         let env = self.game_env(&DeployTarget::Game(game.to_owned()))?;
         let registry = self.registry();
         let game = &registry.game(game)?.value;
@@ -1011,9 +1027,19 @@ impl Patchwork {
             settings: settings.source(&spec.source),
             env: env.as_ref(),
         };
-        source
-            .resolve(&ctx, &spec.id, spec.version.as_deref())
-            .await
+        match origin {
+            Some(path) => {
+                let path = path.to_string_lossy();
+                let mut resolved = source.resolve(&ctx, &path, spec.version.as_deref()).await?;
+                resolved.id = spec.id.clone();
+                Ok(resolved)
+            }
+            None => {
+                source
+                    .resolve(&ctx, &spec.id, spec.version.as_deref())
+                    .await
+            }
+        }
     }
 
     // Searching
@@ -1382,9 +1408,17 @@ impl Patchwork {
         known: &HashMap<String, LockedMod>,
     ) -> Result<Locking> {
         let key = mod_key(&spec.source, &spec.id);
-        if let Some(old) = previous.get(&key)
-            && old.requested == spec.version
-        {
+        let keep = match previous.get(&key) {
+            Some(old) if old.requested == spec.version => Some(old),
+            // There's nothing to resolve it from here, so it stays as it
+            // was locked.
+            _ if self.local_elsewhere(&spec.source, &spec.id)? => {
+                let label = name.as_deref().unwrap_or(&key);
+                Some(known.get(&key).ok_or_else(|| local::not_here(label))?)
+            }
+            _ => None,
+        };
+        if let Some(old) = keep {
             let mut old = old.clone();
             if let Some(name) = name {
                 old.name = name;
@@ -1477,6 +1511,13 @@ impl Patchwork {
             }
             None => None,
         };
+        // where a local mod was added from only means something here
+        let artifact = match resolved.artifact {
+            ArtifactLocation::Path { .. } if spec.source == LOCAL => ArtifactLocation::Local {
+                name: resolved.artifact.file_name(),
+            },
+            artifact => artifact,
+        };
         let locked = LockedMod {
             name,
             source: spec.source,
@@ -1485,7 +1526,7 @@ impl Patchwork {
             version: resolved.version,
             hash,
             format: resolved.format,
-            artifact: resolved.artifact,
+            artifact,
             dependencies,
             requires: resolved
                 .dependencies
@@ -1511,6 +1552,10 @@ impl Patchwork {
     ) -> Result<ContentHash> {
         match artifact {
             ArtifactLocation::Path { path } => self.store.ingest_path(path, format),
+            ArtifactLocation::Local { .. } => match self.local_origin(id)? {
+                Some(path) => self.store.ingest_path(&path, format),
+                None => Err(local::not_here(name)),
+            },
             ArtifactLocation::Url { url } => self.fetch_url(url, format).await,
             ArtifactLocation::Source { file, .. } => {
                 let file = SourceFile {
@@ -1693,7 +1738,7 @@ impl Patchwork {
         if format.needs_lock() {
             let lock = self.lock(profile, false).await?;
             for m in &lock.mods {
-                if let ArtifactLocation::Path { .. } = m.artifact {
+                if let ArtifactLocation::Path { .. } | ArtifactLocation::Local { .. } = m.artifact {
                     let bundled = Bundled {
                         path: self.store.path(&m.hash, m.format),
                         name: m.artifact.file_name(),
@@ -1854,36 +1899,27 @@ impl Patchwork {
             }
         };
 
-        // Local mods come along as files, which need a permanent home.
-        let files = self.profile_dir(&profile_ref).join("files");
-        if files.exists() {
-            fs::remove_dir_all(&files).at(&files)?;
-        }
+        // Local mods come along as files, which go straight into the store.
         if let Some(lock) = &mut shared.lock {
-            for locked in &mut lock.mods {
-                let ArtifactLocation::Path { path: old } = &locked.artifact else {
+            // Exports from before local mods had ids of their own used their
+            // paths, which are no use here.
+            local::portable_ids(&mut shared.mods, lock);
+            for locked in &lock.mods {
+                if !matches!(locked.artifact, ArtifactLocation::Local { .. })
+                    || self.store.contains(&locked.hash, locked.format)
+                {
                     continue;
-                };
+                }
                 let Some(bundled) = shared.bundled.get(&locked.hash) else {
                     continue;
                 };
-                let dest = files.join(locked.hash.to_string()).join(&bundled.name);
-                if !dest.exists() {
-                    fs::create_dir_all(dest.parent().expect("has a parent")).at(&files)?;
-                    fs::rename(&bundled.path, &dest).at(&bundled.path)?;
+                let hash = self.store.ingest_path(&bundled.path, locked.format)?;
+                if hash != locked.hash {
+                    return Err(Error::invalid(format!(
+                        "the file that came with `{}` isn't the one it was locked to",
+                        locked.name
+                    )));
                 }
-                let new_id = dest.to_string_lossy().into_owned();
-                // For local mods the id is the path, and it has to follow
-                // the file.
-                if locked.id == old.to_string_lossy() {
-                    for m in &mut shared.mods {
-                        if m.source == locked.source && m.id == locked.id {
-                            m.id = new_id.clone();
-                        }
-                    }
-                    locked.id = new_id;
-                }
-                locked.artifact = ArtifactLocation::Path { path: dest };
             }
         }
 
@@ -2635,6 +2671,7 @@ fn dedupe_names(mods: Vec<ProfileMod>) -> Vec<ProfileMod> {
 }
 
 mod history;
+mod local;
 mod profiles;
 
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};

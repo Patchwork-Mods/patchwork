@@ -193,6 +193,8 @@ struct UiMod {
     profile: ProfileMod,
     /// `<source>:<id>`, which events about the mod name it by.
     key: String,
+    /// What to show for its id; see [`patchwork_core::Patchwork::display_id`].
+    shown_id: String,
     /// The version in the lockfile, if it's been locked.
     locked: Option<String>,
     /// Whether the mod's source has versions to pick from.
@@ -336,6 +338,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 .flatten();
             let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
             UiMod {
+                shown_id: pw.display_id(lock.as_ref(), &m),
                 versions: known.map(|k| k.versions),
                 summary: summary.and_then(|k| k.summary),
                 versioned,

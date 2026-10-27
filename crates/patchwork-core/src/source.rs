@@ -2,7 +2,7 @@
 //! the Artifact is the thing that gets moved to the game file
 use std::cmp::Ordering;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -35,6 +35,14 @@ pub enum ArtifactLocation {
         file: String,
         name: String,
     },
+    /// A local mod's file as it was locked, which can't be downloaded from
+    /// anywhere: it's in the store, or at the path it was added from on the
+    /// machine that added it. The host records this in lockfiles in place
+    /// of [`ArtifactLocation::Path`], which only means something on one
+    /// machine; sources don't return it.
+    Local {
+        name: String,
+    },
 }
 
 impl ArtifactLocation {
@@ -48,7 +56,9 @@ impl ArtifactLocation {
                 let path = url.split(['?', '#']).next().unwrap_or(url);
                 path.rsplit('/').next().unwrap_or_default().to_owned()
             }
-            ArtifactLocation::Source { name, .. } => name.clone(),
+            ArtifactLocation::Source { name, .. } | ArtifactLocation::Local { name } => {
+                name.clone()
+            }
         }
     }
 }
@@ -65,6 +75,20 @@ pub enum ArtifactFormat {
     Dir,
     /// A single file that's deployed as it is, like a `.pak` or `.ftl`.
     File,
+}
+
+impl ArtifactFormat {
+    /// What a file or folder on disk is: a folder, an archive going by its
+    /// name, or any other file.
+    pub fn of_path(path: &Path) -> Self {
+        if path.is_dir() {
+            ArtifactFormat::Dir
+        } else if is_archive_name(&path.to_string_lossy()) {
+            ArtifactFormat::Archive
+        } else {
+            ArtifactFormat::File
+        }
+    }
 }
 
 /// How to get an [`ArtifactLocation::Source`] file right now.

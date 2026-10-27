@@ -439,8 +439,11 @@ fn profiles_move_between_machines_as_zips() {
         "{out}"
     );
     let list = bob.run(&["list"]);
-    assert!(list.contains("[x] MoreCompany"), "{list}");
-    assert!(list.contains("[ ] Tweaks"), "{list}");
+    assert!(
+        list.contains("[x] MoreCompany  (local:MoreCompany.zip)"),
+        "{list}"
+    );
+    assert!(list.contains("[ ] Tweaks  (local:Tweaks)"), "{list}");
     bob.run(&["enable", "Tweaks"]);
     bob.run(&["deploy"]);
     assert_eq!(
