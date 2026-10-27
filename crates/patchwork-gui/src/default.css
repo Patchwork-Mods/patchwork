@@ -1655,6 +1655,24 @@ legend {
   font-weight: 600;
 }
 
+/* The settings dialogs' sections, titled so each stands out from the next. */
+#settings-dialog fieldset,
+#game-settings-dialog fieldset {
+  padding: 12px var(--pw-gap) var(--pw-gap);
+  background: var(--pw-bg);
+}
+
+#settings-dialog legend,
+#game-settings-dialog legend {
+  padding: 0 6px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+#settings-sources:empty {
+  display: none;
+}
+
 .error {
   color: var(--pw-danger);
   margin: 0;

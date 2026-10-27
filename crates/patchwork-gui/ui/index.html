@@ -26,12 +26,9 @@
 					<button id="install-cli" type="button" title="Put the patchwork command on your PATH, to use Patchwork from a terminal" hidden>
 						Install command-line tool
 					</button>
-					<!-- Linking this computer to the user's others; see sync.js. -->
-					<button id="link-computers" type="button" title="Keep every profile in step across your own computers">
-						My computers
-					</button>
-					<!-- Sources' settings, such as API keys; see settings.js. -->
-					<button id="app-settings" type="button" title="Accounts and settings for where mods come from">
+					<!-- Sources' settings, such as API keys, and linking this computer
+               to the user's others; see settings.js and sync.js. -->
+					<button id="app-settings" type="button" title="Accounts for where mods come from, and linking your computers">
 						Settings
 					</button>
 					<!-- Marked with a "!" while a newer patchwork is out; see
@@ -370,12 +367,38 @@
 			</form>
 		</dialog>
 
-		<!-- Settings for every game: one section per source that takes any;
-         see settings.js. -->
+		<!-- Settings for every game: one section per source that takes any
+         (see settings.js), then linking the user's own computers (see
+         sync.js), whose buttons act straight away rather than on Save. -->
 		<dialog id="settings-dialog">
 			<form id="settings-form" method="dialog" class="stack">
 				<h2>Settings</h2>
 				<div id="settings-sources" class="stack"></div>
+				<fieldset id="computers" class="stack">
+					<legend>My computers</legend>
+					<p class="muted">Linked computers keep every profile in step: profiles on any of them, including ones made
+						later, are on all of them, and a change on one goes to the rest. Profiles you share with friends or follow
+						come along too.</p>
+					<p id="computers-state" class="muted" hidden>This computer is linked to your others.</p>
+					<div id="computers-ticket" class="field" hidden>
+						<label for="computers-text">On your other computer, open <b>Settings</b> and paste this ticket under <b>My
+								computers</b></label>
+						<textarea id="computers-text" readonly rows="4"></textarea>
+						<small class="muted">Keep Patchwork open here until it has linked. The ticket lets whoever has it change every
+							profile here, so don't give it to anyone else.</small>
+					</div>
+					<div id="computers-join" class="field">
+						<label for="computers-paste">Or paste a ticket from your other computer</label>
+						<textarea id="computers-paste" rows="3" autocomplete="off" spellcheck="false"></textarea>
+					</div>
+					<p id="computers-error" class="error" hidden></p>
+					<div class="row end">
+						<button type="button" id="computers-unlink" class="danger-text" hidden>Unlink</button>
+						<button type="button" id="computers-copy" hidden>Copy</button>
+						<button type="button" id="computers-create">Create ticket</button>
+						<button type="button" id="computers-submit">Link</button>
+					</div>
+				</fieldset>
 				<p id="settings-error" class="error" hidden></p>
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Close</button>
@@ -477,8 +500,8 @@
 						<span>Read only <small class="muted">others get your mods and your changes; mods they add stay on their
 								computer</small></span>
 					</label>
-					<small class="muted">To keep this profile in step across your own computers, use <b>My computers</b> on the
-						games screen instead; that covers every profile.</small>
+					<small class="muted">To keep this profile in step across your own computers, use <b>My computers</b> in
+						<b>Settings</b> instead; that covers every profile.</small>
 				</div>
 				<div id="share-ticket" class="field" hidden>
 					<label for="share-text">Send this ticket; they choose <b>Join…</b> and paste it</label>
@@ -508,34 +531,6 @@
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Cancel</button>
 					<button type="submit" id="join-submit" class="primary">Join</button>
-				</div>
-			</form>
-		</dialog>
-
-		<dialog id="computers-dialog">
-			<form id="computers-form" method="dialog" class="stack">
-				<h2>My computers</h2>
-				<p class="muted">Linked computers keep every profile in step: profiles on any of them, including ones made
-					later, are on all of them, and a change on one goes to the rest. Profiles you share with friends or follow come
-					along too.</p>
-				<p id="computers-state" class="muted" hidden>This computer is linked to your others.</p>
-				<div id="computers-ticket" class="field" hidden>
-					<label for="computers-text">On your other computer, open <b>My computers</b> and paste this ticket</label>
-					<textarea id="computers-text" name="ticket" readonly rows="4"></textarea>
-					<small class="muted">Keep Patchwork open here until it has linked. The ticket lets whoever has it change every
-						profile here, so don't give it to anyone else.</small>
-				</div>
-				<div id="computers-join" class="field">
-					<label for="computers-paste">Or paste a ticket from your other computer</label>
-					<textarea id="computers-paste" name="paste" rows="3" autocomplete="off" spellcheck="false"></textarea>
-				</div>
-				<p id="computers-error" class="error" hidden></p>
-				<div class="row end">
-					<button type="button" id="computers-unlink" class="danger-text" hidden>Unlink</button>
-					<button type="button" value="cancel" formnovalidate>Close</button>
-					<button type="button" id="computers-copy" hidden>Copy</button>
-					<button type="button" id="computers-create">Create ticket</button>
-					<button type="submit" id="computers-submit" class="primary">Link</button>
 				</div>
 			</form>
 		</dialog>

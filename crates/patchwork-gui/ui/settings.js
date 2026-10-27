@@ -5,6 +5,7 @@
 
 import { invoke, run, status } from "./state.js";
 import { $, h, link, pickFolder } from "./dom.js";
+import { renderComputers } from "./sync.js";
 
 /** What to say under a field about where its value came from. */
 function originNote(setting) {
@@ -127,9 +128,7 @@ async function render() {
       check,
     );
   });
-  $("#settings-sources").replaceChildren(
-    ...(sections.length ? sections : [h("p", { class: "muted" }, "Nothing to set up.")]),
-  );
+  $("#settings-sources").replaceChildren(...sections);
   for (const source of shown) {
     if (source.settings.some((s) => s.origin)) checkSource(source.id);
   }
@@ -166,7 +165,7 @@ function showError(err) {
 
 export async function openSettings() {
   $("#settings-error").hidden = true;
-  await render();
+  await Promise.all([render(), renderComputers()]);
   dialog.showModal();
 }
 

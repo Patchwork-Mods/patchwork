@@ -165,16 +165,16 @@ joinForm.addEventListener("submit", async (e) => {
   else status(`Joined ${profile.label}; deploy it to install its mods`);
 });
 
-// My computers, from the games screen: linking this computer to the user's
-// others, by making a ticket here or pasting one from there.
+// My computers, in Settings: linking this computer to the user's others, by
+// making a ticket here or pasting one from there. Its buttons act at once,
+// apart from the dialog's Save.
 
-const computersForm = $("#computers-form");
-
-$("#link-computers").addEventListener("click", async () => {
-  computersForm.reset();
+/** Shows whether this computer's linked, for when Settings opens. */
+export async function renderComputers() {
+  $("#computers-text").value = "";
+  $("#computers-paste").value = "";
   showComputers(await run("sync_linked"), null);
-  $("#computers-dialog").showModal();
-});
+}
 
 /** Shows whether this computer's linked, and the ticket made for linking
  * another, if there is one. */
@@ -189,8 +189,8 @@ function showComputers(isLinked, ticket) {
   $("#computers-submit").hidden = isLinked || !!ticket;
   $("#computers-error").hidden = true;
   if (ticket) {
-    computersForm.elements.ticket.value = ticket;
-    computersForm.elements.ticket.select();
+    $("#computers-text").value = ticket;
+    $("#computers-text").select();
   }
 }
 
@@ -198,10 +198,6 @@ function computersError(err) {
   $("#computers-error").textContent = String(err);
   $("#computers-error").hidden = false;
 }
-
-computersForm.querySelector("[value=cancel]").addEventListener("click", () => {
-  $("#computers-dialog").close();
-});
 
 $("#computers-create").addEventListener("click", async () => {
   const create = $("#computers-create");
@@ -222,11 +218,10 @@ $("#computers-create").addEventListener("click", async () => {
   await refresh().catch(() => {});
 });
 
-$("#computers-copy").addEventListener("click", () => copyText(computersForm.elements.ticket));
+$("#computers-copy").addEventListener("click", () => copyText($("#computers-text")));
 
-computersForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const ticket = computersForm.elements.paste.value.trim();
+$("#computers-submit").addEventListener("click", async () => {
+  const ticket = $("#computers-paste").value.trim();
   if (!ticket) {
     computersError("Paste the ticket from your other computer, or create one here to paste there.");
     return;
@@ -244,11 +239,13 @@ computersForm.addEventListener("submit", async (e) => {
   } finally {
     submit.disabled = false;
   }
-  $("#computers-dialog").close();
+  $("#computers-paste").value = "";
   if (joined.kind === "devices") {
+    showComputers(true, null);
     linked(joined);
   } else {
     // a ticket from Share… works here too, for just that profile
+    showComputers(false, null);
     status("That was a ticket for one shared profile, which has been joined; it's under its game");
     await refresh().catch(() => {});
   }
@@ -261,7 +258,7 @@ $("#computers-unlink").addEventListener("click", async () => {
     computersError(err);
     return;
   }
-  $("#computers-dialog").close();
+  showComputers(false, null);
   status("Unlinked; profiles synced so far stay synced until you stop each one");
 });
 
