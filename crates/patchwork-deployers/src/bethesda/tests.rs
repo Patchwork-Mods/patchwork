@@ -267,6 +267,26 @@ fn creation_club_plugins_that_are_there_load_first() {
 }
 
 #[test]
+fn light_creation_club_plugins_are_found_by_flag_or_extension() {
+    let env = Env::new();
+    fs::write(
+        env.game.join("Skyrim.ccc"),
+        "ccFlagged.esm\r\nccFull.esm\r\nccLight.esl\r\n",
+    )
+    .unwrap();
+    let data = env.game.join("Data");
+    fs::write(
+        data.join("ccflagged.esm"),
+        plugin_bytes(MASTER_FLAG | LIGHT_FLAG, &[]),
+    )
+    .unwrap();
+    fs::write(data.join("ccFull.esm"), plugin_bytes(MASTER_FLAG, &[])).unwrap();
+    fs::write(data.join("ccLight.esl"), "").unwrap();
+    let plugins = env.plugins(&[]);
+    assert_eq!(plugins.light_implicit, ["ccFlagged.esm", "ccLight.esl"]);
+}
+
+#[test]
 fn the_load_order_is_written_for_the_game() {
     let env = Env::new();
     let mods = [env.installed(

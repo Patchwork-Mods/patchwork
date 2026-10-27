@@ -51,6 +51,9 @@ pub struct Plugins {
     /// Plugins the game always loads first, before any in the load order
     /// (its own masters and DLC), and so never has to be told about.
     pub implicit: Vec<String>,
+    /// Those of `implicit` that are light, which don't count towards
+    /// `limit`.
+    pub light_implicit: Vec<String>,
     /// The most plugins that aren't light the game can load, counting
     /// `implicit`.
     pub limit: Option<usize>,
@@ -97,6 +100,12 @@ impl LoadOrder {
             }
         }
         let implicit: HashSet<String> = plugins.implicit.iter().map(|p| p.to_lowercase()).collect();
+        let light: HashSet<String> = plugins
+            .light_implicit
+            .iter()
+            .map(|p| p.to_lowercase())
+            .collect();
+        let full_implicit = implicit.difference(&light).count();
         let mut taken = vec![false; found.len()];
         let mut ordered = Vec::new();
         for entry in saved {
@@ -123,12 +132,7 @@ impl LoadOrder {
         ordered.sort_by_key(|p| !p.plugin.master);
 
         let mut warnings = plugins.warnings;
-        warnings.extend(check(
-            &ordered,
-            &implicit,
-            plugins.implicit.len(),
-            plugins.limit,
-        ));
+        warnings.extend(check(&ordered, &implicit, full_implicit, plugins.limit));
         Self {
             plugins: ordered,
             implicit: plugins.implicit,
@@ -215,7 +219,7 @@ pub fn keep_missing(old: &[PluginEntry], mut new: Vec<PluginEntry>) -> Vec<Plugi
 fn check(
     plugins: &[OrderedPlugin],
     implicit: &HashSet<String>,
-    implicit_count: usize,
+    full_implicit: usize,
     limit: Option<usize>,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
@@ -248,7 +252,7 @@ fn check(
         }
     }
     if let Some(limit) = limit {
-        let full = implicit_count
+        let full = full_implicit
             + plugins
                 .iter()
                 .filter(|p| p.enabled && !p.plugin.light)

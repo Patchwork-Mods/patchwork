@@ -153,6 +153,25 @@ impl PluginsConfig {
         }
         Ok(implicit)
     }
+
+    /// Those of `implicit` that are light, going by the header of the copy
+    /// among `present`, or the extension if it can't be read (or isn't
+    /// there, as for the game's masters on a test install).
+    fn light(&self, game: &GameFiles<'_>, implicit: &[String], present: &[String]) -> Vec<String> {
+        implicit
+            .iter()
+            .filter(|name| {
+                let header = present
+                    .iter()
+                    .find(|p| p.eq_ignore_ascii_case(name))
+                    .and_then(|p| RelPath::new(&format!("{}/{p}", self.folder)).ok())
+                    .and_then(|rel| game.original(&rel))
+                    .and_then(|path| read_header(&path).ok());
+                header.is_some_and(|h| h.light) || name.to_lowercase().ends_with(".esl")
+            })
+            .cloned()
+            .collect()
+    }
 }
 
 /// What a plugin's header says about it.
@@ -304,6 +323,7 @@ impl Deployer for BethesdaDeployer {
             .filter(|name| is_plugin(name))
             .collect();
         let implicit = plugins.implicit(game, &present)?;
+        let light_implicit = plugins.light(game, &implicit, &present);
         let unlisted: Vec<_> = present
             .into_iter()
             .filter(|name| !implicit.iter().any(|i| i.eq_ignore_ascii_case(name)))
@@ -322,6 +342,7 @@ impl Deployer for BethesdaDeployer {
         Ok(Some(Plugins {
             found,
             implicit,
+            light_implicit,
             limit: plugins.limit,
             warnings,
         }))

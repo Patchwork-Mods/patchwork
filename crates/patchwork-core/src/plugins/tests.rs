@@ -21,6 +21,7 @@ fn found(plugins: Vec<Plugin>) -> Plugins {
     Plugins {
         found: plugins,
         implicit: vec!["Skyrim.esm".to_owned(), "Update.esm".to_owned()],
+        light_implicit: Vec::new(),
         limit: None,
         warnings: Vec::new(),
     }
@@ -132,6 +133,19 @@ fn too_many_full_plugins_are_warned_about() {
     plugins.limit = Some(4);
     assert!(LoadOrder::new(&[], plugins.clone()).warnings.is_empty());
     plugins.limit = Some(3);
+    let warnings = LoadOrder::new(&[], plugins).warnings;
+    assert!(warnings[0].starts_with("4 plugins"), "{warnings:?}");
+}
+
+#[test]
+fn light_implicit_plugins_dont_count_towards_the_limit() {
+    let mut plugins = found(vec![plugin("A.esp", "a")]);
+    plugins.implicit.push("ccA.esl".to_owned());
+    plugins.implicit.push("ccB.esm".to_owned());
+    plugins.light_implicit = vec!["CCA.esl".to_owned(), "ccB.esm".to_owned()];
+    plugins.limit = Some(3);
+    assert!(LoadOrder::new(&[], plugins.clone()).warnings.is_empty());
+    plugins.light_implicit.pop();
     let warnings = LoadOrder::new(&[], plugins).warnings;
     assert!(warnings[0].starts_with("4 plugins"), "{warnings:?}");
 }
