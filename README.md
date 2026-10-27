@@ -87,7 +87,7 @@ All state is files (set `PATCHWORK_HOME` to put it all in one place):
 - `<data>/profiles/<id>/profile.lock`: exactly what that resolved to
 - `<data>/profile-state/<id>/history/<n>.toml`: the profile and its lockfile at each of its last 50 deploys that changed something, for `patchwork rollback`. Only what's the same on every machine (the two files above) is kept in `profiles/<id>/`; anything about this machine goes here
 - `<data>/profile-state/<id>/synced.json`: the profile as it was last synced, so changes made here since can be told from changes made elsewhere
-- `<data>/sync/`: this machine's iroh key (`secret.key`), which profiles it syncs (`profiles.toml`), and iroh's documents and blobs
+- `<data>/sync/`: this machine's iroh key (`secret.key`), which profiles it syncs and whether it's linked to the user's other computers (`profiles.toml`), and iroh's documents and blobs
 - `<data>/local-mods.toml`: where each local mod was added from on this machine. A local mod's id is the hash its file had when it was added, so it means the same thing anywhere
 - `<data>/store/`: content-addressed (BLAKE3) mod artifacts
 - `<data>/source-files/`: which store entry each file a source downloads (or you downloaded for it, with `patchwork provide` or `patchwork link`) is

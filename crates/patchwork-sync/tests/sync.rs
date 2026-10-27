@@ -10,10 +10,11 @@ use patchwork_core::Patchwork;
 use patchwork_core::game::GameDef;
 use patchwork_core::order::Position;
 use patchwork_core::paths::Paths;
+use patchwork_core::profile::ProfileRef;
 use patchwork_core::source::ModSpec;
 use patchwork_deployers::RulesDeployer;
 use patchwork_sources::LocalSource;
-use patchwork_sync::Node;
+use patchwork_sync::{Joined, Node, Outcome};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -74,7 +75,7 @@ async fn a_profile_and_its_local_mods_reach_the_other_machine() {
 
     let b = patchwork(&tmp.path().join("b"));
     let b_node = node(&b).await;
-    let joined = b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
+    let joined = joined(b_node.join(&b, &ticket, TIMEOUT).await.unwrap());
     assert_eq!(joined.profile, profile);
     assert!(joined.warnings.is_empty(), "{:?}", joined.warnings);
 
@@ -107,6 +108,13 @@ async fn a_profile_and_its_local_mods_reach_the_other_machine() {
 
     a_node.shutdown().await.unwrap();
     b_node.shutdown().await.unwrap();
+}
+
+fn joined(joined: Joined) -> Outcome {
+    match joined {
+        Joined::Profile(outcome) => outcome,
+        Joined::Devices { .. } => panic!("joined devices, not a profile"),
+    }
 }
 
 /// Waits for `check` to hold, while `node` keeps `pw` in step.
@@ -170,7 +178,7 @@ async fn a_running_node_takes_changes_as_they_come() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_followed_profile_stays_as_its_owner_has_it() {
+async fn a_follower_keeps_its_own_changes_to_itself() {
     let tmp = tempfile::tempdir().unwrap();
     let a = patchwork(&tmp.path().join("a"));
     let profile = a.create_profile("my-game", "default").unwrap();
@@ -187,7 +195,7 @@ async fn a_followed_profile_stays_as_its_owner_has_it() {
     let err = b_node.share(&b, &profile, true).await.unwrap_err();
     assert!(err.to_string().contains("only follows"), "{err}");
 
-    // b's own change doesn't go anywhere, and is undone by the next sync
+    // b's own change stays on b, and doesn't go anywhere
     b.set_hidden_tags(&profile, &[]).unwrap();
     let (a_out, b_out) = tokio::join!(
         a_node.sync_once(&a, Duration::from_secs(5)),
@@ -196,8 +204,108 @@ async fn a_followed_profile_stays_as_its_owner_has_it() {
     a_out.unwrap();
     b_out.unwrap();
     assert_eq!(a.load_profile(&profile).unwrap().hidden_tags, ["library"]);
-    assert_eq!(b.load_profile(&profile).unwrap().hidden_tags, ["library"]);
+    assert!(b.load_profile(&profile).unwrap().hidden_tags.is_empty());
 
     a_node.shutdown().await.unwrap();
     b_node.shutdown().await.unwrap();
+}
+
+/// Runs `steps` while both nodes keep their patchworks in step.
+async fn both_running(
+    (a_node, a): (&Node, &Patchwork),
+    (b_node, b): (&Node, &Patchwork),
+    steps: impl Future<Output = ()>,
+) {
+    tokio::select! {
+        result = a_node.run(a, |_| {}) => panic!("stopped running: {result:?}"),
+        result = b_node.run(b, |_| {}) => panic!("stopped running: {result:?}"),
+        () = steps => {}
+    }
+}
+
+/// Waits for `check` to hold.
+async fn until(check: impl Fn() -> bool) {
+    let wait = async {
+        while !check() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+    tokio::time::timeout(TIMEOUT, wait)
+        .await
+        .expect("timed out");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn linked_computers_get_each_others_profiles_including_new_ones() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = patchwork(&tmp.path().join("a"));
+    let on_a = a.create_profile("my-game", "on-a").unwrap();
+    let b = patchwork(&tmp.path().join("b"));
+    let on_b = b.create_profile("my-game", "on-b").unwrap();
+    let a_node = node(&a).await;
+    let b_node = node(&b).await;
+
+    let ticket = a_node.link_devices(&a).await.unwrap();
+    assert!(a_node.devices_linked().unwrap());
+    let joined = b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
+    assert!(
+        matches!(joined, Joined::Devices { profiles: 1 }),
+        "{joined:?}"
+    );
+
+    let has = |pw: &Patchwork, profile: &ProfileRef| pw.load_profile(profile).is_ok();
+    let steps = async {
+        until(|| has(&a, &on_b) && has(&b, &on_a)).await;
+
+        // a profile made later goes over too, and so do changes to it
+        let later = a.create_profile("my-game", "later").unwrap();
+        until(|| has(&b, &later)).await;
+        b.set_hidden_tags(&later, &["library".to_owned()]).unwrap();
+        until(|| {
+            a.load_profile(&later)
+                .is_ok_and(|p| p.hidden_tags == ["library"])
+        })
+        .await;
+
+        // one removed on a stops syncing there, and stays on b
+        a.remove_profile(&later).unwrap();
+        until(|| a_node.synced_profile(&later).unwrap().is_none()).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(!has(&a, &later));
+        assert!(has(&b, &later));
+    };
+    both_running((&a_node, &a), (&b_node, &b), steps).await;
+
+    a_node.shutdown().await.unwrap();
+    b_node.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn friends_pass_changes_on_without_whoever_shared() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = patchwork(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    let a_node = node(&a).await;
+    let ticket = a_node.share(&a, &profile, true).await.unwrap();
+    let b = patchwork(&tmp.path().join("b"));
+    let b_node = node(&b).await;
+    b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
+    let c = patchwork(&tmp.path().join("c"));
+    let c_node = node(&c).await;
+    c_node.join(&c, &ticket, TIMEOUT).await.unwrap();
+    // c hears about b from a before a goes
+    a_node.sync_once(&a, Duration::from_secs(2)).await.unwrap();
+    c_node.sync_once(&c, Duration::from_secs(5)).await.unwrap();
+    a_node.shutdown().await.unwrap();
+
+    b.set_hidden_tags(&profile, &["library".to_owned()])
+        .unwrap();
+    let c_gets_it = until(|| {
+        c.load_profile(&profile)
+            .is_ok_and(|p| p.hidden_tags == ["library"])
+    });
+    both_running((&b_node, &b), (&c_node, &c), c_gets_it).await;
+
+    b_node.shutdown().await.unwrap();
+    c_node.shutdown().await.unwrap();
 }

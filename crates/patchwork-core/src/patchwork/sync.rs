@@ -25,7 +25,7 @@ use crate::profile::{Profile, ProfileRef};
 use crate::sync::{self, Entries};
 use crate::{Error, Result};
 
-/// A profile or its lockfile was saved.
+/// A profile or its lockfile was saved, or the profile was removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileChange {
     pub profile: ProfileRef,
@@ -42,8 +42,8 @@ pub struct Applied {
     pub created: bool,
     /// The profile or its lockfile had to change.
     pub changed: bool,
-    /// Changes made here that the entries don't have yet, which were kept
-    /// and still need publishing.
+    /// Changes made here that the entries don't have, which were kept:
+    /// still to publish, or, for a followed profile, to stay here.
     pub unpublished: Vec<(String, Vec<u8>)>,
 }
 
@@ -55,8 +55,8 @@ struct SyncBase {
 }
 
 impl Patchwork {
-    /// Every change to a profile or its lockfile from now on, made through
-    /// this `Patchwork`. Edits to their files by hand aren't seen; watch the
+    /// Every change to a profile or its lockfile from now on, and every
+    /// profile removed, through this `Patchwork`. Edits to their files by hand aren't seen; watch the
     /// files for those.
     pub fn watch_profiles(&self) -> broadcast::Receiver<ProfileChange> {
         self.changed.subscribe()
@@ -103,22 +103,45 @@ impl Patchwork {
         Ok(sync::changes(&base, &self.sync_entries(profile)?))
     }
 
+    /// The names of the mods added here to a followed profile, which
+    /// whoever shares it doesn't have. Empty if it isn't synced.
+    pub fn unshared_mods(&self, profile: &ProfileRef) -> Result<Vec<String>> {
+        let Some(base) = self.sync_base(profile)? else {
+            return Ok(Vec::new());
+        };
+        let loaded = self.load_profile(profile)?;
+        Ok(loaded
+            .mods
+            .into_iter()
+            .filter(|m| {
+                let key = format!("{}{}", sync::MOD, crate::lock::mod_key(&m.source, &m.id));
+                base.get(&key).is_none_or(|v| v.as_slice() == sync::REMOVED)
+            })
+            .map(|m| m.name)
+            .collect())
+    }
+
     /// Takes a profile as it's been synced, `entries` being the newest
     /// value of each key, saving it and its lockfile as they are. Nothing is
     /// resolved or downloaded; see [`Patchwork::download_locked`].
     ///
-    /// Changes made here since the last sync are kept on top, if
-    /// `keep_local`, and returned for publishing. A profile that's only
-    /// followed, and can't be published to, passes `false`, so that it
-    /// always ends up as it was synced.
-    pub fn apply_synced(&self, entries: &Entries, keep_local: bool) -> Result<Applied> {
+    /// Changes made here since the last sync are kept on top and returned.
+    /// If `writable`, they're for publishing, and win over what arrived.
+    /// A profile that's only followed can't be published to, so they stay
+    /// here (see [`Patchwork::unshared_mods`]), and whatever the sharer
+    /// changed since the last sync wins over them.
+    pub fn apply_synced(&self, entries: &Entries, writable: bool) -> Result<Applied> {
         let incoming = sync::from_entries(entries)?;
         let profile = incoming.profile.reference();
         let exists = self.profile_file(&profile).is_file();
 
         let mut unpublished = match self.sync_base(&profile)? {
-            Some(base) if exists && keep_local => {
-                sync::changes(&base, &self.sync_entries(&profile)?)
+            Some(base) if exists => {
+                let mut local = sync::changes(&base, &self.sync_entries(&profile)?);
+                if !writable {
+                    local.retain(|(k, _)| entries.get(k) == base.get(k));
+                }
+                local
             }
             _ => Vec::new(),
         };

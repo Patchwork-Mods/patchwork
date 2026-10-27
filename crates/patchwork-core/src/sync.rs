@@ -20,9 +20,9 @@
 //!   aren't locked (see [`unlocked`]) are locked wherever the profile is
 //!   next locked.
 //!
-//! Keys starting with `file/` belong to the sync layer, which hands local
-//! mods' files to machines that don't have them that way; they're ignored
-//! here.
+//! Keys starting with `file/` or `peer/` belong to the sync layer, which
+//! hands local mods' files to machines that don't have them that way, and
+//! keeps track of who's syncing; they're ignored here.
 //!
 //! A mod or locked mod that's been removed has `null` for its value; nothing
 //! is ever deleted outright, so a removal replaces older values like any
@@ -59,6 +59,7 @@ pub const MOD: &str = "mod/";
 pub const LOCK: &str = "lock/";
 /// Keys the sync layer keeps for itself.
 pub const FILE: &str = "file/";
+pub const PEER: &str = "peer/";
 /// The value of a removed mod or locked mod.
 pub const REMOVED: &[u8] = b"null";
 

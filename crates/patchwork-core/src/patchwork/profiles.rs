@@ -41,7 +41,7 @@ impl Patchwork {
         let profile = Profile::new(game, name);
         self.check_new_name(&profile)?;
         let profile_ref = profile.reference();
-        fsutil::write_toml(&self.profile_file(&profile_ref), &profile)?;
+        self.save_profile(&profile_ref, &profile)?;
         Ok(profile_ref)
     }
 
@@ -118,6 +118,8 @@ impl Patchwork {
             state.current_profile = None;
             fsutil::write_toml(&self.paths.state_file(), &state)?;
         }
+        // so that it stops being synced, rather than coming back
+        self.profile_changed(profile, false);
         Ok(())
     }
 

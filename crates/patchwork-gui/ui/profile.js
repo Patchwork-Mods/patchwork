@@ -45,7 +45,10 @@ export function renderSidebar() {
             "span",
             {
               class: "muted synced",
-              title: p.sync === "follow" ? "Following a shared profile" : "Synced with other computers",
+              title:
+                p.sync === "follow"
+                  ? "Following someone's profile; mods you add stay on this computer"
+                  : "Synced with your other computers or friends",
             },
             p.sync === "follow" ? "↓" : "⇄",
           ),

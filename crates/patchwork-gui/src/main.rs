@@ -154,8 +154,8 @@ struct ProfileInfo {
     game: String,
     name: String,
     mods: usize,
-    /// `"sync"` if it's kept in step with other computers, `"follow"` if
-    /// this one only follows it.
+    /// `"sync"` if it's kept in step with the user's other computers or
+    /// shared with friends, `"follow"` if this one only follows it.
     sync: Option<&'static str>,
 }
 
@@ -173,6 +173,9 @@ struct ProfileDetail {
     has_plugins: bool,
     /// Everything worth warning about, from [`Patchwork::issues`].
     issues: Vec<Issue>,
+    /// The names of mods added here to a profile this computer follows,
+    /// which whoever shares it doesn't have.
+    unshared: Vec<String>,
     install: Option<String>,
     /// Files patchwork has deployed for this profile's game, if it's this
     /// profile that's deployed.
@@ -333,6 +336,15 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .collect();
     let lock = pw.load_lock(&r).map_err(msg)?;
     let issues = pw.issues(&r).map_err(msg)?;
+    let following = patchwork_sync::synced_profiles(&pw.paths().sync())
+        .unwrap_or_default()
+        .into_iter()
+        .any(|s| s.profile == r.uuid && !s.writable);
+    let unshared = if following {
+        pw.unshared_mods(&r).map_err(msg)?
+    } else {
+        Vec::new()
+    };
     let has_plugins = pw.has_plugins(&r).map_err(msg)?;
     let launch_options = pw
         .launch_options(&loaded.game)
@@ -374,6 +386,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         hidden_tags,
         has_plugins,
         issues,
+        unshared,
         id,
         install,
         deployed_files,
@@ -1475,6 +1488,9 @@ fn main() {
             sync::sync_share,
             sync::sync_join,
             sync::sync_leave,
+            sync::sync_linked,
+            sync::sync_link,
+            sync::sync_unlink,
         ])
         .run(tauri::generate_context!())
         .expect("error while running patchwork");

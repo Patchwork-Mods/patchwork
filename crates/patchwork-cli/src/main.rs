@@ -23,7 +23,7 @@ use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
-use patchwork_sync::Node;
+use patchwork_sync::{Joined, Node};
 
 #[derive(Parser)]
 #[command(name = "patchwork", version, about = "A universal mod manager")]
@@ -219,8 +219,9 @@ enum Command {
     Link { link: String },
     /// Show the current profile and what's deployed.
     Status,
-    /// Keep profiles in step with your other machines. On its own, syncs
-    /// every synced profile once with whichever of them are online.
+    /// Keep profiles in step with your other computers, share them with
+    /// friends, or let others follow them. On its own, syncs every synced
+    /// profile once with whoever's online.
     Sync {
         #[command(subcommand)]
         command: Option<SyncCommand>,
@@ -319,20 +320,34 @@ enum GameCommand {
 
 #[derive(Subcommand)]
 enum SyncCommand {
-    /// Print a ticket another machine can join the profile with, then keep
-    /// it in step until stopped with Ctrl-C.
+    /// Link another of your own computers to this one: every profile on
+    /// either, including ones made later, is kept in step on both. Prints a
+    /// ticket to `join` with there, then keeps everything in step until
+    /// stopped with Ctrl-C.
+    Link,
+    /// Stop linking this computer to your others. Profiles synced so far
+    /// stay synced; stop each with `leave`.
+    Unlink,
+    /// Share the profile with friends, printing a ticket for them to
+    /// `join` with, then keep it in step until stopped with Ctrl-C. Anyone
+    /// with the ticket can add, remove and change mods, and every change
+    /// goes to everyone.
     Share {
-        /// Let whoever has the ticket only follow the profile, not change
-        /// it. Write access can't be taken back once it's given.
+        /// Let others follow the profile instead: they get your mods and
+        /// your changes, and can add mods of their own, which stay on their
+        /// computer. Only you can change what everyone gets. Letting people
+        /// change it can't be taken back once they have the ticket.
         #[arg(long)]
         read_only: bool,
     },
-    /// Join a profile shared from another machine, which has to be sharing
-    /// it at the time. Its mods are downloaded, but not deployed.
+    /// Join a profile someone shared, or link this computer to another of
+    /// yours, with the ticket from `share` or `link`. The other computer
+    /// has to be online. Mods are downloaded, but not deployed.
     Join { ticket: String },
-    /// List the profiles this machine syncs.
+    /// List the profiles this computer syncs.
     List,
-    /// Stop syncing the profile here. It stays as it is.
+    /// Stop syncing the profile here. It stays as it is, here and
+    /// elsewhere, and linked computers no longer pick it up.
     Leave,
     /// Keep every synced profile in step until stopped with Ctrl-C. Changes
     /// from other machines are saved and downloaded, never deployed.
@@ -1595,8 +1610,11 @@ async fn sync_with(
     explicit: &Option<String>,
 ) -> Result<()> {
     let Some(command) = command else {
-        if node.synced()?.is_empty() {
-            bail!("no profiles are synced; share one with `patchwork sync share`");
+        if node.synced()?.is_empty() && !node.devices_linked()? {
+            bail!(
+                "no profiles are synced; link your computers with `patchwork sync link`, \
+                 or share a profile with `patchwork sync share`"
+            );
         }
         for outcome in node.sync_once(pw, patchwork_sync::SYNC_TIMEOUT).await? {
             print_sync(pw, &Ok(outcome), false);
@@ -1604,36 +1622,84 @@ async fn sync_with(
         return Ok(());
     };
     match command {
+        SyncCommand::Link => {
+            let ticket = node.link_devices(pw).await?;
+            println!("{ticket}");
+            eprintln!(
+                "\nRun `patchwork sync join <ticket>` on your other computer with that ticket.\n\
+                 It lets whoever has it change every profile here, so keep it to yourself.\n\
+                 Keeping everything in step until Ctrl-C."
+            );
+            run_sync(pw, node).await?;
+        }
+        SyncCommand::Unlink => {
+            node.unlink_devices().await?;
+            println!(
+                "unlinked; profiles synced so far stay synced (`patchwork sync leave` stops one)"
+            );
+        }
         SyncCommand::Share { read_only } => {
             let (profile, loaded) = selected(pw, explicit)?;
             let ticket = node.share(pw, &profile, !read_only).await?;
             println!("{ticket}");
+            let who = if read_only {
+                "Whoever joins with it can follow the profile, but not change it for anyone else."
+            } else {
+                "Whoever joins with it can change the profile for everyone, which can't be taken back."
+            };
             eprintln!(
-                "\nRun `patchwork sync join <ticket>` on the other machine with that ticket.\n\
-                 Keeping {} in step until Ctrl-C.",
+                "\nGive that ticket to whoever's joining, to run `patchwork sync join <ticket>`.\n\
+                 {who}\nKeeping {} in step until Ctrl-C.",
                 loaded.label()
             );
             run_sync(pw, node).await?;
         }
         SyncCommand::Join { ticket } => {
-            eprintln!("waiting for the other machine...");
-            let outcome = node.join(pw, &ticket, JOIN_TIMEOUT).await?;
-            let loaded = pw.load_profile(&outcome.profile)?;
-            print_sync(pw, &Ok(outcome), false);
-            println!(
-                "joined {}; `patchwork sync` keeps it in step, and `patchwork -p {} deploy` deploys it",
-                loaded.label(),
-                loaded.label()
-            );
+            eprintln!("waiting for the other computer...");
+            match node.join(pw, &ticket, JOIN_TIMEOUT).await? {
+                Joined::Profile(outcome) => {
+                    let loaded = pw.load_profile(&outcome.profile)?;
+                    print_sync(pw, &Ok(outcome), false);
+                    println!(
+                        "joined {}; `patchwork sync` keeps it in step, and `patchwork -p {} deploy` deploys it",
+                        loaded.label(),
+                        loaded.label()
+                    );
+                }
+                Joined::Devices { profiles } => {
+                    eprintln!(
+                        "linked; fetching {profiles} profile(s) from your other computers..."
+                    );
+                    for outcome in node.sync_once(pw, patchwork_sync::SYNC_TIMEOUT).await? {
+                        print_sync(pw, &Ok(outcome), false);
+                    }
+                    println!(
+                        "every profile is now kept in step with your other computers; \
+                         `patchwork sync` or `patchwork sync run` keeps them so"
+                    );
+                }
+            }
         }
         SyncCommand::List => {
+            if node.devices_linked()? {
+                println!("linked to your other computers: every profile is synced");
+            }
             for synced in node.synced()? {
+                let profile = synced.reference();
                 let label = pw
-                    .load_profile(&synced.reference())
+                    .load_profile(&profile)
                     .map(|p| p.label())
                     .unwrap_or_else(|_| synced.profile.to_string());
-                let access = if synced.writable { "" } else { " (following)" };
-                println!("{label}{access}");
+                if synced.writable {
+                    println!("{label}");
+                    continue;
+                }
+                let unshared = pw.unshared_mods(&profile).unwrap_or_default();
+                if unshared.is_empty() {
+                    println!("{label} (following)");
+                } else {
+                    println!("{label} (following; only here: {})", unshared.join(", "));
+                }
             }
         }
         SyncCommand::Leave => {
@@ -1673,12 +1739,12 @@ fn print_sync(pw: &Patchwork, outcome: &Result<patchwork_sync::Outcome>, running
         Some(applied) if applied.created => println!("{label}: added"),
         Some(applied) if applied.changed => println!("{label}: updated"),
         _ if running => {}
-        None => println!("{label}: nothing from other machines yet"),
+        None => println!("{label}: nothing from other computers yet"),
         Some(_) => println!("{label}: up to date"),
     }
     if outcome.received_files > 0 {
         println!(
-            "{label}: got {} local mod file(s) from other machines",
+            "{label}: got {} local mod file(s) from other computers",
             outcome.received_files
         );
     }

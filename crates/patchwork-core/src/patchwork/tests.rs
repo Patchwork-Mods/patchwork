@@ -1714,8 +1714,65 @@ async fn synced_profiles_are_taken_as_they_are_and_keep_local_changes() {
     doc.extend(applied.unpublished);
     assert!(b.apply_synced(&doc, true).unwrap().unpublished.is_empty());
 
-    // a profile that's only followed always ends up as it was synced
+    // a follower's changes stay, unless the sharer changes the same thing
     b.set_enabled(&profile, "Cool", true).unwrap();
+    b.set_hidden_tags(&profile, &["mine".to_owned()]).unwrap();
+    a.apply_synced(&doc, true).unwrap();
+    a.set_hidden_tags(&profile, &["theirs".to_owned()]).unwrap();
+    doc.extend(a.unsynced_changes(&profile).unwrap());
+    let applied = b.apply_synced(&doc, false).unwrap();
+    assert_eq!(applied.unpublished.len(), 1);
+    let loaded = b.load_profile(&profile).unwrap();
+    assert!(loaded.mods[0].enabled);
+    assert_eq!(loaded.hidden_tags, ["theirs"]);
+}
+
+#[tokio::test]
+async fn a_follower_keeps_the_mods_it_adds_and_takes_the_rest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mods = tmp.path().join("mods");
+    fs::create_dir_all(&mods).unwrap();
+    for name in ["Shared.pak", "Mine.pak", "Later.pak"] {
+        fs::write(mods.join(name), name).unwrap();
+    }
+    let a = with_local_files(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    a.add_mod(&profile, local_spec(&mods.join("Shared.pak")), None, true)
+        .await
+        .unwrap();
+    a.lock(&profile, false).await.unwrap();
+    let mut doc = a.start_sync(&profile).unwrap();
+
+    let b = with_local_files(&tmp.path().join("b"));
     b.apply_synced(&doc, false).unwrap();
-    assert!(!b.load_profile(&profile).unwrap().mods[0].enabled);
+    for m in b.missing_local_files(&profile).unwrap() {
+        b.add_synced_file(&m, &a.stored_file(&m).unwrap()).unwrap();
+    }
+    assert!(b.unshared_mods(&profile).unwrap().is_empty());
+    b.add_mod(&profile, local_spec(&mods.join("Mine.pak")), None, true)
+        .await
+        .unwrap();
+    b.lock(&profile, false).await.unwrap();
+    assert_eq!(b.unshared_mods(&profile).unwrap(), ["Mine"]);
+
+    // the sharer adds one too, which moves the load order
+    a.add_mod(&profile, local_spec(&mods.join("Later.pak")), None, true)
+        .await
+        .unwrap();
+    a.lock(&profile, false).await.unwrap();
+    doc.extend(a.unsynced_changes(&profile).unwrap());
+    b.apply_synced(&doc, false).unwrap();
+    for m in b.missing_local_files(&profile).unwrap() {
+        b.add_synced_file(&m, &a.stored_file(&m).unwrap()).unwrap();
+    }
+    let names: Vec<String> = b
+        .load_profile(&profile)
+        .unwrap()
+        .mods
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    assert_eq!(names, ["Shared", "Later", "Mine"]);
+    assert_eq!(b.unshared_mods(&profile).unwrap(), ["Mine"]);
+    assert_eq!(b.load_lock(&profile).unwrap().unwrap().mods.len(), 3);
 }

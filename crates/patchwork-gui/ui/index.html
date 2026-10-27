@@ -26,6 +26,10 @@
 					<button id="install-cli" type="button" title="Put the patchwork command on your PATH, to use Patchwork from a terminal" hidden>
 						Install command-line tool
 					</button>
+					<!-- Linking this computer to the user's others; see sync.js. -->
+					<button id="link-computers" type="button" title="Keep every profile in step across your own computers">
+						My computers
+					</button>
 					<!-- Sources' settings, such as API keys; see settings.js. -->
 					<button id="app-settings" type="button" title="Accounts and settings for where mods come from">
 						Settings
@@ -70,7 +74,7 @@
 				<input name="name" placeholder="Name" required pattern="[A-Za-z0-9._\-]+">
 				<button type="submit">Create</button>
 				<button type="button" id="import-profile">Import…</button>
-				<button type="button" id="join-profile" title="Keep a profile in step with another computer that's sharing it">Join…</button>
+				<button type="button" id="join-profile" title="Join a profile someone shared with you, with their ticket">Join…</button>
 			</form>
 		</aside>
 
@@ -455,8 +459,9 @@
 			</form>
 		</dialog>
 
-		<!-- Sharing a profile to keep in step with other computers, and joining
-		     one shared from elsewhere; see sync.js. -->
+		<!-- Sharing a profile with friends or for others to follow, joining one
+		     shared from elsewhere, and linking the user's own computers; see
+		     sync.js. -->
 		<dialog id="share-dialog">
 			<form id="share-form" method="dialog" class="stack">
 				<h2 id="share-title">Share profile</h2>
@@ -464,18 +469,21 @@
 				<div id="share-modes" class="stack">
 					<label class="row">
 						<input type="radio" name="mode" value="write" checked>
-						<span>With my other computers <small class="muted">changes made on any of them go to all of them</small></span>
+						<span>With friends <small class="muted">everyone can add, remove and change mods, and every change goes to
+								everyone</small></span>
 					</label>
 					<label class="row">
 						<input type="radio" name="mode" value="read">
-						<span>For someone to follow <small class="muted">they get your changes, but can't make their own</small></span>
+						<span>Read only <small class="muted">others get your mods and your changes; mods they add stay on their
+								computer</small></span>
 					</label>
+					<small class="muted">To keep this profile in step across your own computers, use <b>My computers</b> on the
+						games screen instead; that covers every profile.</small>
 				</div>
 				<div id="share-ticket" class="field" hidden>
-					<label for="share-text">On the other computer, choose <b>Join…</b> and paste this ticket</label>
+					<label for="share-text">Send this ticket; they choose <b>Join…</b> and paste it</label>
 					<textarea id="share-text" name="ticket" readonly rows="4"></textarea>
-					<small class="muted">Keep Patchwork open here until it has joined. Anyone with the ticket can join, and letting someone
-						change the profile can't be taken back, so only give it to people you mean to.</small>
+					<small id="share-note" class="muted"></small>
 				</div>
 				<p id="share-error" class="error" hidden></p>
 				<div class="row end">
@@ -491,15 +499,43 @@
 			<form id="join-form" method="dialog" class="stack">
 				<h2>Join a shared profile</h2>
 				<div class="field">
-					<label for="join-text">Paste the ticket from <b>Share…</b> on the other computer</label>
+					<label for="join-text">Paste the ticket someone made with <b>Share…</b></label>
 					<textarea id="join-text" name="ticket" rows="4" autocomplete="off" spellcheck="false"></textarea>
-					<small class="muted">Patchwork has to be open there. The profile's mods are downloaded here, but nothing
-						is deployed until you deploy it.</small>
+					<small class="muted">Patchwork has to be open on their computer, or on the computer of someone else who's
+						joined. The profile's mods are downloaded here, but nothing is deployed until you deploy it.</small>
 				</div>
 				<p id="join-error" class="error" hidden></p>
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Cancel</button>
 					<button type="submit" id="join-submit" class="primary">Join</button>
+				</div>
+			</form>
+		</dialog>
+
+		<dialog id="computers-dialog">
+			<form id="computers-form" method="dialog" class="stack">
+				<h2>My computers</h2>
+				<p class="muted">Linked computers keep every profile in step: profiles on any of them, including ones made
+					later, are on all of them, and a change on one goes to the rest. Profiles you share with friends or follow come
+					along too.</p>
+				<p id="computers-state" class="muted" hidden>This computer is linked to your others.</p>
+				<div id="computers-ticket" class="field" hidden>
+					<label for="computers-text">On your other computer, open <b>My computers</b> and paste this ticket</label>
+					<textarea id="computers-text" name="ticket" readonly rows="4"></textarea>
+					<small class="muted">Keep Patchwork open here until it has linked. The ticket lets whoever has it change every
+						profile here, so don't give it to anyone else.</small>
+				</div>
+				<div id="computers-join" class="field">
+					<label for="computers-paste">Or paste a ticket from your other computer</label>
+					<textarea id="computers-paste" name="paste" rows="3" autocomplete="off" spellcheck="false"></textarea>
+				</div>
+				<p id="computers-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" id="computers-unlink" class="danger-text" hidden>Unlink</button>
+					<button type="button" value="cancel" formnovalidate>Close</button>
+					<button type="button" id="computers-copy" hidden>Copy</button>
+					<button type="button" id="computers-create">Create ticket</button>
+					<button type="submit" id="computers-submit" class="primary">Link</button>
 				</div>
 			</form>
 		</dialog>

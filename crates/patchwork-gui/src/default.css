@@ -617,8 +617,9 @@ dialog button.danger-text {
   color: var(--pw-danger);
 }
 
-/* Stop syncing sits apart from the dialog's other buttons. */
-#share-leave {
+/* Stop syncing and unlinking sit apart from the dialogs' other buttons. */
+#share-leave,
+#computers-unlink {
   margin-right: auto;
 }
 
@@ -965,6 +966,14 @@ dialog button.danger-text {
 .mod-issue {
   margin-left: 6px;
   color: var(--pw-danger);
+  cursor: help;
+}
+
+/* A mod added to a followed profile on this computer, which whoever shares
+   it doesn't have. */
+.mod-unshared {
+  margin-left: 6px;
+  font-size: 0.8em;
   cursor: help;
 }
 

@@ -49,6 +49,14 @@ function issueMark(m) {
   return h("span", { class: "mod-issue", title: messages, "aria-label": messages }, "⚠");
 }
 
+/** Marks a mod added here to a profile this computer follows, which isn't
+ * synced: whoever shares the profile doesn't get it. */
+function unsharedMark(m) {
+  if (!(state.profile?.unshared ?? []).includes(m.name)) return null;
+  const why = "Added on this computer; it isn't synced with whoever shares this profile";
+  return h("span", { class: "mod-unshared muted", title: why }, "only here");
+}
+
 function modRow(m, { movable, onToggle, onRemove, onVersion }) {
   const { key } = m;
   const update = h("div", { class: "card-update" });
@@ -62,7 +70,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
       h(
         "div",
         { class: "row-title" },
-        h("span", { class: "mod-name" }, item.name, issueMark(m), conflictMark(m)),
+        h("span", { class: "mod-name" }, item.name, issueMark(m), conflictMark(m), unsharedMark(m)),
         item.author && h("span", { class: "author" }, item.author),
       ),
     );
@@ -209,6 +217,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
     main,
     issueMark(m),
     conflictMark(m),
+    unsharedMark(m),
     movable && dragHandle(m),
     h(
       "button",
