@@ -28,6 +28,14 @@ struct Synced {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Joined {
+    id: String,
+    /// What didn't work, like mods that couldn't be downloaded.
+    warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncStatus {
     /// Whether this machine can change the profile, or only follows it.
     writable: bool,
@@ -116,21 +124,23 @@ pub async fn sync_share(
         .map_err(msg)
 }
 
-/// Joins a profile shared from another machine, returning its id.
+/// Joins a profile shared from another machine. The window opens it, so
+/// it isn't sent as `patchwork://synced`.
 #[tauri::command]
 pub async fn sync_join(
     handle: AppHandle,
     app: State<'_, App>,
     ticket: String,
-) -> CmdResult<String> {
+) -> CmdResult<Joined> {
     let node = node(&handle).await?;
     let outcome = node
         .join(&app.pw, &ticket, JOIN_TIMEOUT)
         .await
         .map_err(msg)?;
-    let id = outcome.profile.to_string();
-    emit(&handle, Ok::<_, String>(outcome));
-    Ok(id)
+    Ok(Joined {
+        id: outcome.profile.to_string(),
+        warnings: outcome.warnings,
+    })
 }
 
 /// Stops syncing the profile here.

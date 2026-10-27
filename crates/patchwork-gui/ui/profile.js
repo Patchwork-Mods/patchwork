@@ -1,7 +1,7 @@
 // A game's profiles: the sidebar, and the header and Mods tab of the open one.
 
 import { gameInfo, invoke, profilesOf, run, state, status } from "./state.js";
-import { $, h } from "./dom.js";
+import { $, copyText, h } from "./dom.js";
 import { showGames } from "./games.js";
 import { renderMods } from "./mods.js";
 import { refreshDetails } from "./details.js";
@@ -40,6 +40,15 @@ export function renderSidebar() {
           oncontextmenu: (e) => openProfileMenu(e, p),
         },
         h("span", {}, p.name),
+        p.sync &&
+          h(
+            "span",
+            {
+              class: "muted synced",
+              title: p.sync === "follow" ? "Following a shared profile" : "Synced with other computers",
+            },
+            p.sync === "follow" ? "↓" : "⇄",
+          ),
         h("span", { class: "muted" }, String(p.mods)),
       ),
     ),
@@ -145,6 +154,9 @@ const profileMenu = $("#profile-menu");
 /** The profile the menu was opened on. */
 let menuProfile = null;
 
+/** The profile the menu was opened on, for items wired up elsewhere. */
+export const menuTarget = () => menuProfile;
+
 function openProfileMenu(e, profile) {
   e.preventDefault();
   menuProfile = profile;
@@ -157,7 +169,7 @@ function openProfileMenu(e, profile) {
   profileMenu.querySelector("button").focus();
 }
 
-function closeProfileMenu() {
+export function closeProfileMenu() {
   profileMenu.hidden = true;
 }
 
@@ -345,18 +357,7 @@ exportForm.addEventListener("submit", async (e) => {
   }
 });
 
-$("#export-copy").addEventListener("click", async () => {
-  const text = exportForm.elements.text;
-  try {
-    await navigator.clipboard.writeText(text.value);
-    status("Copied to the clipboard");
-  } catch {
-    // Some webviews don't allow the clipboard API; it's selected, at least.
-    text.select();
-    document.execCommand("copy");
-    status("Copied to the clipboard");
-  }
-});
+$("#export-copy").addEventListener("click", () => copyText(exportForm.elements.text));
 
 // Importing, into the game that's open: from pasted text, or from a file.
 

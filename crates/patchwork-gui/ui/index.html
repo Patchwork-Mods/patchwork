@@ -70,6 +70,7 @@
 				<input name="name" placeholder="Name" required pattern="[A-Za-z0-9._\-]+">
 				<button type="submit">Create</button>
 				<button type="button" id="import-profile">Import…</button>
+				<button type="button" id="join-profile" title="Keep a profile in step with another computer that's sharing it">Join…</button>
 			</form>
 		</aside>
 
@@ -384,6 +385,7 @@
 			<button type="button" role="menuitem" id="rename-profile">Rename…</button>
 			<button type="button" role="menuitem" id="duplicate-profile">Duplicate…</button>
 			<button type="button" role="menuitem" id="export-profile">Export…</button>
+			<button type="button" role="menuitem" id="share-profile">Share…</button>
 			<hr>
 			<button type="button" role="menuitem" id="delete-profile" class="danger-text">Delete</button>
 		</div>
@@ -449,6 +451,55 @@
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Cancel</button>
 					<button type="submit" class="primary">Import</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- Sharing a profile to keep in step with other computers, and joining
+		     one shared from elsewhere; see sync.js. -->
+		<dialog id="share-dialog">
+			<form id="share-form" method="dialog" class="stack">
+				<h2 id="share-title">Share profile</h2>
+				<p id="share-state" class="muted" hidden></p>
+				<div id="share-modes" class="stack">
+					<label class="row">
+						<input type="radio" name="mode" value="write" checked>
+						<span>With my other computers <small class="muted">changes made on any of them go to all of them</small></span>
+					</label>
+					<label class="row">
+						<input type="radio" name="mode" value="read">
+						<span>For someone to follow <small class="muted">they get your changes, but can't make their own</small></span>
+					</label>
+				</div>
+				<div id="share-ticket" class="field" hidden>
+					<label for="share-text">On the other computer, choose <b>Join…</b> and paste this ticket</label>
+					<textarea id="share-text" name="ticket" readonly rows="4"></textarea>
+					<small class="muted">Keep Patchwork open here until it has joined. Anyone with the ticket can join, and letting someone
+						change the profile can't be taken back, so only give it to people you mean to.</small>
+				</div>
+				<p id="share-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" id="share-leave" class="danger-text" hidden>Stop syncing</button>
+					<button type="button" value="cancel" formnovalidate>Close</button>
+					<button type="button" id="share-copy" hidden>Copy</button>
+					<button type="submit" id="share-submit" class="primary">Create ticket</button>
+				</div>
+			</form>
+		</dialog>
+
+		<dialog id="join-dialog">
+			<form id="join-form" method="dialog" class="stack">
+				<h2>Join a shared profile</h2>
+				<div class="field">
+					<label for="join-text">Paste the ticket from <b>Share…</b> on the other computer</label>
+					<textarea id="join-text" name="ticket" rows="4" autocomplete="off" spellcheck="false"></textarea>
+					<small class="muted">Patchwork has to be open there. The profile's mods are downloaded here, but nothing
+						is deployed until you deploy it.</small>
+				</div>
+				<p id="join-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" id="join-submit" class="primary">Join</button>
 				</div>
 			</form>
 		</dialog>

@@ -154,6 +154,9 @@ struct ProfileInfo {
     game: String,
     name: String,
     mods: usize,
+    /// `"sync"` if it's kept in step with other computers, `"follow"` if
+    /// this one only follows it.
+    sync: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -244,6 +247,15 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
             })
         })
         .collect::<CmdResult<_>>()?;
+    let mut warnings: Vec<String> = registry
+        .problems
+        .iter()
+        .map(|p| format!("skipped registry entry: {p}"))
+        .collect();
+    let synced = patchwork_sync::synced_profiles(&pw.paths().sync()).unwrap_or_else(|e| {
+        warnings.push(format!("couldn't read which profiles are synced: {e:#}"));
+        Vec::new()
+    });
     let profiles = pw
         .profiles()
         .map_err(msg)?
@@ -252,6 +264,10 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
             id: r.to_string(),
             label: p.label(),
             mods: p.mods.len(),
+            sync: synced
+                .iter()
+                .find(|s| s.profile == r.uuid)
+                .map(|s| if s.writable { "sync" } else { "follow" }),
             game: p.game,
             name: p.name,
         })
@@ -261,11 +277,7 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
         profiles,
         current: pw.current_profile().map_err(msg)?.map(|r| r.to_string()),
         rulesets: registry.data_ids("rulesets").map(str::to_owned).collect(),
-        warnings: registry
-            .problems
-            .iter()
-            .map(|p| format!("skipped registry entry: {p}"))
-            .collect(),
+        warnings,
     })
 }
 

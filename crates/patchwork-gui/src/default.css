@@ -612,8 +612,20 @@ button.link {
   min-width: 160px;
 }
 
-.menu-items button.danger-text {
+.menu-items button.danger-text,
+dialog button.danger-text {
   color: var(--pw-danger);
+}
+
+/* Stop syncing sits apart from the dialog's other buttons. */
+#share-leave {
+  margin-right: auto;
+}
+
+/* Marks a synced profile in the sidebar. */
+#profiles .synced {
+  margin-left: auto;
+  padding-right: 6px;
 }
 
 .menu-items hr {

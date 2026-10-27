@@ -25,6 +25,18 @@ export function compact(n) {
   return (n / 1e6).toFixed(1) + "M";
 }
 
+/** Copies a text field's contents to the clipboard. */
+export async function copyText(field) {
+  try {
+    await navigator.clipboard.writeText(field.value);
+  } catch {
+    // Some webviews don't allow the clipboard API; it's selected, at least.
+    field.select();
+    document.execCommand("copy");
+  }
+  status("Copied to the clipboard");
+}
+
 /** Opens a URL in the browser rather than the app. */
 export function openExternal(url) {
   window.__TAURI__.opener.openUrl(url).catch((err) => status(String(err), true));
