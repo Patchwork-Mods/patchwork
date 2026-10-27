@@ -1201,8 +1201,8 @@ impl Patchwork {
         update: impl Fn(&str) -> bool,
     ) -> Result<Lockfile> {
         let loaded = self.load_profile(profile)?;
-        let registry = self.registry();
-        let game = registry.game(&loaded.game)?;
+        // fails for a game that isn't defined
+        self.registry().game(&loaded.game)?;
         let known: HashMap<String, LockedMod> = self
             .load_lock(profile)?
             .map(|lock| lock.mods.into_iter().map(|m| (m.key(), m)).collect())
@@ -1219,7 +1219,6 @@ impl Patchwork {
                 schema: LOCK_SCHEMA,
                 game: LockedGame {
                     id: loaded.game.clone(),
-                    definition: game.hash,
                 },
                 mods,
             };

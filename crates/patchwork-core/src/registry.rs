@@ -37,9 +37,8 @@ pub struct Entry<T> {
     pub origin: Origin,
     /// Later layers merged on top, in order.
     pub overlays: Vec<Origin>,
-    /// Hash of the merged entry, recorded in lockfiles so a shared profile
-    /// can tell when it's being used with a different definition. For games
-    /// it leaves out fields that don't affect what gets deployed.
+    /// Hash of the merged entry, so deploys can tell when it's changed. For
+    /// games it leaves out fields that don't affect what gets deployed.
     pub hash: ContentHash,
 }
 
@@ -278,8 +277,8 @@ impl Registry {
     }
 }
 
-/// Game fields that don't affect deploying, so changing them doesn't make a
-/// profile look like it was locked against a different definition.
+/// Game fields that don't affect deploying, so changing them doesn't make
+/// what was built for a game look out of date.
 const COSMETIC_GAME_FIELDS: &[&str] =
     &["name", "description", "image", "hidden", "detect", "launch"];
 

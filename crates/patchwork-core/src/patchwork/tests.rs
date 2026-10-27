@@ -943,7 +943,6 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         schema: LOCK_SCHEMA,
         game: LockedGame {
             id: "my-game".to_owned(),
-            definition: ContentHash::of(b"game"),
         },
         mods: Vec::new(),
     };
@@ -1112,7 +1111,6 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         schema: 2,
         game: LockedGame {
             id: "my-game".to_owned(),
-            definition: ContentHash::of(b"game"),
         },
         mods: vec![locked(&file, cool), locked(&imported, imported_hash)],
     };

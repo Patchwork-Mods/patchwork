@@ -179,7 +179,6 @@ fn lock(entries: &[(&str, &[&str])]) -> Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
             id: "game".to_owned(),
-            definition: ContentHash::of(b"game"),
         },
         mods,
     }

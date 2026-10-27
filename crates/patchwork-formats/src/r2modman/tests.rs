@@ -74,7 +74,6 @@ async fn r2z_round_trips() {
             schema: LOCK_SCHEMA,
             game: LockedGame {
                 id: "lethal-company".to_owned(),
-                definition: ContentHash::of(b"game"),
             },
             mods: vec![
                 locked(SOURCE, "a-More", "1.2.3", &["thunderstore:BepInEx-Pack"]),

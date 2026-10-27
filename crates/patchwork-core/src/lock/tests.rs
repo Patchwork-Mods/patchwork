@@ -27,7 +27,6 @@ fn lockfile(mods: Vec<LockedMod>) -> Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
             id: "lethal-company".to_owned(),
-            definition: ContentHash::of(b"game"),
         },
         mods,
     }

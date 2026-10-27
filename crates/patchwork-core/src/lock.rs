@@ -8,8 +8,10 @@ use crate::compat::GameVersions;
 use crate::hash::ContentHash;
 use crate::source::{ArtifactFormat, ArtifactLocation, VersionReq};
 
-/// Schema 2 added [`ArtifactLocation::Source`] artifacts, and schema 3
-/// [`ArtifactLocation::Local`] ones, which replaced paths.
+/// Schema 2 added [`ArtifactLocation::Source`] artifacts. Schema 3 added
+/// [`ArtifactLocation::Local`] ones, which replaced paths, and dropped the
+/// game definition's hash, which differs between machines with different
+/// registries.
 pub const LOCK_SCHEMA: u32 = 3;
 
 /// Exactly what a profile resolved to. Together with the profile, this is
@@ -25,8 +27,6 @@ pub struct Lockfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockedGame {
     pub id: String,
-    /// Hash of the game definition this was locked against.
-    pub definition: ContentHash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
