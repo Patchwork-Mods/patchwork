@@ -61,6 +61,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
+pub mod daemon;
 pub mod files;
 
 /// How long a one-off sync waits to hear from other machines.

@@ -3,6 +3,7 @@
 
 mod changelog;
 mod cli;
+mod daemon;
 mod details;
 mod selfupdate;
 mod sync;
@@ -14,7 +15,7 @@ use base64::prelude::*;
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
-use patchwork_core::event::{Event, Reporter};
+use patchwork_core::event::{Event, Reporter, Silent};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
 use patchwork_core::launch::{self, LaunchOption, Via};
@@ -68,6 +69,7 @@ struct App {
     /// download hold a guard from it while they run.
     work: selfupdate::Work,
     sync: sync::Sync,
+    daemon: daemon::Daemon,
 }
 
 /// Forwards core progress to the window as `patchwork://event`.
@@ -1370,7 +1372,32 @@ const BUILTIN_HEADER: &str = "\
 
 ";
 
+/// Opens patchwork with every source, deployer and format there is.
+fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Result<Patchwork> {
+    Patchwork::builder(paths)
+        .source(LocalSource)
+        .source(Thunderstore)
+        .source(Nexus::default())
+        .source(UrlSource)
+        .deployer(RulesDeployer)
+        .deployer(BethesdaDeployer)
+        .deployer(SmfDeployer)
+        .format(Archive)
+        .format(UrlList)
+        .format(R2modman)
+        .format(ThunderstoreCode::default())
+        .reporter(reporter)
+        .open()
+}
+
 fn main() {
+    if std::env::args().any(|a| a == daemon::FLAG) {
+        if let Err(e) = daemon::run(|paths| open(paths, Silent)) {
+            eprintln!("error: {e:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     tauri::Builder::default()
         // first, so a second launch (say, for an `nxm://` link) hands its
         // link to this one and exits before doing anything else
@@ -1382,26 +1409,18 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
-            let pw = Patchwork::builder(Paths::from_env()?)
-                .source(LocalSource)
-                .source(Thunderstore)
-                .source(Nexus::default())
-                .source(UrlSource)
-                .deployer(RulesDeployer)
-                .deployer(BethesdaDeployer)
-                .deployer(SmfDeployer)
-                .format(Archive)
-                .format(UrlList)
-                .format(R2modman)
-                .format(ThunderstoreCode::default())
-                .reporter(Emit(app.handle().clone()))
-                .open()?;
+            let paths = Paths::from_env()?;
+            // the daemon has patchwork open while it runs, so it steps aside
+            // until the app's closed
+            let paused = daemon::pause_for_app(&paths);
+            let pw = open(paths, Emit(app.handle().clone()))?;
             app.manage(App {
                 pw,
                 plan: Mutex::new(None),
                 work: Default::default(),
                 details: details::Details::default(),
                 sync: Default::default(),
+                daemon: daemon::Daemon::new(paused),
             });
             sync::start_if_synced(app.handle());
 
@@ -1483,6 +1502,10 @@ fn main() {
             selfupdate::install_update,
             selfupdate::cancel_update,
             cli::cli_status,
+            daemon::daemon_status,
+            daemon::daemon_install,
+            daemon::daemon_restart,
+            daemon::daemon_uninstall,
             cli::install_cli,
             sync::sync_status,
             sync::sync_share,

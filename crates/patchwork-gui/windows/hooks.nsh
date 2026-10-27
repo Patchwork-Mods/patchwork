@@ -2,6 +2,7 @@
 ; tauri.conf.json). The patchwork CLI is installed next to the app, so its
 ; folder goes on the user's PATH, and comes off again on uninstall. Updates
 ; run the install hook again, which leaves PATH alone if it's already there.
+; Uninstalling also removes the sync daemon's login item.
 ; ($$ is a literal $ to NSIS, for PowerShell's variables.)
 
 ; Runs SCRIPT on the user's PATH as the registry stores it, unexpanded, so
@@ -24,4 +25,7 @@
 
 !macro NSIS_HOOK_POSTUNINSTALL
   !insertmacro PATCHWORK_EDIT_PATH `$$r = @($$p | Where-Object { $$_.TrimEnd('\') -ne $$d }); if ($$r.Count -ne $$p.Count) { $$q = $$r }`
+  ; The sync daemon's login item, if Settings installed one (see
+  ; daemon/service.rs in patchwork-sync); it'd only fail to start otherwise.
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "PatchworkSync"
 !macroend

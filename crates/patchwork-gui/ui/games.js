@@ -312,7 +312,7 @@ settingsForm.querySelector("[value=cancel]").addEventListener("click", () => {
 
 $("#game-settings-app").addEventListener("click", () => {
   $("#game-settings-dialog").close();
-  openSettings().catch(() => {});
+  openSettings("accounts").catch(() => {});
 });
 
 settingsForm.addEventListener("submit", async (e) => {

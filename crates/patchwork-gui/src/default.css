@@ -619,7 +619,8 @@ dialog button.danger-text {
 
 /* Stop syncing and unlinking sit apart from the dialogs' other buttons. */
 #share-leave,
-#computers-unlink {
+#computers-unlink,
+#daemon-uninstall {
   margin-right: auto;
 }
 
@@ -1669,8 +1670,28 @@ legend {
   font-weight: 700;
 }
 
-#settings-sources:empty {
-  display: none;
+#settings-sources:empty::before {
+  content: "No sources here need setting up.";
+  color: var(--pw-muted);
+}
+
+#settings-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--pw-border);
+}
+
+/* What the sync daemon's done lately, newest first. */
+.daemon-activity {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 12em;
+  overflow-y: auto;
+  font: 12px/1.6 ui-monospace, monospace;
+}
+
+.daemon-activity .muted {
+  margin-right: 1ch;
 }
 
 .error {

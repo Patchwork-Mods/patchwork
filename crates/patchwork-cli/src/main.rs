@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
-use patchwork_core::event::{Event, Reporter};
+use patchwork_core::event::{Event, Reporter, Silent};
 use patchwork_core::issue::Severity;
 use patchwork_core::launch::{self, LaunchOption};
 use patchwork_core::locate::Locator;
@@ -23,6 +23,7 @@ use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
+use patchwork_sync::daemon::{self, service};
 use patchwork_sync::{Joined, Node};
 
 #[derive(Parser)]
@@ -226,6 +227,10 @@ enum Command {
         #[command(subcommand)]
         command: Option<SyncCommand>,
     },
+    /// The sync daemon, which keeps synced profiles in step in the
+    /// background while neither the app nor the CLI is running.
+    #[command(subcommand)]
+    Daemon(DaemonCommand),
     /// Update patchwork to the newest release.
     SelfUpdate {
         /// Only say whether there's a newer release.
@@ -355,6 +360,24 @@ enum SyncCommand {
 }
 
 #[derive(Subcommand)]
+enum DaemonCommand {
+    /// Say whether the daemon's set up and running, and what it's done
+    /// lately.
+    Status,
+    /// Have the daemon start whenever you log in, and start it now.
+    Install,
+    /// Stop the daemon, and stop it starting when you log in.
+    Uninstall,
+    /// Start the daemon now, if it isn't running.
+    Start,
+    /// Stop the daemon until it's next started.
+    Stop,
+    /// Run the daemon here until it's stopped. This is what `install` has
+    /// the system run.
+    Run,
+}
+
+#[derive(Subcommand)]
 enum ConfigCommand {
     /// List the settings sources take, and what they're set to.
     List,
@@ -444,14 +467,9 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run(cli: Cli) -> Result<()> {
-    // Doesn't need the registry or profiles, so don't let problems there get
-    // in the way of fixing them with an update.
-    if let Command::SelfUpdate { check } = cli.command {
-        return self_update(check).await;
-    }
-
-    let pw = Patchwork::builder(Paths::from_env()?)
+/// Opens patchwork with every source, deployer and format there is.
+fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Result<Patchwork> {
+    Patchwork::builder(paths)
         .source(LocalSource)
         .source(Thunderstore)
         .source(Nexus::default())
@@ -463,13 +481,31 @@ async fn run(cli: Cli) -> Result<()> {
         .format(UrlList)
         .format(R2modman)
         .format(ThunderstoreCode::default())
-        .reporter(Printer)
-        .open()?;
+        .reporter(reporter)
+        .open()
+}
+
+async fn run(cli: Cli) -> Result<()> {
+    // Doesn't need the registry or profiles, so don't let problems there get
+    // in the way of fixing them with an update.
+    if let Command::SelfUpdate { check } = cli.command {
+        return self_update(check).await;
+    }
+    let paths = Paths::from_env()?;
+    let command = match cli.command {
+        Command::Daemon(command) => return daemon(paths, command).await,
+        command => command,
+    };
+
+    // the daemon has patchwork open while it runs, so it steps aside until
+    // this is done
+    let _paused = daemon::pause(&paths.sync())?;
+    let pw = open(paths, Printer)?;
     for problem in &pw.registry().problems {
         eprintln!("warning: skipped registry entry: {problem}");
     }
 
-    match cli.command {
+    match command {
         Command::Game(command) => game(&pw, command)?,
         Command::Config(command) => config(&pw, command).await?,
         Command::Sync { command } => sync(&pw, command, &cli.profile).await?,
@@ -887,7 +923,7 @@ async fn run(cli: Cli) -> Result<()> {
             );
         }
         Command::Status => status(&pw, &cli.profile)?,
-        Command::SelfUpdate { .. } => unreachable!("handled before opening"),
+        Command::SelfUpdate { .. } | Command::Daemon(_) => unreachable!("handled before opening"),
     }
     Ok(())
 }
@@ -1710,6 +1746,98 @@ async fn sync_with(
         SyncCommand::Run => run_sync(pw, node).await?,
     }
     Ok(())
+}
+
+async fn daemon(paths: Paths, command: DaemonCommand) -> Result<()> {
+    let dir = paths.sync();
+    let program = || service::Program::current(&["daemon", "run"]);
+    match command {
+        DaemonCommand::Status => {
+            match service::installed()? {
+                Some(how) => println!("installed as {how}: starts when you log in"),
+                None => {
+                    println!("not installed: `patchwork daemon install` starts it when you log in")
+                }
+            }
+            let Some(status) = daemon::status(&dir)? else {
+                println!("not running");
+                return Ok(());
+            };
+            let state = match status.state {
+                daemon::State::Starting => "starting",
+                daemon::State::Syncing => "syncing",
+                daemon::State::Paused => "paused while patchwork is open elsewhere",
+                daemon::State::Waiting => "waiting for patchwork to close elsewhere",
+                daemon::State::Idle => "idle: nothing is synced on this computer",
+            };
+            println!(
+                "running (pid {}, patchwork {}, since {}): {state}",
+                status.pid, status.version, status.started
+            );
+            if status.version != env!("CARGO_PKG_VERSION") {
+                println!(
+                    "it's a different version from this one; `patchwork daemon stop` then `start` restarts it"
+                );
+            }
+            for activity in status.activity.iter().rev().take(10).rev() {
+                let mark = if activity.error { " error:" } else { "" };
+                println!("  {}{mark} {}", activity.at, activity.message);
+            }
+            println!("log: {}", status.log.display());
+        }
+        DaemonCommand::Install => {
+            daemon::install(&dir, &program()?)?;
+            println!(
+                "installed; the daemon syncs in the background whenever you're logged in \
+                 and neither the app nor the CLI is running"
+            );
+        }
+        DaemonCommand::Uninstall => {
+            daemon::uninstall(&dir)?;
+            println!(
+                "uninstalled; profiles only sync while the app or `patchwork sync run` is running"
+            );
+        }
+        DaemonCommand::Start => {
+            if daemon::status(&dir)?.is_some() {
+                println!("already running");
+            } else {
+                service::start(&program()?)?;
+                println!("started");
+            }
+        }
+        DaemonCommand::Stop => {
+            if daemon::stop(&dir)? {
+                println!("stopped");
+            } else {
+                println!("not running");
+            }
+        }
+        DaemonCommand::Run => {
+            #[cfg(windows)]
+            hide_console();
+            let opening = paths.clone();
+            tokio::select! {
+                result = daemon::serve(&dir, || open(opening.clone(), Silent)) => result?,
+                _ = tokio::signal::ctrl_c() => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Lets go of the console window a login item's given, so the daemon
+/// doesn't leave one open.
+#[cfg(windows)]
+fn hide_console() {
+    unsafe extern "system" {
+        fn FreeConsole() -> i32;
+    }
+    // SAFETY: takes no arguments, and only detaches this process from its
+    // console
+    unsafe {
+        FreeConsole();
+    }
 }
 
 /// How long `sync join` waits for the profile to arrive.

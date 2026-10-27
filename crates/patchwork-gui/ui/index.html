@@ -367,14 +367,20 @@
 			</form>
 		</dialog>
 
-		<!-- Settings for every game: one section per source that takes any
-         (see settings.js), then linking the user's own computers (see
-         sync.js), whose buttons act straight away rather than on Save. -->
+		<!-- Settings for every game, in tabs: one section per source that takes
+         any (see settings.js), linking the user's own computers (see
+         sync.js), and the sync daemon (see daemon.js). Only the sources'
+         settings wait for Save; the other tabs' buttons act straight away. -->
 		<dialog id="settings-dialog">
 			<form id="settings-form" method="dialog" class="stack">
 				<h2>Settings</h2>
-				<div id="settings-sources" class="stack"></div>
-				<fieldset id="computers" class="stack">
+				<div id="settings-tabs" class="tabs" role="tablist">
+					<button type="button" role="tab" data-tab="accounts" aria-selected="true">Accounts</button>
+					<button type="button" role="tab" data-tab="computers">My computers</button>
+					<button type="button" role="tab" data-tab="daemon">Background sync</button>
+				</div>
+				<div id="settings-sources" class="stack" data-panel="accounts"></div>
+				<fieldset id="computers" class="stack" data-panel="computers" hidden>
 					<legend>My computers</legend>
 					<p class="muted">Linked computers keep every profile in step: profiles on any of them, including ones made
 						later, are on all of them, and a change on one goes to the rest. Profiles you share with friends or follow
@@ -399,10 +405,30 @@
 						<button type="button" id="computers-submit">Link</button>
 					</div>
 				</fieldset>
+				<fieldset id="daemon" class="stack" data-panel="daemon" hidden>
+					<legend>Background sync</legend>
+					<p class="muted">Keeps synced profiles in step even while Patchwork is closed. It starts when you log in, and
+						steps aside while Patchwork or the <code>patchwork</code> command is open, since they sync by
+						themselves. Changes that come in are downloaded, but never deployed.</p>
+					<p id="daemon-state"></p>
+					<p id="daemon-version" class="hint" hidden></p>
+					<div id="daemon-recent" class="field" hidden>
+						<label>Lately</label>
+						<ul id="daemon-activity" class="daemon-activity"></ul>
+						<small id="daemon-log" class="muted"></small>
+					</div>
+					<p id="daemon-error" class="error" hidden></p>
+					<div class="row end">
+						<button type="button" id="daemon-uninstall" class="danger-text" hidden>Uninstall</button>
+						<button type="button" id="daemon-refresh">Refresh</button>
+						<button type="button" id="daemon-restart" hidden>Restart</button>
+						<button type="button" id="daemon-install" class="primary">Install</button>
+					</div>
+				</fieldset>
 				<p id="settings-error" class="error" hidden></p>
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Close</button>
-					<button type="submit" value="save" class="primary">Save</button>
+					<button type="submit" value="save" class="primary" data-panel="accounts">Save</button>
 				</div>
 			</form>
 		</dialog>

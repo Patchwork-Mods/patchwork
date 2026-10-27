@@ -5807,6 +5807,7 @@ dependencies = [
 name = "patchwork-gui"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "futures-util",
  "jiff",
@@ -5849,12 +5850,14 @@ name = "patchwork-sync"
 version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
+ "directories",
  "futures-util",
  "iroh",
  "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
  "iroh-tickets",
+ "jiff",
  "patchwork-core",
  "patchwork-deployers",
  "patchwork-sources",
