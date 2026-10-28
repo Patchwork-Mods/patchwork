@@ -1,13 +1,16 @@
-//! Which versions of a game a mod works with, and working that out from
-//! what sources say about their files when they have nothing better.
+//! Which versions of a game (and values of its other `[env]` axes) a mod
+//! works with, and working that out from what sources say about their files
+//! when they have nothing better.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 
+use crate::environment::GameEnv;
 use crate::game::GameDef;
 use crate::relpath::RelPath;
 use crate::source::compare_dotted;
@@ -213,6 +216,43 @@ impl TryFrom<OneOrMany> for GameVersions {
 impl From<GameVersions> for Vec<String> {
     fn from(versions: GameVersions) -> Self {
         versions.0.iter().map(Range::to_string).collect()
+    }
+}
+
+/// Which values of a game's `[env]` axes other than `version` a mod works
+/// with, by axis, like `loader = ["fabric", "quilt"]`. It works with any
+/// value of axes that are left out. Values are matched ignoring case.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EnvSupport(BTreeMap<String, Vec<String>>);
+
+impl EnvSupport {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Says the mod works with these values of `axis`.
+    pub fn with(mut self, axis: &str, values: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.0.insert(
+            axis.to_owned(),
+            values.into_iter().map(Into::into).collect(),
+        );
+        self
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.0.iter().map(|(axis, v)| (axis.as_str(), v.as_slice()))
+    }
+
+    /// The axes `env` has a value for that isn't one of these, with the
+    /// values that would do. Axes `env` doesn't know aren't counted.
+    pub fn unmet<'a>(&'a self, env: &GameEnv) -> Vec<(&'a str, &'a [String])> {
+        self.iter()
+            .filter(|(axis, values)| {
+                env.get(axis)
+                    .is_some_and(|have| !values.iter().any(|v| v.eq_ignore_ascii_case(have)))
+            })
+            .collect()
     }
 }
 

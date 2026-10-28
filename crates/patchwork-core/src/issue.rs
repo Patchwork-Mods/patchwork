@@ -57,6 +57,13 @@ pub enum IssueKind {
         version: String,
         supports: GameVersions,
     },
+    /// A mod says it doesn't work with what the profile picks for one of
+    /// the game's `[env]` axes, such as its mod loader.
+    IncompatibleEnv {
+        axis: String,
+        value: String,
+        supports: Vec<String>,
+    },
 }
 
 impl From<UnmetRequirement> for Issue {
@@ -92,6 +99,30 @@ impl Issue {
             kind: IssueKind::IncompatibleGame {
                 version: version.to_owned(),
                 supports,
+            },
+        }
+    }
+
+    /// `axis_name` is what the game definition calls `axis`.
+    pub fn incompatible_env(
+        name: &str,
+        axis: &str,
+        axis_name: &str,
+        value: &str,
+        supports: &[String],
+    ) -> Self {
+        Issue {
+            severity: Severity::Warning,
+            mods: vec![name.to_owned()],
+            message: format!(
+                "`{name}` is for {axis_name} {}, but the profile uses {value}; \
+                 look for a version of it that works with {value}",
+                supports.join(" or ")
+            ),
+            kind: IssueKind::IncompatibleEnv {
+                axis: axis.to_owned(),
+                value: value.to_owned(),
+                supports: supports.to_vec(),
             },
         }
     }

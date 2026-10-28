@@ -59,6 +59,7 @@ impl ProfileFormat for Archive {
             game: shared.game.clone().unwrap_or_default(),
             name: shared.name.clone().unwrap_or_default(),
             hidden_tags: shared.hidden_tags.clone().unwrap_or_default(),
+            env: Default::default(),
             mods: shared.mods.clone(),
             plugins: shared.plugins.clone().unwrap_or_default(),
         };

@@ -192,6 +192,7 @@ impl Env {
             link: Default::default(),
             detect: Default::default(),
             versions: Default::default(),
+            env: Default::default(),
             roots: Default::default(),
             launch: Default::default(),
             fomod: None,

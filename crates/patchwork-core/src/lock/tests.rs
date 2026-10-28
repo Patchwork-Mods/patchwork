@@ -19,6 +19,7 @@ fn locked(id: &str, version: &str, requested: bool, requires: &[(&str, &str)]) -
             .map(|(k, r)| (k.to_string(), r.parse().unwrap()))
             .collect(),
         game_versions: None,
+        env: Default::default(),
     }
 }
 
@@ -26,6 +27,7 @@ fn lockfile(mods: Vec<LockedMod>) -> Lockfile {
     Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
+            env: Default::default(),
             id: "lethal-company".to_owned(),
         },
         mods,

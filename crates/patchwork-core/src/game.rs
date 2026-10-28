@@ -38,6 +38,10 @@ pub struct GameDef {
     pub detect: Detect,
     #[serde(default, skip_serializing_if = "Versions::is_empty")]
     pub versions: Versions,
+    /// What each profile picks about the game it runs, such as which mod
+    /// loader, rather than it being read from the install.
+    #[serde(default, skip_serializing_if = "EnvDefs::is_empty")]
+    pub env: EnvDefs,
     /// Folders besides its own that the game reads mods' files from.
     #[serde(default, skip_serializing_if = "RootDefs::is_empty")]
     pub roots: RootDefs,
@@ -53,6 +57,141 @@ pub struct GameDef {
     /// mod. Without it, nothing is captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture: Option<CaptureDef>,
+}
+
+/// What a profile picks about the game it runs, by axis id. Sources get
+/// the picks (see [`crate::environment::GameEnv`]) so they can find files
+/// that work with them, and mods that say they don't are warned about.
+///
+/// ```toml
+/// [env.loader]
+/// name = "Mod loader"
+/// # Leave it out to allow any value.
+/// choices = ["fabric", "quilt", "forge", "neoforge"]
+/// # What a profile that hasn't picked gets.
+/// default = "fabric"
+///
+/// # `version` is the game's own version, for games where the profile
+/// # picks it. It takes the place of one read from the install.
+/// [env.version]
+/// name = "Minecraft version"
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    try_from = "BTreeMap<String, EnvAxis>",
+    into = "BTreeMap<String, EnvAxis>"
+)]
+pub struct EnvDefs(BTreeMap<String, EnvAxis>);
+
+impl EnvDefs {
+    /// The axis that's the game's own version.
+    pub const VERSION: &str = "version";
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn get(&self, id: &str) -> Option<&EnvAxis> {
+        self.0.get(id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &EnvAxis)> {
+        self.0.iter().map(|(id, axis)| (id.as_str(), axis))
+    }
+
+    /// What a profile whose own picks are `picked` runs on: each axis's
+    /// pick, or its default. Picks for axes the game doesn't have are left
+    /// out.
+    pub fn picks(&self, picked: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+        self.iter()
+            .filter_map(|(axis, def)| {
+                let value = picked.get(axis).or(def.default.as_ref())?;
+                Some((axis.to_owned(), value.clone()))
+            })
+            .collect()
+    }
+
+    /// Checks that `value` can be picked for `axis`, and gives it as the
+    /// axis spells it.
+    pub fn check(&self, axis: &str, value: &str) -> Result<String, Error> {
+        let def = self.get(axis).ok_or_else(|| {
+            let ids: Vec<&str> = self.0.keys().map(String::as_str).collect();
+            Error::invalid(match ids.is_empty() {
+                true => format!("there's nothing to pick about this game, so not `{axis}`"),
+                false => format!("`{axis}` isn't one of {}", ids.join(", ")),
+            })
+        })?;
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(Error::invalid(format!("{} can't be empty", def.name)));
+        }
+        if def.choices.is_empty() {
+            return Ok(value.to_owned());
+        }
+        def.choice(value).map(str::to_owned).ok_or_else(|| {
+            Error::invalid(format!(
+                "{} can't be `{value}`; pick one of {}",
+                def.name,
+                def.choices.join(", ")
+            ))
+        })
+    }
+}
+
+impl TryFrom<BTreeMap<String, EnvAxis>> for EnvDefs {
+    type Error = String;
+
+    fn try_from(axes: BTreeMap<String, EnvAxis>) -> Result<Self, String> {
+        for (id, axis) in &axes {
+            let valid = !id.is_empty()
+                && id.chars().all(|c| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_')
+                });
+            if !valid {
+                return Err(format!(
+                    "`{id}` isn't a valid env id; use lowercase letters, digits, `-` and `_`"
+                ));
+            }
+            if axis.choices.iter().any(|c| c.trim().is_empty()) {
+                return Err(format!("env `{id}` has an empty choice"));
+            }
+            if let Some(default) = &axis.default
+                && !axis.choices.is_empty()
+                && axis.choice(default).is_none()
+            {
+                return Err(format!(
+                    "env `{id}`: the default `{default}` isn't one of its choices"
+                ));
+            }
+        }
+        Ok(Self(axes))
+    }
+}
+
+impl From<EnvDefs> for BTreeMap<String, EnvAxis> {
+    fn from(axes: EnvDefs) -> Self {
+        axes.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvAxis {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
+impl EnvAxis {
+    /// The choice that's `value`, ignoring case.
+    fn choice(&self, value: &str) -> Option<&str> {
+        self.choices
+            .iter()
+            .find(|c| c.eq_ignore_ascii_case(value))
+            .map(String::as_str)
+    }
 }
 
 /// Where to look for files that tools wrote into the game's folder, so

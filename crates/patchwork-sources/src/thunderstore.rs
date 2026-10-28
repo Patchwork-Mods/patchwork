@@ -174,6 +174,7 @@ fn thunderstore_to_resolved_mod(mod_: PackageVersion) -> Option<ResolvedMod> {
         format: ArtifactFormat::Archive,
         dependencies,
         game_versions: None,
+        env: Default::default(),
     })
 }
 

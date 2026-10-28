@@ -1,8 +1,11 @@
-//! What can be found out about a game install without the user saying: which
-//! version of the game it is, and which build of it Steam has. Mods made for
-//! one version of a game don't always work with another, so this is what
-//! notices when a game has updated underneath what's deployed.
+//! What a game's mods run on: what can be found out about the install
+//! without the user saying (which version of the game it is, and which
+//! build of it Steam has), and what the profile picks about it (see
+//! [`crate::game::EnvDefs`]). Mods made for one version of a game don't
+//! always work with another, so this is what notices when a game has
+//! updated underneath what's deployed.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -10,7 +13,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::game::{GameDef, VersionProbe};
+use crate::game::{EnvDefs, GameDef, VersionProbe};
+use crate::profile::Profile;
 use crate::vdf;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +28,11 @@ pub struct GameEnv {
     /// changes with every update, even ones that leave `version` alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steam_build: Option<String>,
+    /// What the profile picked (or the game defaults to) for the game
+    /// definition's `[env]` axes, besides `version`, which goes in
+    /// `version`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub axes: BTreeMap<String, String>,
 }
 
 impl GameEnv {
@@ -42,6 +51,32 @@ impl GameEnv {
                 .steam
                 .iter()
                 .find_map(|app| steam_build(root, *app)),
+            axes: BTreeMap::new(),
+        }
+    }
+
+    /// What `profile` runs on: what's detected of the install in `root`,
+    /// if there is one, with what the profile picks for the game's `[env]`
+    /// on top. Picks for axes the game doesn't have are left out. `None`
+    /// if there's nothing to go on.
+    pub fn for_profile(game: &GameDef, root: Option<&Path>, profile: &Profile) -> Option<Self> {
+        let mut env = root.map(|root| Self::detect(game, root));
+        for (axis, value) in game.env.picks(&profile.env) {
+            let env = env.get_or_insert_default();
+            if axis == EnvDefs::VERSION {
+                env.version = Some(value);
+            } else {
+                env.axes.insert(axis, value);
+            }
+        }
+        env
+    }
+
+    /// The value of `axis`, `version` included.
+    pub fn get(&self, axis: &str) -> Option<&str> {
+        match axis {
+            EnvDefs::VERSION => self.version.as_deref(),
+            _ => self.axes.get(axis).map(String::as_str),
         }
     }
 
@@ -51,14 +86,19 @@ impl GameEnv {
 }
 
 impl fmt::Display for GameEnv {
-    /// `1.6.1170 (Steam build 13190634)`, or as much of it as is known.
+    /// `1.6.1170 (Steam build 13190634)`, or as much of it as is known,
+    /// then the picked axes, like `, loader fabric`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (&self.version, &self.steam_build) {
             (Some(v), Some(b)) => write!(f, "{v} (Steam build {b})"),
             (Some(v), None) => f.write_str(v),
             (None, Some(b)) => write!(f, "Steam build {b}"),
             (None, None) => f.write_str("unknown version"),
+        }?;
+        for (axis, value) in &self.axes {
+            write!(f, ", {axis} {value}")?;
         }
+        Ok(())
     }
 }
 

@@ -49,6 +49,7 @@ fn locked(source: &str, id: &str, version: &str, dependencies: &[&str]) -> Locke
         dependencies: dependencies.iter().map(|d| d.to_string()).collect(),
         requires: Default::default(),
         game_versions: None,
+        env: Default::default(),
     }
 }
 
@@ -75,6 +76,7 @@ async fn r2z_round_trips() {
             schema: LOCK_SCHEMA,
             game: LockedGame {
                 id: "lethal-company".to_owned(),
+                env: Default::default(),
             },
             mods: vec![
                 locked(SOURCE, "a-More", "1.2.3", &["thunderstore:BepInEx-Pack"]),

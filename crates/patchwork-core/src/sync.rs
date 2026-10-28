@@ -7,7 +7,7 @@
 //! locked version:
 //!
 //! - `format`: [`SYNC_FORMAT`], so peers can tell they can't read each other
-//! - `profile`: its id, game, name and hidden tags
+//! - `profile`: its id, game, name, hidden tags and `env` picks
 //! - `mod/<source>:<id>`: a [`ProfileMod`]
 //! - `order`: the mods' load order, as `<source>:<id>` keys. It's one entry,
 //!   so of two reorders made at once only one survives. Mods it doesn't
@@ -19,6 +19,8 @@
 //!   Locked mods nothing depends on any more are left out, and mods that
 //!   aren't locked (see [`unlocked`]) are locked wherever the profile is
 //!   next locked.
+//! - `lock-env`: the `env` the lockfile was locked for (see
+//!   [`LockedGame::env`]), there once anything's been locked
 //!
 //! Keys starting with `file/` or `peer/` belong to the sync layer, which
 //! hands local mods' files to machines that don't have them that way, and
@@ -57,6 +59,7 @@ pub const ORDER: &str = "order";
 pub const PLUGINS: &str = "plugins";
 pub const MOD: &str = "mod/";
 pub const LOCK: &str = "lock/";
+pub const LOCK_ENV: &str = "lock-env";
 /// Keys the sync layer keeps for itself.
 pub const FILE: &str = "file/";
 pub const PEER: &str = "peer/";
@@ -75,6 +78,8 @@ struct ProfileEntry {
     name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hidden_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    env: BTreeMap<String, String>,
 }
 
 /// A profile and its lockfile, as they were synced.
@@ -99,6 +104,7 @@ pub fn to_entries(profile: &Profile, lock: Option<&Lockfile>) -> Entries {
         game: profile.game.clone(),
         name: profile.name.clone(),
         hidden_tags: profile.hidden_tags.clone(),
+        env: profile.env.clone(),
     };
     entries.insert(PROFILE.to_owned(), json(&meta));
     let order: Vec<String> = profile.mods.iter().map(key_of).collect();
@@ -106,6 +112,9 @@ pub fn to_entries(profile: &Profile, lock: Option<&Lockfile>) -> Entries {
     entries.insert(PLUGINS.to_owned(), json(&profile.plugins));
     for m in &profile.mods {
         entries.insert(format!("{MOD}{}", key_of(m)), json(m));
+    }
+    if let Some(lock) = lock {
+        entries.insert(LOCK_ENV.to_owned(), json(&lock.game.env));
     }
     for m in lock.into_iter().flat_map(|l| &l.mods) {
         entries.insert(format!("{LOCK}{}", m.key()), json(m));
@@ -149,12 +158,14 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
         game: meta.game.clone(),
         name: meta.name,
         hidden_tags: meta.hidden_tags,
+        env: meta.env,
         mods: dedupe_names(ordered),
         plugins: decode(entries, PLUGINS)?.unwrap_or_default(),
     };
+    let env = decode(entries, LOCK_ENV)?.unwrap_or_default();
     let lock = (!locked.is_empty()).then(|| Lockfile {
         schema: LOCK_SCHEMA,
-        game: LockedGame { id: meta.game },
+        game: LockedGame { id: meta.game, env },
         mods: reachable(&profile, locked),
     });
     Ok(Synced { profile, lock })

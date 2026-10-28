@@ -548,6 +548,20 @@ impl Patchwork {
         Ok(Some(GameEnv::detect(game, &root)))
     }
 
+    /// What `profile` runs on: what [`Patchwork::game_env`] finds, with
+    /// what the profile picks for the game's `[env]` on top. `None` if
+    /// there's nothing to go on.
+    pub fn profile_env(&self, profile: &ProfileRef) -> Result<Option<GameEnv>> {
+        self.env_of(&self.load_profile(profile)?)
+    }
+
+    fn env_of(&self, loaded: &Profile) -> Result<Option<GameEnv>> {
+        let root = self.target_root(&self.deploy_target(loaded)?)?;
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
+        Ok(GameEnv::for_profile(game, root.as_deref(), loaded))
+    }
+
     /// Saves a new game definition to the user's registry (`<config>/games/`)
     /// and reloads the registry so it can be used straight away. Refuses ids
     /// that are already defined anywhere, so this never shadows a builtin or
@@ -618,7 +632,7 @@ impl Patchwork {
         enabled: bool,
     ) -> Result<ProfileMod> {
         let mut loaded = self.load_profile(profile)?;
-        let resolved = self.resolve(&loaded.game, &spec).await?;
+        let resolved = self.resolve(&loaded, &spec).await?;
         let id = if spec.source == LOCAL {
             self.add_local(&resolved)?
         } else {
@@ -726,6 +740,24 @@ impl Patchwork {
             .find_mut(name)
             .ok_or_else(|| no_such_mod(&label, name))?;
         m.game_versions = versions;
+        self.save_profile(profile, &loaded)
+    }
+
+    /// Picks `value` for one of the game's `[env]` axes, or with `None`
+    /// goes back to the game's default. Every mod is resolved again the
+    /// next time the profile's locked, to suit it.
+    pub fn set_env(&self, profile: &ProfileRef, axis: &str, value: Option<&str>) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        match value {
+            Some(value) => {
+                let registry = self.registry();
+                let value = registry.game(&loaded.game)?.value.env.check(axis, value)?;
+                loaded.env.insert(axis.to_owned(), value);
+            }
+            None => {
+                loaded.env.remove(axis);
+            }
+        }
         self.save_profile(profile, &loaded)
     }
 
@@ -1021,7 +1053,11 @@ impl Patchwork {
 
     /// Resolves a mod with its source. Local mods are resolved from where
     /// they were added from, but keep their own ids.
-    async fn resolve(&self, game: &str, spec: &ModSpec) -> Result<crate::source::ResolvedMod> {
+    async fn resolve(
+        &self,
+        loaded: &Profile,
+        spec: &ModSpec,
+    ) -> Result<crate::source::ResolvedMod> {
         let source = self.source(&spec.source)?;
         let origin = match spec.source == LOCAL && local::is_local_id(&spec.id) {
             true => Some(
@@ -1030,9 +1066,9 @@ impl Patchwork {
             ),
             false => None,
         };
-        let env = self.game_env(&DeployTarget::Game(game.to_owned()))?;
+        let env = self.env_of(loaded)?;
         let registry = self.registry();
-        let game = &registry.game(game)?.value;
+        let game = &registry.game(&loaded.game)?.value;
         let settings = self.settings();
         let ctx = SourceContext {
             game,
@@ -1215,14 +1251,22 @@ impl Patchwork {
     ) -> Result<Lockfile> {
         let loaded = self.load_profile(profile)?;
         // fails for a game that isn't defined
-        self.registry().game(&loaded.game)?;
-        let known: HashMap<String, LockedMod> = self
-            .load_lock(profile)?
+        let picks = self
+            .registry()
+            .game(&loaded.game)?
+            .value
+            .env
+            .picks(&loaded.env);
+        let old = self.load_lock(profile)?;
+        // Mods were picked to suit what the profile picked, so if that's
+        // changed they all have to be picked again.
+        let same_env = old.as_ref().is_none_or(|lock| lock.game.env == picks);
+        let known: HashMap<String, LockedMod> = old
             .map(|lock| lock.mods.into_iter().map(|m| (m.key(), m)).collect())
             .unwrap_or_default();
         let mut previous: HashMap<String, LockedMod> = known
             .iter()
-            .filter(|(key, _)| !update(key))
+            .filter(|(key, _)| same_env && !update(key))
             .map(|(key, m)| (key.clone(), m.clone()))
             .collect();
 
@@ -1232,6 +1276,7 @@ impl Patchwork {
                 schema: LOCK_SCHEMA,
                 game: LockedGame {
                     id: loaded.game.clone(),
+                    env: picks.clone(),
                 },
                 mods,
             };
@@ -1273,7 +1318,7 @@ impl Patchwork {
     pub fn issues(&self, profile: &ProfileRef) -> Result<Vec<Issue>> {
         let loaded = self.load_profile(profile)?;
         let target = self.deploy_target(&loaded)?;
-        let env = self.game_env(&target)?;
+        let env = self.env_of(&loaded)?;
         let mut issues: Vec<Issue> = match self.load_lock(profile)? {
             Some(lock) => {
                 let mut issues: Vec<Issue> = self
@@ -1307,29 +1352,40 @@ impl Patchwork {
     }
 
     /// The mods deploying `loaded` would place that say they don't work
-    /// with the installed version of the game.
+    /// with the installed version of the game, or with what the profile
+    /// picks for its `[env]`.
     fn incompatible(&self, loaded: &Profile, lock: &Lockfile, env: &GameEnv) -> Result<Vec<Issue>> {
-        let Some(version) = &env.version else {
-            return Ok(Vec::new());
-        };
         let overrides: HashMap<String, &GameVersions> = loaded
             .mods
             .iter()
             .filter_map(|m| Some((mod_key(&m.source, &m.id), m.game_versions.as_ref()?)))
             .collect();
         let registry = self.registry();
-        let name = &registry.game(&loaded.game)?.value.name;
-        Ok(deploy_order(loaded, lock)
-            .into_iter()
-            .filter_map(|m| {
-                let supports = overrides
-                    .get(&m.key())
-                    .copied()
-                    .or(m.game_versions.as_ref())?;
-                (supports.matches(version) == Some(false))
-                    .then(|| Issue::incompatible_game(&m.name, name, version, supports.clone()))
-            })
-            .collect())
+        let game = &registry.game(&loaded.game)?.value;
+        let mut issues = Vec::new();
+        for m in deploy_order(loaded, lock) {
+            let supports = overrides
+                .get(&m.key())
+                .copied()
+                .or(m.game_versions.as_ref());
+            if let (Some(version), Some(supports)) = (&env.version, supports)
+                && supports.matches(version) == Some(false)
+            {
+                issues.push(Issue::incompatible_game(
+                    &m.name,
+                    &game.name,
+                    version,
+                    supports.clone(),
+                ));
+            }
+            for (axis, values) in m.env.unmet(env) {
+                let name = game.env.get(axis).map_or(axis, |a| a.name.as_str());
+                // `unmet` only names axes `env` has
+                let value = env.get(axis).unwrap_or_default();
+                issues.push(Issue::incompatible_env(&m.name, axis, name, value, values));
+            }
+        }
+        Ok(issues)
     }
 
     /// One pass of [`Patchwork::lock`]: walks the profile's mods and their
@@ -1470,7 +1526,7 @@ impl Patchwork {
 
         let label = name.clone().unwrap_or_else(|| key.clone());
         self.reporter.report(Event::Resolving { name: label });
-        let resolved = self.resolve(&loaded.game, &spec).await?;
+        let resolved = self.resolve(loaded, &spec).await?;
         let name = name.unwrap_or_else(|| resolved.name.clone());
         let dependencies: Vec<String> = resolved
             .dependencies
@@ -1547,6 +1603,7 @@ impl Patchwork {
                 .map(|d| (mod_key(&d.source, &d.id), d.req))
                 .collect(),
             game_versions,
+            env: resolved.env,
         };
         Ok(Locking::Locked(Box::new(locked), Some(key)))
     }
@@ -2074,7 +2131,7 @@ impl Patchwork {
         );
         let (mods, installer_warnings) = self.installed(&loaded, game, Some(&root), &order)?;
 
-        let env = GameEnv::detect(game, &root);
+        let env = GameEnv::for_profile(game, Some(&root), &loaded).unwrap_or_default();
         let desired = deployer.plan(&ctx, &mods)?;
         let mut placements =
             deploy::resolve(deployer.kind(), desired.placements, &mods, None, &resolved)?;
@@ -2145,18 +2202,19 @@ impl Patchwork {
         };
         // Deploying would lock again first, so a mod that isn't locked the
         // way the profile asks could deploy as something else.
-        let locked = loaded.mods.iter().filter(|m| m.enabled).all(|m| {
-            let key = mod_key(&m.source, &m.id);
-            lock.mods
-                .iter()
-                .any(|l| l.key() == key && l.requested == m.version)
-        });
-        if !locked {
-            return Ok(DeployStatus::Stale);
-        }
         let registry = self.registry();
         let entry = registry.game(&loaded.game)?;
         let game = &entry.value;
+        let locked = lock.game.env == game.env.picks(&loaded.env)
+            && loaded.mods.iter().filter(|m| m.enabled).all(|m| {
+                let key = mod_key(&m.source, &m.id);
+                lock.mods
+                    .iter()
+                    .any(|l| l.key() == key && l.requested == m.version)
+            });
+        if !locked {
+            return Ok(DeployStatus::Stale);
+        }
         let deployer = self.deployer(&game.deployer.kind)?;
         let (config, _, overrides) = self.deploy_config(game)?;
         let ctx = DeployContext {
@@ -2180,10 +2238,9 @@ impl Patchwork {
         );
         // Not part of the inputs, so that deploys from before it was
         // recorded don't all look stale.
-        let same_game = state
-            .env
-            .as_ref()
-            .is_none_or(|env| *env == GameEnv::detect(game, root));
+        let same_game = state.env.as_ref().is_none_or(|env| {
+            Some(env) == GameEnv::for_profile(game, Some(root), &loaded).as_ref()
+        });
         Ok(
             if inputs == recorded
                 && same_game

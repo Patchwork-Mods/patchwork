@@ -331,6 +331,7 @@ fn nexus_to_resolved_mod(game: &GameDef, mod_: &NexusMod, file: &NexusFile) -> R
         // nexus doesn't expose requirements in a machine-readable way
         dependencies: Vec::new(),
         game_versions: game_versions(game, file),
+        env: Default::default(),
     }
 }
 

@@ -174,11 +174,13 @@ fn lock(entries: &[(&str, &[&str])]) -> Lockfile {
             dependencies: deps.iter().map(|d| format!("ts:{d}")).collect(),
             requires: Default::default(),
             game_versions: None,
+            env: Default::default(),
         })
         .collect();
     Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
+            env: Default::default(),
             id: "game".to_owned(),
         },
         mods,

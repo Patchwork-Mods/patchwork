@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Result;
 use crate::changelog::ChangelogEntry;
-use crate::compat::GameVersions;
+use crate::compat::{EnvSupport, GameVersions};
 use crate::environment::GameEnv;
 use crate::game::GameDef;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
@@ -269,6 +269,9 @@ pub struct ResolvedMod {
     /// [`crate::compat::guess`] helps sources that only have free text to
     /// go on.
     pub game_versions: Option<GameVersions>,
+    /// Which values of the game's other `[env]` axes this works with, if
+    /// the source can tell, like `loader = ["fabric", "quilt"]`.
+    pub env: EnvSupport,
 }
 
 pub struct SourceContext<'a> {
@@ -278,9 +281,10 @@ pub struct SourceContext<'a> {
     /// What the user has set of the source's [`Source::settings`], if
     /// anything.
     pub settings: Option<&'a toml::Table>,
-    /// The game install mods are being resolved for, when there is one, so
-    /// sources with a file for each version of the game can pick the right
-    /// one.
+    /// What the profile mods are being resolved for runs on (the game
+    /// install's version, and what the profile picks for the game's
+    /// `[env]`), when anything's known, so sources with a file for each
+    /// version of the game or mod loader can pick the right one.
     pub env: Option<&'a GameEnv>,
 }
 

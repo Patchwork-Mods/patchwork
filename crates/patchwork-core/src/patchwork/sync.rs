@@ -164,6 +164,7 @@ impl Patchwork {
             schema: LOCK_SCHEMA,
             game: LockedGame {
                 id: synced.profile.game.clone(),
+                env: BTreeMap::new(),
             },
             mods: Vec::new(),
         });

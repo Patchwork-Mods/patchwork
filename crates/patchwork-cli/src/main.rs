@@ -111,6 +111,17 @@ enum Command {
         #[arg(long, conflicts_with = "versions")]
         reset: bool,
     },
+    /// Show what the profile picks about the game it runs (its mod loader,
+    /// say), or pick it, e.g. `env loader fabric`. Picking relocks every
+    /// mod to suit.
+    Env {
+        /// Which axis; all of them if left out.
+        axis: Option<String>,
+        value: Option<String>,
+        /// Go back to the game's default.
+        #[arg(long, requires = "axis", conflicts_with = "value")]
+        reset: bool,
+    },
     /// Show the options in a mod's FOMOD installer and which are picked, or
     /// pick them. Mods with an installer are deployed with the options it
     /// recommends until some are picked.
@@ -653,6 +664,41 @@ async fn run(cli: Cli) -> Result<()> {
                 (None, None) => {
                     println!("{name} works with any version, as far as patchwork knows")
                 }
+            }
+        }
+        Command::Env { axis, value, reset } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            if let Some(axis) = &axis
+                && (reset || value.is_some())
+            {
+                pw.set_env(&profile, axis, value.as_deref())?;
+                let lock = pw.lock(&profile, false).await?;
+                println!("relocked {} mods", lock.mods.len());
+            }
+            let loaded = pw.load_profile(&profile).unwrap_or(loaded);
+            let registry = pw.registry();
+            let game = &registry.game(&loaded.game)?.value;
+            if game.env.is_empty() {
+                println!("{} has nothing to pick", game.name);
+            }
+            for (id, def) in game.env.iter() {
+                if axis.as_deref().is_some_and(|a| a != id) {
+                    continue;
+                }
+                let picked = match (loaded.env.get(id), &def.default) {
+                    (Some(v), _) => v.clone(),
+                    (None, Some(d)) => format!("{d} (default)"),
+                    (None, None) => "not picked".to_owned(),
+                };
+                println!("{} ({id}): {picked}", def.name);
+                if !def.choices.is_empty() {
+                    println!("  choices: {}", def.choices.join(", "));
+                }
+            }
+            if let Some(axis) = &axis
+                && game.env.get(axis).is_none()
+            {
+                game.env.check(axis, "")?;
             }
         }
         Command::Installer {

@@ -113,6 +113,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         link: Default::default(),
         detect: Default::default(),
         versions: Default::default(),
+        env: Default::default(),
         roots: Default::default(),
         launch: Default::default(),
         fomod: None,
@@ -167,6 +168,7 @@ impl Source for FixedUrl {
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
             game_versions: None,
+            env: Default::default(),
         })
     }
 }
@@ -225,6 +227,7 @@ impl Source for OwnFiles {
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
             game_versions: None,
+            env: Default::default(),
         })
     }
 
@@ -405,6 +408,7 @@ impl Source for Versioned {
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
             game_versions: None,
+            env: Default::default(),
         })
     }
 }
@@ -898,6 +902,7 @@ impl Source for LocalFiles {
             artifact: ArtifactLocation::Path { path },
             dependencies: Vec::new(),
             game_versions: None,
+            env: Default::default(),
         })
     }
 }
@@ -945,6 +950,7 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
     let lock = Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
+            env: Default::default(),
             id: "my-game".to_owned(),
         },
         mods: Vec::new(),
@@ -1107,6 +1113,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         dependencies: Vec::new(),
         requires: BTreeMap::new(),
         game_versions: None,
+        env: Default::default(),
     };
     let mut loaded = pw.load_profile(&profile).unwrap();
     loaded.mods = vec![local_mod(&file), local_mod(&imported), local_mod(&unlocked)];
@@ -1114,6 +1121,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
     let lock = Lockfile {
         schema: 2,
         game: LockedGame {
+            env: Default::default(),
             id: "my-game".to_owned(),
         },
         mods: vec![locked(&file, cool), locked(&imported, imported_hash)],
@@ -1259,6 +1267,7 @@ impl Source for ForOldGame {
             format: ArtifactFormat::Dir,
             dependencies: Vec::new(),
             game_versions: Some("1.5.97".parse().unwrap()),
+            env: Default::default(),
         })
     }
 }
@@ -1987,4 +1996,122 @@ async fn what_tools_write_is_captured_as_a_mod() {
     fs::write(game.join("Data/Third.esp"), "third").unwrap();
     assert!(pw.capture(&profile, "Body").await.is_err());
     assert!(game.join("Data/Third.esp").exists());
+}
+
+/// Resolves every mod to `<dir>/<loader>.jar` (which has to be there), at
+/// a version naming the game version and loader it was told about. Every
+/// mod says it's only for fabric.
+struct ByLoader(PathBuf);
+
+#[async_trait::async_trait]
+impl Source for ByLoader {
+    fn id(&self) -> &str {
+        "by-loader"
+    }
+
+    async fn resolve(
+        &self,
+        ctx: &SourceContext<'_>,
+        id: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        let env = ctx.env.expect("the profile picks its env");
+        let loader = env.get("loader").unwrap();
+        Ok(crate::source::ResolvedMod {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            version: Some(format!("{}+{loader}", env.get("version").unwrap())),
+            artifact: ArtifactLocation::Path {
+                path: self.0.join(format!("{loader}.jar")),
+            },
+            format: ArtifactFormat::File,
+            dependencies: Vec::new(),
+            game_versions: None,
+            env: compat::EnvSupport::default().with("loader", ["fabric"]),
+        })
+    }
+}
+
+#[tokio::test]
+async fn mods_are_locked_for_what_the_profile_picks_and_relocked_when_it_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let jars = tmp.path().join("jars");
+    fs::create_dir_all(&jars).unwrap();
+    for loader in ["fabric", "quilt"] {
+        fs::write(jars.join(format!("{loader}.jar")), loader).unwrap();
+    }
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(ByLoader(jars))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    let mut def = new_game("blocks", "none");
+    def.env = toml::from_str(
+        r#"
+        version = { name = "Game version" }
+        loader = { name = "Mod loader", choices = ["fabric", "quilt"], default = "fabric" }
+        "#,
+    )
+    .unwrap();
+    pw.add_game(def).unwrap();
+    let profile = pw.create_profile("blocks", "default").unwrap();
+    pw.set_env(&profile, "version", Some("1.21.1")).unwrap();
+
+    // no install, but what the profile picks is enough to go on
+    let env = pw.profile_env(&profile).unwrap().unwrap();
+    assert_eq!(env.version.as_deref(), Some("1.21.1"));
+    assert_eq!(env.get("loader"), Some("fabric"));
+
+    let spec = ModSpec {
+        source: "by-loader".to_owned(),
+        id: "a".to_owned(),
+        version: None,
+    };
+    pw.add_mod(&profile, spec, None, true).await.unwrap();
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lock.mods[0].version.as_deref(), Some("1.21.1+fabric"));
+    assert_eq!(
+        lock.game.env.get("loader").map(String::as_str),
+        Some("fabric")
+    );
+    assert_eq!(pw.issues(&profile).unwrap(), []);
+
+    // picks are checked against the game's choices, ignoring case
+    pw.set_env(&profile, "loader", Some("Quilt")).unwrap();
+    assert_eq!(pw.load_profile(&profile).unwrap().env["loader"], "quilt");
+    assert!(pw.set_env(&profile, "loader", Some("forge")).is_err());
+    assert!(pw.set_env(&profile, "shaders", Some("iris")).is_err());
+
+    // a changed pick relocks without being asked to update
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lock.mods[0].version.as_deref(), Some("1.21.1+quilt"));
+    let issues = pw.issues(&profile).unwrap();
+    assert_eq!(issues.len(), 1);
+    assert!(
+        issues[0]
+            .message
+            .contains("is for Mod loader fabric, but the profile uses quilt"),
+        "{}",
+        issues[0].message
+    );
+
+    // and going back to the default is a change too
+    pw.set_env(&profile, "loader", None).unwrap();
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lock.mods[0].version.as_deref(), Some("1.21.1+fabric"));
+    assert_eq!(pw.issues(&profile).unwrap(), []);
+}
+
+#[test]
+fn env_defaults_have_to_be_among_the_choices() {
+    let bad: std::result::Result<crate::game::EnvDefs, _> =
+        toml::from_str(r#"loader = { name = "Loader", choices = ["fabric"], default = "forge" }"#);
+    assert!(
+        bad.unwrap_err()
+            .to_string()
+            .contains("isn't one of its choices")
+    );
+    let bad: std::result::Result<crate::game::EnvDefs, _> =
+        toml::from_str(r#"Loader = { name = "Loader" }"#);
+    assert!(bad.unwrap_err().to_string().contains("valid env id"));
 }

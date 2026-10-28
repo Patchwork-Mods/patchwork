@@ -460,6 +460,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         link: game.link,
         detect: Default::default(),
         versions: Default::default(),
+        env: Default::default(),
         roots: Default::default(),
         launch: Default::default(),
         fomod: None,

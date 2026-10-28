@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -28,6 +29,11 @@ pub struct Profile {
     /// is shown: hidden mods are still installed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden_tags: Vec<String>,
+    /// What the profile picks for the game's `[env]` axes (see
+    /// [`crate::game::EnvDefs`]), like `loader = "fabric"`. Axes left out
+    /// get the game's default.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
     /// In load order: later mods win when two provide the same file.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
@@ -45,6 +51,7 @@ impl Profile {
             game: game.to_owned(),
             name: name.to_owned(),
             hidden_tags: Vec::new(),
+            env: BTreeMap::new(),
             mods: Vec::new(),
             plugins: Vec::new(),
         }

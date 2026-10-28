@@ -4,7 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::compat::GameVersions;
+use crate::compat::{EnvSupport, GameVersions};
 use crate::hash::ContentHash;
 use crate::source::{ArtifactFormat, ArtifactLocation, VersionReq};
 
@@ -27,6 +27,10 @@ pub struct Lockfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockedGame {
     pub id: String,
+    /// The profile's `env` when it was locked. Mods are picked to suit it,
+    /// so when it changes they're all resolved again.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +58,10 @@ pub struct LockedMod {
     /// for mods that don't care, going by the game's `[versions] files`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_versions: Option<GameVersions>,
+    /// Which values of the game's other `[env]` axes the source says this
+    /// works with.
+    #[serde(default, skip_serializing_if = "EnvSupport::is_empty")]
+    pub env: EnvSupport,
 }
 
 impl LockedMod {

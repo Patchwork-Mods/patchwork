@@ -31,6 +31,7 @@ fn locked(id: &str, version: &str, deps: &[&str]) -> LockedMod {
         dependencies: deps.iter().map(|d| mod_key("thunderstore", d)).collect(),
         requires: BTreeMap::new(),
         game_versions: None,
+        env: Default::default(),
     }
 }
 
@@ -111,6 +112,7 @@ fn pair(ids: &[&str]) -> (Machine, Machine, u64) {
     let lock = Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
+            env: Default::default(),
             id: "my-game".to_owned(),
         },
         mods: ids.iter().map(|id| locked(id, "1.0.0", &[])).collect(),
@@ -138,6 +140,7 @@ fn sync(a: &mut Machine, b: &mut Machine, clock: &mut u64) {
 fn a_profile_survives_the_trip() {
     let mut profile = Profile::new("my-game", "default");
     profile.hidden_tags = vec!["library".to_owned()];
+    profile.env = BTreeMap::from([("loader".to_owned(), "quilt".to_owned())]);
     profile.mods = vec![profile_mod("B"), profile_mod("A")];
     profile.mods[1].enabled = false;
     profile.mods[1].version = Some("1.0.0".to_owned());
@@ -148,6 +151,7 @@ fn a_profile_survives_the_trip() {
     let lock = Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
+            env: profile.env.clone(),
             id: "my-game".to_owned(),
         },
         mods: vec![
@@ -164,7 +168,9 @@ fn a_profile_survives_the_trip() {
     assert_eq!(synced.profile.hidden_tags, profile.hidden_tags);
     assert_eq!(synced.profile.mods, profile.mods);
     assert_eq!(synced.profile.plugins, profile.plugins);
+    assert_eq!(synced.profile.env, profile.env);
     let back = synced.lock.unwrap();
+    assert_eq!(back.game.env, lock.game.env);
     assert_eq!(
         serde_json::to_value(&back.mods).unwrap(),
         serde_json::to_value(&lock.mods).unwrap()
@@ -292,6 +298,7 @@ fn locked_dependencies_nothing_needs_are_left_out() {
     let lock = Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
+            env: Default::default(),
             id: "my-game".to_owned(),
         },
         mods: vec![locked("A", "1.0.0", &["Lib"]), locked("Lib", "1.0.0", &[])],
