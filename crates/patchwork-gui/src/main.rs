@@ -33,7 +33,7 @@ use patchwork_core::source::{ModSpec, SourceFile};
 use patchwork_core::{DeployStatus, GameInstall, HistoryEntry, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
-use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
+use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -360,6 +360,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .map_err(msg)?
         .unwrap_or_default();
     let label = loaded.label();
+    let lookup = pw.lookup(&loaded).map_err(msg)?;
     let name = loaded.name.clone();
     let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
     let mods = loaded
@@ -369,7 +370,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
             let key = mod_key(&m.source, &m.id);
             let versioned = pw.lists_versions(&m.source).unwrap_or(false);
             let known = versioned
-                .then(|| pw.known_versions(&loaded.game, &m.source, &m.id))
+                .then(|| pw.known_versions(&lookup, &m.source, &m.id))
                 .flatten();
             let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
             UiMod {
@@ -1441,6 +1442,7 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
     Patchwork::builder(paths)
         .source(LocalSource)
         .source(Thunderstore)
+        .source(Modrinth)
         .source(Nexus::default())
         .source(UrlSource)
         .deployer(RulesDeployer)

@@ -87,7 +87,11 @@ impl Bound {
         let cmp = |v: &str| compare_dotted(version, v);
         match self {
             Bound::Any => Some(true),
-            Bound::Exact(v) => cmp(v).map(Ordering::is_eq),
+            // versions that aren't numbers, like `26.2-rc-1`, can still be
+            // the same
+            Bound::Exact(v) => cmp(v)
+                .map(Ordering::is_eq)
+                .or_else(|| Some(version.eq_ignore_ascii_case(v))),
             Bound::AtLeast(v) => cmp(v).map(Ordering::is_ge),
             Bound::Above(v) => cmp(v).map(Ordering::is_gt),
             Bound::AtMost(v) => cmp(v).map(Ordering::is_le),

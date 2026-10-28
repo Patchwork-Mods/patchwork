@@ -23,7 +23,7 @@ use patchwork_core::update;
 use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
-use patchwork_sources::{LocalSource, Nexus, Thunderstore, UrlSource};
+use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
 use patchwork_sync::daemon::{self, service};
 use patchwork_sync::{Joined, Node};
 
@@ -511,6 +511,7 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
     Patchwork::builder(paths)
         .source(LocalSource)
         .source(Thunderstore)
+        .source(Modrinth)
         .source(Nexus::default())
         .source(UrlSource)
         .deployer(RulesDeployer)
@@ -738,7 +739,7 @@ async fn run(cli: Cli) -> Result<()> {
                 loaded.mods.iter().find(|m| m.name == name).ok_or_else(|| {
                     anyhow::anyhow!("{} has no mod named `{name}`", loaded.label())
                 })?;
-            for v in pw.versions(&loaded.game, &m.source, &m.id).await? {
+            for v in pw.versions(&pw.lookup(&loaded)?, &m.source, &m.id).await? {
                 let mark = if m.version.as_ref() == Some(&v) {
                     " (pinned)"
                 } else {
@@ -763,7 +764,7 @@ async fn run(cli: Cli) -> Result<()> {
                     bail!("`{name}` isn't locked at a version yet; run `patchwork lock`");
                 };
                 pw.changes(
-                    &loaded.game,
+                    &pw.lookup(&loaded)?,
                     &m.source,
                     &m.id,
                     Some(&locked),
@@ -771,7 +772,8 @@ async fn run(cli: Cli) -> Result<()> {
                 )
                 .await?
             } else {
-                pw.changelog(&loaded.game, &m.source, &m.id, None).await?
+                pw.changelog(&pw.lookup(&loaded)?, &m.source, &m.id, None)
+                    .await?
             };
             if entries.is_empty() && new {
                 println!("nothing new in {name}'s changelog");

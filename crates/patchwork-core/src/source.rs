@@ -54,13 +54,36 @@ impl ArtifactLocation {
                 .unwrap_or_default(),
             ArtifactLocation::Url { url } => {
                 let path = url.split(['?', '#']).next().unwrap_or(url);
-                path.rsplit('/').next().unwrap_or_default().to_owned()
+                let name = path.rsplit('/').next().unwrap_or_default();
+                percent_decode(name).unwrap_or_else(|| name.to_owned())
             }
             ArtifactLocation::Source { name, .. } | ArtifactLocation::Local { name } => {
                 name.clone()
             }
         }
     }
+}
+
+/// `name` with its `%XX` escapes decoded, as long as that makes a file
+/// name: `None` if it'd have a slash in it, or isn't UTF-8.
+fn percent_decode(name: &str) -> Option<String> {
+    let bytes = name.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = match bytes[i] {
+            b'%' => {
+                let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+                i += 2;
+                u8::from_str_radix(hex, 16).ok()?
+            }
+            byte => byte,
+        };
+        decoded.push(byte);
+        i += 1;
+    }
+    let decoded = String::from_utf8(decoded).ok()?;
+    (!decoded.contains(['/', '\\'])).then_some(decoded)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

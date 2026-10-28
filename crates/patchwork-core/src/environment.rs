@@ -55,19 +55,32 @@ impl GameEnv {
         }
     }
 
+    /// Just what a profile picks for the game's `[env]` (see
+    /// [`crate::game::EnvDefs::picks`]), with nothing detected.
+    pub fn from_picks(picks: &BTreeMap<String, String>) -> Self {
+        let mut env = Self::default();
+        for (axis, value) in picks {
+            if axis == EnvDefs::VERSION {
+                env.version = Some(value.clone());
+            } else {
+                env.axes.insert(axis.clone(), value.clone());
+            }
+        }
+        env
+    }
+
     /// What `profile` runs on: what's detected of the install in `root`,
     /// if there is one, with what the profile picks for the game's `[env]`
     /// on top. Picks for axes the game doesn't have are left out. `None`
     /// if there's nothing to go on.
     pub fn for_profile(game: &GameDef, root: Option<&Path>, profile: &Profile) -> Option<Self> {
+        let picks = game.env.picks(&profile.env);
         let mut env = root.map(|root| Self::detect(game, root));
-        for (axis, value) in game.env.picks(&profile.env) {
+        if !picks.is_empty() {
+            let picked = Self::from_picks(&picks);
             let env = env.get_or_insert_default();
-            if axis == EnvDefs::VERSION {
-                env.version = Some(value);
-            } else {
-                env.axes.insert(axis, value);
-            }
+            env.version = picked.version.or(env.version.take());
+            env.axes = picked.axes;
         }
         env
     }

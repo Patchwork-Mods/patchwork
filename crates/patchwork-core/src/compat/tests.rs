@@ -91,3 +91,12 @@ fn only_some_files_can_make_a_mod_version_specific() {
                [versions]\nfiles = [\"a[\"]";
     assert!(toml::from_str::<GameDef>(bad).is_err());
 }
+
+#[test]
+fn exact_versions_that_arent_numbers_match_themselves() {
+    let v = versions(&["1.21.1", "26.2-rc-1"]);
+    assert_eq!(v.matches("26.2-rc-1"), Some(true));
+    assert_eq!(v.matches("26.2-RC-1"), Some(true));
+    assert_eq!(v.matches("26.3-rc-1"), Some(false));
+    assert_eq!(v.matches("1.21.1"), Some(true));
+}

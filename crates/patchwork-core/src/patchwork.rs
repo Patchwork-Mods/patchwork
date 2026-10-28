@@ -108,6 +108,41 @@ const LOCK_CONCURRENCY: usize = 6;
 /// fall behind by before it misses some (and is told it has).
 const CHANGES_BUFFERED: usize = 64;
 
+/// What a mod's versions and changelog are looked up for: a game, and what
+/// a profile picks for its `[env]` (see [`crate::game::EnvDefs::picks`]),
+/// since a source can have different versions of a mod for each (one for
+/// each mod loader, say).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Lookup {
+    pub game: String,
+    pub env: BTreeMap<String, String>,
+}
+
+impl Lookup {
+    /// For `game` as a whole, whatever profiles pick.
+    pub fn game(game: &str) -> Self {
+        Self {
+            game: game.to_owned(),
+            env: BTreeMap::new(),
+        }
+    }
+
+    /// Names what's cached for it, as one path segment: the game's id,
+    /// followed by a hash of the picks if there are any.
+    fn cache_key(&self) -> String {
+        if self.env.is_empty() {
+            return self.game.clone();
+        }
+        let picks = serde_json::to_vec(&self.env).expect("strings serialize");
+        format!("{}@{}", self.game, ContentHash::of(&picks).short())
+    }
+
+    /// What sources are told the mod's for.
+    fn source_env(&self) -> Option<GameEnv> {
+        (!self.env.is_empty()).then(|| GameEnv::from_picks(&self.env))
+    }
+}
+
 /// Where a cache under `dir` keeps what it knows about a mod. Ids can be
 /// paths or have characters that don't belong in file names, so the file is
 /// named by a hash of the id.
@@ -555,6 +590,16 @@ impl Patchwork {
         self.env_of(&self.load_profile(profile)?)
     }
 
+    /// What `loaded`'s mods' versions and changelogs are looked up for.
+    pub fn lookup(&self, loaded: &Profile) -> Result<Lookup> {
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
+        Ok(Lookup {
+            game: loaded.game.clone(),
+            env: game.env.picks(&loaded.env),
+        })
+    }
+
     fn env_of(&self, loaded: &Profile) -> Result<Option<GameEnv>> {
         let root = self.target_root(&self.deploy_target(loaded)?)?;
         let registry = self.registry();
@@ -877,8 +922,8 @@ impl Patchwork {
 
     /// Every version of a mod that can be pinned, newest first, fetched from
     /// its source. The list is remembered for [`Patchwork::known_versions`].
-    pub async fn versions(&self, game: &str, source: &str, id: &str) -> Result<Vec<String>> {
-        self.versions_since(game, source, id, Timestamp::now())
+    pub async fn versions(&self, lookup: &Lookup, source: &str, id: &str) -> Result<Vec<String>> {
+        self.versions_since(lookup, source, id, Timestamp::now())
             .await
     }
 
@@ -887,12 +932,12 @@ impl Patchwork {
     /// underway is waited on instead of being made again.
     pub async fn versions_since(
         &self,
-        game: &str,
+        lookup: &Lookup,
         source: &str,
         id: &str,
         since: Timestamp,
     ) -> Result<Vec<String>> {
-        let key = (game.to_owned(), source.to_owned(), id.to_owned());
+        let key = (lookup.cache_key(), source.to_owned(), id.to_owned());
         let lock = self
             .fetching_versions
             .lock()
@@ -902,9 +947,9 @@ impl Patchwork {
             .clone();
         let result = {
             let _fetching = lock.lock().await;
-            match self.known_versions(game, source, id) {
+            match self.known_versions(lookup, source, id) {
                 Some(known) if known.fetched >= since => Ok(known.versions),
-                _ => self.fetch_versions(game, source, id).await,
+                _ => self.fetch_versions(lookup, source, id).await,
             }
         };
         // the last one done with the lock takes it out of the map
@@ -915,15 +960,16 @@ impl Patchwork {
         result
     }
 
-    async fn fetch_versions(&self, game: &str, source: &str, id: &str) -> Result<Vec<String>> {
+    async fn fetch_versions(&self, lookup: &Lookup, source: &str, id: &str) -> Result<Vec<String>> {
         let registry = self.registry();
-        let def = &registry.game(game)?.value;
+        let def = &registry.game(&lookup.game)?.value;
         let settings = self.settings();
+        let env = lookup.source_env();
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
             settings: settings.source(source),
-            env: None,
+            env: env.as_ref(),
         };
         let versions = self.source(source)?.versions(&ctx, id).await?;
         let known = KnownVersions {
@@ -931,23 +977,28 @@ impl Patchwork {
             fetched: Timestamp::now(),
             versions,
         };
-        fsutil::write_json(&self.known_versions_file(game, source, id), &known)?;
+        fsutil::write_json(&self.known_versions_file(lookup, source, id), &known)?;
         Ok(known.versions)
     }
 
     /// The versions [`Patchwork::versions`] last fetched for a mod, without
     /// going to the network. `None` if they never have been (or the cache
     /// was cleared).
-    pub fn known_versions(&self, game: &str, source: &str, id: &str) -> Option<KnownVersions> {
+    pub fn known_versions(&self, lookup: &Lookup, source: &str, id: &str) -> Option<KnownVersions> {
         // it's only a cache, so a file that can't be read is as good as none
-        fsutil::read_json::<KnownVersions>(&self.known_versions_file(game, source, id))
+        fsutil::read_json::<KnownVersions>(&self.known_versions_file(lookup, source, id))
             .ok()
             .flatten()
             .filter(|k| k.id == id)
     }
 
-    fn known_versions_file(&self, game: &str, source: &str, id: &str) -> PathBuf {
-        cache_file(&self.paths.known_versions(), game, source, id)
+    fn known_versions_file(&self, lookup: &Lookup, source: &str, id: &str) -> PathBuf {
+        cache_file(
+            &self.paths.known_versions(),
+            &lookup.cache_key(),
+            source,
+            id,
+        )
     }
 
     /// What a search would show for a mod, fetched from its source. It's
@@ -990,19 +1041,20 @@ impl Patchwork {
     /// first, fetched from its source. Empty if the source has none.
     pub async fn changelog(
         &self,
-        game: &str,
+        lookup: &Lookup,
         source: &str,
         id: &str,
         version: Option<&str>,
     ) -> Result<Vec<ChangelogEntry>> {
         let registry = self.registry();
-        let def = &registry.game(game)?.value;
+        let def = &registry.game(&lookup.game)?.value;
         let settings = self.settings();
+        let env = lookup.source_env();
         let ctx = SourceContext {
             game: def,
             config: def.sources.get(source),
             settings: settings.source(source),
-            env: None,
+            env: env.as_ref(),
         };
         self.source(source)?.changelog(&ctx, id, version).await
     }
@@ -1012,13 +1064,13 @@ impl Patchwork {
     /// [`changelog::between`]).
     pub async fn changes(
         &self,
-        game: &str,
+        lookup: &Lookup,
         source: &str,
         id: &str,
         from: Option<&str>,
         to: Option<&str>,
     ) -> Result<Vec<ChangelogEntry>> {
-        let entries = self.changelog(game, source, id, to).await?;
+        let entries = self.changelog(lookup, source, id, to).await?;
         let compare = |a: &str, b: &str| self.source(source).ok()?.compare_versions(a, b);
         Ok(changelog::between(&entries, from, to, compare))
     }

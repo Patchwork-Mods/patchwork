@@ -81,7 +81,9 @@ pub async fn preview_updates(
 ) -> CmdResult<UpdatePreview> {
     let pw = &app.pw;
     let r = profile_ref(&id)?;
-    let game = pw.load_profile(&r).map_err(msg)?.game;
+    let loaded = pw.load_profile(&r).map_err(msg)?;
+    let lookup = pw.lookup(&loaded).map_err(msg)?;
+    let game = loaded.game;
     let Some(lock) = pw.load_lock(&r).map_err(msg)? else {
         return Ok(UpdatePreview {
             updates: Vec::new(),
@@ -97,10 +99,10 @@ pub async fn preview_updates(
         .collect();
     let checked: Vec<Result<Option<PendingUpdate>, String>> = stream::iter(candidates)
         .map(|m| {
-            let game = &game;
+            let (game, lookup) = (&game, &lookup);
             async move {
                 let versions = pw
-                    .versions_since(game, &m.source, &m.id, since)
+                    .versions_since(lookup, &m.source, &m.id, since)
                     .await
                     .map_err(|e| format!("{}: {e}", m.name))?;
                 let Some(newest) = versions.into_iter().next() else {
@@ -110,7 +112,13 @@ pub async fn preview_updates(
                     return Ok(None);
                 }
                 let changes = pw
-                    .changes(game, &m.source, &m.id, m.version.as_deref(), Some(&newest))
+                    .changes(
+                        lookup,
+                        &m.source,
+                        &m.id,
+                        m.version.as_deref(),
+                        Some(&newest),
+                    )
                     .await;
                 let key = m.key();
                 let (changes, changelog_error) = match changes {
@@ -160,7 +168,7 @@ pub async fn mod_changelog(
         .find(|m| mod_key(&m.source, &m.id) == key)
         .ok_or_else(|| format!("{} has no mod {key}", profile.label()))?;
     let entries = pw
-        .changelog(&profile.game, &m.source, &m.id, None)
+        .changelog(&pw.lookup(&profile).map_err(msg)?, &m.source, &m.id, None)
         .await
         .map_err(msg)?;
     Ok(ui_entries(entries))

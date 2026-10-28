@@ -493,8 +493,8 @@ async fn versions_being_fetched_are_waited_on_not_fetched_again() {
     pw.add_game(new_game("my-game", "none")).unwrap();
 
     let (a, b) = futures_util::future::join(
-        pw.versions("my-game", "slow", "a"),
-        pw.versions("my-game", "slow", "a"),
+        pw.versions(&Lookup::game("my-game"), "slow", "a"),
+        pw.versions(&Lookup::game("my-game"), "slow", "a"),
     )
     .await;
     assert_eq!(a.unwrap(), ["2.0", "1.0"]);
@@ -503,11 +503,13 @@ async fn versions_being_fetched_are_waited_on_not_fetched_again() {
 
     // ones fetched recently enough are used as they are
     let since = Timestamp::now() - SignedDuration::from_mins(5);
-    pw.versions_since("my-game", "slow", "a", since)
+    pw.versions_since(&Lookup::game("my-game"), "slow", "a", since)
         .await
         .unwrap();
     assert_eq!(fetches.load(SeqCst), 1);
-    pw.versions("my-game", "slow", "a").await.unwrap();
+    pw.versions(&Lookup::game("my-game"), "slow", "a")
+        .await
+        .unwrap();
     assert_eq!(fetches.load(SeqCst), 2);
 }
 

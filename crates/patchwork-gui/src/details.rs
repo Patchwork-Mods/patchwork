@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use patchwork_core::lock::mod_key;
 use patchwork_core::profile::ProfileRef;
 use patchwork_core::search::ModSummary;
-use patchwork_core::{KnownVersions, Patchwork};
+use patchwork_core::{KnownVersions, Lookup, Patchwork};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -40,6 +40,8 @@ impl Kind {
 #[derive(Clone)]
 struct Job {
     game: String,
+    /// What its versions are looked up for.
+    lookup: Lookup,
     source: String,
     id: String,
     name: String,
@@ -119,25 +121,26 @@ impl Details {
         }
         let (game, key) = (job.game.clone(), job.key.clone());
         let result = match kind {
-            Kind::Versions => pw
-                .versions(&job.game, &job.source, &job.id)
-                .await
-                .map(|versions| {
-                    let _ = handle.emit(
-                        "patchwork://details",
-                        DetailsEvent::Versions {
-                            game,
-                            key,
-                            versions,
-                        },
-                    );
-                    // a newer version than the summary knows of means the
-                    // mod's details (when it was updated, say) are out of
-                    // date too
-                    let summary = pw.known_summary(&job.game, &job.source, &job.id);
-                    let versions = pw.known_versions(&job.game, &job.source, &job.id);
-                    summary.zip(versions).is_some_and(|(s, v)| s.is_behind(&v))
-                }),
+            Kind::Versions => {
+                pw.versions(&job.lookup, &job.source, &job.id)
+                    .await
+                    .map(|versions| {
+                        let _ = handle.emit(
+                            "patchwork://details",
+                            DetailsEvent::Versions {
+                                game,
+                                key,
+                                versions,
+                            },
+                        );
+                        // a newer version than the summary knows of means the
+                        // mod's details (when it was updated, say) are out of
+                        // date too
+                        let summary = pw.known_summary(&job.game, &job.source, &job.id);
+                        let versions = pw.known_versions(&job.lookup, &job.source, &job.id);
+                        summary.zip(versions).is_some_and(|(s, v)| s.is_behind(&v))
+                    })
+            }
             Kind::Summary => {
                 let result = pw.summary(&job.game, &job.source, &job.id).await;
                 self.outdated.lock().unwrap().remove(&id.1);
@@ -169,6 +172,7 @@ pub fn refresh(handle: &AppHandle, profile: &ProfileRef) -> CmdResult<()> {
     let app = handle.state::<App>();
     let pw = &app.pw;
     let loaded = pw.load_profile(profile).map_err(msg)?;
+    let lookup = pw.lookup(&loaded).map_err(msg)?;
     let generation = app.details.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let mut versions = VecDeque::new();
     let mut summaries = VecDeque::new();
@@ -177,6 +181,7 @@ pub fn refresh(handle: &AppHandle, profile: &ProfileRef) -> CmdResult<()> {
         for m in loaded.mods {
             let job = Job {
                 game: loaded.game.clone(),
+                lookup: lookup.clone(),
                 key: mod_key(&m.source, &m.id),
                 source: m.source,
                 id: m.id,
@@ -184,7 +189,7 @@ pub fn refresh(handle: &AppHandle, profile: &ProfileRef) -> CmdResult<()> {
             };
             let versioned = pw.lists_versions(&job.source).unwrap_or(false);
             let known = versioned
-                .then(|| pw.known_versions(&job.game, &job.source, &job.id))
+                .then(|| pw.known_versions(&job.lookup, &job.source, &job.id))
                 .flatten();
             let summary_stale = outdated.contains(&job.mod_id())
                 || pw

@@ -51,13 +51,25 @@ use std::time::Duration;
 pub use error::{Error, Result};
 pub use patchwork::{
     Builder, Captured, Change, DeployStatus, GameInstall, HISTORY_LIMIT, HistoryEntry,
-    ImportOptions, Imported, KnownSummary, KnownVersions, Patchwork, ProfileChange, SyncApplied,
+    ImportOptions, Imported, KnownSummary, KnownVersions, Lookup, Patchwork, ProfileChange,
+    SyncApplied,
 };
 
 /// The HTTP client every request shares, so connections to a host are kept
 /// alive and reused rather than set up again (DNS, TCP, TLS) for each one.
 pub fn http() -> &'static reqwest::Client {
-    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+    // Some APIs (Modrinth's) ask clients to say who they are, and may block
+    // ones that don't.
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            .user_agent(concat!(
+                "patchwork-mods/patchwork/",
+                env!("CARGO_PKG_VERSION"),
+                " (https://github.com/patchwork-mods/patchwork)"
+            ))
+            .build()
+            .expect("the HTTP client's settings are valid")
+    });
     &CLIENT
 }
 

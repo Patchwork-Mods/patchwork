@@ -36,3 +36,22 @@ fn version_reqs_match() {
     assert_eq!(exact.matches("1.3", compare_dotted), Some(false));
     assert_eq!(VersionReq::Any.matches("beta", compare_dotted), Some(true));
 }
+
+#[test]
+fn file_names_from_urls_are_decoded() {
+    let name = |url: &str| {
+        ArtifactLocation::Url {
+            url: url.to_owned(),
+        }
+        .file_name()
+    };
+    assert_eq!(
+        name("https://cdn.modrinth.com/data/x/sodium-fabric-0.8.13%2Bmc1.21.1.jar?a=b"),
+        "sodium-fabric-0.8.13+mc1.21.1.jar"
+    );
+    assert_eq!(name("https://example.com/My%20Mod.zip"), "My Mod.zip");
+    // left alone when decoding wouldn't make a file name
+    assert_eq!(name("https://example.com/a%2Fb.zip"), "a%2Fb.zip");
+    assert_eq!(name("https://example.com/100%.zip"), "100%.zip");
+    assert_eq!(name("https://example.com/%FF.zip"), "%FF.zip");
+}

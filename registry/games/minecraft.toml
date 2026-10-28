@@ -1,0 +1,28 @@
+schema = 1
+id = "minecraft"
+name = "Minecraft: Java Edition"
+description = "Mods from Modrinth, for the Minecraft version and mod loader you pick for each profile. Point it at an instance's .minecraft folder from a launcher like Prism, which installs the loader and starts the game."
+
+# Each profile picks which Minecraft and mod loader it's for, and mods are
+# found to suit them. The instance has to be set up with the same.
+[env.version]
+name = "Minecraft version"
+
+[env.loader]
+name = "Mod loader"
+choices = ["fabric", "quilt", "forge", "neoforge"]
+default = "fabric"
+
+[sources.modrinth]
+project_types = ["mod"]
+
+# Quilt runs Fabric mods, and plenty are only uploaded for Fabric.
+[sources.modrinth.loaders]
+quilt = ["quilt", "fabric"]
+
+[deployer]
+kind = "rules"
+
+[[deployer.rules]]
+files = "*.jar"
+to = "mods/{file}"
