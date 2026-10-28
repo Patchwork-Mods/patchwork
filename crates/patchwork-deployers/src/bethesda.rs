@@ -331,10 +331,12 @@ impl Deployer for BethesdaDeployer {
             .collect();
         if !unlisted.is_empty() {
             warnings.push(format!(
-                "{} in {} {} from any of the profile's mods, so the game won't load {} while it's deployed: {}",
+                "{} in {} {} from any of the profile's mods, so the game won't load {} while it's deployed (if a tool made {}, `patchwork capture` keeps {} as a mod): {}",
                 if unlisted.len() == 1 { "a plugin" } else { "plugins" },
                 plugins.folder,
                 if unlisted.len() == 1 { "isn't" } else { "aren't" },
+                if unlisted.len() == 1 { "it" } else { "them" },
+                if unlisted.len() == 1 { "it" } else { "them" },
                 if unlisted.len() == 1 { "it" } else { "them" },
                 unlisted.join(", ")
             ));

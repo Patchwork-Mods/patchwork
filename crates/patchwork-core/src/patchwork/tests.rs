@@ -116,6 +116,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         roots: Default::default(),
         launch: Default::default(),
         fomod: None,
+        capture: None,
     }
 }
 
@@ -1894,4 +1895,96 @@ async fn installers_deploy_the_options_picked() {
     pw.set_installer(&profile, "Pretty", None).unwrap();
     pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
     assert_eq!(fs::read_to_string(&look).unwrap(), "plain");
+}
+
+#[tokio::test]
+async fn what_tools_write_is_captured_as_a_mod() {
+    let tmp = tempfile::tempdir().unwrap();
+    let packed = tmp.path().join("mods/Body");
+    fs::create_dir_all(packed.join("Data/meshes")).unwrap();
+    fs::write(packed.join("Data/meshes/body.nif"), "base body").unwrap();
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
+        .source(LocalFiles)
+        .deployer(AsPacked)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "as-packed");
+    def.capture = Some(crate::game::CaptureDef {
+        folders: vec![RelPath::new("Data").unwrap()],
+        ignore: vec!["**/*.log".to_owned().try_into().unwrap()],
+    });
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(game.join("Data")).unwrap();
+    fs::write(game.join("Data/Game.esm"), "the game's own").unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let game = game.canonicalize().unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    pw.add_mod(&profile, local_spec(&packed), None, true)
+        .await
+        .unwrap();
+
+    // nothing to capture from until it's deployed
+    assert!(pw.tool_output(&profile).is_err());
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert!(pw.tool_output(&profile).unwrap().is_empty());
+
+    // a tool writes a plugin and rebuilds the body, and its log is left be
+    fs::write(game.join("Data/Patch.esp"), "patch").unwrap();
+    fs::remove_file(game.join("Data/meshes/body.nif")).unwrap();
+    fs::write(game.join("Data/meshes/body.nif"), "built body").unwrap();
+    fs::write(game.join("Data/tool.log"), "log").unwrap();
+    // deploying again before capturing doesn't lose track of them
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    let output = pw.tool_output(&profile).unwrap();
+    assert_eq!(output.files.len(), 1, "{output:?}");
+    assert_eq!(output.files[0].path.as_str(), "Data/Patch.esp");
+    // ... though the body went back to the mod's
+    assert_eq!(
+        fs::read_to_string(game.join("Data/meshes/body.nif")).unwrap(),
+        "base body"
+    );
+    fs::remove_file(game.join("Data/meshes/body.nif")).unwrap();
+    fs::write(game.join("Data/meshes/body.nif"), "built body").unwrap();
+
+    let captured = pw.capture(&profile, "Tool Output").await.unwrap();
+    assert!(captured.added);
+    assert_eq!(captured.output.files.len(), 2);
+    assert_eq!(
+        captured.output.files[1].replaces.as_deref(),
+        Some("Body"),
+        "{:?}",
+        captured.output
+    );
+    assert!(!game.join("Data/Patch.esp").exists());
+    let loaded = pw.load_profile(&profile).unwrap();
+    assert_eq!(loaded.mods.last().unwrap().name, "Tool Output");
+
+    // deploying puts them back, from the mod, which wins over the body's
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(
+        fs::read_to_string(game.join("Data/Patch.esp")).unwrap(),
+        "patch"
+    );
+    assert_eq!(
+        fs::read_to_string(game.join("Data/meshes/body.nif")).unwrap(),
+        "built body"
+    );
+    assert!(pw.tool_output(&profile).unwrap().is_empty());
+
+    // running the tool again adds to the same mod
+    fs::write(game.join("Data/Another.esp"), "another").unwrap();
+    let captured = pw.capture(&profile, "Tool Output").await.unwrap();
+    assert!(!captured.added);
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(
+        fs::read_to_string(game.join("Data/Another.esp")).unwrap(),
+        "another"
+    );
+    assert_eq!(pw.load_profile(&profile).unwrap().mods.len(), 2);
+
+    // a mod that wasn't captured isn't added to
+    fs::write(game.join("Data/Third.esp"), "third").unwrap();
+    assert!(pw.capture(&profile, "Body").await.is_err());
+    assert!(game.join("Data/Third.esp").exists());
 }

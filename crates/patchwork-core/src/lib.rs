@@ -10,6 +10,7 @@
 //! Ways of sharing profiles (zips, URL lists, mod manager codes) plug in
 //! through [`share::ProfileFormat`].
 
+pub mod capture;
 pub mod changelog;
 pub mod compat;
 pub mod conflicts;
@@ -49,8 +50,8 @@ use std::time::Duration;
 
 pub use error::{Error, Result};
 pub use patchwork::{
-    Builder, Change, DeployStatus, GameInstall, HISTORY_LIMIT, HistoryEntry, ImportOptions,
-    Imported, KnownSummary, KnownVersions, Patchwork, ProfileChange, SyncApplied,
+    Builder, Captured, Change, DeployStatus, GameInstall, HISTORY_LIMIT, HistoryEntry,
+    ImportOptions, Imported, KnownSummary, KnownVersions, Patchwork, ProfileChange, SyncApplied,
 };
 
 /// The HTTP client every request shares, so connections to a host are kept

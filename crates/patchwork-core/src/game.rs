@@ -48,6 +48,30 @@ pub struct GameDef {
     /// goes. Without it, mods with one are deployed as they're packed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fomod: Option<FomodDef>,
+    /// Where tools the user runs on their own (ones that generate LOD,
+    /// animations or patches, say) write files that should be kept as a
+    /// mod. Without it, nothing is captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<CaptureDef>,
+}
+
+/// Where to look for files that tools wrote into the game's folder, so
+/// they can be captured as a mod (see [`crate::capture`]).
+///
+/// ```toml
+/// [capture]
+/// # Folders in the game's that tools write to. What's in them when a
+/// # profile is deployed is taken to be the game's own.
+/// folders = ["Data"]
+/// # Files in them never to capture, like logs and caches.
+/// ignore = ["**/*.log"]
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureDef {
+    pub folders: Vec<RelPath>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<FilePattern>,
 }
 
 /// How a game's mods' FOMOD installers (see [`crate::fomod`]) are used.

@@ -193,6 +193,14 @@ enum Command {
         #[arg(long)]
         verify: bool,
     },
+    /// Keep what tools (DynDOLOD, Nemesis, Synthesis, BodySlide...) wrote
+    /// into the game's folder since the profile was deployed, as a mod, and
+    /// deploy again. Without a name, just lists what would be kept.
+    Capture {
+        /// The mod to keep the files in. It's added to the end of the
+        /// profile, or added to if it was captured into before.
+        name: Option<String>,
+    },
     /// List the profile's past deploys and what changed in each.
     History,
     /// Put the profile's mods and their versions back how they were at a
@@ -826,6 +834,48 @@ async fn run(cli: Cli) -> Result<()> {
             let check = if verify { Check::Full } else { Check::Quick };
             let plan = pw.plan_deploy_checked(&profile, check).await?;
             finish(&pw, &plan, dry_run)?;
+        }
+        Command::Capture { name } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let output = match &name {
+                Some(name) => pw.capture(&profile, name).await?.output,
+                None => pw.tool_output(&profile)?,
+            };
+            for file in &output.files {
+                match &file.replaces {
+                    Some(m) => println!("{}  (replaces {m}'s)", file.path),
+                    None => println!("{}", file.path),
+                }
+            }
+            if !output.changed.is_empty() {
+                eprintln!(
+                    "warning: the game's own {} changed, and can't be kept as a mod: {}",
+                    if output.changed.len() == 1 {
+                        "file was"
+                    } else {
+                        "files were"
+                    },
+                    output
+                        .changed
+                        .iter()
+                        .map(|p| p.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            let n = output.files.len();
+            let files = format!("{n} file{}", if n == 1 { "" } else { "s" });
+            match name {
+                _ if n == 0 => println!("no files to capture for {}", loaded.label()),
+                None => {
+                    println!("{files} to capture; `patchwork capture <name>` keeps them as a mod")
+                }
+                Some(name) => {
+                    println!("captured {files} into `{name}`");
+                    let plan = pw.plan_deploy(&profile).await?;
+                    finish(&pw, &plan, false)?;
+                }
+            }
         }
         Command::History => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;

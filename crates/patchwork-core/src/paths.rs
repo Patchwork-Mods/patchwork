@@ -127,6 +127,13 @@ impl Paths {
         self.data.join("deployments")
     }
 
+    /// What tools wrote into games' folders, captured as local mods, in
+    /// `captured/<profile id>/<mod name>/`. Each is where its mod was added
+    /// from, so capturing again updates it.
+    pub fn captured(&self) -> PathBuf {
+        self.data.join("captured")
+    }
+
     pub fn backups(&self) -> PathBuf {
         self.data.join("backups")
     }

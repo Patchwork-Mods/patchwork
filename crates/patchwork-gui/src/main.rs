@@ -463,6 +463,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         roots: Default::default(),
         launch: Default::default(),
         fomod: None,
+        capture: None,
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
     if let Some(path) = filled(game.install) {

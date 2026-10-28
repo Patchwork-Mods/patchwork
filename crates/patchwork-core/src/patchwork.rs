@@ -2555,11 +2555,29 @@ impl Patchwork {
     pub fn apply(&self, plan: &DeployPlan) -> Result<DeployState> {
         let target = &plan.target;
         let mut state = self.deploy_state(target)?;
+        // What was in the game's folder before, if it's still the same
+        // folder; see `crate::capture`. Undeploying forgets it.
+        let previous = state
+            .baseline
+            .take()
+            .filter(|_| plan.profile.is_some() && state.root == plan.roots.game_path());
         if state.files.is_empty() {
             state = DeployState::empty(target.game(), &plan.roots);
         }
         let backups = self.paths.backups().join(target.key());
         let result = deploy::apply(plan, &mut state, &backups, self.reporter.as_ref());
+        // What's in it now, so what tools write there later can be told
+        // apart from it. What's deployed is left out, so that has to have
+        // finished.
+        state.baseline = previous.clone();
+        if result.is_ok() && plan.profile.is_some() {
+            match self.capture_baseline(target.game(), &state, previous.as_ref()) {
+                Ok(baseline) => state.baseline = baseline,
+                Err(e) => self.reporter.report(Event::Warning(format!(
+                    "couldn't record what's in the game's folder, so files tools write there might not be found: {e}"
+                ))),
+            }
+        }
         // Saved even on failure, so whatever did get deployed can be undone.
         fsutil::write_json(&self.deploy_state_file(target), &state)?;
         self.prune_generated(target, &state, plan.inputs);
@@ -2949,11 +2967,13 @@ fn visit<'a>(
     order.push(locked);
 }
 
+mod capture;
 mod history;
 mod local;
 mod profiles;
 mod sync;
 
+pub use capture::Captured;
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use sync::{Applied as SyncApplied, ProfileChange};
 

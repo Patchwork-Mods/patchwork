@@ -1109,3 +1109,64 @@ fn skyrim_installers_install_the_options_picked() {
     assert_eq!(read(game.join("Data/textures/glow.dds")), "soft");
     assert!(!game.join("Data/SKSE/Plugins/Lanterns.dll").exists());
 }
+
+#[test]
+fn what_skyrim_tools_make_is_captured_and_loaded() {
+    let env = Env::new();
+    let game = env.path("Skyrim Special Edition");
+    fs::create_dir_all(game.join("Data")).unwrap();
+    fs::write(game.join("Data/Skyrim.esm"), plugin(true, &[])).unwrap();
+    let appdata = env.path("AppData/Local/Skyrim Special Edition");
+    fs::create_dir_all(&appdata).unwrap();
+    env.run(&["game", "set-path", "skyrim-se", game.to_str().unwrap()]);
+    env.run(&[
+        "game",
+        "set",
+        "skyrim-se",
+        "root.appdata",
+        appdata.to_str().unwrap(),
+    ]);
+    env.run(&["profile", "new", "skyrim-se/main"]);
+    let trees = env.path("Trees");
+    fs::create_dir_all(trees.join("meshes")).unwrap();
+    fs::write(trees.join("Trees.esp"), plugin(false, &["Skyrim.esm"])).unwrap();
+    fs::write(trees.join("meshes/tree.nif"), "tree").unwrap();
+    env.run(&["add", trees.to_str().unwrap()]);
+    env.run(&["deploy"]);
+    assert!(env.run(&["capture"]).contains("no files to capture"));
+
+    // DynDOLOD-ish output: a plugin and LOD meshes, plus a log
+    fs::create_dir_all(game.join("Data/meshes/lod")).unwrap();
+    fs::write(
+        game.join("Data/DynDOLOD.esp"),
+        plugin(false, &["Trees.esp"]),
+    )
+    .unwrap();
+    fs::write(game.join("Data/meshes/lod/tree_lod.nif"), "lod").unwrap();
+    fs::write(game.join("Data/DynDOLOD.log"), "log").unwrap();
+    // left out of the load order until it's a mod's
+    let out = Command::new(env!("CARGO_BIN_EXE_patchwork"))
+        .args(["deploy", "--dry-run"])
+        .env("PATCHWORK_HOME", env.path("home"))
+        .output()
+        .unwrap();
+    let warnings = String::from_utf8_lossy(&out.stderr);
+    assert!(warnings.contains("patchwork capture"), "{warnings}");
+
+    let listed = env.run(&["capture"]);
+    assert!(listed.contains("Data/DynDOLOD.esp"), "{listed}");
+    assert!(listed.contains("Data/meshes/lod/tree_lod.nif"), "{listed}");
+    assert!(!listed.contains("DynDOLOD.log"), "{listed}");
+    assert!(listed.contains("2 files to capture"), "{listed}");
+
+    let out = env.run(&["capture", "DynDOLOD Output"]);
+    assert!(
+        out.contains("captured 2 files into `DynDOLOD Output`"),
+        "{out}"
+    );
+    assert_eq!(read(game.join("Data/meshes/lod/tree_lod.nif")), "lod");
+    assert!(env.run(&["list"]).contains("DynDOLOD Output"));
+    let order = read(appdata.join("plugins.txt"));
+    assert!(order.contains("*Trees.esp\r\n*DynDOLOD.esp"), "{order}");
+    assert!(env.run(&["capture"]).contains("no files to capture"));
+}

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::capture::Baseline;
 use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter};
@@ -374,6 +375,11 @@ pub struct DeployState {
     /// [`DeployPlan::env`] of the last deploy that finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<GameEnv>,
+    /// What was in the game's capture folders after the last deploy that
+    /// finished, besides what patchwork put there; see [`crate::capture`].
+    /// `None` for games without any, and until a profile is deployed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<Baseline>,
 }
 
 impl DeployState {
@@ -388,6 +394,7 @@ impl DeployState {
             created_dirs: BTreeSet::new(),
             inputs: None,
             env: None,
+            baseline: None,
         };
         state.set_roots(roots);
         state

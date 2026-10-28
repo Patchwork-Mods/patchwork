@@ -27,6 +27,14 @@ markers = [
 [fomod]
 folder = "Data"
 
+# Tools like DynDOLOD, Nemesis, Synthesis and BodySlide write their output
+# into Data. `patchwork capture` keeps whatever's new there since the
+# profile was deployed as a mod of its own, so it's deployed (and its
+# plugins loaded) like any other.
+[capture]
+folders = ["Data"]
+ignore = ["**/*.log"]
+
 [[deployer.rules]]
 folder = "Data"
 to = "Data/{path}"
