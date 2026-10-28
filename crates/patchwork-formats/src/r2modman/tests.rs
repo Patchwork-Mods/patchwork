@@ -50,6 +50,7 @@ fn locked(source: &str, id: &str, version: &str, dependencies: &[&str]) -> Locke
         requires: Default::default(),
         game_versions: None,
         env: Default::default(),
+        kind: None,
     }
 }
 

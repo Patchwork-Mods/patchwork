@@ -32,6 +32,7 @@ fn locked(id: &str, version: &str, deps: &[&str]) -> LockedMod {
         requires: BTreeMap::new(),
         game_versions: None,
         env: Default::default(),
+        kind: None,
     }
 }
 

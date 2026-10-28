@@ -332,6 +332,7 @@ fn nexus_to_resolved_mod(game: &GameDef, mod_: &NexusMod, file: &NexusFile) -> R
         dependencies: Vec::new(),
         game_versions: game_versions(game, file),
         env: Default::default(),
+        kind: None,
     }
 }
 

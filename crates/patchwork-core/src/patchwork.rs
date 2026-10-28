@@ -1656,6 +1656,7 @@ impl Patchwork {
                 .collect(),
             game_versions,
             env: resolved.env,
+            kind: resolved.kind,
         };
         Ok(Locking::Locked(Box::new(locked), Some(key)))
     }
@@ -2390,6 +2391,7 @@ impl Patchwork {
             version: locked.version.clone(),
             hash: locked.hash,
             files,
+            kind: locked.kind.clone(),
         })
     }
 

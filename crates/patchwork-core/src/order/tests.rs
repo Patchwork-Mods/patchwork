@@ -175,6 +175,7 @@ fn lock(entries: &[(&str, &[&str])]) -> Lockfile {
             requires: Default::default(),
             game_versions: None,
             env: Default::default(),
+            kind: None,
         })
         .collect();
     Lockfile {

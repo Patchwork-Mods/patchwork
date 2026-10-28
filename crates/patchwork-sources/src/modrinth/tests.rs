@@ -158,6 +158,28 @@ fn converts_a_version() {
         loaders,
         [(LOADER, ["fabric".to_owned(), "quilt".to_owned()].as_slice())]
     );
+    assert_eq!(resolved.kind.as_deref(), Some("mod"));
+}
+
+#[test]
+fn kinds_are_project_types() {
+    let game = minecraft();
+    let config = config(&ctx(&game, None)).unwrap();
+    let kind = |project_type: &str, loaders: &[&str]| {
+        let mut project: Project = serde_json::from_str(PROJECT).unwrap();
+        project.project_type = project_type.to_owned();
+        let mut version = version("1.0", "release");
+        version.loaders = loaders.iter().map(|l| l.to_string()).collect();
+        to_resolved(&game, &config, &project, version, &HashMap::new())
+            .unwrap()
+            .kind
+            .unwrap()
+    };
+    assert_eq!(kind("shader", &["iris", "optifine"]), "shader");
+    assert_eq!(kind("resourcepack", &["minecraft"]), "resourcepack");
+    // Modrinth calls datapacks mods that only load as datapacks
+    assert_eq!(kind("mod", &["datapack"]), "datapack");
+    assert_eq!(kind("mod", &["datapack", "fabric"]), "mod");
 }
 
 #[test]

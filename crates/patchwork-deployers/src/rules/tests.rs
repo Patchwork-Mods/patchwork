@@ -41,7 +41,16 @@ fn bepinex() -> Vec<CompiledRule> {
 }
 
 fn dst(rules: &[CompiledRule], mod_name: &str, path: &str) -> Option<String> {
-    match place(rules, mod_name, &RelPath::new(path).unwrap()).unwrap() {
+    kind_dst(rules, mod_name, None, path)
+}
+
+fn kind_dst(
+    rules: &[CompiledRule],
+    mod_name: &str,
+    kind: Option<&str>,
+    path: &str,
+) -> Option<String> {
+    match place(rules, mod_name, kind, &RelPath::new(path).unwrap()).unwrap() {
         Outcome::Place(p) => Some(p.to_string()),
         _ => None,
     }
@@ -218,6 +227,7 @@ fn mod_filters_and_escapes() {
                 files: Some(files.to_owned()),
                 folder: None,
                 mods: mods.map(|m| Patterns::One(m.to_owned())),
+                kinds: None,
                 strip: 0,
                 to: Some(to.to_owned()),
                 skip: false,
@@ -232,7 +242,7 @@ fn mod_filters_and_escapes() {
     assert_eq!(dst(&rules, "Small", "a.pak"), None);
 
     let evil = [rule("**", None, "../{path}")];
-    assert!(place(&evil, "m", &RelPath::new("x").unwrap()).is_err());
+    assert!(place(&evil, "m", None, &RelPath::new("x").unwrap()).is_err());
 }
 
 #[test]
@@ -241,6 +251,53 @@ fn mod_lists() {
     assert_eq!(dst(&rules, "a-thing", "f").as_deref(), Some("x/f"));
     assert_eq!(dst(&rules, "b-EXACT", "f").as_deref(), Some("x/f"));
     assert_eq!(dst(&rules, "c", "f"), None);
+}
+
+#[test]
+fn kinds() {
+    let rules = parse(
+        r#"
+[[rules]]
+kinds = "shader"
+to = "shaderpacks/{file}"
+
+[[rules]]
+kinds = ["resourcepack", "texture*"]
+to = "resourcepacks/{file}"
+
+[[rules]]
+files = "*.jar"
+to = "mods/{file}"
+"#,
+    )
+    .unwrap();
+    let cases = [
+        (Some("shader"), "pack.zip", Some("shaderpacks/pack.zip")),
+        (Some("Shader"), "pack.zip", Some("shaderpacks/pack.zip")),
+        (
+            Some("resourcepack"),
+            "pack.zip",
+            Some("resourcepacks/pack.zip"),
+        ),
+        (
+            Some("texturepack"),
+            "pack.zip",
+            Some("resourcepacks/pack.zip"),
+        ),
+        (Some("mod"), "sodium.jar", Some("mods/sodium.jar")),
+        // A kind no rule names still goes by its files...
+        (Some("mod"), "pack.zip", None),
+        // ...and so does a mod whose source doesn't say.
+        (None, "pack.zip", None),
+        (None, "sodium.jar", Some("mods/sodium.jar")),
+    ];
+    for (kind, path, want) in cases {
+        assert_eq!(
+            kind_dst(&rules, "m", kind, path).as_deref(),
+            want,
+            "{kind:?} {path}"
+        );
+    }
 }
 
 #[test]
@@ -306,6 +363,7 @@ fn deploy(config: &str, files: &[&str]) -> Result<(Vec<String>, Vec<String>)> {
                 src: f.into(),
             })
             .collect(),
+        kind: None,
     };
     let mut desired = DesiredState::default();
     RulesDeployer.plan_mod(&setup, &m, &mut desired)?;

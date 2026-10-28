@@ -62,6 +62,10 @@ pub struct LockedMod {
     /// works with.
     #[serde(default, skip_serializing_if = "EnvSupport::is_empty")]
     pub env: EnvSupport,
+    /// What sort of thing the source says this is, from
+    /// [`crate::source::ResolvedMod::kind`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 impl LockedMod {

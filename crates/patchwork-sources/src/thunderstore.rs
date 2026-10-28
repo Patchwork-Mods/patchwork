@@ -175,6 +175,7 @@ fn thunderstore_to_resolved_mod(mod_: PackageVersion) -> Option<ResolvedMod> {
         dependencies,
         game_versions: None,
         env: Default::default(),
+        kind: None,
     })
 }
 

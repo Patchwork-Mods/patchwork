@@ -201,6 +201,7 @@ fn placements_can_only_come_from_mods_and_builds() {
             rel: rel("a.dll"),
             src: src.clone(),
         }],
+        kind: None,
     };
     let out = env.store.join("out");
     fs::create_dir_all(&out).unwrap();
@@ -359,6 +360,7 @@ fn placements_need_a_root_the_target_has() {
             rel: rel.clone(),
             src,
         }],
+        kind: None,
     };
     let place = Placement {
         dst: "appdata:a.txt".parse().unwrap(),

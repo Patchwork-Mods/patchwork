@@ -35,6 +35,10 @@ use serde::Deserialize;
 /// to = "BepInEx/plugins/{mod}/{path}"
 ///
 /// [[deployer.rules]]
+/// kinds = "shader"           # mods whose source says they're this kind
+/// to = "shaderpacks/{file}"
+///
+/// [[deployer.rules]]
 /// ruleset = "bepinex"        # a ruleset's rules, at this point in the list
 ///
 /// [deployer.root]
@@ -107,6 +111,9 @@ struct Rule {
     files: Option<String>,
     folder: Option<String>,
     mods: Option<Patterns>,
+    /// Globs for the kind of mod its source says it is. Mods whose source
+    /// doesn't say never match.
+    kinds: Option<Patterns>,
     #[serde(default)]
     strip: usize,
     to: Option<String>,
@@ -126,6 +133,7 @@ struct CompiledRule {
     files: GlobMatcher,
     folder: Option<String>,
     mods: Option<GlobSet>,
+    kinds: Option<GlobSet>,
     strip: usize,
     to: String,
     skip: bool,
@@ -190,6 +198,7 @@ impl RulesDeployer {
                     let alone = rule.files.is_none()
                         && rule.folder.is_none()
                         && rule.mods.is_none()
+                        && rule.kinds.is_none()
                         && rule.strip == 0
                         && rule.to.is_none()
                         && !rule.skip;
@@ -250,12 +259,17 @@ impl RulesDeployer {
         })
     }
 
+    fn patterns(&self, patterns: Option<Patterns>) -> Result<Option<GlobSet>> {
+        match patterns {
+            None => Ok(None),
+            Some(Patterns::One(p)) => self.glob_set(&[p]).map(Some),
+            Some(Patterns::Many(ps)) => self.glob_set(&ps).map(Some),
+        }
+    }
+
     fn compile(&self, rule: Rule) -> Result<CompiledRule> {
-        let mods = match rule.mods {
-            None => None,
-            Some(Patterns::One(p)) => Some(self.glob_set(&[p])?),
-            Some(Patterns::Many(ps)) => Some(self.glob_set(&ps)?),
-        };
+        let mods = self.patterns(rule.mods)?;
+        let kinds = self.patterns(rule.kinds)?;
         if let Some(folder) = &rule.folder
             && (folder.is_empty() || folder.contains(['/', '\\']))
         {
@@ -267,6 +281,7 @@ impl RulesDeployer {
                 .compile_matcher(),
             folder: rule.folder,
             mods,
+            kinds,
             strip: rule.strip,
             to: rule.to.unwrap_or_else(|| "{path}".to_owned()),
             skip: rule.skip,
@@ -293,7 +308,7 @@ impl RulesDeployer {
                 }
                 RelPath::new(&parts[top.len()..].join("/")).map_err(|e| self.error(e))?
             };
-            let outcome = place(&setup.rules, &m.name, &rel)
+            let outcome = place(&setup.rules, &m.name, m.kind.as_deref(), &rel)
                 .map_err(|e| self.error(format!("`{}`: {e}", m.name)))?;
             match outcome {
                 Outcome::Place(dst) => desired.placements.push(Placement {
@@ -379,7 +394,13 @@ impl CompiledRoot {
     }
 }
 
-fn place(rules: &[CompiledRule], mod_name: &str, rel: &RelPath) -> Result<Outcome, String> {
+/// Where the file at `rel` in mod `mod_name`, of kind `kind`, goes.
+fn place(
+    rules: &[CompiledRule],
+    mod_name: &str,
+    kind: Option<&str>,
+    rel: &RelPath,
+) -> Result<Outcome, String> {
     let parts: Vec<_> = rel.components().collect();
     // Like r2modman, the outermost folder that any rule names claims the
     // file, so `config/plugins/x.cfg` is config even if plugins comes first.
@@ -393,6 +414,10 @@ fn place(rules: &[CompiledRule], mod_name: &str, rel: &RelPath) -> Result<Outcom
     for rule in rules {
         if !rule.files.is_match(rel.as_str())
             || rule.mods.as_ref().is_some_and(|m| !m.is_match(mod_name))
+            || rule
+                .kinds
+                .as_ref()
+                .is_some_and(|k| !kind.is_some_and(|kind| k.is_match(kind)))
         {
             continue;
         }

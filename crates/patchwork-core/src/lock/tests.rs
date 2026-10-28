@@ -20,6 +20,7 @@ fn locked(id: &str, version: &str, requested: bool, requires: &[(&str, &str)]) -
             .collect(),
         game_versions: None,
         env: Default::default(),
+        kind: None,
     }
 }
 

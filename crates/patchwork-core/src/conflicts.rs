@@ -264,6 +264,7 @@ mod tests {
             version: None,
             hash,
             files,
+            kind: None,
         };
         (m, placements)
     }

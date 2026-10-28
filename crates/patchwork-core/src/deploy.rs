@@ -46,6 +46,9 @@ pub struct InstalledMod {
     pub version: Option<String>,
     pub hash: ContentHash,
     pub files: Vec<ModFile>,
+    /// What sort of thing its source says it is, like `shader`, if it
+    /// says.
+    pub kind: Option<String>,
 }
 
 pub struct DeployContext<'a> {

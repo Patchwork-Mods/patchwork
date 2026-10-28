@@ -12,6 +12,10 @@
 //! loaders; a project's others (`datapack`, `iris`, `minecraft`, ...) are
 //! what it's for rather than what it runs on.
 //!
+//! Each mod's kind is its project type (`mod`, `resourcepack`, `shader`,
+//! `datapack`, ...), which deployer rules can match with `kinds`, since a
+//! resource pack and a shader pack are both just a zip.
+//!
 //! ```toml
 //! [sources.modrinth]
 //! # What searches find: any of `mod`, `resourcepack`, `shader`, `datapack`
@@ -346,6 +350,7 @@ fn to_resolved(
         true => EnvSupport::default(),
         false => EnvSupport::default().with(LOADER, loaders),
     };
+    let kind = kind(project, &version);
     let game_versions = match version.game_versions.is_empty() {
         true => None,
         false => GameVersions::try_from(version.game_versions.clone()).ok(),
@@ -361,7 +366,18 @@ fn to_resolved(
         dependencies,
         game_versions,
         env,
+        kind: Some(kind),
     })
+}
+
+/// What `version` of `project` is: its project type, except that
+/// datapacks are `mod` projects whose only loader is `datapack`.
+fn kind(project: &Project, version: &Version) -> String {
+    let datapack = !version.loaders.is_empty() && version.loaders.iter().all(|l| l == "datapack");
+    match datapack {
+        true => "datapack".to_owned(),
+        false => project.project_type.clone(),
+    }
 }
 
 /// Fails if the game picks its version but the profile hasn't, since

@@ -46,6 +46,7 @@ impl Source for LocalSource {
             dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
+            kind: None,
         })
     }
 }

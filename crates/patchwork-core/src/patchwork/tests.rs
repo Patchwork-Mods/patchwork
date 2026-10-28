@@ -169,6 +169,7 @@ impl Source for FixedUrl {
             dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
+            kind: None,
         })
     }
 }
@@ -228,6 +229,7 @@ impl Source for OwnFiles {
             dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
+            kind: None,
         })
     }
 
@@ -409,6 +411,7 @@ impl Source for Versioned {
             dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
+            kind: None,
         })
     }
 }
@@ -905,6 +908,7 @@ impl Source for LocalFiles {
             dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
+            kind: None,
         })
     }
 }
@@ -1116,6 +1120,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         requires: BTreeMap::new(),
         game_versions: None,
         env: Default::default(),
+        kind: None,
     };
     let mut loaded = pw.load_profile(&profile).unwrap();
     loaded.mods = vec![local_mod(&file), local_mod(&imported), local_mod(&unlocked)];
@@ -1270,6 +1275,7 @@ impl Source for ForOldGame {
             dependencies: Vec::new(),
             game_versions: Some("1.5.97".parse().unwrap()),
             env: Default::default(),
+            kind: None,
         })
     }
 }
@@ -2030,6 +2036,7 @@ impl Source for ByLoader {
             dependencies: Vec::new(),
             game_versions: None,
             env: compat::EnvSupport::default().with("loader", ["fabric"]),
+            kind: None,
         })
     }
 }

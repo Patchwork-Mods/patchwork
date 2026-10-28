@@ -173,6 +173,7 @@ impl Env {
             version: None,
             hash: ContentHash::of(name.as_bytes()),
             files,
+            kind: None,
         }
     }
 

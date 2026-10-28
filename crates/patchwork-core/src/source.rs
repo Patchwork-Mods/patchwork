@@ -295,6 +295,10 @@ pub struct ResolvedMod {
     /// Which values of the game's other `[env]` axes this works with, if
     /// the source can tell, like `loader = ["fabric", "quilt"]`.
     pub env: EnvSupport,
+    /// What sort of thing this is, in the source's own terms, if it has
+    /// more than one: Modrinth's `mod`, `resourcepack` or `shader`, say.
+    /// Deployers can tell artifacts apart by it when their files can't.
+    pub kind: Option<String>,
 }
 
 pub struct SourceContext<'a> {
