@@ -104,6 +104,7 @@ impl ProfileFormat for UrlList {
                 version: spec.version,
                 enabled: true,
                 game_versions: None,
+                fomod: None,
             });
         }
         if mods.is_empty() {

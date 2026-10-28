@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::Error;
 use crate::compat::GameVersions;
+use crate::fomod::Selection;
 use crate::plugins::PluginEntry;
 
 /// Schema 2 added `id` and `name`; profiles used to be identified by their
@@ -77,6 +78,10 @@ pub struct ProfileMod {
     /// its source says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_versions: Option<GameVersions>,
+    /// The options picked in the mod's FOMOD installer, if it has one and
+    /// any have been. Without them, it gets the installer's defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fomod: Option<Vec<Selection>>,
 }
 
 fn enabled_by_default() -> bool {

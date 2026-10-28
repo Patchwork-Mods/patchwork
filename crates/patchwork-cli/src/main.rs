@@ -8,6 +8,7 @@ use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
 use patchwork_core::event::{Event, Reporter, Silent};
+use patchwork_core::fomod::{GroupKind, InstallerView, OptionKind, Selection};
 use patchwork_core::issue::Severity;
 use patchwork_core::launch::{self, LaunchOption};
 use patchwork_core::locate::Locator;
@@ -108,6 +109,25 @@ enum Command {
         versions: Vec<String>,
         /// Go back to what the mod's source says.
         #[arg(long, conflicts_with = "versions")]
+        reset: bool,
+    },
+    /// Show the options in a mod's FOMOD installer and which are picked, or
+    /// pick them. Mods with an installer are deployed with the options it
+    /// recommends until some are picked.
+    Installer {
+        name: String,
+        /// Pick options in a group, as `GROUP=OPTION`, or `STEP/GROUP=OPTION`
+        /// if groups in different steps share a name. Separate several
+        /// options with commas, or give none to pick none. Repeat for more
+        /// groups; the picks are saved.
+        #[arg(long = "pick", value_name = "GROUP=OPTIONS")]
+        picks: Vec<String>,
+        /// Save the options as they're shown, keeping the recommended ones in
+        /// groups nothing's been picked in yet.
+        #[arg(long)]
+        save: bool,
+        /// Forget the options picked, going back to the recommended ones.
+        #[arg(long, conflicts_with_all = ["picks", "save"])]
         reset: bool,
     },
     /// Show a mod's changelog, newest first.
@@ -626,6 +646,37 @@ async fn run(cli: Cli) -> Result<()> {
                     println!("{name} works with any version, as far as patchwork knows")
                 }
             }
+        }
+        Command::Installer {
+            name,
+            picks,
+            save,
+            reset,
+        } => {
+            let (profile, _) = selected(&pw, &cli.profile)?;
+            let mut view = installer(&pw, &profile, &name, None)?;
+            if reset {
+                pw.set_installer(&profile, &name, None)?;
+                view = installer(&pw, &profile, &name, None)?;
+            } else if save || !picks.is_empty() {
+                let mut selections = view.selections.clone();
+                for pick in &picks {
+                    // Each pick can show steps that the next is in.
+                    let now = installer(&pw, &profile, &name, Some(&selections))?;
+                    let picked = find_pick(&now, pick)?;
+                    match selections
+                        .iter_mut()
+                        .find(|s| s.step == picked.step && s.group == picked.group)
+                    {
+                        Some(s) => *s = picked,
+                        None => selections.push(picked),
+                    }
+                }
+                view = installer(&pw, &profile, &name, Some(&selections))?;
+                pw.set_installer(&profile, &name, Some(view.selections.clone()))?;
+                view.saved = true;
+            }
+            print_installer(&name, &view);
         }
         Command::Versions { name } => {
             let (_, loaded) = selected(&pw, &cli.profile)?;
@@ -1580,6 +1631,135 @@ fn print_mods<'a>(
             m.source,
             ids(m)
         );
+    }
+}
+
+/// `name`'s installer with `picks`, or what the profile has saved.
+fn installer(
+    pw: &Patchwork,
+    profile: &ProfileRef,
+    name: &str,
+    picks: Option<&[Selection]>,
+) -> Result<InstallerView> {
+    pw.installer(profile, name, picks)?.with_context(|| {
+        format!("{name} doesn't have a FOMOD installer, or its game doesn't use them")
+    })
+}
+
+/// The group a `--pick` is for, with what it picks, by the names the
+/// installer uses.
+fn find_pick(view: &InstallerView, pick: &str) -> Result<Selection> {
+    let (at, options) = pick
+        .split_once('=')
+        .with_context(|| format!("`{pick}` should be GROUP=OPTIONS"))?;
+    let (step, group) = match at.split_once('/') {
+        Some((step, group)) => (Some(step.trim()), group.trim()),
+        None => (None, at.trim()),
+    };
+    let found: Vec<_> = view
+        .steps
+        .iter()
+        .filter(|s| step.is_none_or(|step| s.name.eq_ignore_ascii_case(step)))
+        .flat_map(|s| s.groups.iter().map(move |g| (s, g)))
+        .filter(|(_, g)| g.name.eq_ignore_ascii_case(group))
+        .collect();
+    let (s, g) = match found.as_slice() {
+        [found] => *found,
+        [] => {
+            bail!("the installer doesn't show a group called `{at}` with the options picked so far")
+        }
+        _ => bail!("more than one step has a group called `{group}`; say which, as STEP/{group}"),
+    };
+    let options = options
+        .split(',')
+        .map(str::trim)
+        .filter(|o| !o.is_empty())
+        .map(|o| {
+            g.options
+                .iter()
+                .find(|c| c.name.eq_ignore_ascii_case(o))
+                .map(|c| c.name.clone())
+                .with_context(|| {
+                    let names: Vec<_> = g.options.iter().map(|c| c.name.as_str()).collect();
+                    format!(
+                        "`{}` has no option called `{o}`; it has {}",
+                        g.name,
+                        names.join(", ")
+                    )
+                })
+        })
+        .collect::<Result<_>>()?;
+    Ok(Selection {
+        step: s.name.clone(),
+        group: g.name.clone(),
+        options,
+    })
+}
+
+fn print_installer(name: &str, view: &InstallerView) {
+    if view.name == name {
+        println!("installer for {name}");
+    } else {
+        println!("installer for {name} ({})", view.name);
+    }
+    for step in &view.steps {
+        println!();
+        println!("{}", step.name);
+        for group in &step.groups {
+            let (rule, single) = match group.kind {
+                GroupKind::ExactlyOne => ("pick one", true),
+                GroupKind::AtMostOne => ("pick one or none", true),
+                GroupKind::AtLeastOne => ("pick at least one", false),
+                GroupKind::All => ("all of these", false),
+                GroupKind::Any => ("pick any", false),
+            };
+            println!("  {} ({rule}):", group.name);
+            for option in &group.options {
+                let mark = match (single, option.picked) {
+                    (true, true) => "(*)",
+                    (true, false) => "( )",
+                    (false, true) => "[x]",
+                    (false, false) => "[ ]",
+                };
+                let kind = match option.kind {
+                    OptionKind::Required => " (required)",
+                    OptionKind::Recommended => " (recommended)",
+                    OptionKind::NotUsable => " (can't be used)",
+                    OptionKind::CouldBeUsable => " (might not work)",
+                    OptionKind::Optional => "",
+                };
+                println!("    {mark} {}{kind}", option.name);
+                if let Some(line) = option
+                    .description
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                {
+                    println!("        {}", truncate(line, 100));
+                }
+            }
+        }
+    }
+    println!();
+    let files = if view.files == 1 { "file" } else { "files" };
+    if view.saved {
+        println!("installs {} {files} with these options", view.files);
+    } else {
+        println!(
+            "installs {} {files} with the options it recommends, which are used until you pick some with --pick GROUP=OPTION, or keep these with --save",
+            view.files
+        );
+    }
+    for warning in &view.warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
+/// `text`, cut to about `max` characters.
+fn truncate(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text.to_owned(),
     }
 }
 

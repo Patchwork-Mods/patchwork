@@ -700,6 +700,32 @@
 			</form>
 		</dialog>
 
+		<!-- A mod's FOMOD installer, a step at a time; see installer.js. -->
+		<dialog id="installer-dialog">
+			<form method="dialog" class="stack">
+				<h2 id="installer-title">Installer</h2>
+				<p id="installer-step" class="installer-step"></p>
+				<div class="installer-body">
+					<div id="installer-groups" class="installer-groups"></div>
+					<aside class="installer-preview">
+						<img id="installer-picture" alt="" hidden />
+						<p id="installer-description" class="muted"></p>
+					</aside>
+				</div>
+				<ul id="installer-warnings" class="warnings"></ul>
+				<p id="installer-files" class="muted"></p>
+				<div class="row end">
+					<button type="button" id="installer-reset" class="installer-reset" hidden
+						title="Forget the options picked, and deploy with the ones the installer recommends">
+						Use recommended
+					</button>
+					<button value="cancel">Cancel</button>
+					<button type="button" id="installer-back">Back</button>
+					<button type="button" id="installer-next" class="primary">Next</button>
+				</div>
+			</form>
+		</dialog>
+
 		<dialog id="changelog-dialog">
 			<form method="dialog" class="stack">
 				<h2 id="changelog-title">Changelog</h2>

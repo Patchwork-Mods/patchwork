@@ -21,8 +21,11 @@ markers = [
     "meshes", "textures", "scripts", "interface", "sound", "music", "strings",
     "seq", "video", "lodsettings", "grass", "shadersfx", "materials", "SKSE",
 ]
-# FOMOD installers pick files from option folders, which needs its own step.
-unless = ["fomod/ModuleConfig.xml"]
+
+# Mods with a FOMOD installer are installed from the options picked in it,
+# which put files in Data.
+[fomod]
+folder = "Data"
 
 [[deployer.rules]]
 folder = "Data"

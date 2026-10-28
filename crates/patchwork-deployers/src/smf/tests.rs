@@ -194,6 +194,7 @@ impl Env {
             versions: Default::default(),
             roots: Default::default(),
             launch: Default::default(),
+            fomod: None,
         };
         let registry = Registry::default();
         let ctx = DeployContext {

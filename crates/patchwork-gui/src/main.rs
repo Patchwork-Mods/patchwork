@@ -8,6 +8,7 @@ mod details;
 mod selfupdate;
 mod sync;
 
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::sync::Mutex;
 
@@ -16,6 +17,7 @@ use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter, Silent};
+use patchwork_core::fomod::{InstallerView, Selection};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
 use patchwork_core::launch::{self, LaunchOption, Via};
@@ -215,6 +217,9 @@ struct UiMod {
     /// What a search would show for it (picture, summary, ...), as last
     /// fetched. The same goes for it as for `versions`.
     summary: Option<ModSummary>,
+    /// Whether it has a FOMOD installer its game uses, to pick options in.
+    /// Only known once it's been downloaded.
+    installer: bool,
 }
 
 #[derive(Serialize)]
@@ -298,6 +303,7 @@ fn image_src(image: &str) -> Option<String> {
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
         "gif" => "image/gif",
+        "bmp" => "image/bmp",
         "avif" => "image/avif",
         "svg" => "image/svg+xml",
         _ => return None,
@@ -348,6 +354,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         Vec::new()
     };
     let has_plugins = pw.has_plugins(&r).map_err(msg)?;
+    let installers = pw.installers(&r).map_err(msg)?;
     let launch_options = pw
         .launch_options(&loaded.game)
         .map_err(msg)?
@@ -376,6 +383,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                     .find(|l| l.key() == key)
                     .and_then(|l| l.version.clone()),
                 key,
+                installer: installers.contains(&m.name),
                 profile: m,
             }
         })
@@ -454,6 +462,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         versions: Default::default(),
         roots: Default::default(),
         launch: Default::default(),
+        fomod: None,
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
     if let Some(path) = filled(game.install) {
@@ -898,6 +907,59 @@ fn set_load_order(
     let r = profile_ref(&id)?;
     app.pw.set_load_order(&r, plugins).map_err(msg)?;
     ui_load_order(&app.pw, &r)
+}
+
+/// A mod's installer as the installer dialog shows it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiInstaller {
+    #[serde(flatten)]
+    view: InstallerView,
+    /// The options' pictures that the dialog didn't say it already has, as
+    /// something the webview can show, by their path in the mod.
+    pictures: BTreeMap<String, String>,
+}
+
+/// `name`'s installer with `picks`, or with what the profile has saved.
+/// `have` are the pictures the dialog already has, which aren't sent again.
+/// Async so unpacking the mod happens off the main thread.
+#[tauri::command]
+async fn installer(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    picks: Option<Vec<Selection>>,
+    have: Vec<String>,
+) -> CmdResult<Option<UiInstaller>> {
+    let Some(mut view) = app
+        .pw
+        .installer(&profile_ref(&id)?, &name, picks.as_deref())
+        .map_err(msg)?
+    else {
+        return Ok(None);
+    };
+    let images = std::mem::take(&mut view.images);
+    let pictures = images
+        .into_iter()
+        .filter(|(rel, _)| !have.contains(rel))
+        .filter_map(|(rel, path)| Some((rel, image_src(path.to_str()?)?)))
+        .collect();
+    Ok(Some(UiInstaller { view, pictures }))
+}
+
+/// Saves the options picked in `name`'s installer, or with `None` goes back
+/// to the ones it recommends.
+#[tauri::command]
+fn set_installer(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    picks: Option<Vec<Selection>>,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .set_installer(&profile_ref(&id)?, &name, picks)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
 }
 
 /// One mod's conflicts, for the Mods tab.
@@ -1479,6 +1541,8 @@ fn main() {
             reorder_mods,
             load_order,
             set_load_order,
+            installer,
+            set_installer,
             conflicts,
             refresh_details,
             find_games,

@@ -1003,3 +1003,109 @@ fn games_launch_through_steam_or_proton() {
             .contains("can't be launched as `skse`; it can be game")
     );
 }
+
+#[test]
+fn skyrim_installers_install_the_options_picked() {
+    let env = Env::new();
+    let game = env.path("Skyrim Special Edition");
+    fs::create_dir_all(game.join("Data")).unwrap();
+    fs::write(game.join("Data/Skyrim.esm"), plugin(true, &[])).unwrap();
+    let appdata = env.path("AppData/Local/Skyrim Special Edition");
+    fs::create_dir_all(&appdata).unwrap();
+    env.run(&["game", "set-path", "skyrim-se", game.to_str().unwrap()]);
+    env.run(&[
+        "game",
+        "set",
+        "skyrim-se",
+        "root.appdata",
+        appdata.to_str().unwrap(),
+    ]);
+    env.run(&["profile", "new", "skyrim-se/main"]);
+
+    // the usual layout: a wrapper folder, numbered option folders, and an
+    // SKSE plugin that has to end up in Data
+    let config = r#"<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <moduleName>Lanterns</moduleName>
+    <requiredInstallFiles><folder source="00 Core" destination="" /></requiredInstallFiles>
+    <installSteps order="Explicit">
+        <installStep name="Options">
+            <optionalFileGroups order="Explicit">
+                <group name="Glow" type="SelectExactlyOne">
+                    <plugins order="Explicit">
+                        <plugin name="Soft">
+                            <description>Gentle.</description>
+                            <files><folder source="10 Soft" destination="" /></files>
+                            <typeDescriptor><type name="Recommended" /></typeDescriptor>
+                        </plugin>
+                        <plugin name="Bright">
+                            <description>Bright.</description>
+                            <files><folder source="11 Bright" destination="" /></files>
+                            <typeDescriptor><type name="Optional" /></typeDescriptor>
+                        </plugin>
+                    </plugins>
+                </group>
+                <group name="Extras" type="SelectAny">
+                    <plugins order="Explicit">
+                        <plugin name="SKSE plugin">
+                            <description />
+                            <files><file source="20 SKSE\Lanterns.dll" destination="SKSE\Plugins\Lanterns.dll" /></files>
+                            <typeDescriptor><type name="Optional" /></typeDescriptor>
+                        </plugin>
+                    </plugins>
+                </group>
+            </optionalFileGroups>
+        </installStep>
+    </installSteps>
+</config>"#;
+    let esp = String::from_utf8(plugin(false, &["Skyrim.esm"])).unwrap();
+    let archive = env.path("Lanterns.zip");
+    write_zip(
+        &archive,
+        &[
+            ("Lanterns/fomod/ModuleConfig.xml", config),
+            ("Lanterns/00 Core/Lanterns.esp", &esp),
+            ("Lanterns/10 Soft/textures/glow.dds", "soft"),
+            ("Lanterns/11 Bright/textures/glow.dds", "bright"),
+            ("Lanterns/20 SKSE/Lanterns.dll", "dll"),
+        ],
+    );
+    env.run(&["add", archive.to_str().unwrap(), "--name", "lanterns"]);
+    env.run(&["lock"]);
+
+    let shown = env.run(&["installer", "lanterns"]);
+    assert!(shown.contains("(*) Soft (recommended)"), "{shown}");
+    assert!(shown.contains("[ ] SKSE plugin"), "{shown}");
+    assert!(shown.contains("--save"), "{shown}");
+
+    env.run(&["deploy"]);
+    assert_eq!(read(game.join("Data/textures/glow.dds")), "soft");
+    assert!(game.join("Data/Lanterns.esp").is_file());
+    assert!(!game.join("Data/fomod").exists());
+    assert!(!game.join("Data/10 Soft").exists());
+
+    let shown = env.run(&[
+        "installer",
+        "lanterns",
+        "--pick",
+        "glow=bright",
+        "--pick",
+        "Options/Extras=skse plugin",
+    ]);
+    assert!(shown.contains("(*) Bright"), "{shown}");
+    assert!(shown.contains("[x] SKSE plugin"), "{shown}");
+    assert!(read(env.profile_dir().join("profile.toml")).contains("[[mod.fomod]]"));
+    let err = env.fails(&["installer", "lanterns", "--pick", "Glow=Dim"]);
+    assert!(err.contains("no option called `Dim`"), "{err}");
+
+    env.run(&["deploy"]);
+    assert_eq!(read(game.join("Data/textures/glow.dds")), "bright");
+    // under Data, not next to the game's exe like a top-level dll
+    assert_eq!(read(game.join("Data/SKSE/Plugins/Lanterns.dll")), "dll");
+    assert!(env.run(&["plugins", "list"]).contains("Lanterns.esp"));
+
+    env.run(&["installer", "lanterns", "--reset"]);
+    env.run(&["deploy"]);
+    assert_eq!(read(game.join("Data/textures/glow.dds")), "soft");
+    assert!(!game.join("Data/SKSE/Plugins/Lanterns.dll").exists());
+}

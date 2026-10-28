@@ -978,6 +978,13 @@ dialog button.danger-text {
   cursor: help;
 }
 
+/* A mod with an installer whose options haven't been picked. */
+.mod-installer {
+  margin-left: 6px;
+  font-size: 0.8em;
+  cursor: help;
+}
+
 /* Says a mod shares files with others; opens #conflicts-dialog. Muted when
    its copies win, since that's usually intended, and in the danger colour
    when none of them do. */
@@ -1590,6 +1597,93 @@ dialog::backdrop {
 
 .changelog-notes a {
   color: var(--pw-accent);
+}
+
+/* Installer dialog; see installer.js. The groups of a step beside the
+   picture and description of the option last pointed at. */
+#installer-dialog {
+  width: min(860px, 92vw);
+}
+
+.installer-step {
+  margin: 0;
+  font-weight: 600;
+}
+
+.installer-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--pw-gap);
+  min-height: 240px;
+}
+
+.installer-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-gap);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.installer-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 8px var(--pw-gap) var(--pw-gap);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  background: var(--pw-bg);
+}
+
+.installer-group legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.installer-group > p {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+.installer-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.installer-option.disabled {
+  color: var(--pw-muted);
+}
+
+.installer-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.installer-preview img {
+  max-width: 100%;
+  border-radius: var(--pw-radius);
+  border: 1px solid var(--pw-border);
+}
+
+.installer-preview p {
+  margin: 0;
+  white-space: pre-line;
+}
+
+.installer-reset {
+  margin-right: auto;
+}
+
+@media (max-width: 640px) {
+  .installer-body {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Downloads dialog */

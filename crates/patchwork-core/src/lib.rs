@@ -17,6 +17,7 @@ pub mod deploy;
 pub mod environment;
 pub mod error;
 pub mod event;
+pub mod fomod;
 pub mod fsutil;
 pub mod game;
 pub mod hash;

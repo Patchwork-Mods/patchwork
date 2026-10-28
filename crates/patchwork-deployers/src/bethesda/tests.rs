@@ -77,6 +77,7 @@ impl Env {
             versions: Default::default(),
             roots: Default::default(),
             launch: Default::default(),
+            fomod: None,
         };
         Self { tmp, game, def }
     }

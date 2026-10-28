@@ -115,6 +115,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         versions: Default::default(),
         roots: Default::default(),
         launch: Default::default(),
+        fomod: None,
     }
 }
 
@@ -936,6 +937,7 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         version: None,
         enabled: false,
         game_versions: None,
+        fomod: None,
     });
     loaded.hidden_tags = vec!["library".to_owned()];
     pw.save_profile(&profile, &loaded).unwrap();
@@ -1088,6 +1090,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         version: None,
         enabled: true,
         game_versions: None,
+        fomod: None,
     };
     let locked = |path: &Path, hash| LockedMod {
         name: path.file_stem().unwrap().to_string_lossy().into_owned(),
@@ -1775,4 +1778,120 @@ async fn a_follower_keeps_the_mods_it_adds_and_takes_the_rest() {
     assert_eq!(names, ["Shared", "Later", "Mine"]);
     assert_eq!(b.unshared_mods(&profile).unwrap(), ["Mine"]);
     assert_eq!(b.load_lock(&profile).unwrap().unwrap().mods.len(), 3);
+}
+
+/// Places mods' files in the game's folder as they are.
+struct AsPacked;
+
+impl Deployer for AsPacked {
+    fn kind(&self) -> &str {
+        "as-packed"
+    }
+
+    fn plan(&self, _: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<deploy::DesiredState> {
+        Ok(deploy::DesiredState {
+            placements: mods
+                .iter()
+                .flat_map(|m| {
+                    m.files.iter().map(|f| deploy::Placement {
+                        dst: deploy::Dest::game(f.rel.clone()),
+                        src: m.src(f),
+                        mod_name: m.name.clone(),
+                    })
+                })
+                .collect(),
+            warnings: Vec::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn installers_deploy_the_options_picked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let packed = tmp.path().join("mods/Pretty");
+    for (file, text) in [
+        (
+            "Pretty/fomod/ModuleConfig.xml",
+            r#"<config><moduleName>Pretty Things</moduleName><installSteps><installStep name="Main">
+            <optionalFileGroups><group name="Look" type="SelectExactlyOne"><plugins order="Explicit">
+                <plugin name="Plain"><description /><files><folder source="a" destination="" /></files>
+                    <typeDescriptor><type name="Recommended" /></typeDescriptor></plugin>
+                <plugin name="Fancy"><description /><files><folder source="b" destination="" /></files>
+                    <typeDescriptor><type name="Optional" /></typeDescriptor></plugin>
+            </plugins></group></optionalFileGroups></installStep></installSteps></config>"#,
+        ),
+        ("Pretty/a/look.txt", "plain"),
+        ("Pretty/b/look.txt", "fancy"),
+    ] {
+        let path = packed.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
+        .source(LocalFiles)
+        .deployer(AsPacked)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "as-packed");
+    def.fomod = Some(crate::game::FomodDef {
+        folder: Some(RelPath::new("Data").unwrap()),
+    });
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    pw.add_mod(&profile, local_spec(&packed), None, true)
+        .await
+        .unwrap();
+    let look = game.canonicalize().unwrap().join("Data/look.txt");
+
+    // until options are picked, it gets the ones the installer recommends
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.contains("haven't been picked")),
+        "{:?}",
+        plan.warnings
+    );
+    pw.apply(&plan).unwrap();
+    assert_eq!(fs::read_to_string(&look).unwrap(), "plain");
+    assert_eq!(
+        pw.installers(&profile).unwrap(),
+        HashSet::from(["Pretty".to_owned()])
+    );
+
+    let view = pw.installer(&profile, "Pretty", None).unwrap().unwrap();
+    assert_eq!(view.name, "Pretty Things");
+    assert!(!view.saved);
+    assert!(view.steps[0].groups[0].defaulted);
+    assert!(view.steps[0].groups[0].options[0].picked);
+
+    // trying picks out doesn't save them
+    let fancy = [Selection {
+        step: "Main".to_owned(),
+        group: "Look".to_owned(),
+        options: vec!["Fancy".to_owned()],
+    }];
+    let view = pw
+        .installer(&profile, "Pretty", Some(&fancy))
+        .unwrap()
+        .unwrap();
+    assert!(view.steps[0].groups[0].options[1].picked);
+    assert_eq!(view.files, 1);
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+
+    pw.set_installer(&profile, "Pretty", Some(view.selections))
+        .unwrap();
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Stale);
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    pw.apply(&plan).unwrap();
+    assert_eq!(fs::read_to_string(&look).unwrap(), "fancy");
+
+    // forgetting them goes back to the defaults
+    pw.set_installer(&profile, "Pretty", None).unwrap();
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(fs::read_to_string(&look).unwrap(), "plain");
 }

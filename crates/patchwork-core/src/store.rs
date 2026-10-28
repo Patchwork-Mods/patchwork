@@ -94,6 +94,17 @@ impl Store {
         Ok(hash)
     }
 
+    /// Where an artifact's files are, if it's a directory or an archive
+    /// that's been unpacked. Doesn't unpack anything.
+    pub fn unpacked(&self, hash: &ContentHash, format: ArtifactFormat) -> Option<PathBuf> {
+        match format {
+            ArtifactFormat::File => None,
+            ArtifactFormat::Dir | ArtifactFormat::Archive => {
+                Some(self.tree(hash)).filter(|t| t.is_dir())
+            }
+        }
+    }
+
     /// Lists an artifact's files, unpacking it first if it hasn't been yet.
     pub fn files(
         &self,
