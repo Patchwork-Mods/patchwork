@@ -385,8 +385,9 @@
 		<!-- Settings for every game, in tabs: one section per source that takes
          any (see settings.js), linking the user's own computers (see
          sync.js), the sync daemon (see daemon.js), and who the user plays
-         as (see setup.js). Only the sources'
-         settings wait for Save; the other tabs' buttons act straight away. -->
+         as (see setup.js), plus which program opens nxm:// links (see
+         links.js). Only the sources' settings wait for Save; every other
+         button acts straight away. -->
 		<dialog id="settings-dialog">
 			<form id="settings-form" method="dialog" class="stack">
 				<h2>Settings</h2>
@@ -397,6 +398,16 @@
 					<button type="button" role="tab" data-tab="playing">Playing</button>
 				</div>
 				<div id="settings-sources" class="stack" data-panel="accounts"></div>
+				<fieldset id="links" class="stack" data-panel="accounts">
+					<legend>Links from the browser</legend>
+					<p class="muted">So Nexus Mods' <b>Mod Manager Download</b> buttons send their downloads to Patchwork, it has to
+						be the program your system opens <code>nxm://</code> links with.</p>
+					<p id="links-state"></p>
+					<p id="links-error" class="error" hidden></p>
+					<div class="row end">
+						<button type="button" id="links-handle" hidden>Use Patchwork for these links</button>
+					</div>
+				</fieldset>
 				<fieldset id="computers" class="stack" data-panel="computers" hidden>
 					<legend>My computers</legend>
 					<p class="muted">Linked computers keep every profile in step: profiles on any of them, including ones made

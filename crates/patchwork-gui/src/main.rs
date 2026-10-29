@@ -5,6 +5,7 @@ mod changelog;
 mod cli;
 mod daemon;
 mod details;
+mod links;
 mod selfupdate;
 mod setup;
 mod sync;
@@ -1354,24 +1355,6 @@ fn provide_download(app: State<'_, App>, file: SourceFile, path: String) -> CmdR
     Ok(())
 }
 
-/// Makes patchwork the handler for `nxm://` links, if it isn't already, so
-/// Nexus's "Mod Manager Download" buttons hand their downloads to it. On
-/// macOS that comes with installing the app instead.
-#[tauri::command]
-fn handle_links(handle: AppHandle) -> CmdResult<()> {
-    #[cfg(any(windows, target_os = "linux"))]
-    {
-        use tauri_plugin_deep_link::DeepLinkExt;
-        let links = handle.deep_link();
-        if !links.is_registered("nxm").unwrap_or(false) {
-            links.register_all().map_err(msg)?;
-        }
-    }
-    #[cfg(not(any(windows, target_os = "linux")))]
-    let _ = handle;
-    Ok(())
-}
-
 /// How a link from the browser went, sent to the window as
 /// `patchwork://link`.
 #[derive(Clone, Serialize)]
@@ -1605,7 +1588,8 @@ fn main() {
             launch_game,
             lock_profile,
             provide_download,
-            handle_links,
+            links::handle_links,
+            links::link_handler,
             theme,
             selfupdate::check_for_update,
             selfupdate::install_update,

@@ -22,7 +22,8 @@ Each [release](https://github.com/patchwork-mods/patchwork/releases/latest) has:
 
 - **The app**, with the `patchwork` CLI inside it: an installer for Windows,
   a `.dmg` for macOS, and an AppImage, `.deb` or `.rpm` for Linux. It handles
-  Nexus's `nxm://` links and updates itself from the button at the top of the
+  Nexus's `nxm://` links (if another program took them over, take them back
+  under **Settings > Accounts**) and updates itself from the button at the top of the
   game list. The Windows installer, `.deb` and `.rpm` put `patchwork` on your
   PATH; on macOS or with the AppImage, use **Install command-line tool** on
   the same screen.
