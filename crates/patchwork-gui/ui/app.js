@@ -22,6 +22,8 @@ import "./selfupdate.js";
 import "./cli.js";
 import "./settings.js";
 import "./sync.js";
+import "./setup.js";
+import "./capture.js";
 
 setModsView(modsView);
 refresh()

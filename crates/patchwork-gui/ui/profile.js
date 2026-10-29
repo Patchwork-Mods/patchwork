@@ -11,6 +11,7 @@ import { renderSourceTabs } from "./browse.js";
 import { markUpdates } from "./deploy.js";
 import { renderPlay } from "./play.js";
 import { go } from "./nav.js";
+import { hasSetup, setupSummary } from "./setup.js";
 
 /** Reloads everything, staying on whichever screen and profile is open. */
 export async function refresh() {
@@ -97,6 +98,7 @@ export function renderDeploy(p) {
   $("#deploy").classList.toggle("primary", !!p?.install && p.deployStatus !== "deployed");
   $("#deploy-menu").hidden = !p;
   const files = p?.gameFiles ?? 0;
+  $("#capture").hidden = !p?.setup.capture;
   $("#undeploy").disabled = !files;
   $("#undeploy-note").textContent = !files
     ? "nothing's deployed"
@@ -109,6 +111,7 @@ export function renderDeploy(p) {
 export function renderProfile({ keepMods = false } = {}) {
   const p = state.profile;
   renderDeploy(p);
+  $("#profile-settings").hidden = !hasSetup(p);
   $("#revert").hidden = !p?.hasChanges;
   $("#update").disabled = !p?.mods.length;
   markUpdates();
@@ -130,7 +133,9 @@ export function renderProfile({ keepMods = false } = {}) {
   // it's deployed is on the Deploy button, so this is just the profile.
   $("#profile-title").textContent = p.name;
   const enabled = p.mods.filter((m) => m.enabled).length;
-  $("#profile-meta").textContent = `${enabled} of ${p.mods.length} mods enabled`;
+  const setup = setupSummary(p);
+  $("#profile-meta").textContent =
+    `${enabled} of ${p.mods.length} mods enabled` + (setup ? ` · ${setup}` : "");
   renderGamePath(!!p.install);
 
   if (!keepMods) renderMods(p.mods);

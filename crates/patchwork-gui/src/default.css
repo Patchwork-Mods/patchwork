@@ -418,7 +418,8 @@ button.link {
   overflow-wrap: anywhere;
 }
 
-#game-settings {
+#game-settings,
+#profile-settings {
   display: inline-flex;
   flex: none;
   border: none;
@@ -427,11 +428,13 @@ button.link {
   color: var(--pw-muted);
 }
 
-#game-settings:hover {
+#game-settings:hover,
+#profile-settings:hover {
   color: var(--pw-text);
 }
 
-#game-settings svg {
+#game-settings svg,
+#profile-settings svg {
   width: 18px;
   height: 18px;
   fill: none;
@@ -494,6 +497,14 @@ button.link {
 
 #profile-meta {
   margin: 2px 0 0;
+}
+
+/* The profile's name, with its settings button beside it for games that
+   have any; see setup.js. */
+.profile-heading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .tabs button {
@@ -1753,13 +1764,15 @@ legend {
 
 /* The settings dialogs' sections, titled so each stands out from the next. */
 #settings-dialog fieldset,
-#game-settings-dialog fieldset {
+#game-settings-dialog fieldset,
+#profile-settings-dialog fieldset {
   padding: 12px var(--pw-gap) var(--pw-gap);
   background: var(--pw-bg);
 }
 
 #settings-dialog legend,
-#game-settings-dialog legend {
+#game-settings-dialog legend,
+#profile-settings-dialog legend {
   padding: 0 6px;
   font-size: 16px;
   font-weight: 700;

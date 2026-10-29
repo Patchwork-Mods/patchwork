@@ -6,6 +6,7 @@ mod cli;
 mod daemon;
 mod details;
 mod selfupdate;
+mod setup;
 mod sync;
 
 use std::collections::BTreeMap;
@@ -106,7 +107,7 @@ enum UiEvent {
 }
 
 #[derive(Clone, Serialize)]
-#[serde(tag = "op", rename_all = "camelCase")]
+#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 enum UiOp {
     Remove { dst: String },
     Backup { dst: String },
@@ -203,6 +204,9 @@ struct ProfileDetail {
     /// The ways the game can be started, for the Play button; none until
     /// it's known where it's installed.
     launch_options: Vec<LaunchOption>,
+    /// What it picks about the game it runs, where it's deployed to, and
+    /// so on, for the profile settings dialog.
+    setup: setup::ProfileSetup,
 }
 
 #[derive(Serialize)]
@@ -366,6 +370,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .profile_launch_options(&loaded)
         .map_err(msg)?
         .unwrap_or_default();
+    let setup = setup::profile_setup(pw, &loaded)?;
     let label = loaded.label();
     let lookup = pw.lookup(&loaded).map_err(msg)?;
     let name = loaded.name.clone();
@@ -413,6 +418,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         has_changes,
         search_sources,
         launch_options,
+        setup,
     })
 }
 
@@ -1559,6 +1565,14 @@ fn main() {
             game_settings,
             game_env,
             set_game_settings,
+            setup::set_profile_env,
+            setup::set_profile_instance,
+            setup::provisioned,
+            setup::provision_profile,
+            setup::account,
+            setup::set_offline_account,
+            setup::tool_output,
+            setup::capture,
             source_settings,
             set_source_setting,
             check_source_settings,

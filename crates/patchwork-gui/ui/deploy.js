@@ -58,7 +58,7 @@ function showPlan(kind, plan, summary) {
  * deployed file is read to check nothing's changed it since, rather than
  * just that it's there and the right size.
  */
-async function deploy(verify) {
+export async function deploy(verify) {
   const id = state.profile.id;
   $("#deploy").disabled = true;
   status(verify ? "Checking deployed files…" : "Working out what to deploy…");

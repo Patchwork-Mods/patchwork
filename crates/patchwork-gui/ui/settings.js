@@ -1,5 +1,6 @@
 // Settings: the app-wide dialog, in tabs, for sources' settings (a Nexus API
-// key, say), linking computers (sync.js) and background sync (daemon.js);
+// key, say), linking computers (sync.js), background sync (daemon.js) and
+// who the user plays as (setup.js);
 // and the fields any setting gets, which game settings use for deployers
 // too. Sources and deployers describe their own settings (see settings.rs in
 // core), so nothing here knows about any one of them.
@@ -8,6 +9,7 @@ import { invoke, run, status } from "./state.js";
 import { $, h, link, pickFolder } from "./dom.js";
 import { renderComputers } from "./sync.js";
 import { renderDaemon } from "./daemon.js";
+import { renderAccount } from "./setup.js";
 
 /** What to say under a field about where its value came from. */
 function originNote(setting) {
@@ -165,7 +167,7 @@ function showError(err) {
   $("#settings-error").hidden = false;
 }
 
-/** Shows one of the dialog's tabs: "accounts", "computers" or "daemon". */
+/** Shows one of the dialog's tabs: "accounts", "computers", "daemon" or "playing". */
 function selectSettingsTab(key) {
   for (const tab of document.querySelectorAll("#settings-tabs [role=tab]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
@@ -184,7 +186,7 @@ for (const tab of document.querySelectorAll("#settings-tabs [role=tab]")) {
 export async function openSettings(tab) {
   $("#settings-error").hidden = true;
   if (tab) selectSettingsTab(tab);
-  await Promise.all([render(), renderComputers(), renderDaemon()]);
+  await Promise.all([render(), renderComputers(), renderDaemon(), renderAccount()]);
   dialog.showModal();
 }
 

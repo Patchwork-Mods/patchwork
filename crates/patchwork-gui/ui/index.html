@@ -78,7 +78,17 @@
 		<main id="main" hidden>
 			<header id="profile-header">
 				<div>
-					<h2 id="profile-title">No profile yet</h2>
+					<div class="profile-heading">
+						<h2 id="profile-title">No profile yet</h2>
+						<!-- Only for games with anything to set up per profile, like
+						     Minecraft's mod loader; see setup.js. -->
+						<button id="profile-settings" title="Profile settings" aria-label="Profile settings" hidden>
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<circle cx="12" cy="12" r="3"/>
+								<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+							</svg>
+						</button>
+					</div>
 					<p id="profile-meta" class="muted"></p>
 				</div>
 				<!-- Mods, Plugins for games that have them, then one tab per source
@@ -106,6 +116,16 @@
 								title="Read every deployed file to check nothing changed it, and put back any that changed"
 							>
 								Check files and deploy…
+							</button>
+							<!-- Only for games that say where tools write; see capture.js. -->
+							<button
+								type="button"
+								role="menuitem"
+								id="capture"
+								title="Keep what tools like DynDOLOD or Nemesis wrote into the game's folder as a mod"
+								hidden
+							>
+								Capture tool output…
 							</button>
 							<button type="button" role="menuitem" id="history">History…</button>
 							<button type="button" role="menuitem" id="undeploy" class="danger-text">
@@ -364,7 +384,8 @@
 
 		<!-- Settings for every game, in tabs: one section per source that takes
          any (see settings.js), linking the user's own computers (see
-         sync.js), and the sync daemon (see daemon.js). Only the sources'
+         sync.js), the sync daemon (see daemon.js), and who the user plays
+         as (see setup.js). Only the sources'
          settings wait for Save; the other tabs' buttons act straight away. -->
 		<dialog id="settings-dialog">
 			<form id="settings-form" method="dialog" class="stack">
@@ -373,6 +394,7 @@
 					<button type="button" role="tab" data-tab="accounts" aria-selected="true">Accounts</button>
 					<button type="button" role="tab" data-tab="computers">My computers</button>
 					<button type="button" role="tab" data-tab="daemon">Background sync</button>
+					<button type="button" role="tab" data-tab="playing">Playing</button>
 				</div>
 				<div id="settings-sources" class="stack" data-panel="accounts"></div>
 				<fieldset id="computers" class="stack" data-panel="computers" hidden>
@@ -421,10 +443,89 @@
 						<button type="button" id="daemon-install" class="primary">Install</button>
 					</div>
 				</fieldset>
+				<fieldset id="playing" class="stack" data-panel="playing" hidden>
+					<legend>Playing</legend>
+					<p class="muted">Who you play as in games Patchwork starts itself, like Minecraft in a profile's own instance.
+						Signing in with a Microsoft account isn't supported yet. An offline name works on your own and on servers
+						that don't check who joins.</p>
+					<p id="account-state"></p>
+					<label class="field">
+						<span>Offline name <small class="muted">3 to 16 letters, digits and underscores</small></span>
+						<input id="account-name" autocomplete="off" spellcheck="false">
+					</label>
+					<p id="account-error" class="error" hidden></p>
+					<div class="row end">
+						<button type="button" id="account-forget" class="danger-text" hidden>Forget</button>
+						<button type="button" id="account-save" class="primary">Use this name</button>
+					</div>
+				</fieldset>
 				<p id="settings-error" class="error" hidden></p>
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Close</button>
 					<button type="submit" value="save" class="primary" data-panel="accounts">Save</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- The open profile's settings: what it picks about the game it runs,
+		     whether it has an instance of its own on this machine, and setting
+		     the game up there; see setup.js. -->
+		<dialog id="profile-settings-dialog">
+			<form id="profile-settings-form" method="dialog" class="stack">
+				<h2 id="profile-settings-title">Profile settings</h2>
+				<fieldset id="profile-settings-env" class="stack" hidden>
+					<legend>Game</legend>
+					<div id="profile-settings-axes" class="stack"></div>
+					<small class="muted">Changing these finds the version of each mod that suits them, which can mean
+						downloading.</small>
+				</fieldset>
+				<fieldset id="profile-settings-instance" class="stack" hidden>
+					<legend>Where it's deployed</legend>
+					<label class="field">
+						<span>Deploy to</span>
+						<select name="instance">
+							<option value="">Default</option>
+							<option value="on">A folder of its own</option>
+							<option value="off">The game's folder</option>
+						</select>
+						<small id="profile-settings-dir" class="muted"></small>
+						<small class="muted">Only on this computer. Undeploy first to change this while it's deployed.</small>
+					</label>
+				</fieldset>
+				<fieldset id="profile-settings-provision" class="stack" hidden>
+					<legend>Setting up the game</legend>
+					<p id="profile-settings-provisioned" class="muted"></p>
+					<div class="row end">
+						<button type="button" id="profile-settings-provision-now">Set up now</button>
+					</div>
+				</fieldset>
+				<p id="profile-settings-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" value="save" class="primary">Save</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- Keeping what tools wrote into the game's folder as a mod; see
+		     capture.js. -->
+		<dialog id="capture-dialog">
+			<form id="capture-form" method="dialog" class="stack">
+				<h2>Capture tool output</h2>
+				<p id="capture-summary" class="hint"></p>
+				<ul id="capture-warnings" class="warnings"></ul>
+				<ul id="capture-files" class="plan-ops"></ul>
+				<div id="capture-name-field" class="field">
+					<label for="capture-name">Keep them in the mod</label>
+					<input id="capture-name" name="name" required list="capture-names" placeholder="DynDOLOD output" autocomplete="off">
+					<datalist id="capture-names"></datalist>
+					<small class="muted">Added to the end of the profile, or added to if it's a mod captured into before. The
+						files are taken out of the game's folder and deployed again from the mod.</small>
+				</div>
+				<p id="capture-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" id="capture-submit" class="primary">Capture and deploy</button>
 				</div>
 			</form>
 		</dialog>
