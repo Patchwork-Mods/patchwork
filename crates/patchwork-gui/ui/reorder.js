@@ -1,4 +1,4 @@
-// Moving the open profile's mods (or, on the Plugins tab, its plugins)
+// Moving the open profile's mods (or, on a list's tab, what's in the list)
 // around by hand, by dragging them by their handles or pressing the arrow
 // keys on one. The ones around the one being moved slide out of its way, and
 // it's saved once it's let go.

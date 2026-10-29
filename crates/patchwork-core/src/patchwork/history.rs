@@ -2,13 +2,14 @@
 //! them: [`Patchwork::revert`] to the last one, [`Patchwork::rollback`] to
 //! older ones.
 //!
-//! Each deploy saves the profile's mods, plugins and lockfile to
+//! Each deploy saves the profile's mods, extensions' state and lockfile
+//! to
 //! `deployed.toml` and, unless they're the same as the newest entry, to
 //! `history/<n>.toml`, both kept with what only this machine knows about the
 //! profile. Mods are content-addressed in the store, so going
 //! back doesn't download anything that's still there.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -17,11 +18,12 @@ use serde::{Deserialize, Serialize};
 
 use super::{Patchwork, local};
 use crate::error::IoContext;
+use crate::ext::ExtTables;
 use crate::fsutil;
 use crate::hash::ContentHash;
+use crate::list::ListEntry;
 use crate::lock::{Lockfile, mod_key};
-use crate::plugins::PluginEntry;
-use crate::profile::{ProfileMod, ProfileRef};
+use crate::profile::{ProfileMod, ProfileRef, upgrade_plugins};
 use crate::{Error, Result};
 
 /// How many deploys each profile's history keeps. Older ones are dropped.
@@ -35,8 +37,12 @@ pub(super) struct Deployed {
     deployed_at: Option<Timestamp>,
     #[serde(default, rename = "mod")]
     mods: Vec<ProfileMod>,
-    #[serde(default, rename = "plugin", skip_serializing_if = "Vec::is_empty")]
-    plugins: Vec<PluginEntry>,
+    /// Saved before profile schema 3, which moved it into `ext`.
+    #[serde(default, rename = "plugin", skip_serializing)]
+    plugins: Vec<ListEntry>,
+    /// See [`crate::profile::Profile::ext`].
+    #[serde(default, skip_serializing_if = "ExtTables::is_empty")]
+    ext: ExtTables,
     lock: Lockfile,
 }
 
@@ -44,7 +50,7 @@ impl Deployed {
     /// Whether the two would deploy the same thing; when they happened
     /// doesn't matter.
     fn same_as(&self, other: &Deployed) -> bool {
-        self.mods == other.mods && self.plugins == other.plugins && toml_eq(&self.lock, &other.lock)
+        self.mods == other.mods && self.ext == other.ext && toml_eq(&self.lock, &other.lock)
     }
 }
 
@@ -91,8 +97,16 @@ pub enum Change {
     },
     /// The mods' order changed.
     Reordered,
-    /// The plugins' load order changed.
-    PluginOrder,
+    /// The order of one of the profile's lists changed (see
+    /// [`crate::list`]).
+    List {
+        id: String,
+        title: String,
+    },
+    /// What an extension keeps for the profile changed.
+    Ext {
+        id: String,
+    },
 }
 
 impl std::fmt::Display for Change {
@@ -105,7 +119,8 @@ impl std::fmt::Display for Change {
             Change::Enabled { name } => write!(f, "  enabled {name}"),
             Change::Disabled { name } => write!(f, "  disabled {name}"),
             Change::Reordered => write!(f, "  reordered mods"),
-            Change::PluginOrder => write!(f, "  changed the plugin load order"),
+            Change::List { title, .. } => write!(f, "  rearranged {}", title.to_lowercase()),
+            Change::Ext { id } => write!(f, "  changed what {id} keeps"),
         }
     }
 }
@@ -121,7 +136,8 @@ impl Patchwork {
         let deployed = Deployed {
             deployed_at: Some(Timestamp::now()),
             mods: loaded.mods,
-            plugins: loaded.plugins,
+            plugins: Vec::new(),
+            ext: loaded.ext,
             lock,
         };
         fsutil::write_toml(&self.deployed_file(profile), &deployed)?;
@@ -145,7 +161,7 @@ impl Patchwork {
     }
 
     fn load_deployed(&self, profile: &ProfileRef) -> Result<Option<Deployed>> {
-        fsutil::read_toml(&self.deployed_file(profile))
+        read_deployed(&self.deployed_file(profile))
     }
 
     /// The profile as it is now, to compare against a deploy.
@@ -157,7 +173,8 @@ impl Patchwork {
         Ok(Some(Deployed {
             deployed_at: None,
             mods: loaded.mods,
-            plugins: loaded.plugins,
+            plugins: Vec::new(),
+            ext: loaded.ext,
             lock,
         }))
     }
@@ -191,6 +208,7 @@ impl Patchwork {
     /// The deploys kept in the profile's history, oldest first.
     pub fn history(&self, profile: &ProfileRef) -> Result<Vec<HistoryEntry>> {
         let now = self.current(profile)?;
+        let lists = self.list_titles();
         let mut entries = Vec::new();
         let mut before: Option<Deployed> = None;
         for n in self.history_numbers(profile)? {
@@ -204,7 +222,7 @@ impl Patchwork {
                 enabled: deployed.mods.iter().filter(|m| m.enabled).count(),
                 changes: before
                     .as_ref()
-                    .map(|b| changes(b, &deployed))
+                    .map(|b| changes(b, &deployed, &lists))
                     .unwrap_or_default(),
                 current: now.as_ref().is_some_and(|now| now.same_as(&deployed)),
             });
@@ -225,7 +243,7 @@ impl Patchwork {
     pub fn rollback_changes(&self, profile: &ProfileRef, number: u32) -> Result<Vec<Change>> {
         let then = self.history_entry(profile, number)?;
         Ok(match self.current(profile)? {
-            Some(now) => changes(&now, &then),
+            Some(now) => changes(&now, &then, &self.list_titles()),
             None => Vec::new(),
         })
     }
@@ -243,7 +261,7 @@ impl Patchwork {
     fn restore(&self, profile: &ProfileRef, deployed: Deployed) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
         loaded.mods = deployed.mods;
-        loaded.plugins = deployed.plugins;
+        loaded.ext = deployed.ext;
         self.save_lock(profile, &deployed.lock)?;
         self.save_profile(profile, &loaded)
     }
@@ -261,7 +279,7 @@ impl Patchwork {
             .map(|n| self.history_file(profile, n))
             .chain([self.deployed_file(profile)]);
         for file in files {
-            let Some(mut deployed) = fsutil::read_toml::<Deployed>(&file)? else {
+            let Some(mut deployed) = read_deployed(&file)? else {
                 continue;
             };
             if !local::portable_ids(&mut deployed.mods, &mut deployed.lock).is_empty() {
@@ -276,7 +294,7 @@ impl Patchwork {
     }
 
     fn load_history_entry(&self, profile: &ProfileRef, number: u32) -> Result<Option<Deployed>> {
-        fsutil::read_toml(&self.history_file(profile, number))
+        read_deployed(&self.history_file(profile, number))
     }
 
     /// The numbers of the history's entries, in order.
@@ -301,7 +319,14 @@ impl Patchwork {
 /// What changed going from `before` to `after`: mods (dependencies too)
 /// added, removed or at another version, then the profile's own mods
 /// enabled or disabled, then order.
-fn changes(before: &Deployed, after: &Deployed) -> Vec<Change> {
+/// What changed from `before` to `after`. `lists` are the titles of the
+/// ordered lists there are, by `(extension, list)`, so changes to their
+/// order can be told apart from other changes to extensions' state.
+fn changes(
+    before: &Deployed,
+    after: &Deployed,
+    lists: &BTreeMap<(String, String), String>,
+) -> Vec<Change> {
     let top_level: HashSet<String> = before
         .mods
         .iter()
@@ -364,10 +389,38 @@ fn changes(before: &Deployed, after: &Deployed) -> Vec<Change> {
     if order(&before.mods, &after.mods) != order(&after.mods, &before.mods) {
         changes.push(Change::Reordered);
     }
-    if before.plugins != after.plugins {
-        changes.push(Change::PluginOrder);
+    let ids: BTreeSet<&String> = before.ext.keys().chain(after.ext.keys()).collect();
+    for id in ids {
+        let (mut was, mut now) = (
+            before.ext.get(id).cloned().unwrap_or_default(),
+            after.ext.get(id).cloned().unwrap_or_default(),
+        );
+        for ((ext, list), title) in lists.iter().filter(|((ext, _), _)| ext == id) {
+            if was.remove(list) != now.remove(list) {
+                changes.push(Change::List {
+                    id: crate::ext::hook_id(ext, list),
+                    title: title.clone(),
+                });
+            }
+        }
+        // The version only matters if something else changed too.
+        was.remove(crate::ext::VERSION_KEY);
+        now.remove(crate::ext::VERSION_KEY);
+        if was != now {
+            changes.push(Change::Ext { id: id.clone() });
+        }
     }
     changes
+}
+
+/// A deploy saved at `path`, with what older versions saved where it is
+/// now.
+fn read_deployed(path: &std::path::Path) -> Result<Option<Deployed>> {
+    let Some(mut deployed) = fsutil::read_toml::<Deployed>(path)? else {
+        return Ok(None);
+    };
+    upgrade_plugins(&mut deployed.ext, std::mem::take(&mut deployed.plugins));
+    Ok(Some(deployed))
 }
 
 /// A mod a deploy would install, from [`installed`].

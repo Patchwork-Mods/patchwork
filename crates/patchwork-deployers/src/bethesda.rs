@@ -7,8 +7,9 @@ use patchwork_core::deploy::{
     BuildContext, DeployContext, Deployer, DesiredState, Dest, GameFiles, InstalledMod, Placement,
     Src,
 };
+use patchwork_core::game::GameDef;
 use patchwork_core::hash::ContentHash;
-use patchwork_core::plugins::{LoadOrder, Plugin, Plugins};
+use patchwork_core::list::{List, ListContext, ListItem, ListItems, OrderedList};
 use patchwork_core::relpath::RelPath;
 use patchwork_core::settings::SettingSpec;
 use patchwork_core::{Error, Result};
@@ -19,14 +20,14 @@ use crate::RulesDeployer;
 /// Bethesda's games since Oblivion: mods' files are laid out by the same
 /// rules as [`RulesDeployer`], and the plugins among them (`.esp`, `.esm`
 /// and `.esl` files) are written to the file the game reads its load order
-/// from, in the order the profile says.
+/// from, in the order the profile puts them in with [`BethesdaLoadOrder`].
 ///
 /// ```toml
 /// [deployer]
 /// kind = "bethesda"
 /// # ... and anything the rules deployer takes
 ///
-/// [deployer.plugins]
+/// [ext.bethesda.plugins]
 /// folder = "Data"                 # where plugins go, in the game folder
 /// file = "appdata:plugins.txt"    # the load order, in one of the game's roots
 /// implicit = ["Skyrim.esm"]       # always loaded first
@@ -35,7 +36,15 @@ use crate::RulesDeployer;
 /// ```
 pub struct BethesdaDeployer;
 
+/// The order the game loads mods' plugins in: the Bethesda extension's
+/// `plugins` list, configured by the game's `[ext.bethesda.plugins]` (see
+/// [`BethesdaDeployer`]).
+pub struct BethesdaLoadOrder;
+
 const KIND: &str = "bethesda";
+/// The extension the load order belongs to, and its name there.
+pub const EXTENSION: &str = "bethesda";
+pub const LIST: &str = "plugins";
 /// Shown as the mod the load order comes from.
 const BUILT_BY: &str = "Load order";
 /// What the load order is called in the build's output.
@@ -55,35 +64,24 @@ struct PluginsConfig {
     limit: Option<usize>,
 }
 
-/// The game's config, split into the rules deployer's and the plugins'.
-struct Config {
-    rules: toml::Table,
-    plugins: Option<PluginsConfig>,
-}
-
-impl BethesdaDeployer {
-    fn load(&self, ctx: &DeployContext<'_>) -> Result<Config> {
-        let mut rules = ctx.config.clone();
-        let plugins = rules
-            .remove("plugins")
-            .map(|value| value.try_into::<PluginsConfig>())
-            .transpose()
-            .map_err(|e| error(format!("bad `plugins` for {}: {e}", ctx.game.id)))?;
-        Ok(Config { rules, plugins })
+impl PluginsConfig {
+    fn parse(game: &GameDef, table: &toml::Table) -> Result<Self> {
+        toml::Value::Table(table.clone()).try_into().map_err(|e| {
+            error(format!(
+                "bad `[ext.{EXTENSION}.{LIST}]` for {}: {e}",
+                game.id
+            ))
+        })
     }
 
-    /// Lays out `mods` with the rules deployer.
-    fn rules(
-        &self,
-        ctx: &DeployContext<'_>,
-        config: &Config,
-        mods: &[InstalledMod],
-    ) -> Result<DesiredState> {
-        let ctx = DeployContext {
-            config: &config.rules,
-            ..*ctx
-        };
-        RulesDeployer.plan(&ctx, mods)
+    /// The game's, if its load order is on.
+    fn of(game: &GameDef) -> Result<Option<Self>> {
+        if !game.hook_on(EXTENSION, LIST) {
+            return Ok(None);
+        }
+        let empty = toml::Table::new();
+        let table = game.hook_config(EXTENSION, LIST).unwrap_or(&empty);
+        Self::parse(game, table).map(Some)
     }
 }
 
@@ -242,15 +240,15 @@ fn read_header(path: &Path) -> std::result::Result<Header, String> {
 }
 
 /// The load order as the game reads it: a `*` before each enabled plugin.
-fn plugins_txt(order: &LoadOrder) -> String {
+fn plugins_txt(order: &List) -> String {
     let mut text = String::from(
         "# This file is used by the game to keep track of your downloaded content.\r\n# Patchwork wrote it; change the order in Patchwork instead, or it'll be put back.\r\n",
     );
-    for p in &order.plugins {
+    for p in &order.items {
         if p.enabled {
             text.push('*');
         }
-        text.push_str(&p.plugin.name);
+        text.push_str(&p.item.name);
         text.push_str("\r\n");
     }
     text
@@ -266,23 +264,90 @@ impl Deployer for BethesdaDeployer {
     }
 
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState> {
-        let config = self.load(ctx)?;
-        self.rules(ctx, &config, mods)
+        RulesDeployer.plan(ctx, mods)
     }
 
-    fn plugins(
+    fn builds(&self, ctx: &DeployContext<'_>) -> bool {
+        PluginsConfig::of(ctx.game).is_ok_and(|c| c.is_some())
+    }
+
+    fn build(
+        &self,
+        ctx: &DeployContext<'_>,
+        build: &BuildContext<'_>,
+        _mods: &[InstalledMod],
+    ) -> Result<DesiredState> {
+        let id = format!("{EXTENSION}.{LIST}");
+        let (Some(plugins), Some(order)) = (PluginsConfig::of(ctx.game)?, build.list(&id)) else {
+            return Ok(DesiredState::default());
+        };
+        let out = build.out.join(OUT);
+        std::fs::write(&out, plugins_txt(order))
+            .map_err(|e| error(format!("couldn't write {}: {e}", out.display())))?;
+        Ok(DesiredState {
+            placements: vec![Placement {
+                dst: plugins.file()?,
+                src: Src::Built(RelPath::new(OUT).expect("valid path")),
+                mod_name: BUILT_BY.to_owned(),
+            }],
+            warnings: Vec::new(),
+        })
+    }
+
+    /// Covers the ccc file, since its plugins are left out of the load
+    /// order.
+    fn fingerprint(
         &self,
         ctx: &DeployContext<'_>,
         game: &GameFiles<'_>,
-        mods: &[InstalledMod],
-    ) -> Result<Option<Plugins>> {
-        let config = self.load(ctx)?;
-        let Some(plugins) = &config.plugins else {
+    ) -> Result<Option<ContentHash>> {
+        let Some(ccc) = PluginsConfig::of(ctx.game)?
+            .map(|p| p.ccc())
+            .transpose()?
+            .flatten()
+        else {
             return Ok(None);
         };
+        let seen = match game.original(&ccc).and_then(|p| std::fs::metadata(p).ok()) {
+            Some(meta) => {
+                let modified = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_nanos());
+                format!("{ccc}={}:{modified}", meta.len())
+            }
+            None => format!("{ccc}=none"),
+        };
+        Ok(Some(ContentHash::of(seen.as_bytes())))
+    }
+}
+
+/// Masters always load first, whatever the user does.
+const MASTERS: u8 = 0;
+const OTHERS: u8 = 1;
+const MASTER: &str = "master";
+const LIGHT: &str = "light";
+
+impl OrderedList for BethesdaLoadOrder {
+    fn title(&self) -> &str {
+        "Plugins"
+    }
+
+    fn description(&self) -> Option<&str> {
+        Some(
+            "The game loads these one after another, and later plugins win when two change the \
+             same thing. This order is separate from the mods' order, and it's written for the \
+             game when you deploy.",
+        )
+    }
+
+    fn items(&self, ctx: &ListContext<'_>, mods: &[InstalledMod]) -> Result<ListItems> {
+        let plugins = PluginsConfig::parse(ctx.game(), ctx.config())?;
+        let game = ctx.files();
         let mut warnings = Vec::new();
-        let mut found = Vec::new();
-        for placement in self.rules(ctx, &config, mods)?.placements {
+        let mut found: Vec<ListItem> = Vec::new();
+        for placement in RulesDeployer.plan(ctx.deploy(), mods)?.placements {
             if !plugins.holds(&placement.dst) {
                 continue;
             }
@@ -306,14 +371,16 @@ impl Deployer for BethesdaDeployer {
                 ));
                 Header::default()
             });
-            found.push(Plugin {
-                // The game goes by the extension as well as the flags.
-                master: header.master || lower.ends_with(".esm") || lower.ends_with(".esl"),
-                light: header.light || lower.ends_with(".esl"),
-                masters: header.masters,
+            // The game goes by the extension as well as the flags.
+            let master = header.master || lower.ends_with(".esm") || lower.ends_with(".esl");
+            let light = header.light || lower.ends_with(".esl");
+            found.push(plugin_item(
                 name,
-                mod_name: placement.mod_name,
-            });
+                placement.mod_name,
+                master,
+                light,
+                header.masters,
+            ));
         }
 
         let present: Vec<String> = game
@@ -341,71 +408,77 @@ impl Deployer for BethesdaDeployer {
                 unlisted.join(", ")
             ));
         }
-        Ok(Some(Plugins {
-            found,
-            implicit,
-            light_implicit,
-            limit: plugins.limit,
+        let fixed = implicit
+            .into_iter()
+            .map(|name| {
+                let light = light_implicit.contains(&name);
+                ListItem {
+                    can_disable: false,
+                    ..plugin_item(name, String::new(), true, light, Vec::new())
+                }
+            })
+            .collect();
+        Ok(ListItems {
+            items: found,
+            fixed,
+            tiers: vec!["Masters".to_owned(), "Plugins".to_owned()],
             warnings,
-        }))
-    }
-
-    fn builds(&self, ctx: &DeployContext<'_>) -> bool {
-        self.load(ctx).is_ok_and(|c| c.plugins.is_some())
-    }
-
-    fn build(
-        &self,
-        ctx: &DeployContext<'_>,
-        build: &BuildContext<'_>,
-        _mods: &[InstalledMod],
-    ) -> Result<DesiredState> {
-        let config = self.load(ctx)?;
-        let (Some(plugins), Some(order)) = (&config.plugins, build.load_order) else {
-            return Ok(DesiredState::default());
-        };
-        let out = build.out.join(OUT);
-        std::fs::write(&out, plugins_txt(order))
-            .map_err(|e| error(format!("couldn't write {}: {e}", out.display())))?;
-        Ok(DesiredState {
-            placements: vec![Placement {
-                dst: plugins.file()?,
-                src: Src::Built(RelPath::new(OUT).expect("valid path")),
-                mod_name: BUILT_BY.to_owned(),
-            }],
-            warnings: Vec::new(),
         })
     }
 
-    /// Covers the ccc file, since its plugins are left out of the load
-    /// order.
-    fn fingerprint(
-        &self,
-        ctx: &DeployContext<'_>,
-        game: &GameFiles<'_>,
-    ) -> Result<Option<ContentHash>> {
-        let config = self.load(ctx)?;
-        let Some(ccc) = config
-            .plugins
-            .as_ref()
-            .map(|p| p.ccc())
-            .transpose()?
-            .flatten()
+    /// Core checks that plugins come after their masters; this checks
+    /// there aren't more than the game can load.
+    fn check(&self, ctx: &ListContext<'_>, list: &List) -> Vec<String> {
+        let Some(limit) = PluginsConfig::parse(ctx.game(), ctx.config())
+            .ok()
+            .and_then(|c| c.limit)
         else {
-            return Ok(None);
+            return Vec::new();
         };
-        let seen = match game.original(&ccc).and_then(|p| std::fs::metadata(p).ok()) {
-            Some(meta) => {
-                let modified = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map_or(0, |d| d.as_nanos());
-                format!("{ccc}={}:{modified}", meta.len())
-            }
-            None => format!("{ccc}=none"),
-        };
-        Ok(Some(ContentHash::of(seen.as_bytes())))
+        let light = |item: &ListItem| item.badges.iter().any(|b| b == LIGHT);
+        let full = list.fixed.iter().filter(|i| !light(i)).count()
+            + list
+                .items
+                .iter()
+                .filter(|i| i.enabled && !light(&i.item))
+                .count();
+        if full > limit {
+            vec![format!(
+                "{full} plugins that aren't light are enabled, counting the game's own, but the game can only load {limit}"
+            )]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// A plugin as an item in the load order.
+fn plugin_item(
+    name: String,
+    mod_name: String,
+    master: bool,
+    light: bool,
+    masters: Vec<String>,
+) -> ListItem {
+    let mut badges = Vec::new();
+    if light {
+        badges.push(LIGHT.to_owned());
+    } else if master {
+        badges.push(MASTER.to_owned());
+    }
+    let detail = if masters.is_empty() {
+        "Doesn't need any other plugins".to_owned()
+    } else {
+        format!("Needs {}", masters.join(", "))
+    };
+    ListItem {
+        name,
+        mod_name,
+        tier: if master { MASTERS } else { OTHERS },
+        badges,
+        after: masters,
+        detail: Some(detail),
+        can_disable: true,
     }
 }
 

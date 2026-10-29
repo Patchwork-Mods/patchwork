@@ -12,6 +12,7 @@ rust-version = "1.91"
 license = "MIT"
 
 [workspace.dependencies]
+patchwork-builtin = { path = "crates/patchwork-builtin" }
 patchwork-core = { path = "crates/patchwork-core" }
 patchwork-sources = { path = "crates/patchwork-sources" }
 patchwork-deployers = { path = "crates/patchwork-deployers" }

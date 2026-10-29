@@ -17,7 +17,7 @@ use crate::error::IoContext;
 use crate::event::{Event, Reporter};
 use crate::game::{GameDef, LinkMethod};
 use crate::hash::ContentHash;
-use crate::plugins::{LoadOrder, Plugins};
+use crate::list::List;
 use crate::profile::ProfileRef;
 use crate::registry::Registry;
 use crate::relpath::RelPath;
@@ -189,19 +189,6 @@ pub trait Deployer: Send + Sync {
     /// them.
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState>;
 
-    /// The plugins in `mods` that the game loads in an order the user picks
-    /// (see [`crate::plugins`]), or `None` for games without them, which is
-    /// most. Like [`Deployer::build`], this may read the game's files and
-    /// the mods' own, but not write anything.
-    fn plugins(
-        &self,
-        _ctx: &DeployContext<'_>,
-        _game: &GameFiles<'_>,
-        _mods: &[InstalledMod],
-    ) -> Result<Option<Plugins>> {
-        Ok(None)
-    }
-
     /// Whether [`Deployer::build`] has anything to do for this game. Most
     /// deployers only ever place mod files and leave this `false`.
     fn builds(&self, _ctx: &DeployContext<'_>) -> bool {
@@ -220,8 +207,8 @@ pub trait Deployer: Send + Sync {
     /// The result is kept and reused for as long as the deploy's inputs stay
     /// the same, so it has to depend only on `mods`, the game definition and
     /// whatever [`Deployer::fingerprint`] covers. (The game definition here
-    /// includes the user's settings, and the profile's plugin order is
-    /// covered too.)
+    /// includes the user's settings, and the order of the profile's
+    /// [`BuildContext::list`]s is covered too.)
     fn build(
         &self,
         _ctx: &DeployContext<'_>,
@@ -254,9 +241,16 @@ pub struct BuildContext<'a> {
     /// of patchwork's cache it can be deleted at any time.
     pub cache: &'a Path,
     pub reporter: &'a dyn Reporter,
-    /// The order to load the mods' plugins in, if
-    /// [`Deployer::plugins`] found that the game has them.
-    pub load_order: Option<&'a LoadOrder>,
+    /// The ordered lists that are on for the game (see [`crate::list`]).
+    pub lists: &'a [List],
+}
+
+impl BuildContext<'_> {
+    /// The ordered list `id` (`<extension>.<list>`), if it's on for the
+    /// game.
+    pub fn list(&self, id: &str) -> Option<&List> {
+        self.lists.iter().find(|l| l.id == id)
+    }
 }
 
 /// The game's own files, as they are without anything patchwork deployed:

@@ -120,6 +120,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         capture: None,
         instances: None,
         provision: None,
+        ext: Default::default(),
     }
 }
 
@@ -952,6 +953,7 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         enabled: false,
         game_versions: None,
         fomod: None,
+        ext: Default::default(),
     });
     loaded.hidden_tags = vec!["library".to_owned()];
     pw.save_profile(&profile, &loaded).unwrap();
@@ -1105,6 +1107,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         version: None,
         enabled: true,
         game_versions: None,
+        ext: Default::default(),
         fomod: None,
     };
     let locked = |path: &Path, hash| LockedMod {
@@ -2404,4 +2407,387 @@ async fn provisioning_leaves_out_files_that_arent_what_was_expected() {
     let runtime = pw.paths.runtime("provides");
     assert!(!runtime.join("versions/1.0.jar").exists());
     assert!(pw.provisioned(&profile).unwrap().is_none());
+}
+
+/// Keeps a list of names for a profile or a mod.
+struct Names;
+
+impl Extension for Names {
+    fn id(&self) -> &'static str {
+        "names"
+    }
+
+    fn register(&self, _: &mut crate::ext::Registrar<'_>) {}
+}
+
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+struct NamesState {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    names: Vec<String>,
+}
+
+fn names(names: &[&str]) -> NamesState {
+    NamesState {
+        names: names.iter().map(|n| n.to_string()).collect(),
+    }
+}
+
+#[tokio::test]
+async fn extension_state_is_kept_and_makes_deploys_stale() {
+    use crate::ext::StateOf;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .extension(Names)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "none");
+    def.ext.insert("names".to_owned(), toml::Table::new());
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+
+    let state: NamesState = pw.ext_state(&profile, "names", StateOf::Profile).unwrap();
+    assert_eq!(state, NamesState::default());
+    pw.set_ext_state(&profile, "names", StateOf::Profile, &names(&["a"]))
+        .unwrap();
+    let state: NamesState = pw.ext_state(&profile, "names", StateOf::Profile).unwrap();
+    assert_eq!(state, names(&["a"]));
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Stale);
+
+    // what's deployed is kept in the history, so reverting brings back the
+    // state as it was then
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+    pw.set_ext_state(&profile, "names", StateOf::Profile, &names(&["b"]))
+        .unwrap();
+    assert!(pw.has_changes(&profile).unwrap());
+    let history = pw.history(&profile).unwrap();
+    assert_eq!(
+        history.last().unwrap().changes,
+        [Change::Ext {
+            id: "names".to_owned()
+        }]
+    );
+    pw.revert(&profile).unwrap();
+    let state: NamesState = pw.ext_state(&profile, "names", StateOf::Profile).unwrap();
+    assert_eq!(state, names(&["a"]));
+}
+
+#[test]
+fn extensions_are_only_on_for_games_that_ask_for_them() {
+    use crate::ext::StateOf;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .extension(Names)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("plain", "none")).unwrap();
+    let mut def = new_game("fancy", "none");
+    def.ext.insert("names".to_owned(), toml::Table::new());
+    def.ext.insert("elsewhere".to_owned(), toml::Table::new());
+    pw.add_game(def).unwrap();
+
+    let registry = pw.registry();
+    let plain = &registry.game("plain").unwrap().value;
+    let fancy = &registry.game("fancy").unwrap().value;
+    assert!(pw.extensions_on(plain).is_empty());
+    assert_eq!(pw.extensions_on(fancy), ["names"]);
+    assert_eq!(pw.missing_extensions(fancy), ["elsewhere"]);
+
+    let profile = pw.create_profile("plain", "default").unwrap();
+    let err = pw
+        .set_ext_state(&profile, "names", StateOf::Profile, &names(&["a"]))
+        .unwrap_err();
+    assert!(err.to_string().contains("isn't on for"), "{err}");
+
+    // an extension this build lacks is an issue, and its state is left as
+    // it was
+    let profile = pw.create_profile("fancy", "default").unwrap();
+    let issues = pw.issues(&profile).unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(
+        issues[0].kind,
+        crate::issue::IssueKind::MissingExtension {
+            id: "elsewhere".to_owned()
+        }
+    );
+    let mut loaded = pw.load_profile(&profile).unwrap();
+    let theirs: toml::Table = toml::from_str("v = 3\nwhatever = [1, 2]").unwrap();
+    loaded.ext.insert("elsewhere".to_owned(), theirs.clone());
+    pw.save_profile(&profile, &loaded).unwrap();
+    pw.set_ext_state(&profile, "names", StateOf::Profile, &names(&["a"]))
+        .unwrap();
+    assert_eq!(pw.load_profile(&profile).unwrap().ext["elsewhere"], theirs);
+}
+
+#[test]
+fn clashing_extensions_stop_patchwork_opening() {
+    struct Again;
+
+    impl Extension for Again {
+        fn id(&self) -> &'static str {
+            "again"
+        }
+
+        fn register(&self, ext: &mut crate::ext::Registrar<'_>) {
+            ext.deployer(NoDeployer);
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let err = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .extension(Again)
+        .open()
+        .err()
+        .unwrap();
+    assert!(
+        err.to_string()
+            .contains("deployer `none` is registered by both the builder and extension `again`"),
+        "{err}"
+    );
+}
+
+/// A list of whatever the game's `[ext.lists.letters]` says, with the ones
+/// in capitals in a tier of their own before the rest.
+struct Letters;
+
+impl crate::list::OrderedList for Letters {
+    fn title(&self) -> &str {
+        "Letters"
+    }
+
+    fn items(
+        &self,
+        ctx: &crate::list::ListContext<'_>,
+        _: &[InstalledMod],
+    ) -> Result<crate::list::ListItems> {
+        let items = ctx.config()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let name = v.as_str().unwrap().to_owned();
+                crate::list::ListItem {
+                    tier: if name.chars().all(|c| c.is_ascii_uppercase()) {
+                        0
+                    } else {
+                        1
+                    },
+                    name,
+                    mod_name: "m".to_owned(),
+                    badges: Vec::new(),
+                    after: Vec::new(),
+                    detail: None,
+                    can_disable: true,
+                }
+            })
+            .collect();
+        Ok(crate::list::ListItems {
+            items,
+            ..Default::default()
+        })
+    }
+}
+
+struct Lists;
+
+impl Extension for Lists {
+    fn id(&self) -> &'static str {
+        "lists"
+    }
+
+    fn register(&self, ext: &mut crate::ext::Registrar<'_>) {
+        ext.deployer(Writer).ordered_list("letters", Letters);
+    }
+}
+
+/// Writes the enabled letters into `order.txt`.
+struct Writer;
+
+impl Deployer for Writer {
+    fn kind(&self) -> &str {
+        "writer"
+    }
+
+    fn plan(&self, _: &DeployContext<'_>, _: &[InstalledMod]) -> Result<deploy::DesiredState> {
+        Ok(Default::default())
+    }
+
+    fn builds(&self, _: &DeployContext<'_>) -> bool {
+        true
+    }
+
+    fn build(
+        &self,
+        _: &DeployContext<'_>,
+        build: &BuildContext<'_>,
+        _: &[InstalledMod],
+    ) -> Result<deploy::DesiredState> {
+        let list = build.list("lists.letters").unwrap();
+        let text: Vec<&str> = list
+            .items
+            .iter()
+            .filter(|i| i.enabled)
+            .map(|i| i.item.name.as_str())
+            .collect();
+        fs::write(build.out.join("order.txt"), text.join(" ")).unwrap();
+        let dst = crate::relpath::RelPath::new("order.txt").unwrap();
+        Ok(deploy::DesiredState {
+            placements: vec![deploy::Placement {
+                dst: deploy::Dest::game(dst.clone()),
+                src: deploy::Src::Built(dst),
+                mod_name: "built".to_owned(),
+            }],
+            warnings: Vec::new(),
+        })
+    }
+}
+
+fn lettered_game(off: &[&str]) -> GameDef {
+    let mut def = new_game("my-game", "writer");
+    let mut ext = toml::Table::new();
+    ext.insert(
+        "letters".to_owned(),
+        toml::Value::Table(toml::from_str(r#"items = ["a", "b", "C", "d"]"#).unwrap()),
+    );
+    if !off.is_empty() {
+        ext.insert(
+            "off".to_owned(),
+            toml::Value::Array(off.iter().map(|o| toml::Value::from(*o)).collect()),
+        );
+    }
+    def.ext.insert("lists".to_owned(), ext);
+    def
+}
+
+#[tokio::test]
+async fn ordered_lists_are_saved_and_given_to_the_deployer() {
+    use crate::list::ListEntry;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .extension(Lists)
+        .open()
+        .unwrap();
+    pw.add_game(lettered_game(&[])).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let order = || -> Vec<String> {
+        pw.list(&profile, "lists.letters")
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|i| i.item.name)
+            .collect()
+    };
+
+    assert_eq!(
+        pw.lists(&profile).unwrap(),
+        [ListInfo {
+            id: "lists.letters".to_owned(),
+            title: "Letters".to_owned()
+        }]
+    );
+    assert_eq!(order(), ["C", "a", "b", "d"]);
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(
+        fs::read_to_string(game.join("order.txt")).unwrap(),
+        "C a b d"
+    );
+
+    // a move stays in its tier, and makes the deploy stale
+    assert_eq!(
+        pw.move_in_list(&profile, "lists.letters", "d", &Position::Top)
+            .unwrap(),
+        1
+    );
+    pw.set_list_enabled(&profile, "lists.letters", "b", false)
+        .unwrap();
+    assert_eq!(order(), ["C", "d", "a", "b"]);
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Stale);
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(fs::read_to_string(game.join("order.txt")).unwrap(), "C d a");
+    let history = pw.history(&profile).unwrap();
+    assert_eq!(
+        history.last().unwrap().changes,
+        [Change::List {
+            id: "lists.letters".to_owned(),
+            title: "Letters".to_owned()
+        }]
+    );
+
+    // it's kept in the extension's state, where typed state can sit next
+    // to it without either disturbing the other
+    let saved = &pw.load_profile(&profile).unwrap().ext["lists"];
+    assert_eq!(saved["letters"].as_array().unwrap().len(), 4);
+    pw.set_ext_state(
+        &profile,
+        "lists",
+        crate::ext::StateOf::Profile,
+        &names(&["x"]),
+    )
+    .unwrap();
+    assert_eq!(order(), ["C", "d", "a", "b"]);
+
+    // items left out of a save keep their places
+    pw.set_list(
+        &profile,
+        "lists.letters",
+        vec![ListEntry {
+            name: "a".to_owned(),
+            enabled: true,
+        }],
+    )
+    .unwrap();
+    assert_eq!(order(), ["C", "d", "a", "b"]);
+    let err = pw
+        .set_list(
+            &profile,
+            "lists.letters",
+            vec![
+                ListEntry {
+                    name: "a".to_owned(),
+                    enabled: true,
+                },
+                ListEntry {
+                    name: "A".to_owned(),
+                    enabled: true,
+                },
+            ],
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("twice"), "{err}");
+}
+
+#[test]
+fn lists_can_be_turned_off_by_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .extension(Lists)
+        .open()
+        .unwrap();
+    pw.add_game(lettered_game(&["letters", "lettters"]))
+        .unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    assert!(pw.lists(&profile).unwrap().is_empty());
+    assert!(pw.list(&profile, "lists.letters").is_err());
+    let issues = pw.issues(&profile).unwrap();
+    assert_eq!(
+        issues.iter().map(|i| &i.kind).collect::<Vec<_>>(),
+        [&crate::issue::IssueKind::UnknownHook {
+            ext: "lists".to_owned(),
+            name: "lettters".to_owned()
+        }]
+    );
 }

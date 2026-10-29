@@ -12,7 +12,9 @@
 //! - `order`: the mods' load order, as `<source>:<id>` keys. It's one entry,
 //!   so of two reorders made at once only one survives. Mods it doesn't
 //!   mention (added while someone else reordered) go at the end.
-//! - `plugins`: the plugin load order; see [`crate::plugins`]
+//! - `ext/<id>`: what extension `<id>` keeps for the profile (see
+//!   [`Profile::ext`]), so two extensions' changes made at once both
+//!   survive. What extensions keep for a mod is part of the mod's entry.
 //! - `lock/<source>:<id>`: a [`LockedMod`], for mods and their dependencies.
 //!   Whoever changes the profile relocks it and publishes what changed, so
 //!   other machines take the lockfile as it is rather than resolving again.
@@ -26,12 +28,16 @@
 //! hands local mods' files to machines that don't have them that way, and
 //! keeps track of who's syncing; they're ignored here.
 //!
-//! A mod or locked mod that's been removed has `null` for its value; nothing
+//! A mod, locked mod or extension's state that's been removed has `null` for its value; nothing
 //! is ever deleted outright, so a removal replaces older values like any
 //! other change.
 //!
 //! What only means something on one machine (where local mods were added
 //! from, what was deployed, game installs) isn't synced.
+//!
+//! Format 1 kept the plugin load order in its own `plugins` entry; it's
+//! read as the Bethesda extension's state (see
+//! [`crate::profile::LEGACY_PLUGINS`]) until that's been written.
 //!
 //! Entries can be added in a later version without changing [`SYNC_FORMAT`]:
 //! unknown keys and fields are ignored. It only goes up for changes older
@@ -44,11 +50,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile};
-use crate::profile::{PROFILE_SCHEMA, Profile, ProfileMod};
+use crate::profile::{LEGACY_PLUGINS, PROFILE_SCHEMA, Profile, ProfileMod, upgrade_plugins};
 use crate::{Error, Result};
 
-/// The version of the entries' layout this build reads and writes.
-pub const SYNC_FORMAT: u32 = 1;
+/// The version of the entries' layout this build reads and writes. 2 moved
+/// the plugin load order into extensions' state, which format 1 builds
+/// would lose.
+pub const SYNC_FORMAT: u32 = 2;
 
 /// The newest value of each key; see the [module docs](self).
 pub type Entries = BTreeMap<String, Vec<u8>>;
@@ -56,14 +64,16 @@ pub type Entries = BTreeMap<String, Vec<u8>>;
 pub const FORMAT: &str = "format";
 pub const PROFILE: &str = "profile";
 pub const ORDER: &str = "order";
+/// Format 1's plugin load order.
 pub const PLUGINS: &str = "plugins";
 pub const MOD: &str = "mod/";
 pub const LOCK: &str = "lock/";
 pub const LOCK_ENV: &str = "lock-env";
+pub const EXT: &str = "ext/";
 /// Keys the sync layer keeps for itself.
 pub const FILE: &str = "file/";
 pub const PEER: &str = "peer/";
-/// The value of a removed mod or locked mod.
+/// The value of a removed mod, locked mod or extension's state.
 pub const REMOVED: &[u8] = b"null";
 
 #[derive(Serialize, Deserialize)]
@@ -109,7 +119,9 @@ pub fn to_entries(profile: &Profile, lock: Option<&Lockfile>) -> Entries {
     entries.insert(PROFILE.to_owned(), json(&meta));
     let order: Vec<String> = profile.mods.iter().map(key_of).collect();
     entries.insert(ORDER.to_owned(), json(&order));
-    entries.insert(PLUGINS.to_owned(), json(&profile.plugins));
+    for (id, state) in &profile.ext {
+        entries.insert(format!("{EXT}{id}"), json(state));
+    }
     for m in &profile.mods {
         entries.insert(format!("{MOD}{}", key_of(m)), json(m));
     }
@@ -130,8 +142,13 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
 
     let mut mods: BTreeMap<String, ProfileMod> = BTreeMap::new();
     let mut locked: HashMap<String, LockedMod> = HashMap::new();
+    let mut ext = BTreeMap::new();
     for key in entries.keys() {
-        if let Some(mod_key) = key.strip_prefix(MOD) {
+        if let Some(id) = key.strip_prefix(EXT) {
+            if let Some(state) = decode(entries, key)? {
+                ext.insert(id.to_owned(), state);
+            }
+        } else if let Some(mod_key) = key.strip_prefix(MOD) {
             if let Some(m) = decode(entries, key)? {
                 mods.insert(mod_key.to_owned(), m);
             }
@@ -151,6 +168,10 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
         }
     }
     ordered.extend(mods.into_values());
+    // Format 1's, unless it's been replaced (or removed) since
+    if !entries.contains_key(&format!("{EXT}{}", LEGACY_PLUGINS.0)) {
+        upgrade_plugins(&mut ext, decode(entries, PLUGINS)?.unwrap_or_default());
+    }
 
     let profile = Profile {
         schema: PROFILE_SCHEMA,
@@ -160,7 +181,7 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
         hidden_tags: meta.hidden_tags,
         env: meta.env,
         mods: dedupe_names(ordered),
-        plugins: decode(entries, PLUGINS)?.unwrap_or_default(),
+        ext,
     };
     let env = decode(entries, LOCK_ENV)?.unwrap_or_default();
     let lock = (!locked.is_empty()).then(|| Lockfile {
@@ -172,7 +193,8 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
 }
 
 /// What to write so that entries that were `base` become `now`: changed
-/// values, and [`REMOVED`] for mods and locked mods that are gone.
+/// values, and [`REMOVED`] for mods, locked mods and extensions' state that
+/// are gone.
 pub fn changes(base: &Entries, now: &Entries) -> Vec<(String, Vec<u8>)> {
     let mut changed: Vec<(String, Vec<u8>)> = now
         .iter()
@@ -182,7 +204,7 @@ pub fn changes(base: &Entries, now: &Entries) -> Vec<(String, Vec<u8>)> {
     changed.extend(
         base.iter()
             .filter(|(k, v)| {
-                (k.starts_with(MOD) || k.starts_with(LOCK))
+                (k.starts_with(MOD) || k.starts_with(LOCK) || k.starts_with(EXT) || *k == PLUGINS)
                     && v.as_slice() != REMOVED
                     && !now.contains_key(*k)
             })

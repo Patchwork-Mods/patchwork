@@ -192,26 +192,21 @@
 				<p id="mods-empty" class="empty" hidden>No mods yet. Find some in the tabs above.</p>
 			</section>
 
-			<!-- The order the game loads plugins in; see plugins.js. -->
-			<section id="tab-plugins" class="tab" hidden>
-				<p class="muted">
-					The game loads these one after another, and later plugins win when two change the same thing.
-					This order is separate from the mods' order, and it's written for the game when you deploy.
-				</p>
-				<ul id="plugin-problems" class="warnings"></ul>
-				<div id="plugins-unlocked" class="row" hidden>
-					<span id="plugins-unlocked-text"></span>
-					<button type="button" id="plugins-lock">Download them</button>
+			<!-- One of the game's ordered lists, like the plugin load order;
+			     see list.js. -->
+			<section id="tab-list" class="tab" hidden>
+				<p id="list-description" class="muted" hidden></p>
+				<ul id="list-problems" class="warnings"></ul>
+				<div id="list-unlocked" class="row" hidden>
+					<span id="list-unlocked-text"></span>
+					<button type="button" id="list-lock">Download them</button>
 				</div>
-				<details id="plugins-implicit" hidden>
+				<details id="list-fixed" hidden>
 					<summary></summary>
-					<p id="plugins-implicit-list" class="muted"></p>
+					<p id="list-fixed-list" class="muted"></p>
 				</details>
-				<h3 id="plugin-masters-title" class="plugin-group" title="Masters always load before other plugins, wherever they're put" hidden>Masters</h3>
-				<ul id="plugin-masters" class="mod-list plugin-list" hidden></ul>
-				<h3 id="plugin-others-title" class="plugin-group" hidden>Plugins</h3>
-				<ul id="plugin-others" class="mod-list plugin-list" hidden></ul>
-				<p id="plugins-empty" class="empty" hidden>None of this profile's mods have plugins.</p>
+				<div id="list-tiers"></div>
+				<p id="list-empty" class="empty" hidden></p>
 			</section>
 
 			<section id="tab-browse" class="tab" hidden>

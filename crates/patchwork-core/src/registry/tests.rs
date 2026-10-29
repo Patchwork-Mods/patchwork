@@ -150,3 +150,24 @@ fn data_entries_merge_too() {
     assert_eq!(after.overlays, [Origin::User]);
     assert_ne!(after.hash, before.hash);
 }
+
+#[test]
+fn the_old_plugins_table_is_the_bethesda_load_orders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::rooted(tmp.path());
+    // the builtin one has moved; an overlay in the old place still counts
+    user_file(
+        &paths,
+        "games",
+        "skyrim-se",
+        "[deployer.plugins]\nlimit = 10\n",
+    );
+    let registry = Registry::load(&paths).unwrap();
+    assert!(registry.problems.is_empty(), "{:?}", registry.problems);
+    let def = &registry.game("skyrim-se").unwrap().value;
+    assert!(def.deployer.config.get("plugins").is_none());
+    let plugins = def.hook_config("bethesda", "plugins").unwrap();
+    assert_eq!(plugins["limit"].as_integer(), Some(10));
+    assert_eq!(plugins["file"].as_str(), Some("appdata:plugins.txt"));
+    assert!(def.hook_on("bethesda", "plugins"));
+}

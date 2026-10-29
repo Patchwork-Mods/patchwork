@@ -29,8 +29,10 @@ function changeText(c) {
       return `Disabled ${c.name}`;
     case "reordered":
       return "Reordered mods";
-    case "pluginOrder":
-      return "Changed the plugin load order";
+    case "list":
+      return `Rearranged ${c.title.toLowerCase()}`;
+    case "ext":
+      return `Changed what ${c.id} keeps`;
   }
 }
 

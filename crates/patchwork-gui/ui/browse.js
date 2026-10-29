@@ -6,7 +6,7 @@ import { renderProfile } from "./profile.js";
 import { cardMain } from "./mods.js";
 import { refreshDetails } from "./details.js";
 import { go } from "./nav.js";
-import { openPlugins } from "./plugins.js";
+import { listOf, listTab, openList } from "./list.js";
 
 const SOURCE_NAMES = { thunderstore: "Thunderstore", nexus: "Nexus Mods" };
 const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
@@ -15,20 +15,21 @@ const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice
 let typing;
 
 /**
- * Opens the Mods tab ("mods"), the Plugins tab ("plugins") or a source's
- * tab; source tabs all share #tab-browse.
+ * Opens the Mods tab ("mods"), a list's tab (see listTab) or a source's
+ * tab; list tabs all share #tab-list, and source tabs #tab-browse.
  */
 export function selectTab(key) {
+  const list = listOf(key);
   state.tab = key;
-  state.source = key === "mods" || key === "plugins" ? null : key;
+  state.source = key === "mods" || list ? null : key;
   for (const tab of document.querySelectorAll("#tabs [role=tab]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
   }
   $("#tab-mods").hidden = key !== "mods";
-  $("#tab-plugins").hidden = key !== "plugins";
+  $("#tab-list").hidden = !list;
   $("#tab-browse").hidden = !state.source;
   clearTimeout(typing);
-  if (key === "plugins") openPlugins();
+  if (list) openList(list);
   if (state.source) {
     // the search form is shared, so put back what this tab last searched for
     const last = state.searches[key];
@@ -44,20 +45,20 @@ export function selectTab(key) {
 }
 
 /**
- * Replaces the tabs after Mods, staying on the open one if it's still there.
- * The Plugins tab is there for profiles whose game has plugins.
+ * Replaces the tabs after Mods, staying on the open one if it's still there:
+ * one for each of the game's ordered lists, then one for each source.
  */
 export function renderSourceTabs(sources) {
-  const plugins = !!state.profile?.hasPlugins;
+  const lists = state.profile?.lists ?? [];
   const tab = (key, label) =>
     h("button", { role: "tab", "data-tab": key, onclick: () => go(() => selectTab(key)) }, label);
   $("#tabs").replaceChildren(
     tab("mods", "Mods"),
-    // replaceChildren would turn a null into a "null" text node
-    ...(plugins ? [tab("plugins", "Plugins")] : []),
+    ...lists.map((l) => tab(listTab(l.id), l.title)),
     ...sources.map((s) => tab(s, sourceName(s))),
   );
-  const still = state.tab === "plugins" ? plugins : sources.includes(state.tab);
+  const open = listOf(state.tab);
+  const still = open ? lists.some((l) => l.id === open) : sources.includes(state.tab);
   selectTab(still ? state.tab : "mods");
 }
 

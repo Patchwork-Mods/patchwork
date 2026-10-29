@@ -64,6 +64,12 @@ pub enum IssueKind {
         value: String,
         supports: Vec<String>,
     },
+    /// The game turns on an extension (see [`crate::ext`]) this build of
+    /// patchwork doesn't have, so whatever it adds is missing.
+    MissingExtension { id: String },
+    /// The game's `[ext.<extension>]` turns off something the extension
+    /// doesn't have, most likely a typo.
+    UnknownHook { ext: String, name: String },
 }
 
 impl From<UnmetRequirement> for Issue {
@@ -123,6 +129,33 @@ impl Issue {
                 axis: axis.to_owned(),
                 value: value.to_owned(),
                 supports: supports.to_vec(),
+            },
+        }
+    }
+
+    pub fn missing_extension(game: &str, id: &str) -> Self {
+        Issue {
+            severity: Severity::Warning,
+            mods: Vec::new(),
+            message: format!(
+                "{game} uses the `{id}` extension, which this build of patchwork doesn't \
+                 include, so some of what it does for {game} is missing"
+            ),
+            kind: IssueKind::MissingExtension { id: id.to_owned() },
+        }
+    }
+
+    pub fn unknown_hook(game: &str, ext: &str, name: &str) -> Self {
+        Issue {
+            severity: Severity::Warning,
+            mods: Vec::new(),
+            message: format!(
+                "{game} turns off `{name}` of the `{ext}` extension, which doesn't have one; \
+                 check the `off` list in its `[ext.{ext}]`"
+            ),
+            kind: IssueKind::UnknownHook {
+                ext: ext.to_owned(),
+                name: name.to_owned(),
             },
         }
     }

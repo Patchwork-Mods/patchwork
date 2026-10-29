@@ -409,7 +409,7 @@ id = "notnotnotswipez-MoreCompany"
     let dir = env.profile_dir();
     assert!(dir.join("profile.lock").is_file());
     let profile = read(dir.join("profile.toml"));
-    assert!(profile.contains("schema = 2"), "{profile}");
+    assert!(profile.contains("schema = 3"), "{profile}");
     assert!(profile.contains("name = \"main\""), "{profile}");
 }
 
@@ -675,7 +675,7 @@ fn skyrim_plugins_load_in_the_order_set() {
     }
     env.run(&["lock"]);
     let order = |env: &Env| -> Vec<String> {
-        env.run(&["plugins", "list"])
+        env.run(&["order", "list"])
             .lines()
             .filter(|l| !l.starts_with("always"))
             .map(|l| l.split("  (").next().unwrap().trim().to_owned())
@@ -698,7 +698,7 @@ fn skyrim_plugins_load_in_the_order_set() {
         .unwrap();
     let warnings = String::from_utf8_lossy(&out.stderr);
     assert!(
-        warnings.contains("needs Required.esp, which loads after it"),
+        warnings.contains("needs Required.esp, which comes after it"),
         "{warnings}"
     );
 
@@ -708,10 +708,10 @@ fn skyrim_plugins_load_in_the_order_set() {
     );
     // masters stay on top
     assert!(
-        env.run(&["plugins", "move", "Required.esp", "--top"])
+        env.run(&["order", "--list", "plugins", "move", "Required.esp", "--top"])
             .contains("to 2 of 3")
     );
-    env.run(&["plugins", "disable", "patch.esp"]);
+    env.run(&["order", "disable", "patch.esp"]);
     assert_eq!(
         order(&env),
         [
@@ -720,7 +720,9 @@ fn skyrim_plugins_load_in_the_order_set() {
             "3. [ ] Patch.esp"
         ]
     );
-    assert!(read(env.profile_dir().join("profile.toml")).contains("[[plugin]]"));
+    let saved = read(env.profile_dir().join("profile.toml"));
+    assert!(saved.contains("[ext.bethesda]"), "{saved}");
+    assert!(!saved.contains("[[plugin]]"), "{saved}");
 
     env.run(&["deploy"]);
     assert!(game.join("Data/Patch.esp").is_file());
@@ -738,7 +740,7 @@ fn skyrim_plugins_load_in_the_order_set() {
 
     // Changing the order makes the deploy stale, and the game rewriting the
     // file is undone by deploying again.
-    env.run(&["plugins", "enable", "Patch.esp"]);
+    env.run(&["order", "enable", "Patch.esp"]);
     fs::write(appdata.join("plugins.txt"), "*Base.esm\r\n").unwrap();
     env.run(&["deploy"]);
     assert_eq!(

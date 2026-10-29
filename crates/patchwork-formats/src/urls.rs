@@ -105,6 +105,7 @@ impl ProfileFormat for UrlList {
                 enabled: true,
                 game_versions: None,
                 fomod: None,
+                ext: Default::default(),
             });
         }
         if mods.is_empty() {

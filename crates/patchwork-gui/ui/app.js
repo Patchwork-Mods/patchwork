@@ -12,7 +12,7 @@ import { showMissed } from "./daemon.js";
 // these only wire up their parts of the page
 import "./games.js";
 import "./browse.js";
-import "./plugins.js";
+import "./list.js";
 import "./toolbar.js";
 import "./deploy.js";
 import "./history.js";

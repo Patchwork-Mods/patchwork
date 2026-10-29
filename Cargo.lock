@@ -5719,17 +5719,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "patchwork-builtin"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "patchwork-core",
+ "patchwork-deployers",
+ "patchwork-formats",
+ "patchwork-provisioners",
+ "patchwork-sources",
+]
+
+[[package]]
 name = "patchwork-cli"
 version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "clap",
  "jiff",
+ "patchwork-builtin",
  "patchwork-core",
- "patchwork-deployers",
- "patchwork-formats",
- "patchwork-provisioners",
- "patchwork-sources",
  "patchwork-sync",
  "tempfile",
  "tokio",
@@ -5815,11 +5823,8 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "jiff",
+ "patchwork-builtin",
  "patchwork-core",
- "patchwork-deployers",
- "patchwork-formats",
- "patchwork-provisioners",
- "patchwork-sources",
  "patchwork-sync",
  "pulldown-cmark",
  "serde",

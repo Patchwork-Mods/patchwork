@@ -12,10 +12,10 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::event::{Event, Reporter};
+use crate::ext::ExtTables;
 use crate::game::GameDef;
 use crate::hash::ContentHash;
 use crate::lock::Lockfile;
-use crate::plugins::PluginEntry;
 use crate::profile::ProfileMod;
 use crate::settings::Settings;
 use crate::source::{Source, SourceContext};
@@ -34,9 +34,10 @@ pub struct SharedProfile {
     /// or `None` if the format can't carry them, in which case an import
     /// leaves the existing profile's alone.
     pub hidden_tags: Option<Vec<String>>,
-    /// The profile's [`Profile::plugins`](crate::profile::Profile::plugins),
-    /// or `None` like `hidden_tags`.
-    pub plugins: Option<Vec<PluginEntry>>,
+    /// The profile's [`Profile::ext`](crate::profile::Profile::ext), or
+    /// `None` like `hidden_tags`. What extensions keep for each mod is in
+    /// `mods` whatever the format.
+    pub ext: Option<ExtTables>,
     /// Only present on export when the format asks for it with
     /// [`ProfileFormat::needs_lock`].
     pub lock: Option<Lockfile>,

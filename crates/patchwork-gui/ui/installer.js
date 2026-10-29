@@ -7,7 +7,7 @@
 import { $, h } from "./dom.js";
 import { run, state, status } from "./state.js";
 import { showProfile } from "./profile.js";
-import { openPlugins } from "./plugins.js";
+import { refreshList } from "./list.js";
 
 /**
  * The installer being shown: the mod it's for, what's picked so far, the
@@ -218,7 +218,7 @@ async function save(picks, message) {
     $("#installer-dialog").close();
     if (state.profile?.id === id) {
       showProfile(profile);
-      if (state.tab === "plugins") openPlugins();
+      refreshList();
     }
     status(message);
   } catch {

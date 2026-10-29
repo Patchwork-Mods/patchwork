@@ -54,7 +54,7 @@ to = "Data/{path}"
 
 # The load order goes in plugins.txt. The game's own masters and the
 # Creation Club content it lists in Skyrim.ccc always load first.
-[deployer.plugins]
+[ext.bethesda.plugins]
 folder = "Data"
 file = "appdata:plugins.txt"
 implicit = ["Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm"]

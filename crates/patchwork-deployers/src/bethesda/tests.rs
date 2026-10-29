@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use patchwork_core::deploy::{DeployState, ModFile, Roots};
 use patchwork_core::event::Silent;
 use patchwork_core::game::{DeployerSpec, GameDef};
-use patchwork_core::plugins::PluginEntry;
+use patchwork_core::list::ListEntry;
 use patchwork_core::registry::Registry;
 
 use super::*;
@@ -16,8 +16,9 @@ to = "Data/{path}"
 
 [[rules]]
 to = "Data/{path}"
+"#;
 
-[plugins]
+const PLUGINS: &str = r#"
 folder = "Data"
 file = "appdata:plugins.txt"
 implicit = ["Skyrim.esm", "Update.esm"]
@@ -82,6 +83,14 @@ impl Env {
             capture: None,
             instances: None,
             provision: None,
+            ext: [(
+                EXTENSION.to_owned(),
+                toml::Table::from_iter([(
+                    LIST.to_owned(),
+                    toml::Value::Table(toml::from_str(PLUGINS).unwrap()),
+                )]),
+            )]
+            .into(),
         };
         Self { tmp, game, def }
     }
@@ -112,7 +121,8 @@ impl Env {
         }
     }
 
-    fn plugins(&self, mods: &[InstalledMod]) -> Plugins {
+    /// What the load order finds in `mods`, and what it makes of `saved`.
+    fn list(&self, saved: &[ListEntry], mods: &[InstalledMod]) -> (ListItems, List) {
         let registry = Registry::default();
         let ctx = DeployContext {
             game: &self.def,
@@ -120,13 +130,26 @@ impl Env {
             registry: &registry,
         };
         let state = DeployState::empty("skyrim-se", &Roots::game(&self.game));
-        BethesdaDeployer
-            .plugins(&ctx, &GameFiles::new(&self.game, &state), mods)
-            .unwrap()
-            .unwrap()
+        let files = GameFiles::new(&self.game, &state);
+        let config = self.def.hook_config(EXTENSION, LIST).unwrap();
+        let lctx = ListContext::new(&ctx, &files, config);
+        let found = BethesdaLoadOrder.items(&lctx, mods).unwrap();
+        let mut list = List::new(
+            format!("{EXTENSION}.{LIST}"),
+            &BethesdaLoadOrder,
+            saved,
+            found.clone(),
+        );
+        let problems = BethesdaLoadOrder.check(&lctx, &list);
+        list.warnings.extend(problems);
+        (found, list)
     }
 
-    fn build(&self, order: &LoadOrder) -> (DesiredState, String) {
+    fn items(&self, mods: &[InstalledMod]) -> ListItems {
+        self.list(&[], mods).0
+    }
+
+    fn build(&self, order: &List) -> (DesiredState, String) {
         let registry = Registry::default();
         let ctx = DeployContext {
             game: &self.def,
@@ -141,7 +164,7 @@ impl Env {
             out: &out,
             cache: &out,
             reporter: &Silent,
-            load_order: Some(order),
+            lists: std::slice::from_ref(order),
         };
         let built = BethesdaDeployer.build(&ctx, &build, &[]).unwrap();
         (built, fs::read_to_string(out.join(OUT)).unwrap())
@@ -208,8 +231,8 @@ fn plugins_are_found_where_the_rules_put_them() {
             ],
         ),
     ];
-    let plugins = env.plugins(&mods);
-    let names: Vec<_> = plugins.found.iter().map(|p| p.name.as_str()).collect();
+    let plugins = env.items(&mods);
+    let names: Vec<_> = plugins.items.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(
         names,
         [
@@ -220,21 +243,28 @@ fn plugins_are_found_where_the_rules_put_them() {
             "Broken.esp"
         ]
     );
-    let get = |name: &str| plugins.found.iter().find(|p| p.name == name).unwrap();
+    let get = |name: &str| plugins.items.iter().find(|p| p.name == name).unwrap();
     assert_eq!(get("Base.esm").mod_name, "Wrapped");
-    assert!(get("Base.esm").master && !get("Base.esm").light);
-    assert_eq!(get("Patch.esp").masters, ["Skyrim.esm", "Base.esm"]);
-    assert!(!get("Patch.esp").master);
-    assert!(get("Small.esl").master && get("Small.esl").light);
-    assert!(get("Flagged.esp").master);
+    assert_eq!(
+        (get("Base.esm").tier, &get("Base.esm").badges[..]),
+        (MASTERS, &["master".to_owned()][..])
+    );
+    assert_eq!(get("Patch.esp").after, ["Skyrim.esm", "Base.esm"]);
+    assert_eq!(get("Patch.esp").tier, OTHERS);
+    assert!(get("Patch.esp").badges.is_empty());
+    assert_eq!(
+        (get("Small.esl").tier, &get("Small.esl").badges[..]),
+        (MASTERS, &["light".to_owned()][..])
+    );
+    assert_eq!(get("Flagged.esp").tier, MASTERS);
     assert_eq!(plugins.warnings.len(), 1);
     assert!(
         plugins.warnings[0].contains("Broken.esp"),
         "{:?}",
         plugins.warnings
     );
-    assert_eq!(plugins.implicit, ["Skyrim.esm", "Update.esm"]);
-    assert_eq!(plugins.limit, Some(254));
+    let fixed: Vec<_> = plugins.fixed.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(fixed, ["Skyrim.esm", "Update.esm"]);
 }
 
 #[test]
@@ -253,9 +283,10 @@ fn creation_club_plugins_that_are_there_load_first() {
     ] {
         fs::write(env.game.join("Data").join(file), "").unwrap();
     }
-    let plugins = env.plugins(&[]);
+    let plugins = env.items(&[]);
+    let fixed: Vec<_> = plugins.fixed.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(
-        plugins.implicit,
+        fixed,
         [
             "Skyrim.esm",
             "Update.esm",
@@ -288,8 +319,14 @@ fn light_creation_club_plugins_are_found_by_flag_or_extension() {
     .unwrap();
     fs::write(data.join("ccFull.esm"), plugin_bytes(MASTER_FLAG, &[])).unwrap();
     fs::write(data.join("ccLight.esl"), "").unwrap();
-    let plugins = env.plugins(&[]);
-    assert_eq!(plugins.light_implicit, ["ccFlagged.esm", "ccLight.esl"]);
+    let plugins = env.items(&[]);
+    let light: Vec<_> = plugins
+        .fixed
+        .iter()
+        .filter(|p| p.badges.iter().any(|b| b == "light"))
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(light, ["ccFlagged.esm", "ccLight.esl"]);
 }
 
 #[test]
@@ -304,16 +341,16 @@ fn the_load_order_is_written_for_the_game() {
         ],
     )];
     let saved = [
-        PluginEntry {
+        ListEntry {
             name: "B.esp".to_owned(),
             enabled: true,
         },
-        PluginEntry {
+        ListEntry {
             name: "A.esp".to_owned(),
             enabled: false,
         },
     ];
-    let order = LoadOrder::new(&saved, env.plugins(&mods));
+    let (_, order) = env.list(&saved, &mods);
     let (built, text) = env.build(&order);
     let lines: Vec<_> = text.lines().filter(|l| !l.starts_with('#')).collect();
     assert_eq!(lines, ["*Base.esm", "*B.esp", "A.esp"]);
@@ -327,9 +364,9 @@ fn the_load_order_is_written_for_the_game() {
 }
 
 #[test]
-fn games_without_plugins_config_have_none() {
+fn games_without_the_load_order_have_none() {
     let mut env = Env::new();
-    env.def.deployer.config.remove("plugins");
+    env.def.ext.clear();
     let registry = Registry::default();
     let ctx = DeployContext {
         game: &env.def,
@@ -338,12 +375,38 @@ fn games_without_plugins_config_have_none() {
     };
     let state = DeployState::empty("skyrim-se", &Roots::game(&env.game));
     let game = GameFiles::new(&env.game, &state);
-    assert!(
-        BethesdaDeployer
-            .plugins(&ctx, &game, &[])
-            .unwrap()
-            .is_none()
-    );
     assert!(!BethesdaDeployer.builds(&ctx));
     assert!(BethesdaDeployer.fingerprint(&ctx, &game).unwrap().is_none());
+}
+
+#[test]
+fn too_many_full_plugins_are_warned_about() {
+    let mut env = Env::new();
+    let mods = [env.installed(
+        "M",
+        &[
+            ("A.esp", plugin_bytes(0, &[])),
+            ("B.esp", plugin_bytes(0, &[])),
+            ("L.esl", plugin_bytes(0, &[])),
+        ],
+    )];
+    let set_limit = |env: &mut Env, limit: i64| {
+        env.def.ext.get_mut(EXTENSION).unwrap()[LIST]
+            .as_table_mut()
+            .unwrap()
+            .insert("limit".to_owned(), toml::Value::Integer(limit));
+    };
+    // the game's two count, but light plugins don't
+    set_limit(&mut env, 4);
+    assert!(env.list(&[], &mods).1.warnings.is_empty());
+    set_limit(&mut env, 3);
+    let warnings = env.list(&[], &mods).1.warnings;
+    assert!(warnings[0].starts_with("4 plugins"), "{warnings:?}");
+
+    // nor do disabled ones
+    let off = [ListEntry {
+        name: "A.esp".to_owned(),
+        enabled: false,
+    }];
+    assert!(env.list(&off, &mods).1.warnings.is_empty());
 }

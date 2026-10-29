@@ -960,7 +960,7 @@ dialog button.danger-text {
 }
 
 #mod-problems li,
-#plugin-problems li {
+#list-problems li {
   padding: 6px 8px;
 }
 
@@ -1470,19 +1470,19 @@ dialog::backdrop {
   color: var(--pw-danger);
 }
 
-/* The Plugins tab; see plugins.js. Masters and the rest are two lists, each
-   rearranged within itself. */
-.plugin-group {
+/* A list's tab, like Plugins; see list.js. Each tier (masters and the rest,
+   for plugins) is a list of its own, rearranged within itself. */
+.list-tier {
   margin: 0;
   font-size: 13px;
   color: var(--pw-muted);
 }
 
-.plugin-list {
+.list-items {
   position: relative;
 }
 
-.plugin-list>li.dragging {
+.list-items>li.dragging {
   position: relative;
   z-index: 1;
   background: var(--pw-surface);
@@ -1490,16 +1490,16 @@ dialog::backdrop {
   will-change: transform;
 }
 
-.plugin-row .row-head {
+.list-row .row-head {
   cursor: default;
 }
 
-.plugin-kind {
+.list-badge {
   margin-left: 6px;
   font-weight: 400;
 }
 
-.plugin-row .muted {
+.list-row .muted {
   font-size: 12px;
 }
 

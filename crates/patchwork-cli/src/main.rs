@@ -4,6 +4,9 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use patchwork_builtin::{
+    Bethesda, Generic, Minecraft, ModrinthExtension, NexusExtension, Smf, ThunderstoreExtension,
+};
 use patchwork_core::account::Account;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
@@ -12,20 +15,16 @@ use patchwork_core::event::{Event, Reporter, Silent};
 use patchwork_core::fomod::{GroupKind, InstallerView, OptionKind, Selection};
 use patchwork_core::issue::Severity;
 use patchwork_core::launch::{self, LaunchOption};
+use patchwork_core::list::List;
 use patchwork_core::locate::Locator;
 use patchwork_core::lock::mod_key;
 use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
-use patchwork_core::plugins::LoadOrder;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::update;
 use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
-use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
-use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
-use patchwork_provisioners::MinecraftProvisioner;
-use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
 use patchwork_sync::daemon::{self, service};
 use patchwork_sync::{Joined, Node};
 
@@ -187,10 +186,18 @@ enum Command {
         #[command(flatten)]
         to: MoveTo,
     },
-    /// Put the plugins in the profile's mods (Skyrim's .esp, .esm and .esl
-    /// files) in the order the game loads them.
-    #[command(subcommand)]
-    Plugins(PluginsCommand),
+    /// Put things in the profile's mods in an order of their own, apart from
+    /// the mods' order, for games that have them: Skyrim's plugins (.esp,
+    /// .esm and .esl files), say.
+    #[command(alias = "plugins")]
+    Order {
+        /// Which list, for games with more than one: its id, or the last
+        /// part of it (`plugins` for `bethesda.plugins`).
+        #[arg(long)]
+        list: Option<String>,
+        #[command(subcommand)]
+        action: OrderCommand,
+    },
     /// Show which mods provide the same files, and whose copy of each is
     /// deployed: the one latest in the load order. Only locked mods count.
     Conflicts {
@@ -349,20 +356,20 @@ enum AccountAction {
 }
 
 #[derive(Subcommand)]
-enum PluginsCommand {
-    /// List the plugins in load order, from the profile's locked mods.
+enum OrderCommand {
+    /// List what's in the list, in order, from the profile's locked mods.
     List,
-    /// Move a plugin in the load order. Masters (.esm and .esl files, and
-    /// plugins flagged as them) always load before the rest, so they stay
-    /// above them.
+    /// Move something in the list. Some things always come before others
+    /// (Skyrim's masters before other plugins), so they stay among their
+    /// own kind.
     Move {
         name: String,
         #[command(flatten)]
         to: MoveTo,
     },
-    /// Load a plugin.
+    /// Turn something in the list on.
     Enable { name: String },
-    /// Leave a plugin's file in place but don't load it.
+    /// Leave something's files in place but turn it off.
     Disable { name: String },
 }
 
@@ -542,22 +549,16 @@ async fn main() -> ExitCode {
     }
 }
 
-/// Opens patchwork with every source, deployer and format there is.
+/// Opens patchwork with every extension there is.
 fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Result<Patchwork> {
     Patchwork::builder(paths)
-        .source(LocalSource)
-        .source(Thunderstore)
-        .source(Modrinth)
-        .source(Nexus::default())
-        .source(UrlSource)
-        .deployer(RulesDeployer)
-        .deployer(BethesdaDeployer)
-        .deployer(SmfDeployer)
-        .provisioner(MinecraftProvisioner)
-        .format(Archive)
-        .format(UrlList)
-        .format(R2modman)
-        .format(ThunderstoreCode::default())
+        .extension(Generic)
+        .extension(ThunderstoreExtension)
+        .extension(NexusExtension)
+        .extension(ModrinthExtension)
+        .extension(Bethesda)
+        .extension(Smf)
+        .extension(Minecraft)
         .reporter(reporter)
         .open()
 }
@@ -889,38 +890,35 @@ async fn run(cli: Cli) -> Result<()> {
             let index = pw.move_mod(&profile, &name, &to.position())?;
             println!("moved {name} to {} of {}", index + 1, loaded.mods.len());
         }
-        Command::Plugins(command) => {
+        Command::Order { list, action } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
-            let order = || -> Result<LoadOrder> {
-                pw.load_order(&profile)?.with_context(|| {
-                    format!("{} doesn't have plugins to put in order", loaded.game)
-                })
-            };
-            match command {
-                PluginsCommand::List => {
-                    let order = order()?;
-                    if order.plugins.is_empty() {
+            let id = pick_list(&pw, &profile, &loaded.game, list.as_deref())?;
+            match action {
+                OrderCommand::List => {
+                    let list = pw.list(&profile, &id)?;
+                    if list.items.is_empty() {
                         println!(
-                            "none of {}'s locked mods have plugins; lock it to include mods added since",
-                            loaded.label()
+                            "none of {}'s locked mods have anything for {}; lock it to include mods added since",
+                            loaded.label(),
+                            list.title.to_lowercase()
                         );
                     }
-                    print_plugins(&order);
+                    print_list(&list);
                 }
-                PluginsCommand::Move { name, to } => {
-                    let index = pw.move_plugin(&profile, &name, &to.position())?;
-                    let order = order()?;
-                    println!("moved {name} to {} of {}", index + 1, order.plugins.len());
-                    for warning in &order.warnings {
+                OrderCommand::Move { name, to } => {
+                    let index = pw.move_in_list(&profile, &id, &name, &to.position())?;
+                    let list = pw.list(&profile, &id)?;
+                    println!("moved {name} to {} of {}", index + 1, list.items.len());
+                    for warning in &list.warnings {
                         eprintln!("warning: {warning}");
                     }
                 }
-                PluginsCommand::Enable { name } => {
-                    pw.set_plugin_enabled(&profile, &name, true)?;
+                OrderCommand::Enable { name } => {
+                    pw.set_list_enabled(&profile, &id, &name, true)?;
                     println!("enabled {name}");
                 }
-                PluginsCommand::Disable { name } => {
-                    pw.set_plugin_enabled(&profile, &name, false)?;
+                OrderCommand::Disable { name } => {
+                    pw.set_list_enabled(&profile, &id, &name, false)?;
                     println!("disabled {name}");
                 }
             }
@@ -1952,26 +1950,63 @@ fn truncate(text: &str, max: usize) -> String {
     }
 }
 
-fn print_plugins(order: &LoadOrder) {
-    if !order.implicit.is_empty() {
-        println!("always loaded first: {}", order.implicit.join(", "));
+/// The id of the list `wanted` names (its id or the last part of it), or
+/// of the game's only list.
+fn pick_list(
+    pw: &Patchwork,
+    profile: &ProfileRef,
+    game: &str,
+    wanted: Option<&str>,
+) -> Result<String> {
+    let lists = pw.lists(profile)?;
+    let ids = || {
+        lists
+            .iter()
+            .map(|l| l.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match wanted {
+        Some(wanted) => lists
+            .iter()
+            .find(|l| l.id == wanted || l.id.rsplit('.').next() == Some(wanted))
+            .map(|l| l.id.clone())
+            .with_context(|| match lists.len() {
+                0 => format!("{game} doesn't have anything to put in order"),
+                _ => format!("{game} has no list `{wanted}`; it has {}", ids()),
+            }),
+        None => match &lists[..] {
+            [] => bail!("{game} doesn't have anything to put in order"),
+            [only] => Ok(only.id.clone()),
+            _ => bail!(
+                "{game} has more than one list; pick one with --list: {}",
+                ids()
+            ),
+        },
     }
-    let width = order.plugins.len().to_string().len();
-    for (i, p) in order.plugins.iter().enumerate() {
-        let mark = if p.enabled { 'x' } else { ' ' };
-        let kind = match (p.plugin.master, p.plugin.light) {
-            (_, true) => " (light)",
-            (true, false) => " (master)",
-            _ => "",
+}
+
+fn print_list(list: &List) {
+    if !list.fixed.is_empty() {
+        let fixed: Vec<&str> = list.fixed.iter().map(|i| i.name.as_str()).collect();
+        println!("always first: {}", fixed.join(", "));
+    }
+    let width = list.items.len().to_string().len();
+    for (i, item) in list.items.iter().enumerate() {
+        let mark = if item.enabled { 'x' } else { ' ' };
+        let badges = if item.item.badges.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", item.item.badges.join(", "))
         };
         println!(
-            "{:>width$}. [{mark}] {}{kind}  ({})",
+            "{:>width$}. [{mark}] {}{badges}  ({})",
             i + 1,
-            p.plugin.name,
-            p.plugin.mod_name
+            item.item.name,
+            item.item.mod_name
         );
     }
-    for warning in &order.warnings {
+    for warning in &list.warnings {
         eprintln!("warning: {warning}");
     }
 }

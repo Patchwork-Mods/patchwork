@@ -13,6 +13,9 @@ use std::fmt::Display;
 use std::sync::Mutex;
 
 use base64::prelude::*;
+use patchwork_builtin::{
+    Bethesda, Generic, Minecraft, ModrinthExtension, NexusExtension, Smf, ThunderstoreExtension,
+};
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
@@ -21,20 +24,16 @@ use patchwork_core::fomod::{InstallerView, Selection};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
 use patchwork_core::launch::{self, LaunchOption, Via};
+use patchwork_core::list::{List, ListEntry};
 use patchwork_core::lock::{Lockfile, mod_key};
 use patchwork_core::matching::{self, ModText};
 use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
-use patchwork_core::plugins::{LoadOrder, PluginEntry};
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{ModSpec, SourceFile};
-use patchwork_core::{DeployStatus, GameInstall, HistoryEntry, ImportOptions, Patchwork};
-use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
-use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
-use patchwork_provisioners::MinecraftProvisioner;
-use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
+use patchwork_core::{DeployStatus, GameInstall, HistoryEntry, ImportOptions, ListInfo, Patchwork};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -174,8 +173,9 @@ struct ProfileDetail {
     mods: Vec<UiMod>,
     /// Mods with any of these tags go in the Mods tab's hidden section.
     hidden_tags: Vec<String>,
-    /// Whether the game has plugins to put in order, on a Plugins tab.
-    has_plugins: bool,
+    /// The game's ordered lists (see [`patchwork_core::list`]), each on a
+    /// tab of its own.
+    lists: Vec<ListInfo>,
     /// Everything worth warning about, from [`Patchwork::issues`].
     issues: Vec<Issue>,
     /// The names of mods added here to a profile this computer follows,
@@ -356,7 +356,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     } else {
         Vec::new()
     };
-    let has_plugins = pw.has_plugins(&r).map_err(msg)?;
+    let lists = pw.lists(&r).map_err(msg)?;
     let installers = pw.installers(&r).map_err(msg)?;
     let launch_options = pw
         .profile_launch_options(&loaded)
@@ -398,7 +398,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         game: loaded.game,
         mods,
         hidden_tags,
-        has_plugins,
+        lists,
         issues,
         unshared,
         id,
@@ -471,6 +471,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         capture: None,
         instances: None,
         provision: None,
+        ext: Default::default(),
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
     if let Some(path) = filled(game.install) {
@@ -867,21 +868,19 @@ fn reorder_mods(app: State<'_, App>, id: String, names: Vec<String>) -> CmdResul
     app.pw.reorder_mods(&profile_ref(&id)?, &names).map_err(msg)
 }
 
-/// What the Plugins tab shows.
+/// What a list's tab shows.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UiLoadOrder {
+struct UiList {
     #[serde(flatten)]
-    order: LoadOrder,
-    /// Enabled mods that haven't been locked, whose plugins aren't known
+    list: List,
+    /// Enabled mods that haven't been locked, whose items aren't known
     /// until they are; see [`lock_profile`].
     unlocked: Vec<String>,
 }
 
-fn ui_load_order(pw: &Patchwork, r: &ProfileRef) -> CmdResult<Option<UiLoadOrder>> {
-    let Some(order) = pw.load_order(r).map_err(msg)? else {
-        return Ok(None);
-    };
+fn ui_list(pw: &Patchwork, r: &ProfileRef, list: &str) -> CmdResult<UiList> {
+    let list = pw.list(r, list).map_err(msg)?;
     let lock = pw.load_lock(r).map_err(msg)?;
     let unlocked = pw
         .load_profile(r)
@@ -895,26 +894,27 @@ fn ui_load_order(pw: &Patchwork, r: &ProfileRef) -> CmdResult<Option<UiLoadOrder
         })
         .map(|m| m.name)
         .collect();
-    Ok(Some(UiLoadOrder { order, unlocked }))
+    Ok(UiList { list, unlocked })
 }
 
-/// The order the profile's plugins load in, for the Plugins tab.
+/// One of the profile's ordered lists, for its tab.
 #[tauri::command]
-fn load_order(app: State<'_, App>, id: String) -> CmdResult<Option<UiLoadOrder>> {
-    ui_load_order(&app.pw, &profile_ref(&id)?)
+fn list(app: State<'_, App>, id: String, list: String) -> CmdResult<UiList> {
+    ui_list(&app.pw, &profile_ref(&id)?, &list)
 }
 
-/// Saves the Plugins tab's order and switches, returning the load order as
-/// it now is.
+/// Saves a list's tab's order and switches, returning the list as it now
+/// is.
 #[tauri::command]
-fn set_load_order(
+fn set_list(
     app: State<'_, App>,
     id: String,
-    plugins: Vec<PluginEntry>,
-) -> CmdResult<Option<UiLoadOrder>> {
+    list: String,
+    entries: Vec<ListEntry>,
+) -> CmdResult<UiList> {
     let r = profile_ref(&id)?;
-    app.pw.set_load_order(&r, plugins).map_err(msg)?;
-    ui_load_order(&app.pw, &r)
+    app.pw.set_list(&r, &list, entries).map_err(msg)?;
+    ui_list(&app.pw, &r, &list)
 }
 
 /// A mod's installer as the installer dialog shows it.
@@ -1456,22 +1456,16 @@ const BUILTIN_HEADER: &str = "\
 
 ";
 
-/// Opens patchwork with every source, deployer and format there is.
+/// Opens patchwork with every extension there is.
 fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Result<Patchwork> {
     Patchwork::builder(paths)
-        .source(LocalSource)
-        .source(Thunderstore)
-        .source(Modrinth)
-        .source(Nexus::default())
-        .source(UrlSource)
-        .deployer(RulesDeployer)
-        .deployer(BethesdaDeployer)
-        .deployer(SmfDeployer)
-        .provisioner(MinecraftProvisioner)
-        .format(Archive)
-        .format(UrlList)
-        .format(R2modman)
-        .format(ThunderstoreCode::default())
+        .extension(Generic)
+        .extension(ThunderstoreExtension)
+        .extension(NexusExtension)
+        .extension(ModrinthExtension)
+        .extension(Bethesda)
+        .extension(Smf)
+        .extension(Minecraft)
         .reporter(reporter)
         .open()
 }
@@ -1563,8 +1557,8 @@ fn main() {
             set_hidden_tags,
             sort_mods,
             reorder_mods,
-            load_order,
-            set_load_order,
+            list,
+            set_list,
             installer,
             set_installer,
             conflicts,

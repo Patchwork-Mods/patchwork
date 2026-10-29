@@ -52,6 +52,8 @@ pub enum Error {
     Deployer { kind: String, message: String },
     #[error("provisioner `{kind}`: {message}")]
     Provisioner { kind: String, message: String },
+    #[error("extension `{id}`: {message}")]
+    Extension { id: String, message: String },
     #[error("another patchwork process is running (lock held on {})", .0.display())]
     Busy(PathBuf),
     #[error("{}", needs_download(.0))]

@@ -1,0 +1,13 @@
+[package]
+name = "patchwork-builtin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+patchwork-core.workspace = true
+patchwork-sources.workspace = true
+patchwork-deployers.workspace = true
+patchwork-provisioners.workspace = true
+patchwork-formats.workspace = true

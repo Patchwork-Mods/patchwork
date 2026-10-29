@@ -200,6 +200,7 @@ impl Env {
             capture: None,
             instances: None,
             provision: None,
+            ext: Default::default(),
         };
         let registry = Registry::default();
         let ctx = DeployContext {
@@ -217,7 +218,7 @@ impl Env {
             out: &out,
             cache: &cache,
             reporter: &Silent,
-            load_order: None,
+            lists: &[],
         };
         SmfDeployer.build(&ctx, &build, mods)
     }

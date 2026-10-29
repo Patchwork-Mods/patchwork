@@ -219,6 +219,7 @@ impl Registry {
         if origin != Origin::Builtin {
             resolve_image(&mut table, path);
         }
+        upgrade_game(&mut table);
 
         let (merged, origin, overlays) = match self.games.get(id) {
             Some(base) => {
@@ -281,6 +282,31 @@ impl Registry {
 /// what was built for a game look out of date.
 const COSMETIC_GAME_FIELDS: &[&str] =
     &["name", "description", "image", "hidden", "detect", "launch"];
+
+/// Moves what game definitions used to have where it is now, so older
+/// definitions (and overlays of them) keep working: `[deployer.plugins]`
+/// is the Bethesda extension's `plugins` list.
+fn upgrade_game(table: &mut toml::Table) {
+    let Some(plugins) = table
+        .get_mut("deployer")
+        .and_then(|d| d.as_table_mut())
+        .and_then(|d| d.remove("plugins"))
+    else {
+        return;
+    };
+    let ext = table
+        .entry("ext")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if let Some(ext) = ext.as_table_mut() {
+        let (id, list) = crate::profile::LEGACY_PLUGINS;
+        let bethesda = ext
+            .entry(id)
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let Some(bethesda) = bethesda.as_table_mut() {
+            bethesda.entry(list).or_insert(plugins);
+        }
+    }
+}
 
 /// Merges `overlay` into `base`: tables merge key by key, and any other value
 /// replaces the old one.

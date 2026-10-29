@@ -328,6 +328,7 @@ fn from_r2z(format_id: &str, ctx: &FormatContext<'_>, input: &[u8]) -> Result<Sh
                 enabled: m.enabled,
                 game_versions: None,
                 fomod: None,
+                ext: Default::default(),
             }
         })
         .collect();

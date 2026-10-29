@@ -1,7 +1,6 @@
 use super::*;
 use crate::hash::ContentHash;
 use crate::lock::mod_key;
-use crate::plugins::PluginEntry;
 use crate::source::{ArtifactFormat, ArtifactLocation};
 
 fn profile_mod(id: &str) -> ProfileMod {
@@ -13,6 +12,7 @@ fn profile_mod(id: &str) -> ProfileMod {
         enabled: true,
         game_versions: None,
         fomod: None,
+        ext: Default::default(),
     }
 }
 
@@ -145,10 +145,13 @@ fn a_profile_survives_the_trip() {
     profile.mods = vec![profile_mod("B"), profile_mod("A")];
     profile.mods[1].enabled = false;
     profile.mods[1].version = Some("1.0.0".to_owned());
-    profile.plugins = vec![PluginEntry {
-        name: "A.esp".to_owned(),
-        enabled: false,
-    }];
+    profile
+        .ext
+        .insert("names".to_owned(), table("v = 1\nnames = [\"a\"]"));
+    profile.mods[0].ext.insert(
+        "picks".to_owned(),
+        table("v = 2\nwhen = 1979-05-27T07:32:00Z"),
+    );
     let lock = Lockfile {
         schema: LOCK_SCHEMA,
         game: LockedGame {
@@ -168,8 +171,8 @@ fn a_profile_survives_the_trip() {
     assert_eq!(synced.profile.game, "my-game");
     assert_eq!(synced.profile.hidden_tags, profile.hidden_tags);
     assert_eq!(synced.profile.mods, profile.mods);
-    assert_eq!(synced.profile.plugins, profile.plugins);
     assert_eq!(synced.profile.env, profile.env);
+    assert_eq!(synced.profile.ext, profile.ext);
     let back = synced.lock.unwrap();
     assert_eq!(back.game.env, lock.game.env);
     assert_eq!(
@@ -178,6 +181,59 @@ fn a_profile_survives_the_trip() {
     );
     // and nothing needs writing again
     assert!(changes(&entries, &to_entries(&synced.profile, Some(&back))).is_empty());
+}
+
+fn table(text: &str) -> toml::Table {
+    toml::from_str(text).unwrap()
+}
+
+#[test]
+fn different_extensions_changed_at_once_both_survive() {
+    let (mut a, mut b, mut clock) = pair(&["One"]);
+    a.profile
+        .ext
+        .insert("first".to_owned(), table("v = 1\nx = 1"));
+    b.profile
+        .ext
+        .insert("second".to_owned(), table("v = 1\ny = 2"));
+    sync(&mut a, &mut b, &mut clock);
+    for m in [&a, &b] {
+        assert_eq!(
+            m.profile.ext.keys().collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+    }
+
+    // and one's state going away goes away everywhere
+    a.profile.ext.remove("first");
+    sync(&mut a, &mut b, &mut clock);
+    for m in [&a, &b] {
+        assert_eq!(m.profile.ext.keys().collect::<Vec<_>>(), ["second"]);
+    }
+}
+
+#[test]
+fn format_1s_plugins_become_the_bethesda_extensions_state() {
+    let (mut a, _, mut clock) = pair(&["One"]);
+    a.replica.insert(
+        PLUGINS.to_owned(),
+        (0, br#"[{"name": "A.esp", "enabled": false}]"#.to_vec()),
+    );
+    a.adopt();
+    let state = &a.profile.ext["bethesda"];
+    assert_eq!(state["v"].as_integer(), Some(1));
+    assert_eq!(state["plugins"][0]["name"].as_str(), Some("A.esp"));
+    assert_eq!(state["plugins"][0]["enabled"].as_bool(), Some(false));
+
+    // once it's published where it goes now, the old entry's removed, and
+    // clearing the new one doesn't bring the old one back
+    a.publish(&mut clock);
+    assert_eq!(a.replica[PLUGINS].1, REMOVED);
+    a.adopt();
+    a.profile.ext.clear();
+    a.publish(&mut clock);
+    a.adopt();
+    assert!(a.profile.ext.is_empty());
 }
 
 #[test]

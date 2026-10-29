@@ -20,18 +20,19 @@ use crate::deploy::{
 use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
+use crate::ext::{Extension, Hook, Registered};
 use crate::fomod::{self, FileState, Installer, InstallerView, Selection};
 use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, LinkMethod, validate_game_id};
 use crate::hash::ContentHash;
 use crate::issue::Issue;
 use crate::launch::{self, Launch, LaunchOption};
+use crate::list::{List, OrderedList};
 use crate::locate::{self, Found, Locator};
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
 use crate::matching::{self, ModText};
 use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
-use crate::plugins::{self, LoadOrder, PluginEntry};
 use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
 use crate::provision::Provisioner;
 use crate::registry::Registry;
@@ -238,35 +239,39 @@ pub struct Imported {
 
 pub struct Builder {
     paths: Paths,
-    sources: BTreeMap<String, Arc<dyn Source>>,
-    deployers: BTreeMap<String, Arc<dyn Deployer>>,
-    provisioners: BTreeMap<String, Arc<dyn Provisioner>>,
-    formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
+    registered: Registered,
     reporter: Arc<dyn Reporter>,
 }
 
 impl Builder {
+    /// Adds everything `extension` registers. Two things of the same kind
+    /// with the same id, from any two extensions, stop [`Builder::open`].
+    pub fn extension(mut self, extension: impl Extension + 'static) -> Self {
+        self.registered.extension(extension);
+        self
+    }
+
+    /// Adds a source outside of any extension, as tests do.
     pub fn source(mut self, source: impl Source + 'static) -> Self {
-        self.sources
-            .insert(source.id().to_owned(), Arc::new(source));
+        self.registered.source(None, source);
         self
     }
 
+    /// Adds a deployer outside of any extension, as tests do.
     pub fn deployer(mut self, deployer: impl Deployer + 'static) -> Self {
-        self.deployers
-            .insert(deployer.kind().to_owned(), Arc::new(deployer));
+        self.registered.deployer(None, deployer);
         self
     }
 
+    /// Adds a provisioner outside of any extension, as tests do.
     pub fn provisioner(mut self, provisioner: impl Provisioner + 'static) -> Self {
-        self.provisioners
-            .insert(provisioner.kind().to_owned(), Arc::new(provisioner));
+        self.registered.provisioner(None, provisioner);
         self
     }
 
+    /// Adds a profile format outside of any extension, as tests do.
     pub fn format(mut self, format: impl ProfileFormat + 'static) -> Self {
-        self.formats
-            .insert(format.id().to_owned(), Arc::new(format));
+        self.registered.format(None, format);
         self
     }
 
@@ -277,9 +282,16 @@ impl Builder {
 
     /// Takes the state lock and loads the registry.
     pub fn open(self) -> Result<Patchwork> {
+        let registered = self.registered;
+        if !registered.problems.is_empty() {
+            return Err(Error::invalid(format!(
+                "patchwork was built with conflicting extensions: {}",
+                registered.problems.join("; ")
+            )));
+        }
         let lock = StateLock::acquire(&self.paths.lock_file())?;
         let registry = Registry::load(&self.paths)?;
-        let settings = Settings::load(&self.paths, &source_specs(&self.sources))?;
+        let settings = Settings::load(&self.paths, &source_specs(&registered.sources))?;
         for problem in &settings.problems {
             self.reporter.report(Event::Warning(problem.clone()));
         }
@@ -288,10 +300,12 @@ impl Builder {
             registry: RwLock::new(Arc::new(registry)),
             settings: RwLock::new(Arc::new(settings)),
             paths: self.paths,
-            sources: self.sources,
-            deployers: self.deployers,
-            provisioners: self.provisioners,
-            formats: self.formats,
+            sources: registered.sources,
+            deployers: registered.deployers,
+            provisioners: registered.provisioners,
+            formats: registered.formats,
+            extensions: registered.extensions,
+            lists: registered.lists,
             reporter: self.reporter,
             categories: Mutex::default(),
             fetching_versions: Mutex::default(),
@@ -318,6 +332,9 @@ pub struct Patchwork {
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
     provisioners: BTreeMap<String, Arc<dyn Provisioner>>,
     formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
+    extensions: BTreeMap<String, Arc<dyn Extension>>,
+    /// By hook id; see [`crate::list`].
+    lists: BTreeMap<String, Hook<dyn OrderedList>>,
     reporter: Arc<dyn Reporter>,
     /// Each source's search categories for each game, by `(source, game)`.
     /// They hardly ever change, and a search by category needs them, so
@@ -337,10 +354,7 @@ impl Patchwork {
     pub fn builder(paths: Paths) -> Builder {
         Builder {
             paths,
-            sources: BTreeMap::new(),
-            deployers: BTreeMap::new(),
-            provisioners: BTreeMap::new(),
-            formats: BTreeMap::new(),
+            registered: Registered::default(),
             reporter: Arc::new(Silent),
         }
     }
@@ -737,6 +751,7 @@ impl Patchwork {
             enabled,
             game_versions: None,
             fomod: None,
+            ext: Default::default(),
         };
         loaded.mods.push(added.clone());
         self.save_profile(profile, &loaded)?;
@@ -1414,6 +1429,16 @@ impl Patchwork {
             }
             None => Vec::new(),
         };
+        {
+            let registry = self.registry();
+            let def = &registry.game(&loaded.game)?.value;
+            for id in self.missing_extensions(def) {
+                issues.push(Issue::missing_extension(&def.name, id));
+            }
+            for (ext, name) in self.unknown_hooks(def) {
+                issues.push(Issue::unknown_hook(&def.name, ext, name));
+            }
+        }
         let state = self.deploy_state(&target)?;
         if state.profile.as_deref() != Some(profile.to_string().as_str()) {
             return Ok(issues);
@@ -1883,7 +1908,7 @@ impl Patchwork {
             id: Some(loaded.id),
             mods: loaded.mods,
             hidden_tags: Some(loaded.hidden_tags),
-            plugins: Some(loaded.plugins),
+            ext: Some(loaded.ext),
             ..Default::default()
         };
         if format.needs_lock() {
@@ -2078,8 +2103,8 @@ impl Patchwork {
         if let Some(tags) = shared.hidden_tags {
             profile.hidden_tags = tags;
         }
-        if let Some(plugins) = shared.plugins {
-            profile.plugins = plugins;
+        if let Some(ext) = shared.ext {
+            profile.ext = ext;
         }
         self.save_profile(&profile_ref, &profile)?;
         if let Some(lock) = &shared.lock {
@@ -2229,8 +2254,8 @@ impl Patchwork {
             &overrides,
             &roots,
             &order,
-            &loaded.plugins,
-            &loaded.mods,
+            &loaded,
+            &self.extensions_on(game),
             fingerprint,
         );
         let (mods, installer_warnings) = self.installed(&loaded, game, Some(&root), &order)?;
@@ -2244,22 +2269,13 @@ impl Patchwork {
         for issue in self.incompatible(&loaded, &lock, &env)? {
             warnings.push(issue.message);
         }
-        let load_order = deployer
-            .plugins(&ctx, &GameFiles::new(&root, &prev), &mods)?
-            .map(|found| LoadOrder::new(&loaded.plugins, found));
-        if let Some(load_order) = &load_order {
-            warnings.extend(load_order.warnings.iter().cloned());
+        let lists = self.make_lists(&loaded, &ctx, &GameFiles::new(&root, &prev), &mods)?;
+        for list in &lists {
+            warnings.extend(list.warnings.iter().cloned());
         }
         if deployer.builds(&ctx) {
             let (built, built_warnings) = self.build(
-                deployer,
-                &ctx,
-                &target,
-                inputs,
-                &prev,
-                &mods,
-                &resolved,
-                load_order.as_ref(),
+                deployer, &ctx, &target, inputs, &prev, &mods, &resolved, &lists,
             )?;
             placements.extend(built);
             warnings.extend(built_warnings);
@@ -2336,8 +2352,8 @@ impl Patchwork {
             &overrides,
             &roots,
             &order,
-            &loaded.plugins,
-            &loaded.mods,
+            &loaded,
+            &self.extensions_on(game),
             fingerprint,
         );
         // Not part of the inputs, so that deploys from before it was
@@ -2572,56 +2588,9 @@ impl Patchwork {
             .collect())
     }
 
-    /// Whether `profile`'s game has plugins to put in order (see
-    /// [`crate::plugins`]).
-    pub fn has_plugins(&self, profile: &ProfileRef) -> Result<bool> {
-        let loaded = self.load_profile(profile)?;
-        let target = self.deploy_target(&loaded)?;
-        let registry = self.registry();
-        let game = &registry.game(&loaded.game)?.value;
-        let deployer = self.deployer(&game.deployer.kind)?;
-        let (config, _, _) = self.deploy_config(game)?;
-        let ctx = DeployContext {
-            game,
-            config: &config,
-            registry: &registry,
-        };
-        let root = self.target_root(&target)?.unwrap_or_default();
-        let state = self.deploy_state(&target)?;
-        let found = deployer.plugins(&ctx, &GameFiles::new(&root, &state), &[])?;
-        Ok(found.is_some())
-    }
-
-    /// The order `profile`'s plugins will load in, or `None` if its game
-    /// doesn't have plugins. Only mods that have been locked count, without
-    /// locking again, so this never touches the network.
-    pub fn load_order(&self, profile: &ProfileRef) -> Result<Option<LoadOrder>> {
-        let loaded = self.load_profile(profile)?;
-        let target = self.deploy_target(&loaded)?;
-        let registry = self.registry();
-        let game = &registry.game(&loaded.game)?.value;
-        let deployer = self.deployer(&game.deployer.kind)?;
-        let (config, _, _) = self.deploy_config(game)?;
-        let ctx = DeployContext {
-            game,
-            config: &config,
-            registry: &registry,
-        };
-        let lock = self.load_lock(profile)?;
-        let order = lock
-            .as_ref()
-            .map(|lock| deploy_order(&loaded, lock))
-            .unwrap_or_default();
-        let root = self.target_root(&target)?.unwrap_or_default();
-        let (mods, _) = self.installed(&loaded, game, Some(&root), &order)?;
-        let state = self.deploy_state(&target)?;
-        let found = deployer.plugins(&ctx, &GameFiles::new(&root, &state), &mods)?;
-        Ok(found.map(|found| LoadOrder::new(&loaded.plugins, found)))
-    }
-
     /// The files that more than one of `profile`'s enabled mods provide,
     /// and whose copy of each deploying would use. Like
-    /// [`Patchwork::load_order`], only mods that have been locked count, so
+    /// [`Patchwork::list`], only mods that have been locked count, so
     /// this never touches the network.
     pub fn conflicts(&self, profile: &ProfileRef) -> Result<Conflicts> {
         let loaded = self.load_profile(profile)?;
@@ -2646,56 +2615,6 @@ impl Patchwork {
         )?;
         let desired = deployer.plan(&ctx, &mods)?;
         Ok(conflicts::find(&mods, &desired.placements))
-    }
-
-    /// Changes `profile`'s load order with `change`, and saves it.
-    fn change_load_order<T>(
-        &self,
-        profile: &ProfileRef,
-        change: impl FnOnce(&mut LoadOrder) -> Result<T>,
-    ) -> Result<T> {
-        let mut order = self.load_order(profile)?.ok_or_else(|| {
-            Error::invalid(format!(
-                "{profile}'s game doesn't have plugins to put in order"
-            ))
-        })?;
-        let changed = change(&mut order)?;
-        self.set_load_order(profile, order.entries())?;
-        Ok(changed)
-    }
-
-    /// Moves a plugin within `profile`'s load order, returning its new
-    /// (zero-based) position. Masters stay above other plugins, since the
-    /// game loads them first regardless.
-    pub fn move_plugin(&self, profile: &ProfileRef, name: &str, to: &Position) -> Result<usize> {
-        self.change_load_order(profile, |order| order.move_plugin(name, to))
-    }
-
-    pub fn set_plugin_enabled(
-        &self,
-        profile: &ProfileRef,
-        name: &str,
-        enabled: bool,
-    ) -> Result<()> {
-        self.change_load_order(profile, |order| order.set_enabled(name, enabled))
-    }
-
-    /// Saves `plugins` as the profile's load order. This is how a frontend
-    /// saves a list the user has rearranged. Masters are put first when
-    /// it's next worked out, wherever they are here. Plugins that were in
-    /// the saved order but aren't in `plugins` (because their mods are
-    /// disabled, say) keep their places.
-    pub fn set_load_order(&self, profile: &ProfileRef, plugins: Vec<PluginEntry>) -> Result<()> {
-        let mut seen = HashSet::new();
-        if let Some(twice) = plugins.iter().find(|p| !seen.insert(p.name.to_lowercase())) {
-            return Err(Error::invalid(format!(
-                "`{}` is in the load order twice",
-                twice.name
-            )));
-        }
-        let mut loaded = self.load_profile(profile)?;
-        loaded.plugins = plugins::keep_missing(&loaded.plugins, plugins);
-        self.save_profile(profile, &loaded)
     }
 
     /// Works out how to remove everything patchwork deployed to `target`.
@@ -2769,7 +2688,7 @@ impl Patchwork {
         prev: &DeployState,
         mods: &[InstalledMod],
         roots: &ResolvedRoots,
-        load_order: Option<&LoadOrder>,
+        lists: &[List],
     ) -> Result<(Vec<Resolved>, Vec<String>)> {
         let dir = self.paths.generated().join(target.key());
         let out = dir.join(inputs.to_string());
@@ -2795,7 +2714,7 @@ impl Patchwork {
             out: &out,
             cache: &cache,
             reporter: self.reporter.as_ref(),
-            load_order,
+            lists,
         };
         let built = match deployer.build(ctx, &build, mods) {
             Ok(built) => built,
@@ -3045,10 +2964,11 @@ fn deploy_inputs(
     deployer_settings: &toml::Table,
     roots: &Roots,
     order: &[&LockedMod],
-    plugins: &[PluginEntry],
-    mods: &[ProfileMod],
+    loaded: &Profile,
+    ext_on: &[&str],
     fingerprint: Option<ContentHash>,
 ) -> ContentHash {
+    let mods = &loaded.mods;
     let mut hasher = blake3::Hasher::new();
     let mut field = |bytes: &[u8]| {
         hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -3087,16 +3007,8 @@ fn deploy_inputs(
         field(format!("{:?}", m.format).as_bytes());
         field(m.artifact.file_name().as_bytes());
     }
-    // Only when the user has placed any, like the deployer's settings.
-    if !plugins.is_empty() {
-        field(b"plugins");
-        for p in plugins {
-            field(p.name.as_bytes());
-            field(&[p.enabled as u8]);
-        }
-    }
-    // Only mods with picks saved, like the plugins. Ones without get the
-    // same defaults each time.
+    // Only mods with picks saved, like the deployer's settings. Ones
+    // without get the same defaults each time.
     for m in mods
         .iter()
         .filter(|m| order.iter().any(|o| o.name == m.name))
@@ -3110,6 +3022,28 @@ fn deploy_inputs(
                 for option in &pick.options {
                     field(option.as_bytes());
                 }
+            }
+        }
+    }
+    // Only extensions that are on for the game, so state kept by one it
+    // doesn't use any more can't make deploys stale, and only what they've
+    // kept, like the picks.
+    let deployed: Vec<&ProfileMod> = mods
+        .iter()
+        .filter(|m| order.iter().any(|o| o.name == m.name))
+        .collect();
+    for id in ext_on {
+        if let Some(state) = loaded.ext.get(*id) {
+            field(b"ext");
+            field(id.as_bytes());
+            field(state.to_string().as_bytes());
+        }
+        for m in &deployed {
+            if let Some(state) = m.ext.get(*id) {
+                field(b"mod-ext");
+                field(m.name.as_bytes());
+                field(id.as_bytes());
+                field(state.to_string().as_bytes());
             }
         }
     }
@@ -3136,8 +3070,10 @@ fn visit<'a>(
 }
 
 mod capture;
+mod extensions;
 mod history;
 mod instances;
+mod lists;
 mod local;
 mod profiles;
 mod provision;
@@ -3145,6 +3081,7 @@ mod sync;
 
 pub use capture::Captured;
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
+pub use lists::ListInfo;
 pub use provision::Provisioned;
 pub use sync::{Applied as SyncApplied, ProfileChange};
 

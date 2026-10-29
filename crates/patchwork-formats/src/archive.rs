@@ -61,7 +61,7 @@ impl ProfileFormat for Archive {
             hidden_tags: shared.hidden_tags.clone().unwrap_or_default(),
             env: Default::default(),
             mods: shared.mods.clone(),
-            plugins: shared.plugins.clone().unwrap_or_default(),
+            ext: shared.ext.clone().unwrap_or_default(),
         };
         let zip_error = |e: zip::result::ZipError| error(e.to_string());
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -130,7 +130,7 @@ impl ProfileFormat for Archive {
             id: Some(profile.id),
             mods: profile.mods,
             hidden_tags: Some(profile.hidden_tags),
-            plugins: Some(profile.plugins),
+            ext: Some(profile.ext),
             lock,
             ..Default::default()
         };

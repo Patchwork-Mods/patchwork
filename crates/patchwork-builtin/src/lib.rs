@@ -1,0 +1,115 @@
+//! The extensions that come with patchwork, each bundling what one game or
+//! family of games needs. Frontends register the ones they want with
+//! [`patchwork_core::Builder::extension`].
+//!
+//! For now they gather up the sources, deployers, provisioners and formats
+//! from the crates those live in; those will move into a crate per
+//! extension. The ids can't change once released, since game definitions
+//! and profiles name them.
+
+use patchwork_core::ext::{Extension, Registrar};
+use patchwork_deployers::{
+    BETHESDA_EXTENSION, BETHESDA_LIST, BethesdaDeployer, BethesdaLoadOrder, RulesDeployer,
+    SmfDeployer,
+};
+use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
+use patchwork_provisioners::MinecraftProvisioner;
+use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
+
+/// What isn't about any game in particular: local files and URLs, the
+/// data-driven `rules` deployer, and patchwork's own sharing formats.
+pub struct Generic;
+
+impl Extension for Generic {
+    fn id(&self) -> &'static str {
+        "generic"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.source(LocalSource)
+            .source(UrlSource)
+            .deployer(RulesDeployer)
+            .format(Archive)
+            .format(UrlList);
+    }
+}
+
+/// Thunderstore, and the r2modman profile codes that go with it.
+pub struct ThunderstoreExtension;
+
+impl Extension for ThunderstoreExtension {
+    fn id(&self) -> &'static str {
+        "thunderstore"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.source(Thunderstore)
+            .format(R2modman)
+            .format(ThunderstoreCode::default());
+    }
+}
+
+pub struct NexusExtension;
+
+impl Extension for NexusExtension {
+    fn id(&self) -> &'static str {
+        "nexus"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.source(Nexus::default());
+    }
+}
+
+pub struct ModrinthExtension;
+
+impl Extension for ModrinthExtension {
+    fn id(&self) -> &'static str {
+        "modrinth"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.source(Modrinth);
+    }
+}
+
+/// Games on Bethesda's engines: Skyrim, Fallout and the like. Its
+/// `plugins` list is the order the game loads mods' plugins in.
+pub struct Bethesda;
+
+impl Extension for Bethesda {
+    /// The deployer looks for its load order under this id.
+    fn id(&self) -> &'static str {
+        BETHESDA_EXTENSION
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.deployer(BethesdaDeployer)
+            .ordered_list(BETHESDA_LIST, BethesdaLoadOrder);
+    }
+}
+
+/// HITMAN World of Assassination, with mods made for Simple Mod Framework.
+pub struct Smf;
+
+impl Extension for Smf {
+    fn id(&self) -> &'static str {
+        "smf"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.deployer(SmfDeployer);
+    }
+}
+
+pub struct Minecraft;
+
+impl Extension for Minecraft {
+    fn id(&self) -> &'static str {
+        "minecraft"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.provisioner(MinecraftProvisioner);
+    }
+}

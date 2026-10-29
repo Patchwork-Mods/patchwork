@@ -66,6 +66,45 @@ pub struct GameDef {
     /// can start it there. Without it, an instance only has mods in it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provision: Option<ProvisionSpec>,
+    /// The extensions the game turns on, each with its config, by
+    /// extension id; see [`crate::ext`]. A table for an extension this
+    /// build doesn't have is reported as an issue, not an error.
+    ///
+    /// ```toml
+    /// [ext.bethesda]
+    /// ```
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ext: BTreeMap<String, toml::Table>,
+}
+
+/// The key in `[ext.<id>]` that turns some of the extension's hooks off.
+pub const HOOKS_OFF: &str = "off";
+
+impl GameDef {
+    /// Whether the game turns on hook `name` of extension `ext`: it has an
+    /// `[ext.<ext>]` table, and `name` isn't in its `off`. Leaving out a
+    /// hook's own table never turns it off.
+    pub fn hook_on(&self, ext: &str, name: &str) -> bool {
+        self.ext.contains_key(ext) && !self.hooks_off(ext).contains(&name)
+    }
+
+    /// The names in `[ext.<ext>]`'s `off`.
+    pub fn hooks_off(&self, ext: &str) -> Vec<&str> {
+        self.ext
+            .get(ext)
+            .and_then(|t| t.get(HOOKS_OFF))
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+            .collect()
+    }
+
+    /// Hook `name` of extension `ext`'s config: the `[ext.<ext>.<name>]`
+    /// table, if there is one.
+    pub fn hook_config(&self, ext: &str, name: &str) -> Option<&toml::Table> {
+        self.ext.get(ext)?.get(name)?.as_table()
+    }
 }
 
 /// What a profile picks about the game it runs, by axis id. Sources get

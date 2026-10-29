@@ -249,7 +249,7 @@ impl Patchwork {
 
     pub fn load_profile(&self, profile: &ProfileRef) -> Result<Profile> {
         let path = self.profile_file(profile);
-        let loaded: Profile = fsutil::read_toml(&path)?
+        let mut loaded: Profile = fsutil::read_toml(&path)?
             .ok_or_else(|| Error::invalid(format!("no profile with id {profile}")))?;
         if loaded.schema > PROFILE_SCHEMA {
             return Err(Error::Schema {
@@ -259,6 +259,9 @@ impl Patchwork {
                 supported: PROFILE_SCHEMA,
             });
         }
+        // Whatever an older schema had has been moved where it is now, so
+        // it's saved as the current one, which older builds won't open.
+        loaded.schema = PROFILE_SCHEMA;
         Ok(loaded)
     }
 

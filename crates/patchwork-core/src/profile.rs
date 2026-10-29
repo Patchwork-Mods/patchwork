@@ -7,16 +7,24 @@ use uuid::Uuid;
 
 use crate::Error;
 use crate::compat::GameVersions;
+use crate::ext::ExtTables;
 use crate::fomod::Selection;
-use crate::plugins::PluginEntry;
+use crate::list::ListEntry;
 
 /// Schema 2 added `id` and `name`; profiles used to be identified by their
-/// directory, `<game>/<name>`.
-pub const PROFILE_SCHEMA: u32 = 2;
+/// directory, `<game>/<name>`. Schema 3 moved the plugin load order
+/// (`[[plugin]]`) into the Bethesda extension's state, so builds that would
+/// drop extensions' state don't open profiles that have it.
+pub const PROFILE_SCHEMA: u32 = 3;
+
+/// Where schema 2's plugin load order went: the Bethesda extension's
+/// `plugins` list.
+pub const LEGACY_PLUGINS: (&str, &str) = ("bethesda", "plugins");
 
 /// What the user wants installed for a game. Meant to be readable and
 /// hand-editable; the exact versions that were resolved live in the lockfile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "ProfileFile")]
 pub struct Profile {
     pub schema: u32,
     /// Stays the same wherever the profile goes, so it can be recognized
@@ -37,10 +45,11 @@ pub struct Profile {
     /// In load order: later mods win when two provide the same file.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
-    /// The plugins whose place in the load order the user has picked, for
-    /// games that have them; see [`crate::plugins`].
-    #[serde(default, rename = "plugin", skip_serializing_if = "Vec::is_empty")]
-    pub plugins: Vec<PluginEntry>,
+    /// What extensions keep for the profile, by extension id; see
+    /// [`crate::ext`]. Kept as it is for extensions this build doesn't
+    /// have.
+    #[serde(default, skip_serializing_if = "ExtTables::is_empty")]
+    pub ext: ExtTables,
 }
 
 impl Profile {
@@ -53,7 +62,7 @@ impl Profile {
             hidden_tags: Vec::new(),
             env: BTreeMap::new(),
             mods: Vec::new(),
-            plugins: Vec::new(),
+            ext: ExtTables::new(),
         }
     }
 
@@ -68,6 +77,60 @@ impl Profile {
 
     pub fn find_mut(&mut self, name: &str) -> Option<&mut ProfileMod> {
         self.mods.iter_mut().find(|m| m.name == name)
+    }
+}
+
+/// A profile as saved, by any schema: [`Profile`] as it is now, along with
+/// what older schemas had that has moved.
+#[derive(Deserialize)]
+struct ProfileFile {
+    schema: u32,
+    id: Uuid,
+    game: String,
+    name: String,
+    #[serde(default)]
+    hidden_tags: Vec<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    #[serde(default, rename = "mod")]
+    mods: Vec<ProfileMod>,
+    #[serde(default)]
+    ext: ExtTables,
+    /// Schema 2's plugin load order.
+    #[serde(default, rename = "plugin")]
+    plugins: Vec<ListEntry>,
+}
+
+impl From<ProfileFile> for Profile {
+    fn from(file: ProfileFile) -> Self {
+        let mut ext = file.ext;
+        upgrade_plugins(&mut ext, file.plugins);
+        Self {
+            schema: file.schema,
+            id: file.id,
+            game: file.game,
+            name: file.name,
+            hidden_tags: file.hidden_tags,
+            env: file.env,
+            mods: file.mods,
+            ext,
+        }
+    }
+}
+
+/// Puts schema 2's plugin load order where it's kept now (see
+/// [`LEGACY_PLUGINS`]), unless something's already there.
+pub fn upgrade_plugins(ext: &mut ExtTables, plugins: Vec<ListEntry>) {
+    if plugins.is_empty() {
+        return;
+    }
+    let (id, list) = LEGACY_PLUGINS;
+    let table = ext.entry(id.to_owned()).or_insert_with(|| {
+        toml::Table::from_iter([(crate::ext::VERSION_KEY.to_owned(), toml::Value::Integer(1))])
+    });
+    if !table.contains_key(list) {
+        let entries = toml::Value::try_from(&plugins).expect("entries serialize");
+        table.insert(list.to_owned(), entries);
     }
 }
 
@@ -89,6 +152,9 @@ pub struct ProfileMod {
     /// any have been. Without them, it gets the installer's defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fomod: Option<Vec<Selection>>,
+    /// What extensions keep for the mod, like [`Profile::ext`].
+    #[serde(default, skip_serializing_if = "ExtTables::is_empty")]
+    pub ext: ExtTables,
 }
 
 fn enabled_by_default() -> bool {
@@ -135,4 +201,32 @@ pub fn validate_name(name: &str) -> Result<(), Error> {
 
 pub(crate) fn no_such_mod(profile: &str, name: &str) -> Error {
     Error::invalid(format!("{profile} has no mod named `{name}`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_2s_plugins_move_into_the_bethesda_extension() {
+        let profile: Profile = toml::from_str(
+            r#"
+            schema = 2
+            id = "6c1d0f4e-6f53-4b8a-9d36-2b7e0c7f6a11"
+            game = "skyrim-se"
+            name = "default"
+
+            [[plugin]]
+            name = "A.esp"
+            enabled = false
+            "#,
+        )
+        .unwrap();
+        let state = &profile.ext["bethesda"];
+        assert_eq!(state["v"].as_integer(), Some(1));
+        assert_eq!(state["plugins"][0]["name"].as_str(), Some("A.esp"));
+        assert_eq!(state["plugins"][0]["enabled"].as_bool(), Some(false));
+        let saved = toml::to_string(&profile).unwrap();
+        assert!(!saved.contains("[[plugin]]"), "{saved}");
+    }
 }
