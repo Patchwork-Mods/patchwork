@@ -19,17 +19,20 @@
 //! one staged it, otherwise the game's. So are entities, whole or as patches
 //! (see [`entity`]); like SMF, a mod's entity patches are applied once the
 //! rest of its content is staged. Textures are converted from TGA (see
-//! [`texture`]).
+//! [`texture`]). Changes to the game's localised strings
+//! (`localisationOverrides`) are applied once every mod's staged, like SMF
+//! does, to the current version of each LOCR (see [`locr`]).
 //!
 //! Not supported yet: SMF's other special file types (materials, sounds,
 //! language files and deltas), entities made for QuickEntity versions
-//! before 3.1, localisation, scripts and choosing options (those enabled by
-//! default are used). Mods that need them fail to deploy rather than half
+//! before 3.1, new localised strings (`localisation`, `localisedLines`),
+//! scripts and choosing options (those enabled by default are used). Mods that need them fail to deploy rather than half
 //! working.
 
 mod entity;
 mod game;
 mod json;
+mod locr;
 mod manifest;
 mod meta;
 mod ores;
@@ -172,6 +175,17 @@ struct Build<'a> {
     checks: Vec<(String, Vec<String>, Vec<String>)>,
     /// The current mod's entity patches, applied once its content's staged.
     entity_patches: Vec<EntityPatch>,
+    /// Every mod's changes to localised strings, applied once all mods are
+    /// staged.
+    string_overrides: Vec<StringOverride>,
+}
+
+struct StringOverride {
+    label: String,
+    locr: u64,
+    language: usize,
+    hash: u32,
+    text: String,
 }
 
 struct EntityPatch {
@@ -197,6 +211,7 @@ impl<'a> Build<'a> {
             ids: HashSet::new(),
             checks: Vec::new(),
             entity_patches: Vec::new(),
+            string_overrides: Vec::new(),
         }
     }
 
@@ -207,6 +222,7 @@ impl<'a> Build<'a> {
             });
             self.stage_mod(m)?;
         }
+        self.apply_string_overrides()?;
         self.check_requirements();
         if !self.destinations.is_empty()
             && self.errors.is_empty()
@@ -216,6 +232,10 @@ impl<'a> Build<'a> {
                 "couldn't add contracts to the Destinations menu: {e}"
             ));
         }
+        // Some problems are found once per file, but are only worth saying
+        // once.
+        dedupe(&mut self.errors);
+        dedupe(&mut self.warnings);
         if !self.errors.is_empty() {
             return Err(self.errors.join("\n"));
         }
@@ -337,6 +357,7 @@ impl<'a> Build<'a> {
             self.package_definition
                 .extend(data.packagedefinition.iter().cloned());
             self.thumbs.extend(data.thumbs.iter().cloned());
+            self.queue_string_overrides(&label, data);
             for dependency in &data.dependencies {
                 self.stage_dependency(&label, dependency)?;
             }
@@ -662,6 +683,93 @@ impl<'a> Build<'a> {
         Ok(())
     }
 
+    fn queue_string_overrides(&mut self, label: &str, data: &manifest::ModData) {
+        let overrides = match data.localisation_overrides() {
+            Ok(overrides) => overrides,
+            Err(e) => {
+                self.errors.push(format!("{label}: {e}"));
+                return;
+            }
+        };
+        for o in overrides {
+            let Some(language) = locr::language(&o.language) else {
+                self.errors.push(format!(
+                    "{label}: `localisationOverrides` has strings for `{}`, which isn't a language the game has",
+                    o.language
+                ));
+                continue;
+            };
+            self.string_overrides.push(StringOverride {
+                label: label.to_owned(),
+                locr: u64::from(meta::parse_hash(&o.locr)),
+                language,
+                hash: locr::string_hash(&o.key),
+                text: o.text,
+            });
+        }
+    }
+
+    /// Applies every mod's changes to localised strings, in load order, to
+    /// the current version of each LOCR. Each is staged in the partition
+    /// its current version is in.
+    fn apply_string_overrides(&mut self) -> Result<(), String> {
+        let mut by_locr: Vec<(u64, Vec<StringOverride>)> = Vec::new();
+        for o in std::mem::take(&mut self.string_overrides) {
+            match by_locr.iter_mut().find(|(hash, _)| *hash == o.locr) {
+                Some((_, group)) => group.push(o),
+                None => by_locr.push((o.locr, vec![o])),
+            }
+        }
+        for (hash, overrides) in by_locr {
+            let Some(partition) = self.partition_of(hash)? else {
+                for label in labels(&overrides) {
+                    self.errors.push(format!(
+                        "{label}: `localisationOverrides`: the game has no LOCR {hash:016X}"
+                    ));
+                }
+                continue;
+            };
+            let current = self.current_game(&partition, hash)?;
+            let mut strings = match locr::Locr::parse(&current.data) {
+                Ok(strings) => strings,
+                Err(e) => {
+                    for label in labels(&overrides) {
+                        self.errors.push(format!(
+                            "{label}: `localisationOverrides`: couldn't read LOCR {hash:016X}: {e}"
+                        ));
+                    }
+                    continue;
+                }
+            };
+            for o in &overrides {
+                if let Err(e) = strings.set(o.language, o.hash, &o.text) {
+                    self.errors.push(format!(
+                        "{}: `localisationOverrides`: string {:08X}: {e}",
+                        o.label, o.hash
+                    ));
+                }
+            }
+            self.stage_built(&partition, hash, current.with_data(strings.serialize()));
+        }
+        Ok(())
+    }
+
+    /// Which partition the current version of a resource is in: one it's
+    /// been staged in, otherwise the one the game loads it from.
+    fn partition_of(&mut self, hash: u64) -> Result<Option<String>, String> {
+        if let Some((partition, _)) = self
+            .staged
+            .iter()
+            .find(|(_, resources)| resources.contains_key(&hash))
+        {
+            return Ok(Some(partition.clone()));
+        }
+        Ok(self
+            .game()?
+            .latest(RuntimeResourceID::from(hash))
+            .map(|(archive, _)| archive.name.partition.to_string()))
+    }
+
     /// Converts a TGA into a TEXT, and a TEXD if its name gives one.
     /// `rel` is its path relative to the manifest, for finding its meta.
     fn stage_texture(
@@ -911,6 +1019,19 @@ fn patch_entity(
     }
     entity::generate(&entity)
         .map_err(|e| format!("{first_file}: couldn't rebuild entity {factory_hash:016X}: {e}"))
+}
+
+/// The mods a group of string overrides come from, each once.
+fn labels(overrides: &[StringOverride]) -> Vec<String> {
+    let mut labels: Vec<String> = overrides.iter().map(|o| o.label.clone()).collect();
+    dedupe(&mut labels);
+    labels
+}
+
+/// Removes repeats, keeping the first of each.
+fn dedupe(items: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    items.retain(|item| seen.insert(item.clone()));
 }
 
 fn has_extension(name: &str, extension: &str) -> bool {

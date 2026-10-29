@@ -1,0 +1,165 @@
+//! LOCR resources, the game's localised strings: for each language, a list
+//! of strings encrypted with XTEA, each under a CRC32 of its name. Mods'
+//! `localisationOverrides` change strings in them.
+//!
+//! Strings that aren't changed are kept as they're stored, so rebuilding a
+//! LOCR never has to decrypt (or re-encrypt) the game's own text.
+
+use rpkg_rs::encryption::xtea::Xtea;
+
+/// The game's languages in the order a LOCR lists them, as SMF names them
+/// in manifests.
+const LANGUAGES: [&str; 10] = [
+    "xx",
+    "english",
+    "french",
+    "italian",
+    "german",
+    "spanish",
+    "russian",
+    "chineseSimplified",
+    "chineseTraditional",
+    "japanese",
+];
+
+/// The same languages as the game's own codes, which manifests use too.
+const CODES: [&str; 10] = ["xx", "en", "fr", "it", "de", "es", "ru", "cn", "tc", "jp"];
+
+/// Marks a language a LOCR has no strings for.
+const NO_STRINGS: u32 = u32::MAX;
+
+/// A language's index in a LOCR, by name or code.
+pub fn language(name: &str) -> Option<usize> {
+    LANGUAGES
+        .iter()
+        .position(|l| l.eq_ignore_ascii_case(name))
+        .or_else(|| CODES.iter().position(|c| c.eq_ignore_ascii_case(name)))
+}
+
+/// The hash a string is stored under. Manifests give it as a decimal
+/// number; anything else is taken as the string's name, hashed like the
+/// game's (uppercase).
+pub fn string_hash(key: &str) -> u32 {
+    match key.parse::<u32>() {
+        Ok(hash) if key.bytes().all(|b| b.is_ascii_digit()) => hash,
+        _ => crc32fast::hash(key.to_ascii_uppercase().as_bytes()),
+    }
+}
+
+/// A language's strings, by hash, still encrypted.
+type Strings = Vec<(u32, Vec<u8>)>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Locr {
+    /// The byte the LOCR starts with, kept as it was.
+    version: u8,
+    /// Each language's strings. `None` for a language the LOCR has no
+    /// table for.
+    languages: Vec<Option<Strings>>,
+}
+
+impl Locr {
+    pub fn parse(data: &[u8]) -> Result<Self, String> {
+        let Some(&version) = data.first() else {
+            return Err("the LOCR is empty".to_owned());
+        };
+        let mut reader = Reader { data, at: 1 };
+        // The offset table runs up to the first language's strings.
+        let mut offsets = Vec::new();
+        let mut end = data.len();
+        while reader.at + 4 <= end {
+            let offset = reader.u32()?;
+            if offset != NO_STRINGS {
+                end = end.min(offset as usize);
+            }
+            offsets.push(offset);
+        }
+        let mut languages = Vec::new();
+        for offset in offsets {
+            if offset == NO_STRINGS {
+                languages.push(None);
+                continue;
+            }
+            reader.at = offset as usize;
+            let count = reader.u32()?;
+            let mut strings = Vec::new();
+            for _ in 0..count {
+                let hash = reader.u32()?;
+                let len = reader.u32()? as usize;
+                let text = reader.bytes(len)?.to_vec();
+                reader.bytes(1)?; // null terminator
+                strings.push((hash, text));
+            }
+            languages.push(Some(strings));
+        }
+        Ok(Self { version, languages })
+    }
+
+    /// Sets a string, replacing it if the language has it already.
+    pub fn set(&mut self, language: usize, hash: u32, text: &str) -> Result<(), String> {
+        let encrypted = Xtea::encrypt_string(text.to_owned(), &Xtea::WOA_L10N_KEY)
+            .map_err(|e| e.to_string())?;
+        if self.languages.len() <= language {
+            self.languages.resize(language + 1, None);
+        }
+        let strings = self.languages[language].get_or_insert_with(Vec::new);
+        match strings.iter_mut().find(|(h, _)| *h == hash) {
+            Some(existing) => existing.1 = encrypted,
+            None => strings.push((hash, encrypted)),
+        }
+        Ok(())
+    }
+
+    /// A string's text, if the language has it.
+    #[cfg(test)]
+    pub fn get(&self, language: usize, hash: u32) -> Option<String> {
+        let strings = self.languages.get(language)?.as_ref()?;
+        let (_, text) = strings.iter().find(|(h, _)| *h == hash)?;
+        let text = Xtea::decrypt_string(text, &Xtea::WOA_L10N_KEY).ok()?;
+        Some(text.trim_end_matches('\0').to_owned())
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = vec![self.version];
+        let table = out.len();
+        out.resize(table + self.languages.len() * 4, 0);
+        for (i, strings) in self.languages.iter().enumerate() {
+            let offset = match strings {
+                Some(_) => out.len() as u32,
+                None => NO_STRINGS,
+            };
+            out[table + i * 4..table + i * 4 + 4].copy_from_slice(&offset.to_le_bytes());
+            let Some(strings) = strings else {
+                continue;
+            };
+            out.extend_from_slice(&(strings.len() as u32).to_le_bytes());
+            for (hash, text) in strings {
+                out.extend_from_slice(&hash.to_le_bytes());
+                out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+                out.extend_from_slice(text);
+                out.push(0);
+            }
+        }
+        out
+    }
+}
+
+struct Reader<'a> {
+    data: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn bytes(&mut self, len: usize) -> Result<&'a [u8], String> {
+        let bytes = self
+            .data
+            .get(self.at..self.at + len)
+            .ok_or("the LOCR is truncated")?;
+        self.at += len;
+        Ok(bytes)
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        Ok(u32::from_le_bytes(self.bytes(4)?.try_into().unwrap()))
+    }
+}

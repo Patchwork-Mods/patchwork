@@ -5782,6 +5782,7 @@ dependencies = [
 name = "patchwork-deployers"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "crc32fast",
  "glacier-bin1",
  "glacier-texture",
  "globset",

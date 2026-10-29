@@ -468,10 +468,11 @@ fn mods_needing_unsupported_features_fail() {
                       localisation: { english: { UI_X: "x" } } }"#,
             ),
             ("c/chunk0/thing.material.json", b"{}"),
+            ("c/chunk0/other.material.json", b"{}"),
         ],
     );
     let err = env.build(&[m]).unwrap_err().to_string();
-    assert!(err.contains(".material.json"), "{err}");
+    assert_eq!(err.matches(".material.json").count(), 1, "{err}");
     assert!(err.contains("localisation"), "{err}");
 }
 
@@ -1155,4 +1156,88 @@ fn textures_that_cant_be_converted_fail() {
     assert!(err.contains("no .meta"), "{err}");
     assert!(err.contains("have to be named"), "{err}");
     assert!(err.contains("power of two"), "{err}");
+}
+
+const LOCR: u64 = 0x00A3_0000_0000_0001;
+
+/// A LOCR with English and French tables, and none for the others.
+fn game_locr() -> Vec<u8> {
+    let mut data = vec![0];
+    data.extend(std::iter::repeat_n(0xFF, 10 * 4));
+    let mut strings = locr::Locr::parse(&data).unwrap();
+    let en = locr::language("english").unwrap();
+    let fr = locr::language("fr").unwrap();
+    strings.set(en, 0x1111_1111, "Kept").unwrap();
+    strings.set(en, 0x2222_2222, "Original").unwrap();
+    strings.set(fr, 0x1111_1111, "Gardé").unwrap();
+    strings.serialize()
+}
+
+fn locr_mod(env: &Env, name: &str, overrides: &str) -> InstalledMod {
+    let manifest =
+        format!(r#"{{ id: "{name}", name: "{name}", localisationOverrides: {overrides} }}"#);
+    env.installed(name, &[("manifest.json", manifest.as_bytes())])
+}
+
+#[test]
+fn locr_round_trips_untouched() {
+    let data = game_locr();
+    assert_eq!(locr::Locr::parse(&data).unwrap().serialize(), data);
+}
+
+#[test]
+fn localisation_overrides_change_the_current_locr() {
+    let env = Env::new();
+    env.archive(
+        "chunk3",
+        PatchId::Base,
+        &[(LOCR, "LOCR", b"stale".to_vec(), &[])],
+    );
+    env.archive(
+        "chunk3",
+        PatchId::Patch(2),
+        &[(LOCR, "LOCR", game_locr(), &[IN_CHUNK0])],
+    );
+    let first = locr_mod(
+        &env,
+        "first",
+        &format!(
+            r#"{{ "{LOCR:016X}": {{
+                english: {{ "572662306": "First", UI_NEW_STRING: "Added" }},
+                german: {{ "572662306": "Erste" }},
+            }} }}"#
+        ),
+    );
+    let second = locr_mod(
+        &env,
+        "second",
+        &format!(r#"{{ "{LOCR:016X}": {{ english: {{ "572662306": "Second" }} }} }}"#),
+    );
+    let desired = env.build(&[first, second]).unwrap();
+
+    let archive = placed(&env, &desired, "Runtime/chunk3patch300.rpkg");
+    let built = resource(&archive, LOCR);
+    assert_eq!(references(&built), vec![(IN_CHUNK0, 0x1F)]);
+    let strings = locr::Locr::parse(&built.data).unwrap();
+    let (en, fr, de) = (1, 2, 4);
+    assert_eq!(strings.get(en, 0x1111_1111).as_deref(), Some("Kept"));
+    assert_eq!(strings.get(en, 0x2222_2222).as_deref(), Some("Second"));
+    let added = crc32fast::hash(b"UI_NEW_STRING");
+    assert_eq!(strings.get(en, added).as_deref(), Some("Added"));
+    assert_eq!(strings.get(fr, 0x1111_1111).as_deref(), Some("Gardé"));
+    assert_eq!(strings.get(de, 0x2222_2222).as_deref(), Some("Erste"));
+}
+
+#[test]
+fn localisation_overrides_that_cant_be_applied_fail() {
+    let env = Env::new();
+    let m = locr_mod(
+        &env,
+        "m",
+        r#"{ "00A3000000000009": { english: { X: "x" } },
+             "00A0000000000001": { klingon: { X: "x" } } }"#,
+    );
+    let err = env.build(&[m]).unwrap_err().to_string();
+    assert!(err.contains("no LOCR 00A3000000000009"), "{err}");
+    assert!(err.contains("`klingon`"), "{err}");
 }

@@ -176,9 +176,6 @@ impl ModData {
         if used(&self.localisation) {
             found.push("localisation");
         }
-        if used(&self.localisation_overrides) {
-            found.push("localisationOverrides");
-        }
         if used(&self.localised_lines) {
             found.push("localisedLines");
         }
@@ -186,5 +183,49 @@ impl ModData {
             found.push("scripts");
         }
         found
+    }
+}
+
+/// A string a mod's `localisationOverrides` changes: in the LOCR `locr`
+/// (a runtime ID or path), for `language`, the string named `key`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalisationOverride {
+    pub locr: String,
+    pub language: String,
+    pub key: String,
+    pub text: String,
+}
+
+impl ModData {
+    /// The strings `localisationOverrides` changes, in order. It's an object
+    /// of LOCRs, each an object of languages, each an object of strings.
+    pub fn localisation_overrides(&self) -> Result<Vec<LocalisationOverride>, String> {
+        let mut found = Vec::new();
+        let Some(overrides) = &self.localisation_overrides else {
+            return Ok(found);
+        };
+        let object = |value: &Value, what: &str| match value {
+            Value::Object(o) => Ok(o.clone()),
+            Value::Null => Ok(Default::default()),
+            _ => Err(format!("`localisationOverrides`: {what} isn't an object")),
+        };
+        for (locr, languages) in object(overrides, "it")? {
+            for (language, strings) in object(&languages, &format!("`{locr}`"))? {
+                for (key, text) in object(&strings, &format!("`{locr}`.`{language}`"))? {
+                    let Value::String(text) = text else {
+                        return Err(format!(
+                            "`localisationOverrides`: `{locr}`.`{language}`.`{key}` isn't a string"
+                        ));
+                    };
+                    found.push(LocalisationOverride {
+                        locr: locr.clone(),
+                        language: language.clone(),
+                        key,
+                        text,
+                    });
+                }
+            }
+        }
+        Ok(found)
     }
 }

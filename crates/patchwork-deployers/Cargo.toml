@@ -14,6 +14,8 @@ rpkg-rs = { version = "1.4.0", default-features = false, features = ["rayon"] }
 json5 = "1.3.3"
 serde_json = { workspace = true, features = ["preserve_order"] }
 json-patch = "4.2.0"
+# Hashes the names of localised strings.
+crc32fast = "1.4.0"
 # Entities: QuickEntity converts and patches them, glacier-bin1 reads and
 # writes the game's binary form, and hitman-commons has the types between.
 quickentity-rs = { path = "../../vendor/quickentity-rs" }
