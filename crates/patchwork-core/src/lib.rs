@@ -21,6 +21,7 @@
 pub mod account;
 pub mod capture;
 pub mod changelog;
+pub mod check;
 pub mod compat;
 pub mod conflicts;
 pub mod deploy;

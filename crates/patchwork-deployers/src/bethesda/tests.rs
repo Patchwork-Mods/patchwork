@@ -133,15 +133,25 @@ impl Env {
         let config = self.def.hook_config(EXTENSION, LIST).unwrap();
         let lctx = ListContext::new(&ctx, &files, config);
         let found = BethesdaLoadOrder.items(&lctx, mods).unwrap();
-        let mut list = List::new(
+        let list = List::new(
             format!("{EXTENSION}.{LIST}"),
             &BethesdaLoadOrder,
             saved,
             found.clone(),
         );
-        let problems = BethesdaLoadOrder.check(&lctx, &list);
-        list.warnings.extend(problems);
         (found, list)
+    }
+
+    /// What [`PluginLimit`] says about the load order `saved` makes of
+    /// `mods`.
+    fn limit(&self, saved: &[ListEntry], mods: &[InstalledMod]) -> Vec<Problem> {
+        let list = self.list(saved, mods).1;
+        let state = DeployState::empty("skyrim-se", &Roots::game(&self.game));
+        let files = GameFiles::new(&self.game, &state);
+        let empty = toml::Table::new();
+        let lists = [list];
+        let ctx = CheckContext::new(&self.def, &empty, EXTENSION, &files, &lists);
+        PluginLimit.check(&ctx, mods)
     }
 
     fn items(&self, mods: &[InstalledMod]) -> ListItems {
@@ -397,15 +407,17 @@ fn too_many_full_plugins_are_warned_about() {
     };
     // the game's two count, but light plugins don't
     set_limit(&mut env, 4);
-    assert!(env.list(&[], &mods).1.warnings.is_empty());
+    assert!(env.limit(&[], &mods).is_empty());
     set_limit(&mut env, 3);
-    let warnings = env.list(&[], &mods).1.warnings;
-    assert!(warnings[0].starts_with("4 plugins"), "{warnings:?}");
+    let problems = env.limit(&[], &mods);
+    assert!(problems[0].message.starts_with("4 plugins"), "{problems:?}");
+    // shown with the load order
+    assert_eq!(problems[0].list.as_deref(), Some(LIST));
 
     // nor do disabled ones
     let off = [ListEntry {
         name: "A.esp".to_owned(),
         enabled: false,
     }];
-    assert!(env.list(&off, &mods).1.warnings.is_empty());
+    assert!(env.limit(&off, &mods).is_empty());
 }

@@ -3,6 +3,7 @@ use std::io::Read;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
+use patchwork_core::check::{Check, CheckContext, Problem};
 use patchwork_core::deploy::{
     BuildContext, DeployContext, Deployer, DesiredState, Dest, GameFiles, InstalledMod, Placement,
     Src,
@@ -41,10 +42,18 @@ pub struct BethesdaDeployer;
 /// [`BethesdaDeployer`]).
 pub struct BethesdaLoadOrder;
 
+/// Warns when more plugins that aren't light are enabled than the game
+/// can load: the `limit` in `[ext.bethesda.plugins]`. The Bethesda
+/// extension's `limit` check, so a game can turn it off with
+/// `off = ["limit"]` in `[ext.bethesda]`.
+pub struct PluginLimit;
+
 const KIND: &str = "bethesda";
 /// The extension the load order belongs to, and its name there.
 pub const EXTENSION: &str = "bethesda";
 pub const LIST: &str = "plugins";
+/// The name of [`PluginLimit`] in the extension.
+pub const LIMIT: &str = "limit";
 /// Shown as the mod the load order comes from.
 const BUILT_BY: &str = "Load order";
 /// What the load order is called in the build's output.
@@ -425,14 +434,14 @@ impl OrderedList for BethesdaLoadOrder {
             warnings,
         })
     }
+}
 
-    /// Core checks that plugins come after their masters; this checks
-    /// there aren't more than the game can load.
-    fn check(&self, ctx: &ListContext<'_>, list: &List) -> Vec<String> {
-        let Some(limit) = PluginsConfig::parse(ctx.game(), ctx.config())
-            .ok()
-            .and_then(|c| c.limit)
-        else {
+impl Check for PluginLimit {
+    fn check(&self, ctx: &CheckContext<'_>, _mods: &[InstalledMod]) -> Vec<Problem> {
+        let (Some(list), Ok(Some(config))) = (ctx.list(LIST), PluginsConfig::of(ctx.game())) else {
+            return Vec::new();
+        };
+        let Some(limit) = config.limit else {
             return Vec::new();
         };
         let light = |item: &ListItem| item.badges.iter().any(|b| b == LIGHT);
@@ -443,9 +452,10 @@ impl OrderedList for BethesdaLoadOrder {
                 .filter(|i| i.enabled && !light(&i.item))
                 .count();
         if full > limit {
-            vec![format!(
-                "{full} plugins that aren't light are enabled, counting the game's own, but the game can only load {limit}"
-            )]
+            vec![Problem::warning(format!(
+                "{full} plugins that aren't light are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or use light versions of them"
+            ))
+            .about_list(LIST)]
         } else {
             Vec::new()
         }

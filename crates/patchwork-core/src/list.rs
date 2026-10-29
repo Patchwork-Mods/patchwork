@@ -10,11 +10,17 @@
 //! them in the order of their mods, so a new mod's items go last, and items
 //! of mods that are gone are just skipped. Items are matched by name,
 //! ignoring ASCII case, since they're usually file names on Windows.
+//!
+//! Core checks that each item comes after the ones it needs
+//! ([`ListItem::after`]). Anything else wrong with an arrangement, like too
+//! many plugins, is for a [`Check`](crate::check::Check) that says its
+//! problem is about the list.
 
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::check::Problem;
 use crate::deploy::{DeployContext, GameFiles, InstalledMod};
 use crate::game::GameDef;
 use crate::order::Position;
@@ -36,12 +42,6 @@ pub trait OrderedList: Send + Sync {
     /// [`Deployer::plan`](crate::deploy::Deployer::plan), this may read
     /// mods' and the game's files, but not write anything.
     fn items(&self, ctx: &ListContext<'_>, mods: &[InstalledMod]) -> Result<ListItems>;
-
-    /// Problems with an arrangement, like too many plugins. Core already
-    /// checks each item's [`ListItem::after`]; this is for anything else.
-    fn check(&self, _ctx: &ListContext<'_>, _list: &List) -> Vec<String> {
-        Vec::new()
-    }
 }
 
 /// What an [`OrderedList`] gets to work with.
@@ -156,8 +156,11 @@ pub struct List {
     /// Lower tiers first, each in the user's order.
     pub items: Vec<OrderedItem>,
     pub fixed: Vec<ListItem>,
-    /// Problems with it as it is, like an item before one it needs.
-    pub warnings: Vec<String>,
+    /// Problems with it as it is, like an item before one it needs: what
+    /// [`ListItems::warnings`] has, what core finds, and (from
+    /// [`Patchwork::list`](crate::Patchwork::list)) what the extension's
+    /// checks say about it.
+    pub problems: Vec<Problem>,
 }
 
 impl List {
@@ -211,10 +214,10 @@ impl List {
             tiers: found.tiers,
             items: ordered,
             fixed: found.fixed,
-            warnings: found.warnings,
+            problems: found.warnings.into_iter().map(Problem::warning).collect(),
         };
         let problems = list.check_after();
-        list.warnings.extend(problems);
+        list.problems.extend(problems);
         list
     }
 
@@ -279,7 +282,7 @@ impl List {
 
     /// Enabled items that need something that comes after them, is
     /// disabled or isn't there.
-    fn check_after(&self) -> Vec<String> {
+    fn check_after(&self) -> Vec<Problem> {
         let key = |name: &str| name.to_ascii_lowercase();
         let fixed: HashSet<String> = self.fixed.iter().map(|i| key(&i.name)).collect();
         let enabled: HashMap<String, usize> = self
@@ -290,7 +293,7 @@ impl List {
             .map(|(at, i)| (key(&i.item.name), at))
             .collect();
         let all: HashSet<String> = self.items.iter().map(|i| key(&i.item.name)).collect();
-        let mut warnings = Vec::new();
+        let mut problems = Vec::new();
         for (at, item) in self.items.iter().enumerate().filter(|(_, i)| i.enabled) {
             for needs in &item.item.after {
                 if fixed.contains(&key(needs)) {
@@ -302,10 +305,13 @@ impl List {
                     None if all.contains(&key(needs)) => "is disabled",
                     None => "isn't in any of the mods",
                 };
-                warnings.push(format!("{} needs {needs}, which {problem}", item.item.name));
+                problems.push(
+                    Problem::warning(format!("{} needs {needs}, which {problem}", item.item.name))
+                        .about_mod(&item.item.mod_name),
+                );
             }
         }
-        warnings
+        problems
     }
 }
 

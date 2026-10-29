@@ -13,8 +13,8 @@ pub use fomod::FOMOD_EXTENSION;
 use fomod::FomodInstaller;
 use patchwork_core::ext::{Extension, Registrar};
 use patchwork_deployers::{
-    BETHESDA_EXTENSION, BETHESDA_LIST, BethesdaDeployer, BethesdaLoadOrder, RulesDeployer,
-    SmfDeployer,
+    BETHESDA_EXTENSION, BETHESDA_LIMIT, BETHESDA_LIST, BethesdaDeployer, BethesdaLoadOrder,
+    PluginLimit, RulesDeployer, SmfDeployer,
 };
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_provisioners::MinecraftProvisioner;
@@ -78,7 +78,8 @@ impl Extension for ModrinthExtension {
 }
 
 /// Games on Bethesda's engines: Skyrim, Fallout and the like. Its
-/// `plugins` list is the order the game loads mods' plugins in.
+/// `plugins` list is the order the game loads mods' plugins in, and its
+/// `limit` check warns when more are enabled than the game can load.
 pub struct Bethesda;
 
 impl Extension for Bethesda {
@@ -89,7 +90,8 @@ impl Extension for Bethesda {
 
     fn register(&self, ext: &mut Registrar<'_>) {
         ext.deployer(BethesdaDeployer)
-            .ordered_list(BETHESDA_LIST, BethesdaLoadOrder);
+            .ordered_list(BETHESDA_LIST, BethesdaLoadOrder)
+            .check(BETHESDA_LIMIT, PluginLimit);
     }
 }
 

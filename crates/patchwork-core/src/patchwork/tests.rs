@@ -2933,3 +2933,118 @@ fn lists_can_be_turned_off_by_name() {
         }]
     );
 }
+
+/// Warns about each enabled vowel in its extension's `letters` list.
+struct Vowels;
+
+impl crate::check::Check for Vowels {
+    fn check(
+        &self,
+        ctx: &crate::check::CheckContext<'_>,
+        _: &[InstalledMod],
+    ) -> Vec<crate::check::Problem> {
+        let Some(list) = ctx.list("letters") else {
+            return Vec::new();
+        };
+        list.items
+            .iter()
+            .filter(|i| i.enabled && "aeiou".contains(&i.item.name))
+            .map(|i| {
+                crate::check::Problem::warning(format!("{} is a vowel", i.item.name))
+                    .about_mod(&i.item.mod_name)
+                    .about_list("letters")
+            })
+            .collect()
+    }
+}
+
+struct Checked;
+
+impl Extension for Checked {
+    fn id(&self) -> &'static str {
+        "checked"
+    }
+
+    fn register(&self, ext: &mut crate::ext::Registrar<'_>) {
+        ext.ordered_list("letters", Letters).check("vowels", Vowels);
+    }
+}
+
+fn checked_game(off: &[&str]) -> GameDef {
+    let mut def = lettered_game(&[]);
+    let mut ext = def.ext["lists"].clone();
+    if !off.is_empty() {
+        ext.insert(
+            "off".to_owned(),
+            toml::Value::Array(off.iter().map(|o| toml::Value::from(*o)).collect()),
+        );
+    }
+    def.ext.insert("checked".to_owned(), ext);
+    def
+}
+
+#[tokio::test]
+async fn checks_report_issues_and_problems_with_their_lists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .extension(Lists)
+        .extension(Checked)
+        .open()
+        .unwrap();
+    pw.add_game(checked_game(&[])).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert_eq!(plan.warnings, ["a is a vowel"]);
+    let issues = pw.issues(&profile).unwrap();
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].message, "a is a vowel");
+    assert_eq!(issues[0].mods, ["m"]);
+    assert_eq!(
+        issues[0].kind,
+        crate::issue::IssueKind::Check {
+            id: "checked.vowels".to_owned(),
+            list: Some("checked.letters".to_owned()),
+        }
+    );
+    // it's shown with the list it's about, and goes when it's dealt with
+    let problems = |pw: &Patchwork| -> Vec<String> {
+        pw.list(&profile, "checked.letters")
+            .unwrap()
+            .problems
+            .into_iter()
+            .map(|p| p.message)
+            .collect()
+    };
+    assert_eq!(problems(&pw), ["a is a vowel"]);
+    assert!(
+        pw.list(&profile, "lists.letters")
+            .unwrap()
+            .problems
+            .is_empty()
+    );
+    pw.set_list_enabled(&profile, "checked.letters", "a", false)
+        .unwrap();
+    assert!(problems(&pw).is_empty());
+    assert!(pw.issues(&profile).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn checks_can_be_turned_off_by_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .extension(Lists)
+        .extension(Checked)
+        .open()
+        .unwrap();
+    pw.add_game(checked_game(&["vowels"])).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    assert!(pw.plan_deploy(&profile).await.unwrap().warnings.is_empty());
+    assert!(pw.issues(&profile).unwrap().is_empty());
+}

@@ -915,8 +915,8 @@ async fn run(cli: Cli) -> Result<()> {
                     let index = pw.move_in_list(&profile, &id, &name, &to.position())?;
                     let list = pw.list(&profile, &id)?;
                     println!("moved {name} to {} of {}", index + 1, list.items.len());
-                    for warning in &list.warnings {
-                        eprintln!("warning: {warning}");
+                    for problem in &list.problems {
+                        eprintln!("{}: {}", severity(problem.severity), problem.message);
                     }
                 }
                 OrderCommand::Enable { name } => {
@@ -2022,8 +2022,8 @@ fn print_list(list: &List) {
             item.item.mod_name
         );
     }
-    for warning in &list.warnings {
-        eprintln!("warning: {warning}");
+    for problem in &list.problems {
+        eprintln!("{}: {}", severity(problem.severity), problem.message);
     }
 }
 

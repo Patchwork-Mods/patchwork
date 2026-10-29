@@ -71,8 +71,9 @@ impl Patchwork {
             .collect())
     }
 
-    /// List `id` as it is for `profile`. Only mods that have been locked
-    /// count, without locking again, so this never touches the network.
+    /// List `id` as it is for `profile`, with what its extension's checks
+    /// say about it. Only mods that have been locked count, without locking
+    /// again, so this never touches the network.
     pub fn list(&self, profile: &ProfileRef, id: &str) -> Result<List> {
         let loaded = self.load_profile(profile)?;
         let target = self.deploy_target(&loaded)?;
@@ -94,7 +95,10 @@ impl Patchwork {
         let state = self.deploy_state(&target)?;
         let files = GameFiles::new(&root, &state);
         let (mods, _) = self.installed(&loaded, game, Some(&files), &order)?;
-        self.make_list(&loaded, id, hook, &ctx, &files, &mods)
+        let mut list = self.make_list(&loaded, id, hook, &ctx, &files, &mods)?;
+        let problems = self.list_problems(game, hook.ext, &files, &list, &mods);
+        list.problems.extend(problems);
+        Ok(list)
     }
 
     /// Every list that's on for `loaded`'s game, for a deploy of `mods`.
@@ -111,7 +115,7 @@ impl Patchwork {
             .collect()
     }
 
-    fn make_list(
+    pub(super) fn make_list(
         &self,
         loaded: &Profile,
         id: &str,
@@ -126,10 +130,7 @@ impl Patchwork {
         let config = ctx.game.hook_config(hook.ext, hook.name).unwrap_or(&empty);
         let lctx = ListContext::new(ctx, files, config);
         let found = hook.hook.items(&lctx, mods)?;
-        let mut list = List::new(id.to_owned(), hook.hook.as_ref(), &saved, found);
-        let problems = hook.hook.check(&lctx, &list);
-        list.warnings.extend(problems);
-        Ok(list)
+        Ok(List::new(id.to_owned(), hook.hook.as_ref(), &saved, found))
     }
 
     /// Saves `entries` as the order of `profile`'s list `id`. This is how a

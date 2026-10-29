@@ -46,7 +46,7 @@ function renderList(list) {
   $("#list-description").textContent = list.description ?? "";
   $("#list-description").hidden = !list.description;
   $("#list-problems").replaceChildren(
-    ...list.warnings.map((w) => h("li", { class: "warning" }, w)),
+    ...list.problems.map((p) => h("li", { class: p.severity }, p.message)),
   );
   const unlocked = list.unlocked;
   $("#list-unlocked").hidden = !unlocked.length;

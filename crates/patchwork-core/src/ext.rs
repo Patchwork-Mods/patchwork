@@ -11,7 +11,7 @@
 //!
 //! Sources, deployers, provisioners and profile formats keep the ids they
 //! have always had (profiles and game definitions name them). Other hooks,
-//! like [`OrderedList`]s and [`ModTransform`]s, are `<extension>.<name>`; each is configured by the
+//! like [`OrderedList`]s, [`ModTransform`]s and [`Check`]s, are `<extension>.<name>`; each is configured by the
 //! game's `[ext.<extension>.<name>]` table, and can be turned off with
 //! `off = ["<name>"]` in `[ext.<extension>]`.
 
@@ -21,6 +21,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::check::Check;
 use crate::deploy::Deployer;
 use crate::list::OrderedList;
 use crate::options::{ModOptions, ModTransform};
@@ -141,6 +142,13 @@ impl Registrar<'_> {
         self.registered.mod_options(self.ext, name, options);
         self
     }
+
+    /// Adds something that looks for problems with profiles, as
+    /// `<extension>.<name>`, configured by `[ext.<extension>.<name>]`.
+    pub fn check(&mut self, name: &'static str, check: impl Check + 'static) -> &mut Self {
+        self.registered.check(self.ext, name, check);
+        self
+    }
 }
 
 /// A hook, as registered by an extension.
@@ -171,6 +179,8 @@ pub(crate) struct Registered {
     pub transforms: Vec<Hook<dyn ModTransform>>,
     /// By hook id.
     pub options: BTreeMap<String, Hook<dyn ModOptions>>,
+    /// By hook id.
+    pub checks: BTreeMap<String, Hook<dyn Check>>,
     /// Which extension registered each thing, by `(kind, id)`, so a clash
     /// can say who's involved. `None` for things registered directly.
     owners: HashMap<(&'static str, String), Option<&'static str>>,
@@ -273,6 +283,17 @@ impl Registered {
                 hook: Arc::new(options) as Arc<dyn ModOptions>,
             };
             self.options.insert(id, hook);
+        }
+    }
+
+    pub fn check(&mut self, ext: &'static str, name: &'static str, check: impl Check + 'static) {
+        if let Some(id) = self.hook("check", ext, name) {
+            let hook = Hook {
+                ext,
+                name,
+                hook: Arc::new(check) as Arc<dyn Check>,
+            };
+            self.checks.insert(id, hook);
         }
     }
 

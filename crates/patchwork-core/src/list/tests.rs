@@ -138,10 +138,13 @@ fn missing_and_late_needs_are_warned_about() {
             item("Off.esp", "o"),
         ]),
     );
-    assert_eq!(list.warnings.len(), 3, "{:?}", list.warnings);
-    assert!(list.warnings[0].contains("Base.esp, which comes after it"));
-    assert!(list.warnings[1].contains("Off.esp, which is disabled"));
-    assert!(list.warnings[2].contains("Nowhere.esp, which isn't in any of the mods"));
+    let messages: Vec<&str> = list.problems.iter().map(|p| p.message.as_str()).collect();
+    assert_eq!(messages.len(), 3, "{messages:?}");
+    assert!(messages[0].contains("Base.esp, which comes after it"));
+    assert!(messages[1].contains("Off.esp, which is disabled"));
+    assert!(messages[2].contains("Nowhere.esp, which isn't in any of the mods"));
+    // each is about the mod Patch.esp is from
+    assert!(list.problems.iter().all(|p| p.mods == ["m"]));
 }
 
 #[test]

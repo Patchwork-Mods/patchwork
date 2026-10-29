@@ -62,6 +62,7 @@ impl Patchwork {
                 .filter(|h| h.ext == ext)
                 .map(|h| h.name),
         );
+        names.extend(self.check_names(ext));
         names
     }
 

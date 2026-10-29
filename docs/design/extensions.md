@@ -1,8 +1,8 @@
 # Extensions: game-specific behaviour without game-specific core
 
-Status: proposal (2026-10-29). Steps 1 (the skeleton), 2 (`OrderedList`)
-and 3 (`ModTransform` + `ModOptions`) of "Order of work" are built; see the
-notes under each.
+Status: proposal (2026-10-29). Steps 1 (the skeleton), 2 (`OrderedList`),
+3 (`ModTransform` + `ModOptions`) and 4 (`Check`) of "Order of work" are
+built; see the notes under each.
 
 ## The problem
 
@@ -481,7 +481,7 @@ be loosened later by adding new `StateChange` variants.
 
 ```rust
 pub trait Check: Send + Sync {
-    fn check(&self, ctx: &CheckContext<'_>, mods: &[InstalledMod]) -> Vec<Issue>;
+    fn check(&self, ctx: &CheckContext<'_>, mods: &[InstalledMod]) -> Vec<Problem>;
 }
 ```
 
@@ -659,6 +659,35 @@ Each step leaves `main` working and shippable.
    - Picking options isn't recorded as a `Change` in history yet.
 4. **`Check`.** Move the plugin limit, missing masters and env mismatches
    into checks.
+
+   Built (2026-10-29), with these differences:
+   - Checks return `Vec<Problem>` (`severity`, `mods`, `list`, `message`)
+     rather than `Issue`s, so an extension can't make up another kind of
+     issue. Core wraps each in an `Issue` with `IssueKind::Check { id,
+     list }`. `Problem::about_list(name)` says it's about one of the
+     extension's own lists. `Patchwork::list` then shows it with the list,
+     so it stays live while the user rearranges.
+   - `CheckContext` has `game()`, `config()`, `files()` and `list(name)`
+     (the extension's own lists only, until `uses` exists). In
+     `Patchwork::list` it only sees the list being shown.
+   - `OrderedList::check` is gone. The plugin limit is the `bethesda.limit`
+     check, so `off = ["limit"]` turns it off. Its number stays as `limit`
+     in `[ext.bethesda.plugins]`, since it's about the load order.
+   - Missing masters stay in core's generic `after` check, not in a
+     Bethesda check. Every list's problems (that check's, and the
+     `ListItems::warnings` an `OrderedList` finds) now become issues with
+     `IssueKind::List { id }`, naming the mod they're about. `List::warnings`
+     became `List::problems` (`Vec<Problem>`); `list.js` and the CLI were
+     updated.
+   - Env mismatches stay in core. They come from the game's `[env]` data
+     and the mods' own metadata, not from any extension, so a hook would
+     add nothing.
+   - `Patchwork::issues` runs lists and checks only for games that have
+     some on, and only when every enabled mod is already unpacked, so it
+     never unpacks. It still lists every mod's files and, for Bethesda,
+     reads plugin headers each time a profile is shown. If that gets slow
+     on big profiles, cache the result by deploy inputs.
+   - Deploy plans get the same issues' messages as warnings.
 5. **`Launcher` + `AccountKind`.** Port Java and Minecraft accounts. This
    should be done *before* Microsoft sign-in is built, so that sign-in is
    built on the new hook rather than ported afterwards.

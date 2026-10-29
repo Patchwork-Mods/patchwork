@@ -307,6 +307,7 @@ impl Builder {
             lists: registered.lists,
             transforms: registered.transforms,
             options: registered.options,
+            checks: registered.checks,
             reporter: self.reporter,
             categories: Mutex::default(),
             fetching_versions: Mutex::default(),
@@ -340,6 +341,8 @@ pub struct Patchwork {
     transforms: Vec<Hook<dyn ModTransform>>,
     /// By hook id.
     options: BTreeMap<String, Hook<dyn ModOptions>>,
+    /// By hook id, which is the order they run in; see [`crate::check`].
+    checks: BTreeMap<String, Hook<dyn crate::check::Check>>,
     reporter: Arc<dyn Reporter>,
     /// Each source's search categories for each game, by `(source, game)`.
     /// They hardly ever change, and a search by category needs them, so
@@ -1429,6 +1432,7 @@ impl Patchwork {
                 if let Some(env) = &env {
                     issues.extend(self.incompatible(&loaded, &lock, env)?);
                 }
+                issues.extend(self.known_found_issues(&loaded, &lock)?);
                 issues
             }
             None => Vec::new(),
@@ -2274,9 +2278,10 @@ impl Patchwork {
         for issue in self.incompatible(&loaded, &lock, &env)? {
             warnings.push(issue.message);
         }
-        let lists = self.make_lists(&loaded, &ctx, &GameFiles::new(&root, &prev), &mods)?;
-        for list in &lists {
-            warnings.extend(list.warnings.iter().cloned());
+        let files = GameFiles::new(&root, &prev);
+        let lists = self.make_lists(&loaded, &ctx, &files, &mods)?;
+        for issue in self.found_issues(game, &files, &lists, &mods) {
+            warnings.push(issue.message);
         }
         if deployer.builds(&ctx) {
             let (built, built_warnings) = self.build(
@@ -2795,6 +2800,7 @@ fn visit<'a>(
 }
 
 mod capture;
+mod checks;
 mod extensions;
 mod history;
 mod instances;

@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 
+use crate::check::Problem;
 use crate::compat::GameVersions;
 use crate::deploy::{Dest, Drift};
 use crate::environment::GameEnv;
@@ -70,6 +71,17 @@ pub enum IssueKind {
     /// The game's `[ext.<extension>]` turns off something the extension
     /// doesn't have, most likely a typo.
     UnknownHook { ext: String, name: String },
+    /// Something wrong with one of the game's ordered lists (see
+    /// [`crate::list`]) as the profile has it, like an item that comes
+    /// before one it needs.
+    List { id: String },
+    /// What an extension's [`Check`](crate::check::Check) found.
+    Check {
+        /// The check's id, `<extension>.<check>`.
+        id: String,
+        /// The id of the list it's about, if it's about one.
+        list: Option<String>,
+    },
 }
 
 impl From<UnmetRequirement> for Issue {
@@ -156,6 +168,29 @@ impl Issue {
             kind: IssueKind::UnknownHook {
                 ext: ext.to_owned(),
                 name: name.to_owned(),
+            },
+        }
+    }
+
+    /// A problem with list `id`.
+    pub fn list(id: &str, problem: Problem) -> Self {
+        Issue {
+            severity: problem.severity,
+            mods: problem.mods,
+            message: problem.message,
+            kind: IssueKind::List { id: id.to_owned() },
+        }
+    }
+
+    /// A problem check `id` of extension `ext` found.
+    pub fn check(ext: &str, id: &str, problem: Problem) -> Self {
+        Issue {
+            severity: problem.severity,
+            mods: problem.mods,
+            message: problem.message,
+            kind: IssueKind::Check {
+                id: id.to_owned(),
+                list: problem.list.map(|name| crate::ext::hook_id(ext, &name)),
             },
         }
     }
