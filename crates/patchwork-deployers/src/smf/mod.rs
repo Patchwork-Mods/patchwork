@@ -23,12 +23,16 @@
 //! (`localisationOverrides`) are applied once every mod's staged, like SMF
 //! does, to the current version of each LOCR (see [`locr`]).
 //!
+//! Dialogue (`.dlge.json`, `.ditl.json`,
+//! `.clng.json`) is rebuilt natively (see [`dlge`]).
+//!
 //! Not supported yet: SMF's other special file types (materials, sounds,
-//! language files and deltas), entities made for QuickEntity versions
+//! other language files and deltas), entities made for QuickEntity versions
 //! before 3.1, new localised strings (`localisation`, `localisedLines`),
 //! scripts and choosing options (those enabled by default are used). Mods that need them fail to deploy rather than half
 //! working.
 
+mod dlge;
 mod entity;
 mod game;
 mod json;
@@ -83,9 +87,6 @@ const BUILT_BY: &str = "SMF mods";
 /// can't do yet.
 const UNSUPPORTED_TYPES: &[&str] = &[
     "material.json",
-    "clng.json",
-    "ditl.json",
-    "dlge.json",
     "locr.json",
     "rtlv.json",
     "sfx.wem",
@@ -409,6 +410,9 @@ impl<'a> Build<'a> {
                 "entity.json" => Some(self.stage_entity(file, &partition)),
                 "entity.patch.json" => Some(self.queue_entity_patch(file, &partition)),
                 "texture.tga" => Some(self.stage_texture(files, &rel, file, stem, &partition)),
+                "dlge.json" => Some(self.stage_dialogue(file, &partition, "DLGE")),
+                "ditl.json" => Some(self.stage_dialogue(file, &partition, "DITL")),
+                "clng.json" => Some(self.stage_dialogue(file, &partition, "CLNG")),
                 _ => None,
             };
             if let Some(result) = special {
@@ -768,6 +772,38 @@ impl<'a> Build<'a> {
             .game()?
             .latest(RuntimeResourceID::from(hash))
             .map(|(archive, _)| archive.name.partition.to_string()))
+    }
+
+    /// Rebuilds a dialogue resource (a DLGE, DITL or CLNG) from TonyTools
+    /// JSON, keeping the header of the version it replaces if there is one.
+    fn stage_dialogue(
+        &mut self,
+        file: &ModFile,
+        partition: &str,
+        resource_type: &str,
+    ) -> Result<(), String> {
+        let text = fs::read_to_string(&file.src).map_err(|e| e.to_string())?;
+        let built = match resource_type {
+            "DITL" => dlge::build_ditl(&text)?,
+            "CLNG" => dlge::build_clng(&text)?,
+            _ => dlge::build(&text)?,
+        };
+        let hash = u64::from(built.hash);
+        let mut loaded = match self.current(partition, hash)? {
+            Some(existing) => existing.with_data(built.data),
+            // Like the game's own, which don't say what memory they need.
+            None => Loaded {
+                resource_type: resource_type.to_owned(),
+                header: Header {
+                    system_memory: u32::MAX,
+                    ..Header::default_for(built.data.len() as u32)
+                },
+                data: built.data,
+            },
+        };
+        loaded.header.references = built.references;
+        self.stage_built(partition, hash, loaded);
+        Ok(())
     }
 
     /// Converts a TGA into a TEXT, and a TEXD if its name gives one.

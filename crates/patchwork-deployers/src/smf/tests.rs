@@ -1241,3 +1241,188 @@ fn localisation_overrides_that_cant_be_applied_fail() {
     assert!(err.contains("no LOCR 00A3000000000009"), "{err}");
     assert!(err.contains("`klingon`"), "{err}");
 }
+
+const DLGE: u64 = 0x00A4_0000_0000_0001;
+const DITL: &str = "00B7E83B2B5BFE20";
+const CLNG: &str = "00E3CBB0725ED16C";
+
+/// A line with an English sound and subtitle, and no other languages.
+fn dlge_json(subtitle: &str) -> String {
+    format!(
+        r#"{{
+            "hash": "{DLGE:016X}", "DITL": "{DITL}", "CLNG": "{CLNG}", "langmap": "xx,en",
+            "rootContainer": {{
+                "type": "WavFile", "wavName": "00000010", "soundtag": "In-world_AI_Important",
+                "defaultWav": "[assembly:/sound/line.wav].pc_wes",
+                "defaultFfx": "[assembly:/facefx/line.animset].pc_animset",
+                "languages": {{ "en": "{subtitle}" }}
+            }}
+        }}"#
+    )
+}
+
+#[test]
+fn dialogue_is_rebuilt_from_json() {
+    let env = Env::new();
+    env.archive(
+        "chunk0",
+        PatchId::Base,
+        &[(DLGE, "DLGE", b"old".to_vec(), &[IN_CHUNK0])],
+    );
+    let m = content_mod(&env, "m", &[("line.dlge.json", &dlge_json("Hi"))]);
+    let desired = env.build(&[m]).unwrap();
+
+    let built = resource(&placed(&env, &desired, "Runtime/chunk0patch300.rpkg"), DLGE);
+    assert_eq!(built.resource_type, "DLGE");
+    let hash = |s: &str| u64::from(meta::parse_hash(s));
+    assert_eq!(
+        references(&built),
+        vec![
+            (hash(DITL), 0x1F),
+            (hash(CLNG), 0x1F),
+            (hash("[assembly:/sound/line.wav].pc_wes"), 0x81),
+            (hash("[assembly:/facefx/line.animset].pc_animset"), 0x81),
+        ]
+    );
+    let mut expected = Vec::new();
+    for v in [0, 1] {
+        expected.extend_from_slice(&u32::to_le_bytes(v));
+    }
+    expected.push(1);
+    for v in [crc32fast::hash(b"In-world_AI_Important"), 0x10, 0] {
+        expected.extend_from_slice(&v.to_le_bytes());
+    }
+    // xx has nothing, en has the default sound and the subtitle.
+    expected.extend_from_slice(&u64::MAX.to_le_bytes());
+    expected.extend_from_slice(&0u32.to_le_bytes());
+    for v in [2, 3, 8] {
+        expected.extend_from_slice(&u32::to_le_bytes(v));
+    }
+    let subtitle = &built.data[expected.len()..expected.len() + 8];
+    let text = rpkg_rs::encryption::xtea::Xtea::decrypt_string(
+        subtitle,
+        &rpkg_rs::encryption::xtea::Xtea::WOA_L10N_KEY,
+    )
+    .unwrap();
+    assert_eq!(text.trim_end_matches('\0'), "Hi");
+    expected.extend_from_slice(subtitle);
+    expected.extend_from_slice(&0x1000u16.to_le_bytes());
+    assert_eq!(built.data, expected);
+}
+
+#[test]
+fn dialogue_containers_index_their_children() {
+    let wav = |name: &str, extra: &str| {
+        format!(
+            r#"{{ "type": "WavFile", "wavName": "{name}", "soundtag": "T", {extra}
+                  "defaultWav": null, "defaultFfx": null, "languages": {{}} }}"#
+        )
+    };
+    let json = format!(
+        r#"{{ "hash": "{DLGE:016X}", "DITL": "{DITL}", "CLNG": "{CLNG}", "langmap": "xx",
+              "rootContainer": {{ "type": "Switch", "switchKey": "Key", "default": "B",
+                "containers": [
+                  {{ "type": "Random", "cases": ["A"], "containers": [{}, {}] }},
+                  {}
+                ] }} }}"#,
+        wav("a1", r#""weight": 0.5,"#),
+        wav("a2", r#""weight": "00800000","#),
+        wav("b", r#""cases": ["B", "C"],"#),
+    );
+    let data = dlge::build(&json).unwrap().data;
+    let le = |v: u32| v.to_le_bytes();
+    let line_len = 1 + 4 * 3 + 12;
+    let mut at = 8 + 2 * line_len;
+    // The Random: two weighted entries pointing at lines 0 and 1.
+    assert_eq!(data[at], 2);
+    at += 9;
+    assert_eq!(data[at..at + 4], le(2));
+    let entry = |index: u16, hashes: &[u32]| {
+        let mut e = index.to_le_bytes().to_vec();
+        e.extend_from_slice(&le(hashes.len() as u32));
+        hashes.iter().for_each(|h| e.extend_from_slice(&le(*h)));
+        e
+    };
+    let half = (0.5 * f64::from(0xFF_FFFF)).round() as u32;
+    let mut random = entry(0x1000, &[half]);
+    random.extend(entry(0x1001, &[0x0080_0000]));
+    assert_eq!(data[at + 4..at + 4 + random.len()], random[..]);
+    at += 4 + random.len() + line_len;
+    // The Switch: the Random (by its own index) and line 2, with their cases.
+    let crc = |s: &str| crc32fast::hash(s.as_bytes());
+    assert_eq!(data[at], 3);
+    assert_eq!(
+        data[at + 1..at + 9],
+        [le(crc("Key")), le(crc("B"))].concat()[..]
+    );
+    let mut switch = le(2).to_vec();
+    switch.extend(entry(0x2000, &[crc("A")]));
+    switch.extend(entry(0x1002, &[crc("B"), crc("C")]));
+    assert_eq!(data[at + 9..at + 9 + switch.len()], switch[..]);
+    // The root is the Switch, the second container overall.
+    assert_eq!(data[at + 9 + switch.len()..], 0x3001u16.to_le_bytes());
+}
+
+#[test]
+fn soundtag_lists_and_language_flags_are_rebuilt() {
+    // The game's own, rebuilt from TonyTools' JSON of them.
+    let ditl = dlge::build_ditl(&format!(
+        r#"{{ "hash": "{DITL}", "soundtags": {{
+              "In-world_AI_Important": "009C01E066ED6E5C", "Other": "009C01E066ED6E5C" }} }}"#
+    ))
+    .unwrap();
+    assert_eq!(u64::from(ditl.hash), u64::from(meta::parse_hash(DITL)));
+    let tag = |v: u32, name: &str| {
+        [
+            v.to_le_bytes(),
+            crc32fast::hash(name.as_bytes()).to_le_bytes(),
+        ]
+        .concat()
+    };
+    assert_eq!(
+        ditl.data,
+        [
+            2u32.to_le_bytes().to_vec(),
+            tag(0, "In-world_AI_Important"),
+            tag(0, "Other")
+        ]
+        .concat()
+    );
+    assert_eq!(
+        ditl.references,
+        vec![(meta::parse_hash("009C01E066ED6E5C"), 0x1F)]
+    );
+
+    let clng = dlge::build_clng(&format!(
+        r#"{{ "hash": "{CLNG}", "languages": {{ "xx": false, "en": false, "fr": true }} }}"#
+    ))
+    .unwrap();
+    assert_eq!(clng.data, vec![0, 0, 1]);
+    assert!(clng.references.is_empty());
+}
+
+#[test]
+fn dialogue_that_cant_be_rebuilt_fails() {
+    let env = Env::new();
+    let bad_random = format!(
+        r#"{{ "hash": "{DLGE:016X}", "DITL": "{DITL}", "CLNG": "{CLNG}",
+              "rootContainer": {{ "type": "Random", "containers": [{{ "type": "Sequence", "containers": [] }}] }} }}"#
+    );
+    let m = content_mod(
+        &env,
+        "m",
+        &[
+            ("a.dlge.json", &bad_random),
+            (
+                "b.ditl.json",
+                r#"{ "hash": "00A4000000000002", "soundtags": { "T": 1 } }"#,
+            ),
+        ],
+    );
+    let err = env.build(&[m]).unwrap_err().to_string();
+    assert!(
+        err.contains("a.dlge.json: a Random container can only hold WavFiles"),
+        "{err}"
+    );
+    assert!(err.contains("soundtag `T` isn't given a resource"), "{err}");
+}
