@@ -23,6 +23,7 @@ jiff.workspace = true
 patchwork-core.workspace = true
 patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
+patchwork-provisioners.workspace = true
 patchwork-formats.workspace = true
 patchwork-sync.workspace = true
 pulldown-cmark.workspace = true

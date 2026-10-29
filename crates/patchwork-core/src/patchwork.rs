@@ -33,6 +33,7 @@ use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
 use crate::plugins::{self, LoadOrder, PluginEntry};
 use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
+use crate::provision::Provisioner;
 use crate::registry::Registry;
 use crate::relpath::RelPath;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
@@ -239,6 +240,7 @@ pub struct Builder {
     paths: Paths,
     sources: BTreeMap<String, Arc<dyn Source>>,
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
+    provisioners: BTreeMap<String, Arc<dyn Provisioner>>,
     formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
     reporter: Arc<dyn Reporter>,
 }
@@ -253,6 +255,12 @@ impl Builder {
     pub fn deployer(mut self, deployer: impl Deployer + 'static) -> Self {
         self.deployers
             .insert(deployer.kind().to_owned(), Arc::new(deployer));
+        self
+    }
+
+    pub fn provisioner(mut self, provisioner: impl Provisioner + 'static) -> Self {
+        self.provisioners
+            .insert(provisioner.kind().to_owned(), Arc::new(provisioner));
         self
     }
 
@@ -282,6 +290,7 @@ impl Builder {
             paths: self.paths,
             sources: self.sources,
             deployers: self.deployers,
+            provisioners: self.provisioners,
             formats: self.formats,
             reporter: self.reporter,
             categories: Mutex::default(),
@@ -307,6 +316,7 @@ pub struct Patchwork {
     store: Store,
     sources: BTreeMap<String, Arc<dyn Source>>,
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
+    provisioners: BTreeMap<String, Arc<dyn Provisioner>>,
     formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
     reporter: Arc<dyn Reporter>,
     /// Each source's search categories for each game, by `(source, game)`.
@@ -329,6 +339,7 @@ impl Patchwork {
             paths,
             sources: BTreeMap::new(),
             deployers: BTreeMap::new(),
+            provisioners: BTreeMap::new(),
             formats: BTreeMap::new(),
             reporter: Arc::new(Silent),
         }
@@ -474,22 +485,35 @@ impl Patchwork {
             roots,
             prefix,
         };
-        let state = self.deploy_state(&DeployTarget::Game(game.to_owned()))?;
-        let moved = resolve_roots(def, &install).roots();
-        if let Some((_, was)) = state.moved_root(&moved) {
-            return Err(Error::invalid(format!(
-                "mods are still deployed to {}; run `patchwork undeploy {game}` first",
-                was.display()
-            )));
-        }
-        // files already placed stay the way they were placed, so the method
-        // can only change while there aren't any
+        // Instances use the install's link method and other roots too.
         let was = self.game_install(game)?.and_then(|i| i.link);
-        if was.unwrap_or(def.link) != install.link.unwrap_or(def.link) && !state.files.is_empty() {
-            return Err(Error::invalid(format!(
-                "mods are still deployed to {}; run `patchwork undeploy {game}` before changing how they're linked",
-                install.path.display()
-            )));
+        for target in self.targets_of(game)? {
+            let state = self.deploy_state(&target)?;
+            let undeploy = self.undeploy_command(&target)?;
+            let path = match &target {
+                DeployTarget::Game(_) => install.path.clone(),
+                DeployTarget::Instance { profile, .. } => self.instance_dir(profile),
+            };
+            let roots = GameInstall {
+                path,
+                ..install.clone()
+            };
+            if let Some((_, was)) = state.moved_root(&resolve_roots(def, &roots).roots()) {
+                return Err(Error::invalid(format!(
+                    "mods are still deployed to {}; run `{undeploy}` first",
+                    was.display()
+                )));
+            }
+            // files already placed stay the way they were placed, so the
+            // method can only change while there aren't any
+            if was.unwrap_or(def.link) != install.link.unwrap_or(def.link)
+                && !state.files.is_empty()
+            {
+                return Err(Error::invalid(format!(
+                    "mods are still deployed to {}; run `{undeploy}` before changing how they're linked",
+                    state.root.display()
+                )));
+            }
         }
         fsutil::write_toml(&self.install_file(game), &install)?;
         Ok(install)
@@ -624,6 +648,11 @@ impl Patchwork {
         }
         if !self.deployers.contains_key(&def.deployer.kind) {
             return Err(Error::UnknownDeployer(def.deployer.kind.clone()));
+        }
+        if let Some(spec) = &def.provision
+            && !self.provisioners.contains_key(&spec.kind)
+        {
+            return Err(Error::UnknownProvisioner(spec.kind.clone()));
         }
         if let Some(source) = def.sources.keys().find(|s| !self.has_source(s)) {
             return Err(Error::UnknownSource(source.clone()));
@@ -2073,16 +2102,26 @@ impl Patchwork {
 
     // Deploying
 
-    /// Where `profile`'s mods are deployed to.
+    /// Where `profile`'s mods are deployed to: its instance if it uses one
+    /// (see [`Patchwork::uses_instance`]), otherwise the game's folder.
     pub fn deploy_target(&self, profile: &Profile) -> Result<DeployTarget> {
-        Ok(DeployTarget::Game(profile.game.clone()))
+        Ok(if self.uses_instance(profile)? {
+            DeployTarget::Instance {
+                game: profile.game.clone(),
+                profile: profile.reference(),
+            }
+        } else {
+            DeployTarget::Game(profile.game.clone())
+        })
     }
 
     /// The directory mods for `target` go in, if it's been set up: its
-    /// `game` root.
+    /// `game` root. Instances are always set up, though their folder is
+    /// only made when something's first deployed to it.
     pub fn target_root(&self, target: &DeployTarget) -> Result<Option<PathBuf>> {
         match target {
             DeployTarget::Game(game) => Ok(self.game_install(game)?.map(|i| i.path)),
+            DeployTarget::Instance { profile, .. } => Ok(Some(self.instance_dir(profile))),
         }
     }
 
@@ -2095,8 +2134,20 @@ impl Patchwork {
     /// Where each of `target`'s roots is, or why it couldn't be found, and
     /// what may go in it. `None` until it's been set up.
     pub fn resolve_roots(&self, target: &DeployTarget) -> Result<Option<ResolvedRoots>> {
-        let DeployTarget::Game(game) = target;
-        let Some(install) = self.game_install(game)? else {
+        let game = target.game();
+        let install = match target {
+            DeployTarget::Game(_) => self.game_install(game)?,
+            // The game's other roots are wherever they are for the install,
+            // if there is one.
+            DeployTarget::Instance { profile, .. } => {
+                let path = self.instance_dir(profile);
+                Some(match self.game_install(game)? {
+                    Some(install) => GameInstall { path, ..install },
+                    None => GameInstall::new(path),
+                })
+            }
+        };
+        let Some(install) = install else {
             return Ok(None);
         };
         let registry = self.registry();
@@ -2675,6 +2726,12 @@ impl Patchwork {
         if state.files.is_empty() {
             state = DeployState::empty(target.game(), &plan.roots);
         }
+        if let DeployTarget::Instance { profile, .. } = target
+            && plan.profile.is_some()
+        {
+            let dir = self.instance_dir(profile);
+            fs::create_dir_all(&dir).at(&dir)?;
+        }
         let backups = self.paths.backups().join(target.key());
         let result = deploy::apply(plan, &mut state, &backups, self.reporter.as_ref());
         // What's in it now, so what tools write there later can be told
@@ -3080,12 +3137,15 @@ fn visit<'a>(
 
 mod capture;
 mod history;
+mod instances;
 mod local;
 mod profiles;
+mod provision;
 mod sync;
 
 pub use capture::Captured;
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
+pub use provision::Provisioned;
 pub use sync::{Applied as SyncApplied, ProfileChange};
 
 #[cfg(test)]

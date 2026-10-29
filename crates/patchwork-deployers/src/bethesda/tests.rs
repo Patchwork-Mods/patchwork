@@ -80,6 +80,8 @@ impl Env {
             launch: Default::default(),
             fomod: None,
             capture: None,
+            instances: None,
+            provision: None,
         };
         Self { tmp, game, def }
     }

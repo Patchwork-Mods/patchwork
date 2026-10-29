@@ -90,15 +90,16 @@ $("#verify-deploy").addEventListener("click", () => {
   deploy(true);
 });
 
-// Undeploy. Takes every file patchwork put in the game folder back out and
-// puts back the game's own files that mods replaced, whichever profile was
-// deployed. The profiles themselves aren't touched.
+// Undeploy. Takes every file patchwork put in the game folder (or the open
+// profile's instance) back out and puts back the game's own files that mods
+// replaced, whichever profile was deployed. The profiles themselves aren't
+// touched.
 
 $("#undeploy").addEventListener("click", async () => {
   $("#deploy-menu").open = false;
   const game = gameInfo(state.game);
   status("Working out what to undeploy…");
-  const plan = await run("plan_undeploy", { game: game.id });
+  const plan = await run("plan_undeploy", { game: game.id, id: state.profile?.id });
   const files = plan.ops.length;
   showPlan(
     "undeploy",

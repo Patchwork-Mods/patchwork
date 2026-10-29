@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use patchwork_core::account::Account;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
@@ -23,6 +24,7 @@ use patchwork_core::update;
 use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
+use patchwork_provisioners::MinecraftProvisioner;
 use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
 use patchwork_sync::daemon::{self, service};
 use patchwork_sync::{Joined, Node};
@@ -121,6 +123,29 @@ enum Command {
         /// Go back to the game's default.
         #[arg(long, requires = "axis", conflicts_with = "value")]
         reset: bool,
+    },
+    /// Show whether the profile is deployed to an instance (a folder of its
+    /// own) or to the game's folder, or pick, e.g. `instance on`. Only for
+    /// games that have instances, and only for this machine.
+    Instance {
+        /// `on` or `off`.
+        #[arg(value_parser = clap::builder::BoolishValueParser::new())]
+        value: Option<bool>,
+        /// Go back to the game's default.
+        #[arg(long, conflicts_with = "value")]
+        reset: bool,
+    },
+    /// Download what the profile's instance needs to run the game as it
+    /// picks with `env` (the game itself and its mod loader), for games
+    /// patchwork can set up. Files that are already there aren't
+    /// downloaded again.
+    Provision,
+    /// Show who you play as in games patchwork starts itself (Minecraft),
+    /// or set it: `account offline <name>` plays under that name without
+    /// signing in.
+    Account {
+        #[command(subcommand)]
+        action: Option<AccountAction>,
     },
     /// Show the options in a mod's FOMOD installer and which are picked, or
     /// pick them. Mods with an installer are deployed with the options it
@@ -225,7 +250,8 @@ enum Command {
         dry_run: bool,
     },
     /// Start the profile's game, deploying the profile first if it isn't
-    /// deployed as it is now.
+    /// deployed as it is now, and for a profile with an instance, setting
+    /// the game up in it first if it isn't.
     Launch {
         /// Which way to start it, from `--list`. Defaults to the game's
         /// default one.
@@ -240,9 +266,10 @@ enum Command {
         #[arg(long)]
         no_deploy: bool,
     },
-    /// Remove everything patchwork deployed to a game.
+    /// Remove everything patchwork deployed to a game, or to the profile's
+    /// instance if it has one.
     Undeploy {
-        /// Defaults to the profile's game.
+        /// Defaults to wherever the profile is deployed to.
         game: Option<String>,
         #[arg(long)]
         dry_run: bool,
@@ -310,6 +337,15 @@ impl MoveTo {
             unreachable!("clap requires one of them")
         }
     }
+}
+
+#[derive(Subcommand)]
+enum AccountAction {
+    /// Play under `name` without signing in: fine on your own, and on
+    /// servers that don't check who joins.
+    Offline { name: String },
+    /// Forget the account.
+    Forget,
 }
 
 #[derive(Subcommand)]
@@ -517,6 +553,7 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
         .deployer(RulesDeployer)
         .deployer(BethesdaDeployer)
         .deployer(SmfDeployer)
+        .provisioner(MinecraftProvisioner)
         .format(Archive)
         .format(UrlList)
         .format(R2modman)
@@ -700,6 +737,45 @@ async fn run(cli: Cli) -> Result<()> {
                 && game.env.get(axis).is_none()
             {
                 game.env.check(axis, "")?;
+            }
+        }
+        Command::Instance { value, reset } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            if reset || value.is_some() {
+                pw.set_instance(&profile, value)?;
+            }
+            let registry = pw.registry();
+            let game = &registry.game(&loaded.game)?.value;
+            match &game.instances {
+                None => println!(
+                    "{} profiles are deployed to the game's folder; they can't have instances",
+                    game.name
+                ),
+                Some(_) if pw.uses_instance(&loaded)? => println!(
+                    "{} is deployed to its own instance, {}",
+                    loaded.label(),
+                    pw.instance_dir(&profile).display()
+                ),
+                Some(_) => println!("{} is deployed to the game's folder", loaded.label()),
+            }
+        }
+        Command::Provision => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            provision(&pw, &profile, &loaded).await?;
+        }
+        Command::Account { action } => {
+            match action {
+                Some(AccountAction::Offline { name }) => {
+                    pw.set_account(Some(&Account::offline(&name)?))?
+                }
+                Some(AccountAction::Forget) => pw.set_account(None)?,
+                None => {}
+            }
+            match pw.account()? {
+                Some(account @ Account::Offline { .. }) => {
+                    println!("playing offline as {} ({})", account.name(), account.uuid())
+                }
+                None => println!("no account; pick a name with `patchwork account offline <name>`"),
             }
         }
         Command::Installer {
@@ -981,7 +1057,7 @@ async fn run(cli: Cli) -> Result<()> {
             no_deploy,
         } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
-            let options = pw.launch_options(&loaded.game)?.with_context(|| {
+            let options = pw.profile_launch_options(&loaded)?.with_context(|| {
                 format!(
                     "patchwork doesn't know where {} is installed; run `patchwork game set-path {} <dir>`",
                     loaded.game, loaded.game
@@ -999,7 +1075,17 @@ async fn run(cli: Cli) -> Result<()> {
                     finish(&pw, &plan, false)?;
                 }
             }
-            let launch = pw.plan_launch(&loaded.game, option.as_deref())?;
+            if pw.needs_provisioning(&profile)? {
+                if dry_run {
+                    println!(
+                        "would set the game up in {}'s instance first",
+                        loaded.label()
+                    );
+                    return Ok(());
+                }
+                provision(&pw, &profile, &loaded).await?;
+            }
+            let launch = pw.plan_profile_launch(&profile, option.as_deref())?;
             let name = options
                 .iter()
                 .find(|o| o.id == launch.option)
@@ -1033,11 +1119,11 @@ async fn run(cli: Cli) -> Result<()> {
             println!("started {name} {}", launch.via);
         }
         Command::Undeploy { game, dry_run } => {
-            let game = match game {
-                Some(game) => game,
-                None => selected(&pw, &cli.profile)?.1.game,
+            let target = match game {
+                Some(game) => DeployTarget::Game(game),
+                None => pw.deploy_target(&selected(&pw, &cli.profile)?.1)?,
             };
-            let plan = pw.plan_undeploy(&DeployTarget::Game(game))?;
+            let plan = pw.plan_undeploy(&target)?;
             finish(&pw, &plan, dry_run)?;
         }
         Command::Provide { name, file } => {
@@ -1536,10 +1622,15 @@ fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
             };
             println!("game:    {}{env}", install.path.display())
         }
+        // Instances don't need it.
+        None if matches!(target, DeployTarget::Instance { .. }) => {}
         None => println!(
             "game:    not set up; run `patchwork game set-path {} <dir>`",
             loaded.game
         ),
+    }
+    if let DeployTarget::Instance { profile, .. } = &target {
+        println!("instance: {}", pw.instance_dir(profile).display());
     }
     let state = pw.deploy_state(&target)?;
     match &state.profile {
@@ -2211,4 +2302,18 @@ fn selected(pw: &Patchwork, explicit: &Option<String>) -> Result<(ProfileRef, Pr
     };
     let loaded = pw.load_profile(&profile)?;
     Ok((profile, loaded))
+}
+
+async fn provision(pw: &Patchwork, profile: &ProfileRef, loaded: &Profile) -> Result<()> {
+    let done = pw.provision(profile).await?;
+    let fetched = match done.downloaded {
+        0 => "nothing needed downloading".to_owned(),
+        n => format!(
+            "downloaded {n} of its {} files ({:.1} MB)",
+            done.files,
+            done.bytes as f64 / 1e6
+        ),
+    };
+    println!("set up {} with {}: {fetched}", loaded.label(), done.setup);
+    Ok(())
 }

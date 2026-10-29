@@ -198,6 +198,8 @@ impl Env {
             launch: Default::default(),
             fomod: None,
             capture: None,
+            instances: None,
+            provision: None,
         };
         let registry = Registry::default();
         let ctx = DeployContext {

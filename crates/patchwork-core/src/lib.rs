@@ -7,9 +7,14 @@
 //! and deployers describe where files should end up and the host places them.
 //! That boundary is what will let sandboxed (WASM) plugins slot in later.
 //!
+//! What a game needs to run besides mods (the game itself, for games
+//! patchwork sets up) comes from a [`provision::Provisioner`], which
+//! likewise only describes the files to download.
+//!
 //! Ways of sharing profiles (zips, URL lists, mod manager codes) plug in
 //! through [`share::ProfileFormat`].
 
+pub mod account;
 pub mod capture;
 pub mod changelog;
 pub mod compat;
@@ -31,6 +36,7 @@ pub mod order;
 pub mod paths;
 pub mod plugins;
 pub mod profile;
+pub mod provision;
 pub mod registry;
 pub mod relpath;
 pub mod search;
@@ -52,7 +58,7 @@ pub use error::{Error, Result};
 pub use patchwork::{
     Builder, Captured, Change, DeployStatus, GameInstall, HISTORY_LIMIT, HistoryEntry,
     ImportOptions, Imported, KnownSummary, KnownVersions, Lookup, Patchwork, ProfileChange,
-    SyncApplied,
+    Provisioned, SyncApplied,
 };
 
 /// The HTTP client every request shares, so connections to a host are kept

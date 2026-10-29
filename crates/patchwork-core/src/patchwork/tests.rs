@@ -118,6 +118,8 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         launch: Default::default(),
         fomod: None,
         capture: None,
+        instances: None,
+        provision: None,
     }
 }
 
@@ -2123,4 +2125,283 @@ fn env_defaults_have_to_be_among_the_choices() {
     let bad: std::result::Result<crate::game::EnvDefs, _> =
         toml::from_str(r#"Loader = { name = "Loader" }"#);
     assert!(bad.unwrap_err().to_string().contains("valid env id"));
+}
+
+/// Builds `options.txt` into the game's folder.
+struct Options;
+
+impl Deployer for Options {
+    fn kind(&self) -> &str {
+        "options"
+    }
+
+    fn plan(&self, _: &DeployContext<'_>, _: &[InstalledMod]) -> Result<deploy::DesiredState> {
+        Ok(Default::default())
+    }
+
+    fn builds(&self, _: &DeployContext<'_>) -> bool {
+        true
+    }
+
+    fn build(
+        &self,
+        _: &DeployContext<'_>,
+        build: &BuildContext<'_>,
+        _: &[InstalledMod],
+    ) -> Result<deploy::DesiredState> {
+        fs::write(build.out.join("options.txt"), "modded").unwrap();
+        let dst = crate::relpath::RelPath::new("options.txt").unwrap();
+        Ok(deploy::DesiredState {
+            placements: vec![deploy::Placement {
+                dst: deploy::Dest::game(dst.clone()),
+                src: deploy::Src::Built(dst),
+                mod_name: "built".to_owned(),
+            }],
+            warnings: Vec::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn profiles_with_instances_are_each_deployed_to_their_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(Options)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "options");
+    def.instances = Some(crate::game::InstancesDef { default: true });
+    pw.add_game(def).unwrap();
+    let a = pw.create_profile("my-game", "a").unwrap();
+    let b = pw.create_profile("my-game", "b").unwrap();
+
+    // no game folder needed, and deploying one leaves the other be
+    pw.apply(&pw.plan_deploy(&a).await.unwrap()).unwrap();
+    pw.apply(&pw.plan_deploy(&b).await.unwrap()).unwrap();
+    for profile in [&a, &b] {
+        let options = pw.instance_dir(profile).join("options.txt");
+        assert_eq!(fs::read_to_string(options).unwrap(), "modded");
+        assert_eq!(pw.deploy_status(profile).unwrap(), DeployStatus::Deployed);
+    }
+
+    // switching to the game's folder needs it undeployed first
+    let err = pw.set_instance(&a, Some(false)).unwrap_err();
+    assert!(
+        err.to_string().contains("--profile my-game/a undeploy"),
+        "{err}"
+    );
+    let a_loaded = pw.load_profile(&a).unwrap();
+    let target = pw.deploy_target(&a_loaded).unwrap();
+    pw.apply(&pw.plan_undeploy(&target).unwrap()).unwrap();
+    assert!(!pw.instance_dir(&a).join("options.txt").exists());
+    pw.set_instance(&a, Some(false)).unwrap();
+    assert_eq!(
+        pw.deploy_target(&a_loaded).unwrap(),
+        DeployTarget::Game("my-game".into())
+    );
+    // which isn't set up
+    assert!(pw.plan_deploy(&a).await.is_err());
+
+    // copies use an instance if the original does, but not its files
+    let c = pw.duplicate_profile(&a, "c").unwrap();
+    assert!(!pw.uses_instance(&pw.load_profile(&c).unwrap()).unwrap());
+
+    // what the game put in an instance outlives its profile
+    let err = pw.remove_profile(&b).unwrap_err();
+    assert!(err.to_string().contains("undeploy"), "{err}");
+    let b_loaded = pw.load_profile(&b).unwrap();
+    let target = pw.deploy_target(&b_loaded).unwrap();
+    pw.apply(&pw.plan_undeploy(&target).unwrap()).unwrap();
+    let saves = pw.instance_dir(&b).join("saves");
+    fs::create_dir_all(&saves).unwrap();
+    pw.remove_profile(&b).unwrap();
+    assert!(saves.exists());
+    assert!(
+        !pw.paths
+            .deployments()
+            .join(format!("{}.json", target.key()))
+            .exists()
+    );
+}
+
+#[test]
+fn only_games_with_instances_let_profiles_use_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = with_local_files(tmp.path());
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let err = pw.set_instance(&profile, Some(true)).unwrap_err();
+    assert!(err.to_string().contains("can't have instances"), "{err}");
+    pw.set_instance(&profile, None).unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    assert!(!pw.uses_instance(&loaded).unwrap());
+}
+
+struct Provides(crate::provision::Setup);
+
+#[async_trait::async_trait]
+impl crate::provision::Provisioner for Provides {
+    fn kind(&self) -> &str {
+        "provides"
+    }
+
+    async fn plan(
+        &self,
+        ctx: &crate::provision::ProvisionContext<'_>,
+    ) -> Result<crate::provision::Setup> {
+        assert_eq!(ctx.env.version.as_deref(), Some("1.0"));
+        Ok(self.0.clone())
+    }
+}
+
+fn zip_of(name: &str, contents: &[u8]) -> &'static [u8] {
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file(name, zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(contents).unwrap();
+    Vec::leak(zip.finish().unwrap().into_inner())
+}
+
+#[tokio::test]
+async fn provisioning_downloads_a_setup_once_and_checks_it() {
+    use crate::provision::{JavaLaunch, Launch, RuntimeFile, Setup, Unpack};
+    let file = |path: &str, url: String, sha1: Option<&str>| RuntimeFile {
+        path: RelPath::new(path).unwrap(),
+        url,
+        size: None,
+        sha1: sha1.map(str::to_owned),
+        unpack: None,
+        executable: false,
+    };
+    let mut native = file(
+        "libraries/natives.jar",
+        serve_once("200 OK", zip_of("lib.so", b"native")),
+        None,
+    );
+    native.unpack = Some(Unpack {
+        to: RelPath::new("natives/1.0").unwrap(),
+        exclude: vec!["META-INF/".to_owned()],
+    });
+    let mut java = file("java/bin/java", serve_once("200 OK", b"#!"), None);
+    java.executable = true;
+    let setup = Setup {
+        id: "1.0".to_owned(),
+        files: vec![
+            file(
+                "versions/1.0.jar",
+                serve_once("200 OK", b"hello"),
+                Some("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"),
+            ),
+            native,
+            java,
+        ],
+        launch: Launch::Java(JavaLaunch {
+            java: Some(21),
+            java_exe: Some(RelPath::new("java/bin/java").unwrap()),
+            main_class: "Main".to_owned(),
+            classpath: vec![RelPath::new("versions/1.0.jar").unwrap()],
+            jvm_args: Vec::new(),
+            game_args: Vec::new(),
+            vars: BTreeMap::new(),
+            dirs: BTreeMap::from([("scratch".to_owned(), RelPath::new("scratch/1.0").unwrap())]),
+        }),
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .provisioner(Provides(setup.clone()))
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "none");
+    def.instances = Some(crate::game::InstancesDef { default: false });
+    def.env = toml::from_str("[version]\nname = \"Version\"").unwrap();
+    def.provision = Some(crate::game::ProvisionSpec {
+        kind: "provides".to_owned(),
+        config: toml::Table::new(),
+    });
+    pw.add_game(def).unwrap();
+    let profile = pw.create_profile("my-game", "a").unwrap();
+    pw.set_env(&profile, "version", Some("1.0")).unwrap();
+
+    // only instances are set up by patchwork
+    let err = pw.provision(&profile).await.unwrap_err();
+    assert!(err.to_string().contains("instance on"), "{err}");
+    pw.set_instance(&profile, Some(true)).unwrap();
+
+    let done = pw.provision(&profile).await.unwrap();
+    assert_eq!((done.files, done.downloaded), (3, 3));
+    let runtime = pw.paths.runtime("provides");
+    assert!(runtime.join("scratch/1.0").is_dir());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(runtime.join("java/bin/java"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111);
+    }
+    assert_eq!(
+        fs::read(runtime.join("versions/1.0.jar")).unwrap(),
+        b"hello"
+    );
+    assert_eq!(
+        fs::read(runtime.join("natives/1.0/lib.so")).unwrap(),
+        b"native"
+    );
+    let (found, dir) = pw.provisioned(&profile).unwrap().unwrap();
+    assert_eq!((found, dir), (setup, runtime));
+
+    // the servers have gone, so nothing can be downloaded again
+    let done = pw.provision(&profile).await.unwrap();
+    assert_eq!(done.downloaded, 0);
+
+    // picking another version means setting it up again
+    pw.set_env(&profile, "version", Some("2.0")).unwrap();
+    assert!(pw.provisioned(&profile).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn provisioning_leaves_out_files_that_arent_what_was_expected() {
+    use crate::provision::{JavaLaunch, Launch, RuntimeFile, Setup};
+    let setup = Setup {
+        id: "1.0".to_owned(),
+        files: vec![RuntimeFile {
+            path: RelPath::new("versions/1.0.jar").unwrap(),
+            url: serve_once("200 OK", b"tampered"),
+            size: None,
+            sha1: Some("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d".to_owned()),
+            unpack: None,
+            executable: false,
+        }],
+        launch: Launch::Java(JavaLaunch {
+            java: None,
+            java_exe: None,
+            main_class: "Main".to_owned(),
+            classpath: Vec::new(),
+            jvm_args: Vec::new(),
+            game_args: Vec::new(),
+            vars: BTreeMap::new(),
+            dirs: BTreeMap::new(),
+        }),
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .provisioner(Provides(setup))
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "none");
+    def.instances = Some(crate::game::InstancesDef { default: true });
+    def.env = toml::from_str("[version]\nname = \"Version\"\ndefault = \"1.0\"").unwrap();
+    def.provision = Some(crate::game::ProvisionSpec {
+        kind: "provides".to_owned(),
+        config: toml::Table::new(),
+    });
+    pw.add_game(def).unwrap();
+    let profile = pw.create_profile("my-game", "a").unwrap();
+    let err = pw.provision(&profile).await.unwrap_err();
+    assert!(err.to_string().contains("not the file expected"), "{err}");
+    let runtime = pw.paths.runtime("provides");
+    assert!(!runtime.join("versions/1.0.jar").exists());
+    assert!(pw.provisioned(&profile).unwrap().is_none());
 }

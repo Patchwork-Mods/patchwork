@@ -9,7 +9,7 @@ use serde::Serialize;
 use super::Patchwork;
 use super::local::LOCAL;
 use crate::capture::{self, ToolOutput};
-use crate::deploy::{DeployState, DeployTarget};
+use crate::deploy::DeployState;
 use crate::error::IoContext;
 use crate::event::Event;
 use crate::game::CaptureDef;
@@ -133,7 +133,7 @@ impl Patchwork {
                 game.name
             )));
         };
-        let state = self.deploy_state(&DeployTarget::Game(loaded.game.clone()))?;
+        let state = self.deploy_state(&self.deploy_target(&loaded)?)?;
         if state.profile.as_deref() != Some(&profile.to_string()) {
             return Err(Error::invalid(format!(
                 "{} isn't deployed; deploy it, run the tool, then capture what it made",

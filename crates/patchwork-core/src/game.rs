@@ -57,6 +57,15 @@ pub struct GameDef {
     /// mod. Without it, nothing is captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture: Option<CaptureDef>,
+    /// Whether each profile can have a folder of its own to be deployed
+    /// to (an instance) rather than sharing the game's. Without it, every
+    /// profile is deployed to the game's folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instances: Option<InstancesDef>,
+    /// What sets up the game itself in a profile's instance, so patchwork
+    /// can start it there. Without it, an instance only has mods in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provision: Option<ProvisionSpec>,
 }
 
 /// What a profile picks about the game it runs, by axis id. Sources get
@@ -211,6 +220,22 @@ pub struct CaptureDef {
     pub folders: Vec<RelPath>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore: Vec<FilePattern>,
+}
+
+/// How profiles get instances: folders of their own, under patchwork's
+/// data, that they're deployed to instead of the game's folder. Each
+/// profile picks on each machine whether it uses one.
+///
+/// ```toml
+/// [instances]
+/// # Whether profiles that haven't picked use one.
+/// default = true
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstancesDef {
+    #[serde(default)]
+    pub default: bool,
 }
 
 /// How a game's mods' FOMOD installers (see [`crate::fomod`]) are used.
@@ -632,6 +657,20 @@ impl Detect {
 pub struct DeployerSpec {
     pub kind: String,
     /// Everything else in the table, handed to the deployer to interpret.
+    #[serde(flatten)]
+    pub config: toml::Table,
+}
+
+/// Which [`Provisioner`](crate::provision::Provisioner) sets up the game.
+///
+/// ```toml
+/// [provision]
+/// kind = "minecraft"
+/// # Anything else is for the provisioner.
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProvisionSpec {
+    pub kind: String,
     #[serde(flatten)]
     pub config: toml::Table,
 }

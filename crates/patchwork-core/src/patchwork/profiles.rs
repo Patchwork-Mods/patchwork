@@ -57,8 +57,8 @@ impl Patchwork {
         self.save_profile(profile, &loaded)
     }
 
-    /// Copies a profile to `<game>/<name>` with a new id: its mods and its
-    /// lockfile. The copy hasn't been deployed, so it has nothing to revert
+    /// Copies a profile to `<game>/<name>` with a new id: its mods, its
+    /// lockfile and whether it uses an instance, but not what's in it. The copy hasn't been deployed, so it has nothing to revert
     /// to.
     pub fn duplicate_profile(&self, profile: &ProfileRef, name: &str) -> Result<ProfileRef> {
         let mut copy = self.load_profile(profile)?;
@@ -71,6 +71,7 @@ impl Patchwork {
         if let Some(lock) = lock {
             self.save_lock(&copy_ref, &lock)?;
         }
+        self.copy_local_settings(profile, &copy_ref)?;
         Ok(copy_ref)
     }
 
@@ -102,11 +103,12 @@ impl Patchwork {
         let deployed = self.deploy_state(&target)?.profile;
         if deployed.as_deref() == Some(profile.to_string().as_str()) {
             return Err(Error::invalid(format!(
-                "{} is deployed; run `patchwork undeploy {}` first",
+                "{} is deployed; run `{}` first",
                 loaded.label(),
-                loaded.game
+                self.undeploy_command(&target)?
             )));
         }
+        self.remove_instance(profile, &loaded.game)?;
         let dir = self.profile_dir(profile);
         fs::remove_dir_all(&dir).at(&dir)?;
         let state = self.profile_state_dir(profile);

@@ -13,6 +13,29 @@ name = "Mod loader"
 choices = ["fabric", "quilt", "forge", "neoforge"]
 default = "fabric"
 
+# The mod loader's own version, for instances patchwork sets up. The
+# newest stable one if it isn't picked.
+[env.loader-version]
+name = "Mod loader version"
+
+# A profile can have a folder of its own to be deployed to, rather than
+# the instance the game's set to. Off by default until patchwork can
+# start the game in one itself; `patchwork instance on` for now.
+[instances]
+default = false
+
+# What sets the game and its mod loader up in a profile's own instance
+# (`patchwork provision`). Loaders whose metadata is in the same form as
+# Fabric's can be added here; Forge and NeoForge can't be set up yet.
+[provision]
+kind = "minecraft"
+
+[provision.loaders.fabric]
+meta = "https://meta.fabricmc.net/v2"
+
+[provision.loaders.quilt]
+meta = "https://meta.quiltmc.org/v3"
+
 [sources.modrinth]
 project_types = ["mod", "resourcepack", "shader"]
 

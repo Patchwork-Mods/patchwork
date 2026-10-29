@@ -13,6 +13,9 @@
 //! Steam Linux Runtime container it asks for, as Steam runs it, since
 //! newer ones don't work outside it; on NixOS that in turn is run through
 //! `steam-run`, which gives it the usual Linux file layout.
+//!
+//! Games patchwork set up itself, in a profile's instance, are started
+//! with Java instead (see [`java`]).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -29,6 +32,8 @@ use crate::locate::{self, SteamInstall};
 use crate::patchwork::GameInstall;
 use crate::relpath::RelPath;
 use crate::{Error, Result};
+
+pub mod java;
 
 /// DLLs that mods put next to a game's exe to be loaded in place of the
 /// system's: loaders like BepInEx's (`winhttp`), ReShade and ENB (`dxgi`,
@@ -189,7 +194,7 @@ impl Setup {
 
 /// `steam-run` on NixOS, whose programs don't use the usual Linux file
 /// layout that Steam's own expect.
-fn fhs_wrapper(os: Os) -> Option<PathBuf> {
+pub(crate) fn fhs_wrapper(os: Os) -> Option<PathBuf> {
     if os != Os::Linux || !Path::new("/etc/NIXOS").exists() {
         return None;
     }
@@ -238,6 +243,8 @@ pub enum Via {
     Proton { proton: PathBuf },
     /// The exe is run by Wine, in the prefix the user set.
     Wine { prefix: PathBuf },
+    /// A game patchwork set up is run by the Java at `java`.
+    Java { java: PathBuf },
 }
 
 impl fmt::Display for Via {
@@ -247,6 +254,7 @@ impl fmt::Display for Via {
             Via::Direct => f.write_str("directly"),
             Via::Proton { proton } => write!(f, "Proton at {}", proton.display()),
             Via::Wine { prefix } => write!(f, "Wine in {}", prefix.display()),
+            Via::Java { java } => write!(f, "with the Java at {}", java.display()),
         }
     }
 }
@@ -648,11 +656,30 @@ impl Launch {
         if let Some(dir) = log.parent() {
             std::fs::create_dir_all(dir).at(dir)?;
         }
+        // an instance that's had nothing deployed to it yet
+        std::fs::create_dir_all(&self.cwd).at(&self.cwd)?;
         let out = std::fs::File::create(log).at(log)?;
         let err = out.try_clone().at(log)?;
-        let mut command = Command::new(&self.program);
+        // Started by a shell that waits for it, rather than by patchwork,
+        // since what gives it the usual Linux file layout (`steam-run`'s
+        // bubblewrap) ends along with whatever started it, and patchwork
+        // can exit first.
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args(["-c", r#""$@"; exit $?"#, "sh"])
+                .arg(&self.program)
+                .args(&self.args);
+            command
+        };
+        #[cfg(not(unix))]
+        let mut command = {
+            let mut command = Command::new(&self.program);
+            command.args(&self.args);
+            command
+        };
         command
-            .args(&self.args)
             .envs(&self.env)
             .current_dir(&self.cwd)
             .stdin(Stdio::null())

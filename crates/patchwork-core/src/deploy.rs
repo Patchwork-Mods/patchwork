@@ -18,6 +18,7 @@ use crate::event::{Event, Reporter};
 use crate::game::{GameDef, LinkMethod};
 use crate::hash::ContentHash;
 use crate::plugins::{LoadOrder, Plugins};
+use crate::profile::ProfileRef;
 use crate::registry::Registry;
 use crate::relpath::RelPath;
 use crate::settings::SettingSpec;
@@ -333,20 +334,26 @@ pub enum DeployTarget {
     /// A game's install, shared by all of the game's profiles: deploying one
     /// takes the place of whichever was deployed before.
     Game(String),
+    /// A folder of one profile's own, for games that have
+    /// [`crate::game::InstancesDef`]. Only that profile is ever deployed
+    /// to it.
+    Instance { game: String, profile: ProfileRef },
 }
 
 impl DeployTarget {
     pub fn game(&self) -> &str {
         match self {
-            DeployTarget::Game(game) => game,
+            DeployTarget::Game(game) | DeployTarget::Instance { game, .. } => game,
         }
     }
 
     /// Unique among targets, and safe to name files with (the target's
-    /// deploy state and backups).
-    pub fn key(&self) -> &str {
+    /// deploy state and backups). Instances' have a `+`, which game ids
+    /// can't.
+    pub fn key(&self) -> String {
         match self {
-            DeployTarget::Game(game) => game,
+            DeployTarget::Game(game) => game.clone(),
+            DeployTarget::Instance { game, profile } => format!("{game}+{profile}"),
         }
     }
 }

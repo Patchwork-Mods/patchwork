@@ -33,6 +33,7 @@ use patchwork_core::source::{ModSpec, SourceFile};
 use patchwork_core::{DeployStatus, GameInstall, HistoryEntry, ImportOptions, Patchwork};
 use patchwork_deployers::{BethesdaDeployer, RulesDeployer, SmfDeployer};
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
+use patchwork_provisioners::MinecraftProvisioner;
 use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -180,6 +181,8 @@ struct ProfileDetail {
     /// The names of mods added here to a profile this computer follows,
     /// which whoever shares it doesn't have.
     unshared: Vec<String>,
+    /// Where the profile is deployed to, if that's been set up: the game's
+    /// folder, or its instance (which always is).
     install: Option<String>,
     /// Files patchwork has deployed for this profile's game, if it's this
     /// profile that's deployed.
@@ -325,11 +328,11 @@ fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
 fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let r = profile_ref(&id)?;
     let mut loaded = pw.load_profile(&r).map_err(msg)?;
-    let install = pw
-        .game_install(&loaded.game)
-        .map_err(msg)?
-        .map(|i| i.path.display().to_string());
     let target = pw.deploy_target(&loaded).map_err(msg)?;
+    let install = pw
+        .target_root(&target)
+        .map_err(msg)?
+        .map(|p| p.display().to_string());
     let state = pw.deploy_state(&target).map_err(msg)?;
     let deployed_files =
         (state.profile.as_deref() == Some(id.as_str())).then_some(state.files.len());
@@ -356,7 +359,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let has_plugins = pw.has_plugins(&r).map_err(msg)?;
     let installers = pw.installers(&r).map_err(msg)?;
     let launch_options = pw
-        .launch_options(&loaded.game)
+        .profile_launch_options(&loaded)
         .map_err(msg)?
         .unwrap_or_default();
     let label = loaded.label();
@@ -466,6 +469,8 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         launch: Default::default(),
         fomod: None,
         capture: None,
+        instances: None,
+        provision: None,
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
     if let Some(path) = filled(game.install) {
@@ -1209,13 +1214,19 @@ async fn plan_deploy(
 }
 
 /// Works out how to take everything patchwork deployed back out of `game`,
-/// like `patchwork undeploy`, to be confirmed with `apply_plan` as well.
+/// or out of wherever profile `id` is deployed to (its instance, if it has
+/// one), like `patchwork undeploy`, to be confirmed with `apply_plan` as
+/// well.
 #[tauri::command]
-fn plan_undeploy(app: State<'_, App>, game: String) -> CmdResult<PlanSummary> {
-    let plan = app
-        .pw
-        .plan_undeploy(&DeployTarget::Game(game))
-        .map_err(msg)?;
+fn plan_undeploy(app: State<'_, App>, game: String, id: Option<String>) -> CmdResult<PlanSummary> {
+    let target = match id {
+        Some(id) => {
+            let loaded = app.pw.load_profile(&profile_ref(&id)?).map_err(msg)?;
+            app.pw.deploy_target(&loaded).map_err(msg)?
+        }
+        None => DeployTarget::Game(game),
+    };
+    let plan = app.pw.plan_undeploy(&target).map_err(msg)?;
     Ok(hold_plan(&app, plan))
 }
 
@@ -1245,20 +1256,27 @@ fn apply_plan(app: State<'_, App>) -> CmdResult<usize> {
     Ok(state.files.len())
 }
 
-/// Starts `game` the way `option` says (by id), or the default way, like
-/// `patchwork launch --no-deploy`; deploying first is up to the UI. Says
-/// how it was started, with a warning if Steam is needed and isn't running.
+/// Starts the game of the profile `id` the way `option` says (by id), or
+/// the default way, like `patchwork launch --no-deploy`: deploying first
+/// is up to the UI, but a profile with an instance has the game set up in
+/// it first if it isn't. Says how it was started, with a warning if Steam
+/// is needed and isn't running.
 #[tauri::command]
-async fn launch_game(
-    app: State<'_, App>,
-    game: String,
-    option: Option<String>,
-) -> CmdResult<String> {
+async fn launch_game(app: State<'_, App>, id: String, option: Option<String>) -> CmdResult<String> {
     let _work = app.work.start()?;
-    let launch = app.pw.plan_launch(&game, option.as_deref()).map_err(msg)?;
+    let r = profile_ref(&id)?;
+    let loaded = app.pw.load_profile(&r).map_err(msg)?;
+    let game = loaded.game.clone();
+    if app.pw.needs_provisioning(&r).map_err(msg)? {
+        app.pw.provision(&r).await.map_err(msg)?;
+    }
+    let launch = app
+        .pw
+        .plan_profile_launch(&r, option.as_deref())
+        .map_err(msg)?;
     let name = app
         .pw
-        .launch_options(&game)
+        .profile_launch_options(&loaded)
         .map_err(msg)?
         .into_iter()
         .flatten()
@@ -1278,6 +1296,7 @@ async fn launch_game(
         Via::Direct => "",
         Via::Proton { .. } => " with Proton",
         Via::Wine { .. } => " with Wine",
+        Via::Java { .. } => " with Java",
     };
     let mut said = format!("Started {name}{how}");
     if !started.added_overrides.is_empty() {
@@ -1448,6 +1467,7 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
         .deployer(RulesDeployer)
         .deployer(BethesdaDeployer)
         .deployer(SmfDeployer)
+        .provisioner(MinecraftProvisioner)
         .format(Archive)
         .format(UrlList)
         .format(R2modman)

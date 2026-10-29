@@ -75,7 +75,7 @@ async function play(option) {
       if (!(await deployFirst(p.id))) return status("Ready");
     }
     status("Starting the game…");
-    status(await run("launch_game", { game: p.game, option }));
+    status(await run("launch_game", { id: p.id, option }));
   } finally {
     renderPlay(state.profile);
   }
