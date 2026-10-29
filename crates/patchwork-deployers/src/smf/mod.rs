@@ -24,9 +24,10 @@
 //! does, to the current version of each LOCR (see [`locr`]).
 //!
 //! Dialogue (`.dlge.json`, `.ditl.json`,
-//! `.clng.json`) is rebuilt natively (see [`dlge`]).
+//! `.clng.json`) is rebuilt natively (see [`dlge`]), and so are materials
+//! (`.material.json`, see [`material`]).
 //!
-//! Not supported yet: SMF's other special file types (materials, sounds,
+//! Not supported yet: SMF's other special file types (sounds,
 //! other language files and deltas), entities made for QuickEntity versions
 //! before 3.1, new localised strings (`localisation`, `localisedLines`),
 //! scripts and choosing options (those enabled by default are used). Mods that need them fail to deploy rather than half
@@ -38,6 +39,7 @@ mod game;
 mod json;
 mod locr;
 mod manifest;
+mod material;
 mod meta;
 mod ores;
 mod resource;
@@ -85,13 +87,7 @@ const BUILT_BY: &str = "SMF mods";
 
 /// SMF content files that are converted rather than copied, which patchwork
 /// can't do yet.
-const UNSUPPORTED_TYPES: &[&str] = &[
-    "material.json",
-    "locr.json",
-    "rtlv.json",
-    "sfx.wem",
-    "delta",
-];
+const UNSUPPORTED_TYPES: &[&str] = &["locr.json", "rtlv.json", "sfx.wem", "delta"];
 
 /// The partition SMF puts edits to the game's lookup tables in.
 const BASE: &str = "chunk0";
@@ -413,6 +409,7 @@ impl<'a> Build<'a> {
                 "dlge.json" => Some(self.stage_dialogue(file, &partition, "DLGE")),
                 "ditl.json" => Some(self.stage_dialogue(file, &partition, "DITL")),
                 "clng.json" => Some(self.stage_dialogue(file, &partition, "CLNG")),
+                "material.json" => Some(self.stage_material(file, &partition)),
                 _ => None,
             };
             if let Some(result) = special {
@@ -803,6 +800,30 @@ impl<'a> Build<'a> {
         };
         loaded.header.references = built.references;
         self.stage_built(partition, hash, loaded);
+        Ok(())
+    }
+
+    /// Rebuilds a material's MATI, MATT and MATB from RPKG Tool JSON. Like
+    /// SMF, they get the meta RPKG Tool writes for them, which doesn't say
+    /// what memory they need.
+    fn stage_material(&mut self, file: &ModFile, partition: &str) -> Result<(), String> {
+        let text = fs::read_to_string(&file.src).map_err(|e| e.to_string())?;
+        for (built, resource_type) in material::build(&text)? {
+            let header = Header {
+                references: built.references,
+                system_memory: u32::MAX,
+                ..Header::default_for(built.data.len() as u32)
+            };
+            self.stage_built(
+                partition,
+                u64::from(built.hash),
+                Loaded {
+                    resource_type: resource_type.to_owned(),
+                    header,
+                    data: built.data,
+                },
+            );
+        }
         Ok(())
     }
 

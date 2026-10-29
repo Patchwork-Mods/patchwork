@@ -467,12 +467,12 @@ fn mods_needing_unsupported_features_fail() {
                 br#"{ id: "M", name: "M", contentFolders: ["c"],
                       localisation: { english: { UI_X: "x" } } }"#,
             ),
-            ("c/chunk0/thing.material.json", b"{}"),
-            ("c/chunk0/other.material.json", b"{}"),
+            ("c/chunk0/thing.locr.json", b"{}"),
+            ("c/chunk0/other.locr.json", b"{}"),
         ],
     );
     let err = env.build(&[m]).unwrap_err().to_string();
-    assert_eq!(err.matches(".material.json").count(), 1, "{err}");
+    assert_eq!(err.matches(".locr.json").count(), 1, "{err}");
     assert!(err.contains("localisation"), "{err}");
 }
 
@@ -1425,4 +1425,145 @@ fn dialogue_that_cant_be_rebuilt_fails() {
         "{err}"
     );
     assert!(err.contains("soundtag `T` isn't given a resource"), "{err}");
+}
+
+const MATI_PATH: &str = "[assembly:/m.mi].pc_mi";
+const MATT_PATH: &str = "[assembly:/m.mi].pc_entitytype";
+const MATB_PATH: &str = "[assembly:/m.mi].pc_entityblueprint";
+const MATE_PATH: &str = "[assembly:/m.materialclass].pc_mate";
+const ERES_PATH: &str = "[assembly:/m.entitytemplate].pc_entityresource";
+const TEXTURE_A: &str = "[assembly:/a.tex].pc_tex";
+const TEXTURE_B: &str = "[assembly:/b.tex].pc_tex";
+
+fn material_json(overrides: &str) -> String {
+    format!(
+        r#"{{ "MATI": "{MATI_PATH}", "MATT": "{MATT_PATH}", "MATB": "{MATB_PATH}",
+              "MATE": "{MATE_PATH}", "ERES": "{ERES_PATH}", "TYPE": "Standard",
+              "Material": {{ "Instance": [{{ "Name": "m", "Tags": "", "Binder": [{{
+                  "Texture": [{{ "Name": "mapA", "Texture Id": "{TEXTURE_A}" }}]
+              }}] }}] }},
+              "Overrides": {overrides},
+              "Flags": {{ "Class": {{ "LIGHTING": true, "UNKNOWN_1": true, "ALPHA": false }},
+                          "Instance": {{ "DECAL_ALL": true }} }} }}"#
+    )
+}
+
+#[test]
+fn materials_are_rebuilt_from_json() {
+    let env = Env::new();
+    let overrides = format!(
+        r#"{{ "Texture": {{ "A": "{TEXTURE_B}", "Missing": "{TEXTURE_A}" }},
+              "Color": {{ "C": [1.0, 0.0, 0.0] }}, "F": 0.5 }}"#
+    );
+    let m = content_mod(
+        &env,
+        "m",
+        &[("m.material.json", &material_json(&overrides))],
+    );
+    let desired = env.build(&[m]).unwrap();
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
+    let hash = |s: &str| u64::from(meta::parse_hash(s));
+
+    let mati = resource(&archive, hash(MATI_PATH));
+    assert_eq!(mati.resource_type, "MATI");
+    assert_eq!(
+        references(&mati),
+        vec![
+            (hash(TEXTURE_A), 0x5F),
+            (hash(MATE_PATH), 0x1F),
+            (hash(ERES_PATH), 0x5F)
+        ]
+    );
+    let mut expected = Vec::new();
+    let u32s = |expected: &mut Vec<u8>, values: &[u32]| {
+        for v in values {
+            expected.extend_from_slice(&v.to_le_bytes());
+        }
+    };
+    // Where the header is, then the type.
+    u32s(&mut expected, &[0x20, 0, 0, 0]);
+    expected.extend_from_slice(b"Standard\0\0\0\0\0\0\0\0");
+    // Textures, flags, the ERES's index and where the instance is.
+    u32s(
+        &mut expected,
+        &[0x10, 1, 0x4 | 0x20000, 0x1020, 2, 0, 0, 0x50, 3, 0, 0, 0],
+    );
+    let tag = |t: &[u8; 4]| u32::from_le_bytes(*t).swap_bytes();
+    for record in [
+        [tag(b"INST"), 0x60, 3, 3],
+        [tag(b"NAME"), 0xC0, 2, 1],
+        [tag(b"TAGS"), 0xD0, 1, 1],
+        [tag(b"BIND"), 0x90, 1, 3],
+        [tag(b"TEXT"), 0xA0, 2, 3],
+        // Strings in the binder are counted without their terminator.
+        [tag(b"NAME"), 0xE0, 4, 1],
+        [tag(b"TXID"), 0, 1, 2],
+    ] {
+        u32s(&mut expected, &record);
+    }
+    for s in [&b"m"[..], b"", b"mapA"] {
+        let mut padded = s.to_vec();
+        padded.resize(16, 0);
+        expected.extend_from_slice(&padded);
+    }
+    assert_eq!(mati.data, expected);
+
+    let matt = resource(&archive, hash(MATT_PATH));
+    assert_eq!(matt.resource_type, "MATT");
+    assert_eq!(
+        references(&matt),
+        vec![
+            (0x00B4B11DA327CAD0, 0x1F),
+            (hash(MATB_PATH), 0x1F),
+            (hash(MATI_PATH), 0x5F),
+            (hash(TEXTURE_B), 0x5F),
+        ]
+    );
+    let mut expected = vec![1, 3, 0, 0, 0, 2];
+    for v in [1.0f32, 0.0, 0.0] {
+        expected.extend_from_slice(&v.to_le_bytes());
+    }
+    expected.push(4);
+    expected.extend_from_slice(&0.5f32.to_le_bytes());
+    assert_eq!(matt.data, expected);
+
+    let matb = resource(&archive, hash(MATB_PATH));
+    assert_eq!(matb.resource_type, "MATB");
+    assert_eq!(references(&matb), vec![(0x00A1595C0918E2C9, 0x1F)]);
+    let mut expected = Vec::new();
+    for (kind, name) in [(1, "A"), (2, "C"), (4, "F")] {
+        expected.push(kind);
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.extend_from_slice(name.as_bytes());
+        expected.push(0);
+    }
+    assert_eq!(matb.data, expected);
+}
+
+#[test]
+fn materials_that_cant_be_rebuilt_fail() {
+    let env = Env::new();
+    let m = content_mod(
+        &env,
+        "m",
+        &[
+            (
+                "a.material.json",
+                &material_json(r#"{ "Color": { "C": [1.0, 0.0] } }"#),
+            ),
+            (
+                "b.material.json",
+                &material_json("{}").replace(r#""TYPE": "Standard","#, ""),
+            ),
+        ],
+    );
+    let err = env.build(&[m]).unwrap_err().to_string();
+    assert!(
+        err.contains("a.material.json: colour `C` has 2 values, not 3 or 4"),
+        "{err}"
+    );
+    assert!(
+        err.contains("b.material.json: the material has no `TYPE`"),
+        "{err}"
+    );
 }
