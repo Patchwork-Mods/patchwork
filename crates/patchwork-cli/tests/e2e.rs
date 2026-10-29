@@ -708,8 +708,15 @@ fn skyrim_plugins_load_in_the_order_set() {
     );
     // masters stay on top
     assert!(
-        env.run(&["order", "--list", "plugins", "move", "Required.esp", "--top"])
-            .contains("to 2 of 3")
+        env.run(&[
+            "order",
+            "--list",
+            "plugins",
+            "move",
+            "Required.esp",
+            "--top"
+        ])
+        .contains("to 2 of 3")
     );
     env.run(&["order", "disable", "patch.esp"]);
     assert_eq!(
@@ -1075,7 +1082,8 @@ fn skyrim_installers_install_the_options_picked() {
     env.run(&["add", archive.to_str().unwrap(), "--name", "lanterns"]);
     env.run(&["lock"]);
 
-    let shown = env.run(&["installer", "lanterns"]);
+    let shown = env.run(&["options", "lanterns"]);
+    assert!(shown.contains("installer for lanterns"), "{shown}");
     assert!(shown.contains("(*) Soft (recommended)"), "{shown}");
     assert!(shown.contains("[ ] SKSE plugin"), "{shown}");
     assert!(shown.contains("--save"), "{shown}");
@@ -1087,7 +1095,7 @@ fn skyrim_installers_install_the_options_picked() {
     assert!(!game.join("Data/10 Soft").exists());
 
     let shown = env.run(&[
-        "installer",
+        "options",
         "lanterns",
         "--pick",
         "glow=bright",
@@ -1096,7 +1104,8 @@ fn skyrim_installers_install_the_options_picked() {
     ]);
     assert!(shown.contains("(*) Bright"), "{shown}");
     assert!(shown.contains("[x] SKSE plugin"), "{shown}");
-    assert!(read(env.profile_dir().join("profile.toml")).contains("[[mod.fomod]]"));
+    assert!(read(env.profile_dir().join("profile.toml")).contains("[[mod.ext.fomod.picks]]"));
+    // the old name still works
     let err = env.fails(&["installer", "lanterns", "--pick", "Glow=Dim"]);
     assert!(err.contains("no option called `Dim`"), "{err}");
 
@@ -1106,7 +1115,7 @@ fn skyrim_installers_install_the_options_picked() {
     assert_eq!(read(game.join("Data/SKSE/Plugins/Lanterns.dll")), "dll");
     assert!(env.run(&["plugins", "list"]).contains("Lanterns.esp"));
 
-    env.run(&["installer", "lanterns", "--reset"]);
+    env.run(&["options", "lanterns", "--for", "installer", "--reset"]);
     env.run(&["deploy"]);
     assert_eq!(read(game.join("Data/textures/glow.dds")), "soft");
     assert!(!game.join("Data/SKSE/Plugins/Lanterns.dll").exists());

@@ -1,7 +1,8 @@
 # Extensions: game-specific behaviour without game-specific core
 
-Status: proposal (2026-10-29). Steps 1 (the skeleton) and 2 (`OrderedList`)
-of "Order of work" are built; see the notes under each.
+Status: proposal (2026-10-29). Steps 1 (the skeleton), 2 (`OrderedList`)
+and 3 (`ModTransform` + `ModOptions`) of "Order of work" are built; see the
+notes under each.
 
 ## The problem
 
@@ -135,7 +136,7 @@ these things.
 A game definition turns an extension on by having a table for it:
 
 ```toml
-[ext.fomod]
+[ext.fomod.installer]
 folder = "Data"
 
 [ext.bethesda.plugins]
@@ -583,7 +584,8 @@ Each step leaves `main` working and shippable.
      `thunderstore`, `nexus`, `modrinth`, `bethesda`, `smf`, `minecraft`),
      which step 7 splits up.
    - Not done yet: `uses`/`reads_state`, the test harness and moving
-     `[fomod]` under `ext`. (`off` and the schema bumps came with step 2.)
+     `[fomod]` under `ext`. (`off` and the schema bumps came with step 2,
+     `[fomod]` with step 3.)
 2. **`OrderedList`.** Port the Bethesda load order, add the generic list
    command and screen, migrate `plugin` → `ext.bethesda`. This is the
    smallest port, and it proves state, sync, hashing and generic UI end to
@@ -612,6 +614,49 @@ Each step leaves `main` working and shippable.
 
 3. **`ModTransform` + `ModOptions`.** Port FOMOD into its own extension and
    add the generic form renderer.
+
+   Built (2026-10-29), with these differences:
+   - Both hooks live in `crate::options` and share one context,
+     `ModContext`: `game()`, `config()` (the hook's
+     `[ext.<extension>.<hook>]`), `state::<T>()` and `saved()` (the
+     extension's state for that mod), `mods()` (every enabled mod as packed,
+     listed only if a hook asks, since the options dialog calls `form` on
+     every pick) and `files()` (the game's own, if it's set up).
+   - `applies` takes a `ModPeek` rather than an `InstalledMod`, whose
+     `has_near_top(path)` looks for a file at the mod's top or one folder
+     down, without listing the mod's files. That keeps the "which mods have
+     options" check cheap enough for every profile render. FOMOD only finds
+     installers that deep now; before, deploys found them at any depth.
+   - The FOMOD hooks are both called `installer`, so they share one config
+     table: `[ext.fomod.installer] folder = "Data"`. The registry moves an
+     old top-level `[fomod]` there.
+   - `Answers` is `Vec<Answer { group, items }>` rather than a map, so two
+     groups with the same id get answers in order, as FOMOD's same-named
+     groups did. `Form` has `answers` (everything picked, including for
+     pages that aren't shown now) for frontends to change and send back,
+     and no `defaulted`: core reports `saved` from whether the mod has
+     state, and each `Group` has its own `defaulted`. `Item::image` is a
+     path in the mod; core resolves it to a store path in the
+     `ModOptionsView` it returns.
+   - `save` gets the mod and returns the extension's whole state for it.
+     Forgetting (answers `None`) clears that state; there's no hook for it.
+   - FOMOD group ids are `step/group`, with `\` escaping `/` and `\`.
+   - A transform's error becomes a warning and leaves the mod's files as
+     packed. Output files the mod hasn't got are dropped with a warning.
+   - Schema 3 (unreleased) also moves each mod's `[[mod.fomod]]` to
+     `[[mod.ext.fomod.picks]]`, on any load, so sync entries and archive
+     imports from older builds are moved too. `PROFILE_SCHEMA` stays 3.
+   - The FOMOD parser moved from core to `patchwork-builtin` (`fomod.rs`,
+     with the hooks in `fomod/hooks.rs`). Core's `fomod` module, `GameDef::fomod`,
+     `ProfileMod::fomod` and `Patchwork::installer`/`set_installer`/`installers`
+     are gone, replaced by `mods_with_options`, `mod_options` and
+     `set_mod_options`.
+   - The CLI command is `patchwork options <mod> [--for <id>] …`, with
+     `installer` kept as an alias. In the GUI, `installer.js` became
+     `form.js`; ids and classes were renamed from `installer-*` to
+     `options-*` (`.installer-option` is `.options-item`, `.mod-installer`
+     is `.mod-options`), so user themes that styled them need updating.
+   - Picking options isn't recorded as a `Change` in history yet.
 4. **`Check`.** Move the plugin limit, missing masters and env mismatches
    into checks.
 5. **`Launcher` + `AccountKind`.** Port Java and Minecraft accounts. This

@@ -48,10 +48,6 @@ pub struct GameDef {
     /// Ways to start the game besides the usual one.
     #[serde(default, skip_serializing_if = "LaunchDefs::is_empty")]
     pub launch: LaunchDefs,
-    /// Whether mods' FOMOD installers are used, and where what they install
-    /// goes. Without it, mods with one are deployed as they're packed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fomod: Option<FomodDef>,
     /// Where tools the user runs on their own (ones that generate LOD,
     /// animations or patches, say) write files that should be kept as a
     /// mod. Without it, nothing is captured.
@@ -275,21 +271,6 @@ pub struct CaptureDef {
 pub struct InstancesDef {
     #[serde(default)]
     pub default: bool,
-}
-
-/// How a game's mods' FOMOD installers (see [`crate::fomod`]) are used.
-///
-/// ```toml
-/// [fomod]
-/// # The folder in the game's that installers' destinations are relative
-/// # to, and the files their conditions ask about.
-/// folder = "Data"
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FomodDef {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub folder: Option<RelPath>,
 }
 
 /// A game's roots other than its own folder, by id.

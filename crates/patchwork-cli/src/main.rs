@@ -5,26 +5,27 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use patchwork_builtin::{
-    Bethesda, Generic, Minecraft, ModrinthExtension, NexusExtension, Smf, ThunderstoreExtension,
+    Bethesda, Fomod, Generic, Minecraft, ModrinthExtension, NexusExtension, Smf,
+    ThunderstoreExtension,
 };
 use patchwork_core::account::Account;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
 use patchwork_core::event::{Event, Reporter, Silent};
-use patchwork_core::fomod::{GroupKind, InstallerView, OptionKind, Selection};
 use patchwork_core::issue::Severity;
 use patchwork_core::launch::{self, LaunchOption};
 use patchwork_core::list::List;
 use patchwork_core::locate::Locator;
 use patchwork_core::lock::mod_key;
+use patchwork_core::options::{Answer, ItemState, Pick};
 use patchwork_core::order::{Position, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::update;
-use patchwork_core::{DeployStatus, GameInstall, ImportOptions, Patchwork};
+use patchwork_core::{DeployStatus, GameInstall, ImportOptions, ModOptionsView, Patchwork};
 use patchwork_sync::daemon::{self, service};
 use patchwork_sync::{Joined, Node};
 
@@ -146,22 +147,27 @@ enum Command {
         #[command(subcommand)]
         action: Option<AccountAction>,
     },
-    /// Show the options in a mod's FOMOD installer and which are picked, or
-    /// pick them. Mods with an installer are deployed with the options it
-    /// recommends until some are picked.
-    Installer {
+    /// Show the choices to make about a mod, like the options in its FOMOD
+    /// installer, and which are picked, or pick them. Until some are picked,
+    /// mods get the defaults, like the options an installer recommends.
+    #[command(alias = "installer")]
+    Options {
         name: String,
-        /// Pick options in a group, as `GROUP=OPTION`, or `STEP/GROUP=OPTION`
-        /// if groups in different steps share a name. Separate several
-        /// options with commas, or give none to pick none. Repeat for more
-        /// groups; the picks are saved.
+        /// Which choices, for mods with more than one kind: their id, or the
+        /// last part of it (`installer` for `fomod.installer`).
+        #[arg(long = "for", value_name = "ID")]
+        of: Option<String>,
+        /// Pick options in a group, as `GROUP=OPTION`, or `PAGE/GROUP=OPTION`
+        /// if groups on different pages (an installer's steps) share a name.
+        /// Separate several options with commas, or give none to pick none.
+        /// Repeat for more groups; the picks are saved.
         #[arg(long = "pick", value_name = "GROUP=OPTIONS")]
         picks: Vec<String>,
-        /// Save the options as they're shown, keeping the recommended ones in
-        /// groups nothing's been picked in yet.
+        /// Save the options as they're shown, keeping the defaults in groups
+        /// nothing's been picked in yet.
         #[arg(long)]
         save: bool,
-        /// Forget the options picked, going back to the recommended ones.
+        /// Forget the options picked, going back to the defaults.
         #[arg(long, conflicts_with_all = ["picks", "save"])]
         reset: bool,
     },
@@ -557,6 +563,7 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
         .extension(NexusExtension)
         .extension(ModrinthExtension)
         .extension(Bethesda)
+        .extension(Fomod)
         .extension(Smf)
         .extension(Minecraft)
         .reporter(reporter)
@@ -779,36 +786,35 @@ async fn run(cli: Cli) -> Result<()> {
                 None => println!("no account; pick a name with `patchwork account offline <name>`"),
             }
         }
-        Command::Installer {
+        Command::Options {
             name,
+            of,
             picks,
             save,
             reset,
         } => {
             let (profile, _) = selected(&pw, &cli.profile)?;
-            let mut view = installer(&pw, &profile, &name, None)?;
+            let of = pick_options(&pw, &profile, &name, of.as_deref())?;
+            let of = of.as_deref();
+            let mut view = pw.mod_options(&profile, &name, of, None)?;
             if reset {
-                pw.set_installer(&profile, &name, None)?;
-                view = installer(&pw, &profile, &name, None)?;
+                pw.set_mod_options(&profile, &name, of, None)?;
+                view = pw.mod_options(&profile, &name, of, None)?;
             } else if save || !picks.is_empty() {
-                let mut selections = view.selections.clone();
+                let mut answers = view.form.answers.clone();
                 for pick in &picks {
-                    // Each pick can show steps that the next is in.
-                    let now = installer(&pw, &profile, &name, Some(&selections))?;
+                    // Each pick can show pages that the next is on.
+                    let now = pw.mod_options(&profile, &name, of, Some(&answers))?;
                     let picked = find_pick(&now, pick)?;
-                    match selections
-                        .iter_mut()
-                        .find(|s| s.step == picked.step && s.group == picked.group)
-                    {
-                        Some(s) => *s = picked,
-                        None => selections.push(picked),
+                    match answers.iter_mut().find(|a| a.group == picked.group) {
+                        Some(a) => *a = picked,
+                        None => answers.push(picked),
                     }
                 }
-                view = installer(&pw, &profile, &name, Some(&selections))?;
-                pw.set_installer(&profile, &name, Some(view.selections.clone()))?;
-                view.saved = true;
+                pw.set_mod_options(&profile, &name, of, Some(&answers))?;
+                view = pw.mod_options(&profile, &name, of, None)?;
             }
-            print_installer(&name, &view);
+            print_options(&name, &view);
         }
         Command::Versions { name } => {
             let (_, loaded) = selected(&pw, &cli.profile)?;
@@ -1821,104 +1827,115 @@ fn print_mods<'a>(
     }
 }
 
-/// `name`'s installer with `picks`, or what the profile has saved.
-fn installer(
+/// The id of the choices `wanted` names (an id, or the last part of one)
+/// for mod `name`, or `None` to let core take the mod's only ones.
+fn pick_options(
     pw: &Patchwork,
     profile: &ProfileRef,
     name: &str,
-    picks: Option<&[Selection]>,
-) -> Result<InstallerView> {
-    pw.installer(profile, name, picks)?.with_context(|| {
-        format!("{name} doesn't have a FOMOD installer, or its game doesn't use them")
-    })
+    wanted: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(wanted) = wanted else {
+        return Ok(None);
+    };
+    let all = pw.mods_with_options(profile)?;
+    let found = all
+        .get(name)
+        .into_iter()
+        .flatten()
+        .find(|o| o.id == wanted || o.id.rsplit('.').next() == Some(wanted));
+    Ok(Some(
+        found.map_or_else(|| wanted.to_owned(), |o| o.id.clone()),
+    ))
 }
 
-/// The group a `--pick` is for, with what it picks, by the names the
-/// installer uses.
-fn find_pick(view: &InstallerView, pick: &str) -> Result<Selection> {
+/// The group a `--pick` is for, with what it picks, by the names the form
+/// shows.
+fn find_pick(view: &ModOptionsView, pick: &str) -> Result<Answer> {
     let (at, options) = pick
         .split_once('=')
         .with_context(|| format!("`{pick}` should be GROUP=OPTIONS"))?;
-    let (step, group) = match at.split_once('/') {
-        Some((step, group)) => (Some(step.trim()), group.trim()),
+    let (page, group) = match at.split_once('/') {
+        Some((page, group)) => (Some(page.trim()), group.trim()),
         None => (None, at.trim()),
     };
     let found: Vec<_> = view
-        .steps
+        .form
+        .pages
         .iter()
-        .filter(|s| step.is_none_or(|step| s.name.eq_ignore_ascii_case(step)))
-        .flat_map(|s| s.groups.iter().map(move |g| (s, g)))
-        .filter(|(_, g)| g.name.eq_ignore_ascii_case(group))
+        .filter(|p| page.is_none_or(|page| p.title.eq_ignore_ascii_case(page)))
+        .flat_map(|p| &p.groups)
+        .filter(|g| g.title.eq_ignore_ascii_case(group))
         .collect();
-    let (s, g) = match found.as_slice() {
+    let g = match found.as_slice() {
         [found] => *found,
-        [] => {
-            bail!("the installer doesn't show a group called `{at}` with the options picked so far")
-        }
-        _ => bail!("more than one step has a group called `{group}`; say which, as STEP/{group}"),
+        [] => bail!("there's no group called `{at}` with the options picked so far"),
+        _ => bail!("more than one page has a group called `{group}`; say which, as PAGE/{group}"),
     };
-    let options = options
+    let items = options
         .split(',')
         .map(str::trim)
         .filter(|o| !o.is_empty())
         .map(|o| {
-            g.options
+            g.items
                 .iter()
-                .find(|c| c.name.eq_ignore_ascii_case(o))
-                .map(|c| c.name.clone())
+                .find(|i| i.title.eq_ignore_ascii_case(o))
+                .map(|i| i.id.clone())
                 .with_context(|| {
-                    let names: Vec<_> = g.options.iter().map(|c| c.name.as_str()).collect();
+                    let names: Vec<_> = g.items.iter().map(|i| i.title.as_str()).collect();
                     format!(
                         "`{}` has no option called `{o}`; it has {}",
-                        g.name,
+                        g.title,
                         names.join(", ")
                     )
                 })
         })
         .collect::<Result<_>>()?;
-    Ok(Selection {
-        step: s.name.clone(),
-        group: g.name.clone(),
-        options,
+    Ok(Answer {
+        group: g.id.clone(),
+        items,
     })
 }
 
-fn print_installer(name: &str, view: &InstallerView) {
-    if view.name == name {
-        println!("installer for {name}");
+fn print_options(name: &str, view: &ModOptionsView) {
+    let form = &view.form;
+    let title = view.title.to_lowercase();
+    if form.title.is_empty() || form.title == name {
+        println!("{title} for {name}");
     } else {
-        println!("installer for {name} ({})", view.name);
+        println!("{title} for {name} ({})", form.title);
     }
-    for step in &view.steps {
+    for page in &form.pages {
         println!();
-        println!("{}", step.name);
-        for group in &step.groups {
-            let (rule, single) = match group.kind {
-                GroupKind::ExactlyOne => ("pick one", true),
-                GroupKind::AtMostOne => ("pick one or none", true),
-                GroupKind::AtLeastOne => ("pick at least one", false),
-                GroupKind::All => ("all of these", false),
-                GroupKind::Any => ("pick any", false),
+        println!("{}", page.title);
+        for group in &page.groups {
+            let (rule, single) = match group.pick {
+                Pick::ExactlyOne => ("pick one", true),
+                Pick::AtMostOne => ("pick one or none", true),
+                Pick::AtLeastOne => ("pick at least one", false),
+                Pick::All => ("all of these", false),
+                Pick::Any => ("pick any", false),
             };
-            println!("  {} ({rule}):", group.name);
-            for option in &group.options {
-                let mark = match (single, option.picked) {
+            println!("  {} ({rule}):", group.title);
+            for item in &group.items {
+                let mark = match (single, item.picked) {
                     (true, true) => "(*)",
                     (true, false) => "( )",
                     (false, true) => "[x]",
                     (false, false) => "[ ]",
                 };
-                let kind = match option.kind {
-                    OptionKind::Required => " (required)",
-                    OptionKind::Recommended => " (recommended)",
-                    OptionKind::NotUsable => " (can't be used)",
-                    OptionKind::CouldBeUsable => " (might not work)",
-                    OptionKind::Optional => "",
+                let state = match item.state {
+                    ItemState::Required => " (required)",
+                    ItemState::Recommended => " (recommended)",
+                    ItemState::NotUsable => " (can't be used)",
+                    ItemState::CouldBeUsable => " (might not work)",
+                    ItemState::Optional => "",
                 };
-                println!("    {mark} {}{kind}", option.name);
-                if let Some(line) = option
+                println!("    {mark} {}{state}", item.title);
+                if let Some(line) = item
                     .description
-                    .lines()
+                    .iter()
+                    .flat_map(|d| d.lines())
                     .map(str::trim)
                     .find(|l| !l.is_empty())
                 {
@@ -1928,16 +1945,15 @@ fn print_installer(name: &str, view: &InstallerView) {
         }
     }
     println!();
-    let files = if view.files == 1 { "file" } else { "files" };
-    if view.saved {
-        println!("installs {} {files} with these options", view.files);
-    } else {
+    if let Some(summary) = &form.summary {
+        println!("{summary}");
+    }
+    if !view.saved {
         println!(
-            "installs {} {files} with the options it recommends, which are used until you pick some with --pick GROUP=OPTION, or keep these with --save",
-            view.files
+            "These are the defaults, which are used until you pick some with --pick GROUP=OPTION, or keep these with --save."
         );
     }
-    for warning in &view.warnings {
+    for warning in &form.warnings {
         eprintln!("warning: {warning}");
     }
 }

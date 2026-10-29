@@ -6,7 +6,7 @@ import { openProfile, refresh, showProfile } from "./profile.js";
 import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
 import { showChangelog } from "./changelog.js";
-import { showInstaller } from "./installer.js";
+import { showOptions } from "./form.js";
 import { dragHandle, dragging } from "./reorder.js";
 import { conflictMark } from "./conflicts.js";
 
@@ -58,28 +58,28 @@ function unsharedMark(m) {
   return h("span", { class: "mod-unshared muted", title: why }, "only here");
 }
 
-/** Marks a mod whose installer's options haven't been picked, so it's
- * deployed with the ones it recommends. */
-function installerMark(m) {
-  if (!m.installer || m.fomod) return null;
-  const why =
-    "Its installer's options haven't been picked, so it's deployed with the ones it recommends";
-  return h("span", { class: "mod-installer muted", title: why }, "recommended options");
+/** Marks a mod with choices nothing's been picked in yet, like an
+ * installer's options, so it's deployed with the defaults. */
+function optionsMark(m) {
+  const unpicked = (m.options ?? []).filter((o) => !o.saved);
+  if (!unpicked.length) return null;
+  const what = unpicked.map((o) => o.title.toLowerCase()).join(" or ");
+  const why = `Nothing's been picked in its ${what} yet, so it's deployed with the defaults`;
+  return h("span", { class: "mod-options muted", title: why }, "default options");
 }
 
-/** Opens the mod's installer, for mods that have one. */
-function installerButton(m) {
-  return (
-    m.installer &&
+/** A button for each set of choices the mod has, like its installer. */
+function optionsButtons(m) {
+  return (m.options ?? []).map((o) =>
     h(
       "button",
       {
         type: "button",
-        title: "Pick the options its installer offers",
-        onclick: () => showInstaller(m),
+        title: `Pick the options in its ${o.title.toLowerCase()}`,
+        onclick: () => showOptions(m, o),
       },
-      "Installer",
-    )
+      o.title,
+    ),
   );
 }
 
@@ -103,7 +103,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
           issueMark(m),
           conflictMark(m),
           unsharedMark(m),
-          installerMark(m),
+          optionsMark(m),
         ),
         item.author && h("span", { class: "author" }, item.author),
       ),
@@ -185,7 +185,7 @@ function rowDetails(m, item, onRemove) {
       urlButton(item.url, "Website"),
       urlButton(item.author_url, "Author's mods"),
       m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
-      installerButton(m),
+      ...optionsButtons(m),
       h("button", { type: "button", class: "danger", onclick: onRemove }, "Remove"),
     ),
   ];
@@ -280,7 +280,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
         }),
         h("span", { "aria-hidden": "true" }, m.enabled ? "On" : "Off"),
       ),
-      installerButton(m),
+      ...optionsButtons(m),
       m.versioned
         ? versionSelect(m, onVersion)
         : h("span", { class: "mod-version muted" }, m.version ?? m.locked ?? "No versions"),

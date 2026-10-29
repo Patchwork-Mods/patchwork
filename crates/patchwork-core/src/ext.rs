@@ -11,7 +11,7 @@
 //!
 //! Sources, deployers, provisioners and profile formats keep the ids they
 //! have always had (profiles and game definitions name them). Other hooks,
-//! like [`OrderedList`]s, are `<extension>.<name>`; each is configured by the
+//! like [`OrderedList`]s and [`ModTransform`]s, are `<extension>.<name>`; each is configured by the
 //! game's `[ext.<extension>.<name>]` table, and can be turned off with
 //! `off = ["<name>"]` in `[ext.<extension>]`.
 
@@ -23,6 +23,7 @@ use serde::de::DeserializeOwned;
 
 use crate::deploy::Deployer;
 use crate::list::OrderedList;
+use crate::options::{ModOptions, ModTransform};
 use crate::provision::Provisioner;
 use crate::share::ProfileFormat;
 use crate::source::Source;
@@ -115,6 +116,31 @@ impl Registrar<'_> {
         self.registered.ordered_list(self.ext, name, list);
         self
     }
+
+    /// Adds something that changes which files mods install, as
+    /// `<extension>.<name>`, configured by `[ext.<extension>.<name>]`.
+    /// Transforms run in the order they're registered.
+    pub fn mod_transform(
+        &mut self,
+        name: &'static str,
+        transform: impl ModTransform + 'static,
+    ) -> &mut Self {
+        self.registered.mod_transform(self.ext, name, transform);
+        self
+    }
+
+    /// Adds choices the user makes about mods, as `<extension>.<name>`,
+    /// configured by `[ext.<extension>.<name>]`. What they pick is saved as
+    /// the extension's state for the mod. A transform and options that go
+    /// together can share a name, and so a config table.
+    pub fn mod_options(
+        &mut self,
+        name: &'static str,
+        options: impl ModOptions + 'static,
+    ) -> &mut Self {
+        self.registered.mod_options(self.ext, name, options);
+        self
+    }
 }
 
 /// A hook, as registered by an extension.
@@ -141,6 +167,10 @@ pub(crate) struct Registered {
     pub extensions: BTreeMap<String, Arc<dyn Extension>>,
     /// By hook id.
     pub lists: BTreeMap<String, Hook<dyn OrderedList>>,
+    /// In the order they were registered, which is the order they run in.
+    pub transforms: Vec<Hook<dyn ModTransform>>,
+    /// By hook id.
+    pub options: BTreeMap<String, Hook<dyn ModOptions>>,
     /// Which extension registered each thing, by `(kind, id)`, so a clash
     /// can say who's involved. `None` for things registered directly.
     owners: HashMap<(&'static str, String), Option<&'static str>>,
@@ -205,13 +235,7 @@ impl Registered {
         name: &'static str,
         list: impl OrderedList + 'static,
     ) {
-        if let Err(e) = validate_ext_id(name) {
-            self.problems
-                .push(format!("{e} (a list of extension `{ext}`)"));
-            return;
-        }
-        let id = hook_id(ext, name);
-        if self.claim("ordered list", &id, Some(ext)) {
+        if let Some(id) = self.hook("ordered list", ext, name) {
             let hook = Hook {
                 ext,
                 name,
@@ -219,6 +243,49 @@ impl Registered {
             };
             self.lists.insert(id, hook);
         }
+    }
+
+    pub fn mod_transform(
+        &mut self,
+        ext: &'static str,
+        name: &'static str,
+        transform: impl ModTransform + 'static,
+    ) {
+        if self.hook("mod transform", ext, name).is_some() {
+            self.transforms.push(Hook {
+                ext,
+                name,
+                hook: Arc::new(transform) as Arc<dyn ModTransform>,
+            });
+        }
+    }
+
+    pub fn mod_options(
+        &mut self,
+        ext: &'static str,
+        name: &'static str,
+        options: impl ModOptions + 'static,
+    ) {
+        if let Some(id) = self.hook("mod options", ext, name) {
+            let hook = Hook {
+                ext,
+                name,
+                hook: Arc::new(options) as Arc<dyn ModOptions>,
+            };
+            self.options.insert(id, hook);
+        }
+    }
+
+    /// The id of extension `ext`'s `kind` called `name`, if it's a valid
+    /// name and nothing else has it.
+    fn hook(&mut self, kind: &'static str, ext: &'static str, name: &str) -> Option<String> {
+        if let Err(e) = validate_ext_id(name) {
+            self.problems
+                .push(format!("{e} (a {kind} of extension `{ext}`)"));
+            return None;
+        }
+        let id = hook_id(ext, name);
+        self.claim(kind, &id, Some(ext)).then_some(id)
     }
 
     /// Records `owner` as having registered the `kind` called `id`, unless

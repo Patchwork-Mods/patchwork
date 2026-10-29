@@ -9,17 +9,20 @@
 //! nothing was saved for gets the installer's own defaults: its required
 //! and recommended options.
 //!
-//! Games opt in with `[fomod]` in their definition (see
-//! [`crate::game::FomodDef`]), which says which folder installers'
-//! destinations are relative to.
-use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+//! Games turn it on with `[ext.fomod.installer]` in their definition,
+//! whose `folder` is the one in the game's that installers' destinations
+//! are relative to, and that the files their conditions ask about are in.
+use std::collections::HashMap;
 
+use patchwork_core::deploy::ModFile;
+use patchwork_core::options::{ItemState, Pick};
+use patchwork_core::relpath::RelPath;
 use roxmltree::{Document, Node};
 use serde::{Deserialize, Serialize};
 
-use crate::deploy::ModFile;
-use crate::relpath::RelPath;
+mod hooks;
+
+pub use hooks::{FOMOD_EXTENSION, FomodInstaller};
 
 /// The options picked for one group of a mod's installer, as a profile
 /// saves them.
@@ -40,32 +43,6 @@ pub enum FileState {
     /// There, but not loaded.
     Inactive,
     Missing,
-}
-
-/// How many of a group's options can be picked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum GroupKind {
-    AtLeastOne,
-    AtMostOne,
-    ExactlyOne,
-    All,
-    Any,
-}
-
-/// What an installer says about picking an option.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum OptionKind {
-    /// Always picked.
-    Required,
-    /// Picked unless the user says otherwise.
-    Recommended,
-    Optional,
-    /// Can't be picked, usually because something it needs isn't there.
-    NotUsable,
-    /// Can be picked, but might not work.
-    CouldBeUsable,
 }
 
 /// A mod's installer, read from its `ModuleConfig.xml`.
@@ -92,7 +69,7 @@ struct Step {
 #[derive(Debug, Clone)]
 struct Group {
     name: String,
-    kind: GroupKind,
+    kind: Pick,
     options: Vec<Choice>,
 }
 
@@ -110,11 +87,11 @@ struct Choice {
 
 #[derive(Debug, Clone)]
 enum Kind {
-    Fixed(OptionKind),
+    Fixed(ItemState),
     /// The first pattern whose condition holds says, or else `default`.
     Depends {
-        default: OptionKind,
-        patterns: Vec<(Condition, OptionKind)>,
+        default: ItemState,
+        patterns: Vec<(Condition, ItemState)>,
     },
 }
 
@@ -166,6 +143,7 @@ pub struct Resolved {
 impl Resolved {
     /// Whether any shown group got the installer's defaults, having
     /// nothing saved.
+    #[cfg(test)]
     pub fn defaulted(&self) -> bool {
         self.steps
             .iter()
@@ -174,53 +152,29 @@ impl Resolved {
     }
 }
 
-/// A mod's installer as a frontend shows it, from
-/// [`Patchwork::installer`](crate::Patchwork::installer).
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstallerView {
-    /// What the installer calls the mod.
-    pub name: String,
-    pub steps: Vec<StepView>,
-    /// What's picked, to save; see [`Resolved::selections`].
-    pub selections: Vec<Selection>,
-    pub warnings: Vec<String>,
-    /// Whether the profile has picks saved for it, rather than it getting
-    /// the installer's defaults.
-    pub saved: bool,
-    /// How many files it installs with these picks.
-    pub files: usize,
-    /// Where the options' pictures are in the store, by their path in the
-    /// mod.
-    pub images: BTreeMap<String, PathBuf>,
-}
-
 /// A step of an installer, for showing.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct StepView {
     pub name: String,
     pub groups: Vec<GroupView>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct GroupView {
     pub name: String,
-    pub kind: GroupKind,
+    pub kind: Pick,
     pub options: Vec<OptionView>,
     /// Nothing was saved for it, so it has the installer's defaults.
     pub defaulted: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OptionView {
     pub name: String,
     pub description: String,
     /// Its picture, as a file in the mod.
     pub image: Option<RelPath>,
-    pub kind: OptionKind,
+    pub kind: ItemState,
     pub picked: bool,
 }
 
@@ -236,33 +190,6 @@ pub fn find(files: &[ModFile]) -> Option<(&ModFile, String)> {
             (base.is_empty() || base.ends_with('/')).then(|| (f, base.to_owned()))
         })
         .min_by_key(|(f, _)| f.rel.components().count())
-}
-
-/// Whether a mod unpacked in `dir` has an installer, looking only as deep
-/// as [`find`] usually finds one, so it's cheap enough for every mod in a
-/// list.
-pub fn in_dir(dir: &Path) -> bool {
-    let has = |dir: &Path| {
-        entry(dir, "fomod", true).is_some_and(|f| entry(&f, "moduleconfig.xml", false).is_some())
-    };
-    has(dir)
-        || std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .any(|e| e.file_type().is_ok_and(|t| t.is_dir()) && has(&e.path()))
-}
-
-/// The entry in `dir` called `name` (lowercase), in any case.
-fn entry(dir: &Path, name: &str, is_dir: bool) -> Option<PathBuf> {
-    std::fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .find(|e| {
-            e.file_name().to_string_lossy().to_lowercase() == name
-                && e.file_type().is_ok_and(|t| t.is_dir() == is_dir)
-        })
-        .map(|e| e.path())
 }
 
 impl Installer {
@@ -339,7 +266,7 @@ impl Installer {
                 groups: Vec::new(),
             };
             for group in &step.groups {
-                let kinds: Vec<OptionKind> = group
+                let kinds: Vec<ItemState> = group
                     .options
                     .iter()
                     .map(|c| c.kind.get(&flags, state))
@@ -358,7 +285,7 @@ impl Installer {
                             flags.insert(name.clone(), value.clone());
                         }
                     }
-                    let usable = kind != OptionKind::NotUsable;
+                    let usable = kind != ItemState::NotUsable;
                     installs.extend(
                         choice
                             .files
@@ -498,8 +425,8 @@ impl Installer {
 
 /// Which of `group`'s options are picked: the ones `saved`, or the
 /// defaults if nothing is, made to fit what the group allows.
-fn pick(group: &Group, kinds: &[OptionKind], saved: Option<&[String]>) -> Vec<bool> {
-    let usable = |i: usize| kinds[i] != OptionKind::NotUsable;
+fn pick(group: &Group, kinds: &[ItemState], saved: Option<&[String]>) -> Vec<bool> {
+    let usable = |i: usize| kinds[i] != ItemState::NotUsable;
     let mut on: Vec<bool> = group
         .options
         .iter()
@@ -508,47 +435,43 @@ fn pick(group: &Group, kinds: &[OptionKind], saved: Option<&[String]>) -> Vec<bo
             usable(i)
                 && match saved {
                     Some(names) => names.contains(&c.name),
-                    None => kinds[i] == OptionKind::Recommended,
+                    None => kinds[i] == ItemState::Recommended,
                 }
         })
         .collect();
     for (i, kind) in kinds.iter().enumerate() {
-        if *kind == OptionKind::Required {
+        if *kind == ItemState::Required {
             on[i] = true;
         }
     }
     let first_usable = (0..on.len()).find(|&i| usable(i));
     match group.kind {
-        GroupKind::All => on = (0..on.len()).map(usable).collect(),
-        GroupKind::ExactlyOne | GroupKind::AtMostOne => {
+        Pick::All => on = (0..on.len()).map(usable).collect(),
+        Pick::ExactlyOne | Pick::AtMostOne => {
             let keep = kinds
                 .iter()
-                .position(|k| *k == OptionKind::Required)
+                .position(|k| *k == ItemState::Required)
                 .or_else(|| on.iter().position(|o| *o));
             let keep = match (keep, group.kind) {
-                (None, GroupKind::ExactlyOne) => first_usable,
+                (None, Pick::ExactlyOne) => first_usable,
                 (keep, _) => keep,
             };
             on = (0..on.len()).map(|i| Some(i) == keep).collect();
         }
-        GroupKind::AtLeastOne => {
+        Pick::AtLeastOne => {
             if !on.contains(&true)
                 && let Some(i) = first_usable
             {
                 on[i] = true;
             }
         }
-        GroupKind::Any => {}
+        Pick::Any => {}
     }
     on
 }
 
 impl Kind {
-    fn get(
-        &self,
-        flags: &HashMap<String, String>,
-        state: &dyn Fn(&str) -> FileState,
-    ) -> OptionKind {
+    fn get(&self, flags: &HashMap<String, String>, state: &dyn Fn(&str) -> FileState) -> ItemState {
         match self {
             Kind::Fixed(kind) => *kind,
             Kind::Depends { default, patterns } => patterns
@@ -671,11 +594,11 @@ fn step(node: Node<'_, '_>) -> Step {
 
 fn group(node: Node<'_, '_>) -> Group {
     let kind = match attr(node, "type").unwrap_or_default() {
-        "SelectAtLeastOne" => GroupKind::AtLeastOne,
-        "SelectAtMostOne" => GroupKind::AtMostOne,
-        "SelectExactlyOne" => GroupKind::ExactlyOne,
-        "SelectAll" => GroupKind::All,
-        _ => GroupKind::Any,
+        "SelectAtLeastOne" => Pick::AtLeastOne,
+        "SelectAtMostOne" => Pick::AtMostOne,
+        "SelectExactlyOne" => Pick::ExactlyOne,
+        "SelectAll" => Pick::All,
+        _ => Pick::Any,
     };
     Group {
         name: attr(node, "name").unwrap_or_default().to_owned(),
@@ -692,23 +615,23 @@ fn choice(node: Node<'_, '_>) -> Choice {
         Some(t) => match (child(t, "type"), child(t, "dependencyType")) {
             (Some(t), _) => Kind::Fixed(option_kind(t)),
             (None, Some(d)) => Kind::Depends {
-                default: child(d, "defaultType").map_or(OptionKind::Optional, option_kind),
+                default: child(d, "defaultType").map_or(ItemState::Optional, option_kind),
                 patterns: child(d, "patterns")
                     .map(|p| {
                         children(p, "pattern")
                             .map(|p| {
                                 (
                                     child(p, "dependencies").map_or(Condition::Met, condition),
-                                    child(p, "type").map_or(OptionKind::Optional, option_kind),
+                                    child(p, "type").map_or(ItemState::Optional, option_kind),
                                 )
                             })
                             .collect()
                     })
                     .unwrap_or_default(),
             },
-            (None, None) => Kind::Fixed(OptionKind::Optional),
+            (None, None) => Kind::Fixed(ItemState::Optional),
         },
-        None => Kind::Fixed(OptionKind::Optional),
+        None => Kind::Fixed(ItemState::Optional),
     };
     Choice {
         name: attr(node, "name").unwrap_or_default().to_owned(),
@@ -729,13 +652,13 @@ fn choice(node: Node<'_, '_>) -> Choice {
     }
 }
 
-fn option_kind(node: Node<'_, '_>) -> OptionKind {
+fn option_kind(node: Node<'_, '_>) -> ItemState {
     match attr(node, "name").unwrap_or_default() {
-        "Required" => OptionKind::Required,
-        "Recommended" => OptionKind::Recommended,
-        "NotUsable" => OptionKind::NotUsable,
-        "CouldBeUsable" => OptionKind::CouldBeUsable,
-        _ => OptionKind::Optional,
+        "Required" => ItemState::Required,
+        "Recommended" => ItemState::Recommended,
+        "NotUsable" => ItemState::NotUsable,
+        "CouldBeUsable" => ItemState::CouldBeUsable,
+        _ => ItemState::Optional,
     }
 }
 

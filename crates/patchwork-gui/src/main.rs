@@ -14,26 +14,30 @@ use std::sync::Mutex;
 
 use base64::prelude::*;
 use patchwork_builtin::{
-    Bethesda, Generic, Minecraft, ModrinthExtension, NexusExtension, Smf, ThunderstoreExtension,
+    Bethesda, Fomod, Generic, Minecraft, ModrinthExtension, NexusExtension, Smf,
+    ThunderstoreExtension,
 };
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter, Silent};
-use patchwork_core::fomod::{InstallerView, Selection};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
 use patchwork_core::launch::{self, LaunchOption, Via};
 use patchwork_core::list::{List, ListEntry};
 use patchwork_core::lock::{Lockfile, mod_key};
 use patchwork_core::matching::{self, ModText};
+use patchwork_core::options::Answer;
 use patchwork_core::order::SortKey;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{ModSpec, SourceFile};
-use patchwork_core::{DeployStatus, GameInstall, HistoryEntry, ImportOptions, ListInfo, Patchwork};
+use patchwork_core::{
+    DeployStatus, GameInstall, HistoryEntry, ImportOptions, ListInfo, ModOptionsInfo,
+    ModOptionsView, Patchwork,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -220,9 +224,9 @@ struct UiMod {
     /// What a search would show for it (picture, summary, ...), as last
     /// fetched. The same goes for it as for `versions`.
     summary: Option<ModSummary>,
-    /// Whether it has a FOMOD installer its game uses, to pick options in.
+    /// The choices to make about it, like a FOMOD installer's options.
     /// Only known once it's been downloaded.
-    installer: bool,
+    options: Vec<ModOptionsInfo>,
 }
 
 #[derive(Serialize)]
@@ -357,7 +361,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         Vec::new()
     };
     let lists = pw.lists(&r).map_err(msg)?;
-    let installers = pw.installers(&r).map_err(msg)?;
+    let mut options = pw.mods_with_options(&r).map_err(msg)?;
     let launch_options = pw
         .profile_launch_options(&loaded)
         .map_err(msg)?
@@ -387,7 +391,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                     .find(|l| l.key() == key)
                     .and_then(|l| l.version.clone()),
                 key,
-                installer: installers.contains(&m.name),
+                options: options.remove(&m.name).unwrap_or_default(),
                 profile: m,
             }
         })
@@ -467,7 +471,6 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         env: Default::default(),
         roots: Default::default(),
         launch: Default::default(),
-        fomod: None,
         capture: None,
         instances: None,
         provision: None,
@@ -917,55 +920,64 @@ fn set_list(
     ui_list(&app.pw, &r, &list)
 }
 
-/// A mod's installer as the installer dialog shows it.
+/// A mod's choices as the options dialog shows them.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UiInstaller {
+struct UiModOptions {
     #[serde(flatten)]
-    view: InstallerView,
-    /// The options' pictures that the dialog didn't say it already has, as
+    view: ModOptionsView,
+    /// The items' pictures that the dialog didn't say it already has, as
     /// something the webview can show, by their path in the mod.
     pictures: BTreeMap<String, String>,
 }
 
-/// `name`'s installer with `picks`, or with what the profile has saved.
-/// `have` are the pictures the dialog already has, which aren't sent again.
-/// Async so unpacking the mod happens off the main thread.
+/// `name`'s choices `options` with `answers`, or with what the profile has
+/// saved. `have` are the pictures the dialog already has, which aren't sent
+/// again. Async so unpacking the mod happens off the main thread.
 #[tauri::command]
-async fn installer(
+async fn mod_options(
     app: State<'_, App>,
     id: String,
     name: String,
-    picks: Option<Vec<Selection>>,
+    options: String,
+    answers: Option<Vec<Answer>>,
     have: Vec<String>,
-) -> CmdResult<Option<UiInstaller>> {
-    let Some(mut view) = app
+) -> CmdResult<UiModOptions> {
+    let mut view = app
         .pw
-        .installer(&profile_ref(&id)?, &name, picks.as_deref())
-        .map_err(msg)?
-    else {
-        return Ok(None);
-    };
+        .mod_options(
+            &profile_ref(&id)?,
+            &name,
+            Some(&options),
+            answers.as_deref(),
+        )
+        .map_err(msg)?;
     let images = std::mem::take(&mut view.images);
     let pictures = images
         .into_iter()
         .filter(|(rel, _)| !have.contains(rel))
         .filter_map(|(rel, path)| Some((rel, image_src(path.to_str()?)?)))
         .collect();
-    Ok(Some(UiInstaller { view, pictures }))
+    Ok(UiModOptions { view, pictures })
 }
 
-/// Saves the options picked in `name`'s installer, or with `None` goes back
-/// to the ones it recommends.
+/// Saves `answers` as what's picked in `name`'s choices `options`, or with
+/// `None` goes back to the defaults.
 #[tauri::command]
-fn set_installer(
+fn set_mod_options(
     app: State<'_, App>,
     id: String,
     name: String,
-    picks: Option<Vec<Selection>>,
+    options: String,
+    answers: Option<Vec<Answer>>,
 ) -> CmdResult<ProfileDetail> {
     app.pw
-        .set_installer(&profile_ref(&id)?, &name, picks)
+        .set_mod_options(
+            &profile_ref(&id)?,
+            &name,
+            Some(&options),
+            answers.as_deref(),
+        )
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
@@ -1464,6 +1476,7 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
         .extension(NexusExtension)
         .extension(ModrinthExtension)
         .extension(Bethesda)
+        .extension(Fomod)
         .extension(Smf)
         .extension(Minecraft)
         .reporter(reporter)
@@ -1559,8 +1572,8 @@ fn main() {
             reorder_mods,
             list,
             set_list,
-            installer,
-            set_installer,
+            mod_options,
+            set_mod_options,
             conflicts,
             refresh_details,
             find_games,

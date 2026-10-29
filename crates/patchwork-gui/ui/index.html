@@ -695,28 +695,29 @@
 			</form>
 		</dialog>
 
-		<!-- A mod's FOMOD installer, a step at a time; see installer.js. -->
-		<dialog id="installer-dialog">
+		<!-- A mod's choices, like its FOMOD installer's, a page at a time;
+		     see form.js. -->
+		<dialog id="options-dialog">
 			<form method="dialog" class="stack">
-				<h2 id="installer-title">Installer</h2>
-				<p id="installer-step" class="installer-step"></p>
-				<div class="installer-body">
-					<div id="installer-groups" class="installer-groups"></div>
-					<aside class="installer-preview">
-						<img id="installer-picture" alt="" hidden />
-						<p id="installer-description" class="muted"></p>
+				<h2 id="options-title">Options</h2>
+				<p id="options-page" class="options-page"></p>
+				<div class="options-body">
+					<div id="options-groups" class="options-groups"></div>
+					<aside class="options-preview">
+						<img id="options-picture" alt="" hidden />
+						<p id="options-description" class="muted"></p>
 					</aside>
 				</div>
-				<ul id="installer-warnings" class="warnings"></ul>
-				<p id="installer-files" class="muted"></p>
+				<ul id="options-warnings" class="warnings"></ul>
+				<p id="options-summary" class="muted"></p>
 				<div class="row end">
-					<button type="button" id="installer-reset" class="installer-reset" hidden
-						title="Forget the options picked, and deploy with the ones the installer recommends">
-						Use recommended
+					<button type="button" id="options-reset" class="options-reset" hidden
+						title="Forget the options picked, and deploy with the defaults">
+						Use defaults
 					</button>
 					<button value="cancel">Cancel</button>
-					<button type="button" id="installer-back">Back</button>
-					<button type="button" id="installer-next" class="primary">Next</button>
+					<button type="button" id="options-back">Back</button>
+					<button type="button" id="options-next" class="primary">Next</button>
 				</div>
 			</form>
 		</dialog>

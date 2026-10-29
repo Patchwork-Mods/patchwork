@@ -978,8 +978,9 @@ dialog button.danger-text {
   cursor: help;
 }
 
-/* A mod with an installer whose options haven't been picked. */
-.mod-installer {
+/* A mod with choices (like an installer's options) nothing's been picked
+   in yet. */
+.mod-options {
   margin-left: 6px;
   font-size: 0.8em;
   cursor: help;
@@ -1599,25 +1600,25 @@ dialog::backdrop {
   color: var(--pw-accent);
 }
 
-/* Installer dialog; see installer.js. The groups of a step beside the
-   picture and description of the option last pointed at. */
-#installer-dialog {
+/* Options dialog; see form.js. The groups of a page beside the picture
+   and description of the item last pointed at. */
+#options-dialog {
   width: min(860px, 92vw);
 }
 
-.installer-step {
+.options-page {
   margin: 0;
   font-weight: 600;
 }
 
-.installer-body {
+.options-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--pw-gap);
   min-height: 240px;
 }
 
-.installer-groups {
+.options-groups {
   display: flex;
   flex-direction: column;
   gap: var(--pw-gap);
@@ -1625,7 +1626,7 @@ dialog::backdrop {
   overflow-y: auto;
 }
 
-.installer-group {
+.options-group {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1636,28 +1637,28 @@ dialog::backdrop {
   background: var(--pw-bg);
 }
 
-.installer-group legend {
+.options-group legend {
   padding: 0 4px;
   font-weight: 600;
 }
 
-.installer-group > p {
+.options-group > p {
   margin: 0 0 4px;
   font-size: 12px;
 }
 
-.installer-option {
+.options-item {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 2px 0;
 }
 
-.installer-option.disabled {
+.options-item.disabled {
   color: var(--pw-muted);
 }
 
-.installer-preview {
+.options-preview {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1665,23 +1666,23 @@ dialog::backdrop {
   overflow-y: auto;
 }
 
-.installer-preview img {
+.options-preview img {
   max-width: 100%;
   border-radius: var(--pw-radius);
   border: 1px solid var(--pw-border);
 }
 
-.installer-preview p {
+.options-preview p {
   margin: 0;
   white-space: pre-line;
 }
 
-.installer-reset {
+.options-reset {
   margin-right: auto;
 }
 
 @media (max-width: 640px) {
-  .installer-body {
+  .options-body {
     grid-template-columns: 1fr;
   }
 }

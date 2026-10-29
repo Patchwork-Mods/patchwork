@@ -5727,6 +5727,9 @@ dependencies = [
  "patchwork-formats",
  "patchwork-provisioners",
  "patchwork-sources",
+ "roxmltree",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -5759,7 +5762,6 @@ dependencies = [
  "keyring",
  "md-5",
  "reqwest",
- "roxmltree",
  "serde",
  "serde_json",
  "sevenz-rust2",

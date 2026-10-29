@@ -91,16 +91,10 @@ impl Patchwork {
             .map(|lock| deploy_order(&loaded, lock))
             .unwrap_or_default();
         let root = self.target_root(&target)?.unwrap_or_default();
-        let (mods, _) = self.installed(&loaded, game, Some(&root), &order)?;
         let state = self.deploy_state(&target)?;
-        self.make_list(
-            &loaded,
-            id,
-            hook,
-            &ctx,
-            &GameFiles::new(&root, &state),
-            &mods,
-        )
+        let files = GameFiles::new(&root, &state);
+        let (mods, _) = self.installed(&loaded, game, Some(&files), &order)?;
+        self.make_list(&loaded, id, hook, &ctx, &files, &mods)
     }
 
     /// Every list that's on for `loaded`'s game, for a deploy of `mods`.
@@ -219,7 +213,7 @@ impl Patchwork {
             .keys()
             .filter(|ext| self.extensions.contains_key(*ext))
             .flat_map(|ext| {
-                let names = self.list_names(ext);
+                let names = self.hook_names(ext);
                 def.hooks_off(ext)
                     .into_iter()
                     .filter(move |off| !names.contains(off))

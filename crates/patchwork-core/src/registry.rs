@@ -285,25 +285,38 @@ const COSMETIC_GAME_FIELDS: &[&str] =
 
 /// Moves what game definitions used to have where it is now, so older
 /// definitions (and overlays of them) keep working: `[deployer.plugins]`
-/// is the Bethesda extension's `plugins` list.
+/// is the Bethesda extension's `plugins` list, and `[fomod]` the FOMOD
+/// extension's `installer`.
 fn upgrade_game(table: &mut toml::Table) {
-    let Some(plugins) = table
+    if let Some(plugins) = table
         .get_mut("deployer")
         .and_then(|d| d.as_table_mut())
         .and_then(|d| d.remove("plugins"))
-    else {
-        return;
-    };
+    {
+        let (id, list) = crate::profile::LEGACY_PLUGINS;
+        move_to_ext(table, id, list, plugins);
+    }
+    if let Some(fomod) = table.remove(LEGACY_FOMOD.0) {
+        let (id, hook) = LEGACY_FOMOD;
+        move_to_ext(table, id, hook, fomod);
+    }
+}
+
+/// Where `[fomod]` went: the FOMOD extension's `installer` hooks.
+const LEGACY_FOMOD: (&str, &str) = ("fomod", "installer");
+
+/// Puts `value` in `table` as `[ext.<id>.<hook>]`, unless something's
+/// already there.
+fn move_to_ext(table: &mut toml::Table, id: &str, hook: &str, value: toml::Value) {
     let ext = table
         .entry("ext")
         .or_insert_with(|| toml::Value::Table(toml::Table::new()));
     if let Some(ext) = ext.as_table_mut() {
-        let (id, list) = crate::profile::LEGACY_PLUGINS;
-        let bethesda = ext
+        let extension = ext
             .entry(id)
             .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-        if let Some(bethesda) = bethesda.as_table_mut() {
-            bethesda.entry(list).or_insert(plugins);
+        if let Some(extension) = extension.as_table_mut() {
+            extension.entry(hook).or_insert(value);
         }
     }
 }

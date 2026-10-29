@@ -171,3 +171,21 @@ fn the_old_plugins_table_is_the_bethesda_load_orders() {
     assert_eq!(plugins["file"].as_str(), Some("appdata:plugins.txt"));
     assert!(def.hook_on("bethesda", "plugins"));
 }
+
+#[test]
+fn the_old_fomod_table_is_the_fomod_installers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths::rooted(tmp.path());
+    user_file(
+        &paths,
+        "games",
+        "skyrim-se",
+        "[fomod]\nfolder = \"Data/x\"\n",
+    );
+    let registry = Registry::load(&paths).unwrap();
+    assert!(registry.problems.is_empty(), "{:?}", registry.problems);
+    let def = &registry.game("skyrim-se").unwrap().value;
+    let installer = def.hook_config("fomod", "installer").unwrap();
+    assert_eq!(installer["folder"].as_str(), Some("Data/x"));
+    assert!(def.hook_on("fomod", "installer"));
+}

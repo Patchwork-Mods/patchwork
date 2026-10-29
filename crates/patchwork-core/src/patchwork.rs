@@ -14,14 +14,13 @@ use crate::compat::{self, GameVersions};
 use crate::conflicts::{self, Conflicts};
 use crate::deploy::{
     self, BuildContext, Check, DeployContext, DeployPlan, DeployState, DeployTarget, Deployer,
-    DesiredState, Folders, GameFiles, InstalledMod, ModFile, Os, Resolved, ResolvedRoots, RootId,
-    RootSetup, Roots,
+    DesiredState, Folders, GameFiles, InstalledMod, Os, Resolved, ResolvedRoots, RootId, RootSetup,
+    Roots,
 };
 use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
 use crate::ext::{Extension, Hook, Registered};
-use crate::fomod::{self, FileState, Installer, InstallerView, Selection};
 use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, LinkMethod, validate_game_id};
 use crate::hash::ContentHash;
@@ -31,12 +30,12 @@ use crate::list::{List, OrderedList};
 use crate::locate::{self, Found, Locator};
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
 use crate::matching::{self, ModText};
+use crate::options::{ModOptions, ModTransform};
 use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
 use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
 use crate::provision::Provisioner;
 use crate::registry::Registry;
-use crate::relpath::RelPath;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::{Origin, SettingSpec, SettingState, Settings};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
@@ -306,6 +305,8 @@ impl Builder {
             formats: registered.formats,
             extensions: registered.extensions,
             lists: registered.lists,
+            transforms: registered.transforms,
+            options: registered.options,
             reporter: self.reporter,
             categories: Mutex::default(),
             fetching_versions: Mutex::default(),
@@ -335,6 +336,10 @@ pub struct Patchwork {
     extensions: BTreeMap<String, Arc<dyn Extension>>,
     /// By hook id; see [`crate::list`].
     lists: BTreeMap<String, Hook<dyn OrderedList>>,
+    /// In the order they run; see [`crate::options`].
+    transforms: Vec<Hook<dyn ModTransform>>,
+    /// By hook id.
+    options: BTreeMap<String, Hook<dyn ModOptions>>,
     reporter: Arc<dyn Reporter>,
     /// Each source's search categories for each game, by `(source, game)`.
     /// They hardly ever change, and a search by category needs them, so
@@ -750,7 +755,6 @@ impl Patchwork {
             version: spec.version,
             enabled,
             game_versions: None,
-            fomod: None,
             ext: Default::default(),
         };
         loaded.mods.push(added.clone());
@@ -2258,7 +2262,8 @@ impl Patchwork {
             &self.extensions_on(game),
             fingerprint,
         );
-        let (mods, installer_warnings) = self.installed(&loaded, game, Some(&root), &order)?;
+        let (mods, installer_warnings) =
+            self.installed(&loaded, game, Some(&GameFiles::new(&root, &prev)), &order)?;
 
         let env = GameEnv::for_profile(game, Some(&root), &loaded).unwrap_or_default();
         let desired = deployer.plan(&ctx, &mods)?;
@@ -2373,79 +2378,6 @@ impl Patchwork {
         )
     }
 
-    /// `order`'s files, from the store, as `loaded`'s game installs them:
-    /// for mods with a FOMOD installer, if the game uses them, the files it
-    /// picks (see [`crate::fomod`]). `root` is where the game is, if it's
-    /// been set up, for installers' conditions. Also returns problems with
-    /// the installers.
-    fn installed(
-        &self,
-        loaded: &Profile,
-        game: &GameDef,
-        root: Option<&Path>,
-        order: &[&LockedMod],
-    ) -> Result<(Vec<InstalledMod>, Vec<String>)> {
-        let mut mods = order
-            .iter()
-            .map(|locked| self.packed(locked))
-            .collect::<Result<Vec<_>>>()?;
-        let mut warnings = Vec::new();
-        let Some(fomod) = &game.fomod else {
-            return Ok((mods, warnings));
-        };
-        let present = Present::new(&mods, fomod.folder.as_ref(), root);
-        for m in &mut mods {
-            let saved = loaded
-                .mods
-                .iter()
-                .find(|p| p.name == m.name)
-                .and_then(|p| p.fomod.as_deref());
-            let resolved = match read_installer(m) {
-                None => continue,
-                Some(Err(why)) => {
-                    warnings.push(format!(
-                        "couldn't read `{}`'s installer, so its files are deployed as packed: {why}",
-                        m.name
-                    ));
-                    continue;
-                }
-                Some(Ok(installer)) => {
-                    let rels: Vec<RelPath> = m.files.iter().map(|f| f.rel.clone()).collect();
-                    installer.resolve(&rels, saved.unwrap_or_default(), &|f| present.state(f))
-                }
-            };
-            if saved.is_none() {
-                warnings.push(format!(
-                    "`{}` has an installer whose options haven't been picked, so it gets the ones it recommends; pick them with its Installer button, or `patchwork installer {}`",
-                    m.name, m.name
-                ));
-            }
-            warnings.extend(
-                resolved
-                    .warnings
-                    .iter()
-                    .map(|w| format!("`{}`: {w}", m.name)),
-            );
-            let src: HashMap<&RelPath, &PathBuf> =
-                m.files.iter().map(|f| (&f.rel, &f.src)).collect();
-            let files = resolved
-                .files
-                .iter()
-                .filter_map(|(dst, from)| {
-                    Some(ModFile {
-                        rel: match &fomod.folder {
-                            Some(folder) => RelPath::new(&format!("{folder}/{dst}")).ok()?,
-                            None => dst.clone(),
-                        },
-                        src: src.get(from)?.to_path_buf(),
-                    })
-                })
-                .collect();
-            m.files = files;
-        }
-        Ok((mods, warnings))
-    }
-
     /// `locked`'s files as they're packed, from the store.
     fn packed(&self, locked: &LockedMod) -> Result<InstalledMod> {
         let files = self
@@ -2460,132 +2392,6 @@ impl Patchwork {
             files,
             kind: locked.kind.clone(),
         })
-    }
-
-    /// `name`'s FOMOD installer in `profile`, worked out for `picks`, or
-    /// for the ones the profile has saved if `None`. `None` if the mod
-    /// hasn't got one or its game doesn't use them. Only locked mods count,
-    /// since the installer is among the mod's files.
-    pub fn installer(
-        &self,
-        profile: &ProfileRef,
-        name: &str,
-        picks: Option<&[Selection]>,
-    ) -> Result<Option<InstallerView>> {
-        let loaded = self.load_profile(profile)?;
-        let label = loaded.label();
-        let saved = loaded
-            .mods
-            .iter()
-            .find(|m| m.name == name)
-            .ok_or_else(|| no_such_mod(&label, name))?
-            .fomod
-            .clone();
-        let registry = self.registry();
-        let game = &registry.game(&loaded.game)?.value;
-        if game.fomod.is_none() {
-            return Ok(None);
-        }
-        let lock = self.load_lock(profile)?;
-        let Some(locked) = lock.iter().flat_map(|l| &l.mods).find(|l| l.name == name) else {
-            return Err(Error::invalid(format!(
-                "`{name}` hasn't been downloaded yet; lock {label} first"
-            )));
-        };
-        let target = self.deploy_target(&loaded)?;
-        let root = self.target_root(&target)?;
-        let m = self.packed(locked)?;
-        let installer = match read_installer(&m) {
-            None => return Ok(None),
-            Some(installer) => installer.map_err(|why| {
-                Error::invalid(format!("couldn't read `{name}`'s installer: {why}"))
-            })?,
-        };
-        let folder = game.fomod.as_ref().and_then(|f| f.folder.as_ref());
-        // Every enabled mod's files, for the installer's conditions, only
-        // if it has any that ask about files: listing them all takes a
-        // while, and this is called each time a pick changes.
-        let present = std::cell::OnceCell::new();
-        let state = |f: &str| {
-            present
-                .get_or_init(|| {
-                    let others: Vec<InstalledMod> = lock
-                        .iter()
-                        .flat_map(|lock| deploy_order(&loaded, lock))
-                        .filter_map(|l| self.packed(l).ok())
-                        .collect();
-                    Present::new(&others, folder, root.as_deref())
-                })
-                .state(f)
-        };
-        let rels: Vec<RelPath> = m.files.iter().map(|f| f.rel.clone()).collect();
-        let picks = picks.or(saved.as_deref()).unwrap_or_default();
-        let resolved = installer.resolve(&rels, picks, &state);
-        let images = resolved
-            .steps
-            .iter()
-            .flat_map(|s| &s.groups)
-            .flat_map(|g| &g.options)
-            .filter_map(|o| o.image.as_ref())
-            .filter_map(|rel| {
-                let file = m.files.iter().find(|f| f.rel == *rel)?;
-                Some((rel.to_string(), file.src.clone()))
-            })
-            .collect();
-        Ok(Some(InstallerView {
-            name: if installer.name.is_empty() {
-                name.to_owned()
-            } else {
-                installer.name.clone()
-            },
-            saved: saved.is_some(),
-            files: resolved.files.len(),
-            steps: resolved.steps,
-            selections: resolved.selections,
-            warnings: resolved.warnings,
-            images,
-        }))
-    }
-
-    /// Saves the options picked in `name`'s installer, or with `None`
-    /// forgets them, so it gets the ones the installer recommends.
-    pub fn set_installer(
-        &self,
-        profile: &ProfileRef,
-        name: &str,
-        picks: Option<Vec<Selection>>,
-    ) -> Result<()> {
-        let mut loaded = self.load_profile(profile)?;
-        let label = loaded.label();
-        loaded
-            .find_mut(name)
-            .ok_or_else(|| no_such_mod(&label, name))?
-            .fomod = picks;
-        self.save_profile(profile, &loaded)
-    }
-
-    /// The names of `profile`'s mods that have an installer its game uses,
-    /// among those that are locked and unpacked. Cheap enough to call
-    /// whenever the profile is shown, since it doesn't unpack anything.
-    pub fn installers(&self, profile: &ProfileRef) -> Result<HashSet<String>> {
-        let loaded = self.load_profile(profile)?;
-        let registry = self.registry();
-        if registry.game(&loaded.game)?.value.fomod.is_none() {
-            return Ok(HashSet::new());
-        }
-        let Some(lock) = self.load_lock(profile)? else {
-            return Ok(HashSet::new());
-        };
-        Ok(lock
-            .mods
-            .iter()
-            .filter(|l| {
-                self.store
-                    .unpacked(&l.hash, l.format)
-                    .is_some_and(|dir| fomod::in_dir(&dir))
-            })
-            .map(|l| l.name.clone())
-            .collect())
     }
 
     /// The files that more than one of `profile`'s enabled mods provide,
@@ -2606,13 +2412,12 @@ impl Patchwork {
             config: &config,
             registry: &registry,
         };
-        let root = self.target_root(&self.deploy_target(&loaded)?)?;
-        let (mods, _) = self.installed(
-            &loaded,
-            game,
-            root.as_deref(),
-            &deploy_order(&loaded, &lock),
-        )?;
+        let target = self.deploy_target(&loaded)?;
+        let root = self.target_root(&target)?;
+        let state = self.deploy_state(&target)?;
+        let files = root.as_deref().map(|root| GameFiles::new(root, &state));
+        let (mods, _) =
+            self.installed(&loaded, game, files.as_ref(), &deploy_order(&loaded, &lock))?;
         let desired = deployer.plan(&ctx, &mods)?;
         Ok(conflicts::find(&mods, &desired.placements))
     }
@@ -2894,68 +2699,6 @@ fn existing_dir(path: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// `m`'s FOMOD installer, if it has one, or why it couldn't be read.
-fn read_installer(m: &InstalledMod) -> Option<std::result::Result<Installer, String>> {
-    let (config, base) = fomod::find(&m.files)?;
-    Some(
-        fs::read(&config.src)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| Installer::parse(&bytes, base)),
-    )
-}
-
-/// The files that FOMOD installers' conditions can ask about: the mods',
-/// wherever they're packed in them, and the game's own.
-struct Present {
-    /// Each mod file's path, lowercased, by its lowercased name.
-    by_name: HashMap<String, Vec<String>>,
-    /// Where installers install to, if the game's set up.
-    dir: Option<PathBuf>,
-}
-
-impl Present {
-    fn new(mods: &[InstalledMod], folder: Option<&RelPath>, root: Option<&Path>) -> Self {
-        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
-        for f in mods.iter().flat_map(|m| &m.files) {
-            by_name
-                .entry(f.rel.file_name().to_lowercase())
-                .or_default()
-                .push(f.rel.as_str().to_lowercase());
-        }
-        Self {
-            by_name,
-            dir: root.map(|r| folder.map_or_else(|| r.to_owned(), |f| f.under(r))),
-        }
-    }
-
-    /// Whether `file` (relative to where installers install to) is there.
-    /// Patchwork can't tell whether one that is gets loaded, so it's taken
-    /// to be.
-    fn state(&self, file: &str) -> FileState {
-        let lower = file.to_lowercase();
-        let name = lower.rsplit('/').next().unwrap_or_default();
-        let in_mods = self.by_name.get(name).is_some_and(|paths| {
-            paths
-                .iter()
-                .any(|p| *p == lower || p.ends_with(&format!("/{lower}")))
-        });
-        let in_game = || {
-            self.dir.as_ref().is_some_and(|dir| {
-                RelPath::new(file).is_ok_and(|rel| {
-                    rel.under(dir).exists() || {
-                        RelPath::new(&lower).is_ok_and(|rel| rel.under(dir).exists())
-                    }
-                })
-            })
-        };
-        if in_mods || in_game() {
-            FileState::Active
-        } else {
-            FileState::Missing
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn deploy_inputs(
     profile: &ProfileRef,
@@ -3007,24 +2750,6 @@ fn deploy_inputs(
         field(format!("{:?}", m.format).as_bytes());
         field(m.artifact.file_name().as_bytes());
     }
-    // Only mods with picks saved, like the deployer's settings. Ones
-    // without get the same defaults each time.
-    for m in mods
-        .iter()
-        .filter(|m| order.iter().any(|o| o.name == m.name))
-    {
-        if let Some(picks) = &m.fomod {
-            field(b"fomod");
-            field(m.name.as_bytes());
-            for pick in picks {
-                field(pick.step.as_bytes());
-                field(pick.group.as_bytes());
-                for option in &pick.options {
-                    field(option.as_bytes());
-                }
-            }
-        }
-    }
     // Only extensions that are on for the game, so state kept by one it
     // doesn't use any more can't make deploys stale, and only what they've
     // kept, like the picks.
@@ -3075,6 +2800,7 @@ mod history;
 mod instances;
 mod lists;
 mod local;
+mod options;
 mod profiles;
 mod provision;
 mod sync;
@@ -3082,6 +2808,7 @@ mod sync;
 pub use capture::Captured;
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use lists::ListInfo;
+pub use options::{ModOptionsInfo, ModOptionsView};
 pub use provision::Provisioned;
 pub use sync::{Applied as SyncApplied, ProfileChange};
 

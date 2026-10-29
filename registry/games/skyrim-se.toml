@@ -24,7 +24,7 @@ markers = [
 
 # Mods with a FOMOD installer are installed from the options picked in it,
 # which put files in Data.
-[fomod]
+[ext.fomod.installer]
 folder = "Data"
 
 # Tools like DynDOLOD, Nemesis, Synthesis and BodySlide write their output

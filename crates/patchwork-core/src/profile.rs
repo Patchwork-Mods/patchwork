@@ -8,18 +8,22 @@ use uuid::Uuid;
 use crate::Error;
 use crate::compat::GameVersions;
 use crate::ext::ExtTables;
-use crate::fomod::Selection;
 use crate::list::ListEntry;
 
 /// Schema 2 added `id` and `name`; profiles used to be identified by their
 /// directory, `<game>/<name>`. Schema 3 moved the plugin load order
-/// (`[[plugin]]`) into the Bethesda extension's state, so builds that would
-/// drop extensions' state don't open profiles that have it.
+/// (`[[plugin]]`) and mods' FOMOD picks (`[[mod.fomod]]`) into extensions'
+/// state, so builds that would drop extensions' state don't open profiles
+/// that have it.
 pub const PROFILE_SCHEMA: u32 = 3;
 
 /// Where schema 2's plugin load order went: the Bethesda extension's
 /// `plugins` list.
 pub const LEGACY_PLUGINS: (&str, &str) = ("bethesda", "plugins");
+
+/// Where schema 2's FOMOD picks went: the `fomod` extension's state for
+/// the mod, as `picks`.
+pub const LEGACY_FOMOD: (&str, &str) = ("fomod", "picks");
 
 /// What the user wants installed for a game. Meant to be readable and
 /// hand-editable; the exact versions that were resolved live in the lockfile.
@@ -135,6 +139,7 @@ pub fn upgrade_plugins(ext: &mut ExtTables, plugins: Vec<ListEntry>) {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ProfileModFile")]
 pub struct ProfileMod {
     /// Unique within the profile; how the user refers to the mod.
     pub name: String,
@@ -148,13 +153,53 @@ pub struct ProfileMod {
     /// its source says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_versions: Option<GameVersions>,
-    /// The options picked in the mod's FOMOD installer, if it has one and
-    /// any have been. Without them, it gets the installer's defaults.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fomod: Option<Vec<Selection>>,
     /// What extensions keep for the mod, like [`Profile::ext`].
     #[serde(default, skip_serializing_if = "ExtTables::is_empty")]
     pub ext: ExtTables,
+}
+
+/// A mod as saved, by any schema, like [`ProfileFile`].
+#[derive(Deserialize)]
+struct ProfileModFile {
+    name: String,
+    source: String,
+    id: String,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default = "enabled_by_default")]
+    enabled: bool,
+    #[serde(default)]
+    game_versions: Option<GameVersions>,
+    #[serde(default)]
+    ext: ExtTables,
+    /// Schema 2's FOMOD picks.
+    #[serde(default)]
+    fomod: Option<toml::Value>,
+}
+
+impl From<ProfileModFile> for ProfileMod {
+    fn from(file: ProfileModFile) -> Self {
+        let mut ext = file.ext;
+        if let Some(picks) = file.fomod {
+            let (id, key) = LEGACY_FOMOD;
+            let table = ext.entry(id.to_owned()).or_insert_with(|| {
+                toml::Table::from_iter([(
+                    crate::ext::VERSION_KEY.to_owned(),
+                    toml::Value::Integer(1),
+                )])
+            });
+            table.entry(key).or_insert(picks);
+        }
+        Self {
+            name: file.name,
+            source: file.source,
+            id: file.id,
+            version: file.version,
+            enabled: file.enabled,
+            game_versions: file.game_versions,
+            ext,
+        }
+    }
 }
 
 fn enabled_by_default() -> bool {
@@ -206,6 +251,36 @@ pub(crate) fn no_such_mod(profile: &str, name: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_2s_fomod_picks_move_into_the_fomod_extension() {
+        let profile: Profile = toml::from_str(
+            r#"
+            schema = 2
+            id = "6c1d0f4e-6f53-4b8a-9d36-2b7e0c7f6a11"
+            game = "skyrim-se"
+            name = "default"
+
+            [[mod]]
+            name = "SkyUI"
+            source = "nexus"
+            id = "3863"
+
+            [[mod.fomod]]
+            step = "Main"
+            group = "Version"
+            options = ["SE"]
+            "#,
+        )
+        .unwrap();
+        let state = &profile.mods[0].ext["fomod"];
+        assert_eq!(state["v"].as_integer(), Some(1));
+        assert_eq!(state["picks"][0]["group"].as_str(), Some("Version"));
+        assert_eq!(state["picks"][0]["options"][0].as_str(), Some("SE"));
+        let saved = toml::to_string(&profile).unwrap();
+        assert!(!saved.contains("[[mod.fomod]]"), "{saved}");
+        assert!(saved.contains("[[mod.ext.fomod.picks]]"), "{saved}");
+    }
 
     #[test]
     fn schema_2s_plugins_move_into_the_bethesda_extension() {

@@ -327,7 +327,6 @@ fn from_r2z(format_id: &str, ctx: &FormatContext<'_>, input: &[u8]) -> Result<Sh
                 version: Some(format!("{major}.{minor}.{patch}")),
                 enabled: m.enabled,
                 game_versions: None,
-                fomod: None,
                 ext: Default::default(),
             }
         })

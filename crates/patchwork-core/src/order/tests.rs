@@ -11,7 +11,6 @@ fn profile_mod(name: &str) -> ProfileMod {
         version: None,
         enabled: true,
         game_versions: None,
-        fomod: None,
         ext: Default::default(),
     }
 }

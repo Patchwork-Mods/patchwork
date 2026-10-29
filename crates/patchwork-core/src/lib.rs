@@ -28,7 +28,6 @@ pub mod environment;
 pub mod error;
 pub mod event;
 pub mod ext;
-pub mod fomod;
 pub mod fsutil;
 pub mod game;
 pub mod hash;
@@ -38,6 +37,7 @@ pub mod list;
 pub mod locate;
 pub mod lock;
 pub mod matching;
+pub mod options;
 pub mod order;
 pub mod paths;
 pub mod profile;
@@ -62,8 +62,8 @@ use std::time::Duration;
 pub use error::{Error, Result};
 pub use patchwork::{
     Builder, Captured, Change, DeployStatus, GameInstall, HISTORY_LIMIT, HistoryEntry,
-    ImportOptions, Imported, KnownSummary, KnownVersions, ListInfo, Lookup, Patchwork,
-    ProfileChange, Provisioned, SyncApplied,
+    ImportOptions, Imported, KnownSummary, KnownVersions, ListInfo, Lookup, ModOptionsInfo,
+    ModOptionsView, Patchwork, ProfileChange, Provisioned, SyncApplied,
 };
 
 /// The HTTP client every request shares, so connections to a host are kept

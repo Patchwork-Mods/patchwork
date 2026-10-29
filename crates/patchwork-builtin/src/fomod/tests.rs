@@ -127,7 +127,7 @@ fn defaults_are_the_recommended_options() {
     // 4K sets the flag that shows the second step
     assert_eq!(steps, ["Textures", "Big extras"]);
     let resolution = &r.steps[0].groups[0];
-    assert_eq!(resolution.kind, GroupKind::ExactlyOne);
+    assert_eq!(resolution.kind, Pick::ExactlyOne);
     assert!(!resolution.options[0].picked);
     assert!(resolution.options[1].picked);
     assert_eq!(
@@ -218,7 +218,7 @@ fn option_kinds_can_depend_on_files() {
         }
     });
     let alpha = &r.steps[1].groups[0].options[0];
-    assert_eq!(alpha.kind, OptionKind::Recommended);
+    assert_eq!(alpha.kind, ItemState::Recommended);
     assert!(alpha.picked);
 }
 

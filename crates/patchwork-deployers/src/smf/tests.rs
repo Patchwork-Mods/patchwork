@@ -196,7 +196,6 @@ impl Env {
             env: Default::default(),
             roots: Default::default(),
             launch: Default::default(),
-            fomod: None,
             capture: None,
             instances: None,
             provision: None,

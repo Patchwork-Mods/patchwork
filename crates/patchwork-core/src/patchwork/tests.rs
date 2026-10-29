@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
+use crate::relpath::RelPath;
 
 fn known_summary(latest: &str, fetched: &str) -> KnownSummary {
     KnownSummary {
@@ -116,7 +117,6 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         env: Default::default(),
         roots: Default::default(),
         launch: Default::default(),
-        fomod: None,
         capture: None,
         instances: None,
         provision: None,
@@ -952,7 +952,6 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         version: None,
         enabled: false,
         game_versions: None,
-        fomod: None,
         ext: Default::default(),
     });
     loaded.hidden_tags = vec!["library".to_owned()];
@@ -1108,7 +1107,6 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         enabled: true,
         game_versions: None,
         ext: Default::default(),
-        fomod: None,
     };
     let locked = |path: &Path, hash| LockedMod {
         name: path.file_stem().unwrap().to_string_lossy().into_owned(),
@@ -1828,23 +1826,145 @@ impl Deployer for AsPacked {
     }
 }
 
+/// Mods with a `looks/` folder install just one of the folders in it: the
+/// look picked, or `plain`.
+struct Looks;
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Look {
+    look: Option<String>,
+}
+
+impl Looks {
+    fn picked(
+        ctx: &crate::options::ModContext<'_>,
+        answers: Option<&[crate::options::Answer]>,
+    ) -> String {
+        match answers {
+            Some(answers) => answers[0].items[0].clone(),
+            None => ctx
+                .state::<Look>()
+                .unwrap()
+                .look
+                .unwrap_or("plain".to_owned()),
+        }
+    }
+}
+
+impl crate::options::ModTransform for Looks {
+    fn applies(&self, _: &crate::options::ModContext<'_>, m: &crate::options::ModPeek<'_>) -> bool {
+        m.has_near_top("looks/plain/look.txt")
+    }
+
+    fn transform(
+        &self,
+        ctx: &crate::options::ModContext<'_>,
+        m: &InstalledMod,
+    ) -> Result<crate::options::Transformed> {
+        let prefix = format!("looks/{}/", Self::picked(ctx, None));
+        let folder = ctx.config()["folder"].as_str().unwrap();
+        Ok(crate::options::Transformed {
+            files: m
+                .files
+                .iter()
+                .filter_map(|f| {
+                    let rest = f.rel.as_str().split_once(&prefix)?.1;
+                    Some((
+                        RelPath::new(&format!("{folder}/{rest}")).ok()?,
+                        f.rel.clone(),
+                    ))
+                })
+                // and one that isn't there, which is left out
+                .chain([(RelPath::new("x").unwrap(), RelPath::new("nope").unwrap())])
+                .collect(),
+            warnings: vec![format!("`{}` looks {}", m.name, Self::picked(ctx, None))],
+        })
+    }
+}
+
+impl crate::options::ModOptions for Looks {
+    fn title(&self) -> &str {
+        "Looks"
+    }
+
+    fn applies(&self, _: &crate::options::ModContext<'_>, m: &crate::options::ModPeek<'_>) -> bool {
+        m.has_near_top("looks/plain/look.txt")
+    }
+
+    fn form(
+        &self,
+        ctx: &crate::options::ModContext<'_>,
+        m: &InstalledMod,
+        answers: Option<&[crate::options::Answer]>,
+    ) -> Result<crate::options::Form> {
+        use crate::options::{Answer, Form, Group, Item, ItemState, Page, Pick};
+        let picked = Self::picked(ctx, answers);
+        let image = m.files.iter().find(|f| f.rel.file_name() == "fancy.png");
+        Ok(Form {
+            title: "Pretty Things".to_owned(),
+            pages: vec![Page {
+                title: "Main".to_owned(),
+                groups: vec![Group {
+                    id: "look".to_owned(),
+                    title: "Look".to_owned(),
+                    pick: Pick::ExactlyOne,
+                    items: ["plain", "fancy"]
+                        .map(|look| Item {
+                            id: look.to_owned(),
+                            title: look.to_owned(),
+                            description: None,
+                            image: (look == "fancy").then(|| image.unwrap().rel.clone()),
+                            state: ItemState::Optional,
+                            picked: picked == look,
+                        })
+                        .into(),
+                    defaulted: !ctx.saved(),
+                }],
+            }],
+            summary: None,
+            warnings: Vec::new(),
+            answers: vec![Answer {
+                group: "look".to_owned(),
+                items: vec![picked],
+            }],
+        })
+    }
+
+    fn save(
+        &self,
+        ctx: &crate::options::ModContext<'_>,
+        _: &InstalledMod,
+        answers: &[crate::options::Answer],
+    ) -> Result<toml::Table> {
+        let look = Look {
+            look: Some(Self::picked(ctx, Some(answers))),
+        };
+        Ok(toml::Table::try_from(&look).unwrap())
+    }
+}
+
+struct LooksExtension;
+
+impl Extension for LooksExtension {
+    fn id(&self) -> &'static str {
+        "looks"
+    }
+
+    fn register(&self, ext: &mut crate::ext::Registrar<'_>) {
+        ext.mod_transform("pick", Looks).mod_options("pick", Looks);
+    }
+}
+
 #[tokio::test]
-async fn installers_deploy_the_options_picked() {
+async fn mod_options_change_what_mods_install() {
+    use crate::options::Answer;
+
     let tmp = tempfile::tempdir().unwrap();
     let packed = tmp.path().join("mods/Pretty");
     for (file, text) in [
-        (
-            "Pretty/fomod/ModuleConfig.xml",
-            r#"<config><moduleName>Pretty Things</moduleName><installSteps><installStep name="Main">
-            <optionalFileGroups><group name="Look" type="SelectExactlyOne"><plugins order="Explicit">
-                <plugin name="Plain"><description /><files><folder source="a" destination="" /></files>
-                    <typeDescriptor><type name="Recommended" /></typeDescriptor></plugin>
-                <plugin name="Fancy"><description /><files><folder source="b" destination="" /></files>
-                    <typeDescriptor><type name="Optional" /></typeDescriptor></plugin>
-            </plugins></group></optionalFileGroups></installStep></installSteps></config>"#,
-        ),
-        ("Pretty/a/look.txt", "plain"),
-        ("Pretty/b/look.txt", "fancy"),
+        ("Pretty/looks/plain/look.txt", "plain"),
+        ("Pretty/looks/fancy/look.txt", "fancy"),
+        ("Pretty/fancy.png", "png"),
     ] {
         let path = packed.join(file);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1853,12 +1973,16 @@ async fn installers_deploy_the_options_picked() {
     let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
         .source(LocalFiles)
         .deployer(AsPacked)
+        .extension(LooksExtension)
         .open()
         .unwrap();
     let mut def = new_game("my-game", "as-packed");
-    def.fomod = Some(crate::game::FomodDef {
-        folder: Some(RelPath::new("Data").unwrap()),
-    });
+    let mut looks = toml::Table::new();
+    looks.insert(
+        "pick".to_owned(),
+        toml::Value::Table(toml::from_str(r#"folder = "Data""#).unwrap()),
+    );
+    def.ext.insert("looks".to_owned(), looks);
     pw.add_game(def).unwrap();
     let game = tmp.path().join("game");
     fs::create_dir_all(&game).unwrap();
@@ -1869,54 +1993,72 @@ async fn installers_deploy_the_options_picked() {
         .unwrap();
     let look = game.canonicalize().unwrap().join("Data/look.txt");
 
-    // until options are picked, it gets the ones the installer recommends
+    // until something's picked, it gets the defaults
     let plan = pw.plan_deploy(&profile).await.unwrap();
     assert!(
+        plan.warnings.iter().any(|w| w == "`Pretty` looks plain"),
+        "{:?}",
         plan.warnings
-            .iter()
-            .any(|w| w.contains("haven't been picked")),
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("hasn't got nope")),
         "{:?}",
         plan.warnings
     );
     pw.apply(&plan).unwrap();
     assert_eq!(fs::read_to_string(&look).unwrap(), "plain");
+    let found = pw.mods_with_options(&profile).unwrap();
     assert_eq!(
-        pw.installers(&profile).unwrap(),
-        HashSet::from(["Pretty".to_owned()])
+        found["Pretty"],
+        [crate::ModOptionsInfo {
+            id: "looks.pick".to_owned(),
+            title: "Looks".to_owned(),
+            saved: false,
+        }]
     );
 
-    let view = pw.installer(&profile, "Pretty", None).unwrap().unwrap();
-    assert_eq!(view.name, "Pretty Things");
+    let view = pw.mod_options(&profile, "Pretty", None, None).unwrap();
+    assert_eq!(view.id, "looks.pick");
+    assert_eq!(view.form.title, "Pretty Things");
     assert!(!view.saved);
-    assert!(view.steps[0].groups[0].defaulted);
-    assert!(view.steps[0].groups[0].options[0].picked);
+    assert!(view.form.pages[0].groups[0].defaulted);
+    assert!(view.form.pages[0].groups[0].items[0].picked);
+    assert_eq!(view.images.len(), 1);
+    assert!(view.images["Pretty/fancy.png"].ends_with("fancy.png"));
 
-    // trying picks out doesn't save them
-    let fancy = [Selection {
-        step: "Main".to_owned(),
-        group: "Look".to_owned(),
-        options: vec!["Fancy".to_owned()],
+    // trying answers out doesn't save them
+    let fancy = [Answer {
+        group: "look".to_owned(),
+        items: vec!["fancy".to_owned()],
     }];
     let view = pw
-        .installer(&profile, "Pretty", Some(&fancy))
-        .unwrap()
+        .mod_options(&profile, "Pretty", Some("looks.pick"), Some(&fancy))
         .unwrap();
-    assert!(view.steps[0].groups[0].options[1].picked);
-    assert_eq!(view.files, 1);
+    assert!(view.form.pages[0].groups[0].items[1].picked);
     assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
 
-    pw.set_installer(&profile, "Pretty", Some(view.selections))
+    pw.set_mod_options(&profile, "Pretty", None, Some(&view.form.answers))
         .unwrap();
+    assert!(pw.mods_with_options(&profile).unwrap()["Pretty"][0].saved);
     assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Stale);
-    let plan = pw.plan_deploy(&profile).await.unwrap();
-    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
-    pw.apply(&plan).unwrap();
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
     assert_eq!(fs::read_to_string(&look).unwrap(), "fancy");
 
     // forgetting them goes back to the defaults
-    pw.set_installer(&profile, "Pretty", None).unwrap();
+    pw.set_mod_options(&profile, "Pretty", None, None).unwrap();
+    assert!(
+        !pw.mod_options(&profile, "Pretty", None, None)
+            .unwrap()
+            .saved
+    );
     pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
     assert_eq!(fs::read_to_string(&look).unwrap(), "plain");
+
+    // and nothing's done for games that don't turn it on
+    let err = pw
+        .mod_options(&profile, "Pretty", Some("looks.other"), None)
+        .unwrap_err();
+    assert!(err.to_string().contains("`looks.other`"), "{err}");
 }
 
 #[tokio::test]
