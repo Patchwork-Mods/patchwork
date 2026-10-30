@@ -421,3 +421,39 @@ fn too_many_full_plugins_are_warned_about() {
     }];
     assert!(env.limit(&off, &mods).is_empty());
 }
+
+#[test]
+fn too_many_light_plugins_are_warned_about() {
+    let mut env = Env::new();
+    let mods = [env.installed(
+        "M",
+        &[
+            ("A.esl", plugin_bytes(0, &[])),
+            ("B.esp", plugin_bytes(LIGHT_FLAG, &[])),
+            ("C.esp", plugin_bytes(0, &[])),
+        ],
+    )];
+    let set_limit = |env: &mut Env, limit: i64| {
+        env.def.ext.get_mut(EXTENSION).unwrap()[LIST]
+            .as_table_mut()
+            .unwrap()
+            .insert("light_limit".to_owned(), toml::Value::Integer(limit));
+    };
+    // light by extension or by flag; full ones don't count
+    set_limit(&mut env, 2);
+    assert!(env.limit(&[], &mods).is_empty());
+    set_limit(&mut env, 1);
+    let problems = env.limit(&[], &mods);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].message.starts_with("2 light plugins"),
+        "{problems:?}"
+    );
+    assert_eq!(problems[0].list.as_deref(), Some(LIST));
+
+    let off = [ListEntry {
+        name: "A.esl".to_owned(),
+        enabled: false,
+    }];
+    assert!(env.limit(&off, &mods).is_empty());
+}

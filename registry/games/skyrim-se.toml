@@ -60,6 +60,7 @@ file = "appdata:plugins.txt"
 implicit = ["Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm"]
 ccc = "Skyrim.ccc"
 limit = 254
+light_limit = 4096
 
 [roots.appdata]
 path = "{localappdata}/Skyrim Special Edition"

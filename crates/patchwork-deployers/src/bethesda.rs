@@ -34,6 +34,7 @@ use crate::RulesDeployer;
 /// implicit = ["Skyrim.esm"]       # always loaded first
 /// ccc = "Skyrim.ccc"              # lists Creation Club plugins, also loaded first
 /// limit = 254                     # how many plugins that aren't light it can load
+/// light_limit = 4096              # and how many light ones
 /// ```
 pub struct BethesdaDeployer;
 
@@ -42,8 +43,9 @@ pub struct BethesdaDeployer;
 /// [`BethesdaDeployer`]).
 pub struct BethesdaLoadOrder;
 
-/// Warns when more plugins that aren't light are enabled than the game
-/// can load: the `limit` in `[ext.bethesda.plugins]`. The Bethesda
+/// Warns when more plugins are enabled than the game can load: more that
+/// aren't light than the `limit` in `[ext.bethesda.plugins]`, or more
+/// light ones than its `light_limit`. The Bethesda
 /// extension's `limit` check, so a game can turn it off with
 /// `off = ["limit"]` in `[ext.bethesda]`.
 pub struct PluginLimit;
@@ -71,6 +73,7 @@ struct PluginsConfig {
     implicit: Vec<String>,
     ccc: Option<String>,
     limit: Option<usize>,
+    light_limit: Option<usize>,
 }
 
 impl PluginsConfig {
@@ -441,24 +444,30 @@ impl Check for PluginLimit {
         let (Some(list), Ok(Some(config))) = (ctx.list(LIST), PluginsConfig::of(ctx.game())) else {
             return Vec::new();
         };
-        let Some(limit) = config.limit else {
-            return Vec::new();
-        };
-        let light = |item: &ListItem| item.badges.iter().any(|b| b == LIGHT);
-        let full = list.fixed.iter().filter(|i| !light(i)).count()
-            + list
-                .items
-                .iter()
-                .filter(|i| i.enabled && !light(&i.item))
-                .count();
-        if full > limit {
-            vec![Problem::warning(format!(
-                "{full} plugins that aren't light are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or use light versions of them"
-            ))
-            .about_list(LIST)]
-        } else {
-            Vec::new()
+        let is_light = |item: &ListItem| item.badges.iter().any(|b| b == LIGHT);
+        let enabled = list
+            .fixed
+            .iter()
+            .chain(list.items.iter().filter(|i| i.enabled).map(|i| &i.item));
+        let (light, full): (Vec<_>, Vec<_>) = enabled.partition(|i| is_light(i));
+        let mut problems = Vec::new();
+        if let Some(limit) = config.limit
+            && full.len() > limit
+        {
+            problems.push(Problem::warning(format!(
+                "{} plugins that aren't light are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or use light versions of them",
+                full.len()
+            )));
         }
+        if let Some(limit) = config.light_limit
+            && light.len() > limit
+        {
+            problems.push(Problem::warning(format!(
+                "{} light plugins are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or merge some of them",
+                light.len()
+            )));
+        }
+        problems.into_iter().map(|p| p.about_list(LIST)).collect()
     }
 }
 
