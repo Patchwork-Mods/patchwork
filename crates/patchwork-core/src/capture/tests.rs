@@ -133,3 +133,52 @@ fn deploying_again_keeps_tool_output_out_of_the_baseline() {
     let output = find(&state.root, &def, &state, &again).unwrap();
     assert_eq!(output.files.len(), 1);
 }
+
+#[test]
+fn only_what_changed_since_a_snapshot_is_kept() {
+    let (_tmp, state) = setup(&[]);
+    let def = def(&[]);
+    let baseline = baseline(&state.root, &def, &state, None).unwrap();
+    fs::write(state.root.join("Data/Before.esp"), "before").unwrap();
+    let before = snapshot(&state.root, &def).unwrap();
+    fs::write(state.root.join("Data/After.esp"), "after").unwrap();
+    let output = find(&state.root, &def, &state, &baseline).unwrap();
+    assert_eq!(output.files.len(), 2);
+    let output = since(output, &state.root, &before);
+    assert_eq!(output.files.len(), 1);
+    assert_eq!(output.files[0].path, rel("Data/After.esp"));
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_store_files_are_read_only_while_protected() {
+    let (tmp, mut state) = setup(&[("Data/copied.esp", "copied")]);
+    let src = tmp.path().join("store/linked");
+    fs::write(&src, "linked").unwrap();
+    fs::hard_link(&src, state.root.join("Data/linked.esp")).unwrap();
+    let outside = tmp.path().join("store/outside");
+    fs::write(&outside, "outside").unwrap();
+    fs::hard_link(&outside, state.root.join("outside.txt")).unwrap();
+    for (path, src) in [("Data/linked.esp", &src), ("outside.txt", &outside)] {
+        state.files.insert(
+            Dest::game(rel(path)),
+            DeployedFile {
+                mod_name: "A Mod".to_owned(),
+                src: src.clone(),
+                hash: ContentHash::of_file(src).unwrap(),
+                backup: None,
+                rewritten: false,
+            },
+        );
+    }
+    let readonly = |p: &Path| p.metadata().unwrap().permissions().readonly();
+
+    let protected = protect(&state.root, &def(&[]), &state).unwrap();
+    assert_eq!(protected.len(), 1);
+    assert!(readonly(&src));
+    // copies can't change the store, and only the capture folders count
+    assert!(!readonly(&tmp.path().join("store/Data_copied.esp")));
+    assert!(!readonly(&outside));
+    drop(protected);
+    assert!(!readonly(&src));
+}

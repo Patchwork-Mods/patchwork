@@ -1181,3 +1181,43 @@ fn what_skyrim_tools_make_is_captured_and_loaded() {
     assert!(order.contains("*Trees.esp\r\n*DynDOLOD.esp"), "{order}");
     assert!(env.run(&["capture"]).contains("no files to capture"));
 }
+
+#[cfg(unix)]
+#[test]
+fn tools_run_through_patchwork_are_captured_and_loaded() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::new();
+    let game = env.path("Skyrim Special Edition");
+    fs::create_dir_all(game.join("Data")).unwrap();
+    fs::write(game.join("Data/Skyrim.esm"), plugin(true, &[])).unwrap();
+    let appdata = env.path("AppData/Local/Skyrim Special Edition");
+    fs::create_dir_all(&appdata).unwrap();
+    env.run(&["game", "set-path", "skyrim-se", game.to_str().unwrap()]);
+    env.run(&[
+        "game",
+        "set",
+        "skyrim-se",
+        "root.appdata",
+        appdata.to_str().unwrap(),
+    ]);
+    env.run(&["profile", "new", "skyrim-se/main"]);
+
+    // a stand-in for a patcher, which writes a plugin
+    let tool = env.path("Patcher/Patcher.sh");
+    fs::create_dir_all(tool.parent().unwrap()).unwrap();
+    fs::copy(game.join("Data/Skyrim.esm"), env.path("Patcher/out.esp")).unwrap();
+    fs::write(&tool, "#!/bin/sh\ncp out.esp \"$1/Data/Patch.esp\"\n").unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // deploys first, since nothing is yet
+    let out = env.run(&["tool", tool.to_str().unwrap(), game.to_str().unwrap()]);
+    assert!(out.contains("Data/Patch.esp"), "{out}");
+    assert!(
+        out.contains("captured 1 file into `Patcher Output`"),
+        "{out}"
+    );
+    assert!(env.run(&["list"]).contains("Patcher Output"));
+    assert!(game.join("Data/Patch.esp").exists());
+    assert!(read(appdata.join("plugins.txt")).contains("Patch.esp"));
+}

@@ -814,13 +814,13 @@ pub fn drift(path: &Path, entry: &DeployedFile, check: Check) -> Option<Drift> {
 }
 
 #[cfg(unix)]
-fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+pub(crate) fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
     a.dev() == b.dev() && a.ino() == b.ino()
 }
 
 #[cfg(not(unix))]
-fn same_file(_: &fs::Metadata, _: &fs::Metadata) -> bool {
+pub(crate) fn same_file(_: &fs::Metadata, _: &fs::Metadata) -> bool {
     false
 }
 

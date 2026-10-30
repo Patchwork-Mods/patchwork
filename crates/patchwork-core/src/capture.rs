@@ -11,14 +11,21 @@
 //! is recorded as its [`Baseline`]: the game's own files, and anything else
 //! that was there before patchwork first deployed. Anything new since, and
 //! any deployed file that's been replaced, is a tool's output.
+//!
+//! A tool run through patchwork is narrowed down further, to what changed
+//! while it ran (see [`snapshot`]). Deployed files that are links to the
+//! store are made read-only while it runs (see [`protect`]), so a tool that
+//! writes into one in place fails rather than changing the store's copy.
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 
-use crate::deploy::{Check, DeployState, Dest, Drift, drift};
+use crate::deploy::{Check, DeployState, Dest, Drift, drift, same_file};
+use crate::error::IoContext;
 use crate::game::CaptureDef;
 use crate::relpath::RelPath;
 use crate::{Error, Result};
@@ -140,6 +147,89 @@ pub fn find(
         }
     })?;
     Ok(output)
+}
+
+/// What every file in the game's capture folders looked like, by path in
+/// the game's folder.
+pub type Snapshot = BTreeMap<RelPath, Stamp>;
+
+/// What's in `def`'s folders under `root` now, ignored files left out.
+pub fn snapshot(root: &Path, def: &CaptureDef) -> Result<Snapshot> {
+    let mut snapshot = Snapshot::new();
+    walk(root, def, |rel, path| {
+        if let Some(stamp) = Stamp::of(path) {
+            snapshot.insert(rel, stamp);
+        }
+    })?;
+    Ok(snapshot)
+}
+
+/// What of `output`, found under `root`, has changed since `before`.
+pub fn since(mut output: ToolOutput, root: &Path, before: &Snapshot) -> ToolOutput {
+    let changed = |rel: &RelPath| Stamp::of(&rel.under(root)).as_ref() != before.get(rel);
+    output.files.retain(|f| changed(&f.path));
+    output.changed.retain(changed);
+    output
+}
+
+/// Store files made read-only by [`protect`], which are put back how they
+/// were when it's dropped.
+#[derive(Debug, Default)]
+pub struct Protected {
+    files: Vec<(PathBuf, fs::Permissions)>,
+}
+
+impl Protected {
+    /// How many files it made read-only.
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+}
+
+impl Drop for Protected {
+    fn drop(&mut self) {
+        for (path, permissions) in self.files.drain(..) {
+            // Nothing to be done about one that's gone since.
+            let _ = fs::set_permissions(&path, permissions);
+        }
+    }
+}
+
+/// Makes the store's copies of the files deployed in `def`'s folders under
+/// `root` read-only, where what's deployed is a link to them (a hardlink
+/// or a symlink), until what's returned is dropped. Copies are left alone,
+/// since writing to them can't change the store.
+pub fn protect(root: &Path, def: &CaptureDef, state: &DeployState) -> Result<Protected> {
+    let mut protected = Protected::default();
+    for (dest, entry) in &state.files {
+        let in_folders = def.folders.iter().any(|folder| {
+            let mut parts = dest.path.components();
+            folder
+                .components()
+                .all(|f| parts.next().is_some_and(|p| p.eq_ignore_ascii_case(f)))
+        });
+        if !dest.root.is_game() || !in_folders || entry.mod_name.is_empty() {
+            continue;
+        }
+        let path = dest.path.under(root);
+        let (Ok(meta), Ok(src)) = (path.symlink_metadata(), entry.src.metadata()) else {
+            continue;
+        };
+        let linked = meta.file_type().is_symlink() || same_file(&meta, &src);
+        let permissions = src.permissions();
+        if !linked || permissions.readonly() {
+            continue;
+        }
+        let mut readonly = permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&entry.src, readonly).at(&entry.src)?;
+        protected.files.push((entry.src.clone(), permissions));
+    }
+    Ok(protected)
 }
 
 /// Calls `f` with each file (or link to one) in `def`'s folders under

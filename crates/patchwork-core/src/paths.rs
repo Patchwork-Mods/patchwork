@@ -165,6 +165,11 @@ impl Paths {
         self.data.join("logs").join(format!("launch-{game}.log"))
     }
 
+    /// What a tool printed the last time patchwork ran one for `game`.
+    pub fn tool_log(&self, game: &str) -> PathBuf {
+        self.data.join("logs").join(format!("tool-{game}.log"))
+    }
+
     /// Who the user plays as in games patchwork starts itself; see
     /// [`crate::account`].
     pub fn account_file(&self) -> PathBuf {

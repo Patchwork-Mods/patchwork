@@ -64,7 +64,7 @@ pub use error::{Error, Result};
 pub use patchwork::{
     Builder, Captured, Change, DeployStatus, GameInstall, HISTORY_LIMIT, HistoryEntry,
     ImportOptions, Imported, KnownSummary, KnownVersions, ListInfo, Lookup, ModOptionsInfo,
-    ModOptionsView, Patchwork, ProfileChange, Provisioned, SyncApplied,
+    ModOptionsView, Patchwork, ProfileChange, Provisioned, SyncApplied, ToolRan,
 };
 
 /// The HTTP client every request shares, so connections to a host are kept

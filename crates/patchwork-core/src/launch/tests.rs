@@ -429,3 +429,22 @@ fn commands_print_as_a_shell_would_take_them() {
         r"WINEDLLOVERRIDES=winhttp=n,b '/games/My Game/game' -a 'it'\''s'"
     );
 }
+
+#[test]
+fn tools_run_from_their_own_folder_in_the_games_prefix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let setup = steam_setup(tmp.path(), &["Game.exe"]);
+    let exe = tmp.path().join("DynDOLOD/DynDOLODx64.exe");
+    std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+    std::fs::write(&exe, "").unwrap();
+    let launch = plan_tool(&game(""), &setup, &exe, vec!["-SSE".to_owned()]).unwrap();
+    assert_eq!(launch.option, TOOL);
+    assert_eq!(launch.program, tmp.path().join("Proton 9.0/proton"));
+    assert_eq!(launch.args, ["run", &*exe.to_string_lossy(), "-SSE"]);
+    assert_eq!(launch.cwd, exe.parent().unwrap());
+    // it's not the game, so Steam isn't told it is
+    assert!(!launch.needs_steam());
+
+    let missing = tmp.path().join("missing.exe");
+    assert!(plan_tool(&game(""), &setup, &missing, Vec::new()).is_err());
+}

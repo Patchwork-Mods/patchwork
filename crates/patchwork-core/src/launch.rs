@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -349,7 +349,6 @@ pub fn plan(game: &GameDef, option: Option<&str>, setup: &Setup) -> Result<Launc
             setup.install.display()
         )));
     }
-    let cwd = path.parent().unwrap_or(&setup.install).to_owned();
     let mut env = def.env;
     if let Some(steam) = &setup.steam {
         // Without these, a Steam game started outside Steam asks Steam to
@@ -357,18 +356,65 @@ pub fn plan(game: &GameDef, option: Option<&str>, setup: &Setup) -> Result<Launc
         env.insert("SteamAppId".to_owned(), steam.app.to_string());
         env.insert("SteamGameId".to_owned(), steam.app.to_string());
     }
+    run_exe(
+        game,
+        setup,
+        chosen.id.clone(),
+        path,
+        def.args,
+        env,
+        &overrides,
+    )
+}
+
+/// The id of the [`Launch::option`] that [`plan_tool`] makes.
+pub const TOOL: &str = "tool";
+
+/// How to run the tool at `exe`, which can be anywhere, for `game`: the
+/// way the game's own exe would be run directly, so a Windows tool runs in
+/// the game's Wine prefix and finds it there.
+pub fn plan_tool(game: &GameDef, setup: &Setup, exe: &Path, args: Vec<String>) -> Result<Launch> {
+    if !exe.is_file() {
+        return Err(Error::invalid(format!("{} isn't a file", exe.display())));
+    }
+    run_exe(
+        game,
+        setup,
+        TOOL.to_owned(),
+        exe.to_owned(),
+        args,
+        BTreeMap::new(),
+        &[],
+    )
+}
+
+/// How to run the exe at `path` directly for `game`: as it is, or through
+/// Proton or Wine if it's for Windows and this isn't.
+fn run_exe(
+    game: &GameDef,
+    setup: &Setup,
+    option: String,
+    path: PathBuf,
+    args: Vec<String>,
+    mut env: BTreeMap<String, String>,
+    overrides: &[String],
+) -> Result<Launch> {
+    let under_wine = setup.os != Os::Windows
+        && path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+    let cwd = path.parent().unwrap_or(&setup.install).to_owned();
     if !under_wine {
         return Ok(Launch {
-            option: chosen.id.clone(),
+            option,
             via: Via::Direct,
             program: path,
-            args: def.args,
+            args,
             env,
             cwd,
             prefix_overrides: None,
         });
     }
-
     if !overrides.is_empty() {
         let mut value = overrides
             .iter()
@@ -429,10 +475,9 @@ pub fn plan(game: &GameDef, option: Option<&str>, setup: &Setup) -> Result<Launc
                 .into_iter()
                 .map(|p| p.to_string_lossy().into_owned());
             let program = PathBuf::from(command.next().expect("there's always Proton"));
-            let mut args: Vec<String> = command.collect();
-            args.extend(def.args);
+            let args = command.chain(args).collect();
             Ok(Launch {
-                option: chosen.id.clone(),
+                option,
                 via: Via::Proton {
                     proton: proton.clone(),
                 },
@@ -448,10 +493,11 @@ pub fn plan(game: &GameDef, option: Option<&str>, setup: &Setup) -> Result<Launc
                 "WINEPREFIX".to_owned(),
                 prefix.to_string_lossy().into_owned(),
             );
-            let mut args = vec![path.to_string_lossy().into_owned()];
-            args.extend(def.args);
+            let args = std::iter::once(path.to_string_lossy().into_owned())
+                .chain(args)
+                .collect();
             Ok(Launch {
-                option: chosen.id.clone(),
+                option,
                 via: Via::Wine {
                     prefix: prefix.clone(),
                 },
@@ -653,6 +699,49 @@ impl Launch {
             Some(o) => add_prefix_overrides(&o.prefix, &o.dlls)?,
             None => Vec::new(),
         };
+        let mut command = self.command(log)?;
+        let mut child = command.spawn().at(&self.program)?;
+        let since = Instant::now();
+        while since.elapsed() < SETTLE {
+            // Steam's command hands the game to Steam and exits, fine; one
+            // that fails this soon is the game, or Proton, not starting
+            if let Some(status) = child.try_wait().at(&self.program)? {
+                if status.success() {
+                    return Ok(Started { added_overrides });
+                }
+                let output = std::fs::read_to_string(log).unwrap_or_default();
+                let tail: Vec<&str> = output.lines().rev().take(15).collect();
+                let tail: Vec<&str> = tail.into_iter().rev().collect();
+                return Err(Error::invalid(format!(
+                    "the game didn't start ({status}){}; everything it printed is in {}",
+                    if tail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(":\n{}", tail.join("\n"))
+                    },
+                    log.display()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        // reaped in the background, so a long-running patchwork doesn't
+        // collect finished games
+        std::thread::spawn(move || child.wait());
+        Ok(Started { added_overrides })
+    }
+
+    /// Runs it, with what it prints going to `log`, and waits for it to
+    /// finish.
+    pub fn run(&self, log: &Path) -> Result<ExitStatus> {
+        self.command(log)?
+            .spawn()
+            .at(&self.program)?
+            .wait()
+            .at(&self.program)
+    }
+
+    /// The command that runs it, with what it prints going to `log`.
+    fn command(&self, log: &Path) -> Result<Command> {
         if let Some(dir) = log.parent() {
             std::fs::create_dir_all(dir).at(dir)?;
         }
@@ -697,34 +786,7 @@ impl Launch {
                 DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
             );
         }
-        let mut child = command.spawn().at(&self.program)?;
-        let since = Instant::now();
-        while since.elapsed() < SETTLE {
-            // Steam's command hands the game to Steam and exits, fine; one
-            // that fails this soon is the game, or Proton, not starting
-            if let Some(status) = child.try_wait().at(&self.program)? {
-                if status.success() {
-                    return Ok(Started { added_overrides });
-                }
-                let output = std::fs::read_to_string(log).unwrap_or_default();
-                let tail: Vec<&str> = output.lines().rev().take(15).collect();
-                let tail: Vec<&str> = tail.into_iter().rev().collect();
-                return Err(Error::invalid(format!(
-                    "the game didn't start ({status}){}; everything it printed is in {}",
-                    if tail.is_empty() {
-                        String::new()
-                    } else {
-                        format!(":\n{}", tail.join("\n"))
-                    },
-                    log.display()
-                )));
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        // reaped in the background, so a long-running patchwork doesn't
-        // collect finished games
-        std::thread::spawn(move || child.wait());
-        Ok(Started { added_overrides })
+        Ok(command)
     }
 
     /// Whether the game needs Steam to be running already. Games run from

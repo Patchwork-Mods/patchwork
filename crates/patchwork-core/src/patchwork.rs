@@ -2811,7 +2811,7 @@ mod profiles;
 mod provision;
 mod sync;
 
-pub use capture::Captured;
+pub use capture::{Captured, ToolRan};
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use lists::ListInfo;
 pub use options::{ModOptionsInfo, ModOptionsView};

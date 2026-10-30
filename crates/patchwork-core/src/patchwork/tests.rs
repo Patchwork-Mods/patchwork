@@ -2153,6 +2153,93 @@ async fn what_tools_write_is_captured_as_a_mod() {
     assert!(game.join("Data/Third.esp").exists());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn tools_run_through_patchwork_have_what_they_write_captured() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let packed = tmp.path().join("mods/Body");
+    fs::create_dir_all(packed.join("Data/meshes")).unwrap();
+    fs::write(packed.join("Data/meshes/body.nif"), "base body").unwrap();
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
+        .source(LocalFiles)
+        .deployer(AsPacked)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "as-packed");
+    def.link = crate::game::LinkMethod::Hardlink;
+    def.capture = Some(crate::game::CaptureDef {
+        folders: vec![RelPath::new("Data").unwrap()],
+        ignore: Vec::new(),
+    });
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(game.join("Data")).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let game = game.canonicalize().unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    pw.add_mod(&profile, local_spec(&packed), None, true)
+        .await
+        .unwrap();
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    // there before the tool ran, so not its
+    fs::write(game.join("Data/Stray.esp"), "stray").unwrap();
+
+    // writes a plugin, and notes whether the body was read-only meanwhile
+    let tool = tmp.path().join("tool.sh");
+    fs::write(
+        &tool,
+        "#!/bin/sh\necho patch > \"$1/Data/Patch.esp\"\nls -l \"$1/Data/meshes/body.nif\" > \"$2\"\nexit $3\n",
+    )
+    .unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    let mode = tmp.path().join("mode");
+    let args = |code: &str| {
+        vec![
+            game.to_string_lossy().into_owned(),
+            mode.to_string_lossy().into_owned(),
+            code.to_owned(),
+        ]
+    };
+
+    // a tool that fails leaves what it wrote be
+    let failing = pw.plan_tool(&profile, &tool, args("3")).unwrap();
+    let ran = pw
+        .run_tool(&profile, &failing, "Tool Output")
+        .await
+        .unwrap();
+    assert!(!ran.success);
+    assert!(ran.captured.is_none());
+    assert!(game.join("Data/Patch.esp").exists());
+    fs::remove_file(game.join("Data/Patch.esp")).unwrap();
+
+    let launch = pw.plan_tool(&profile, &tool, args("0")).unwrap();
+    // the name's checked before it runs
+    assert!(pw.run_tool(&profile, &launch, "Body").await.is_err());
+    let ran = pw.run_tool(&profile, &launch, "Tool Output").await.unwrap();
+    assert!(ran.success, "{}", ran.status);
+    assert_eq!(ran.protected, 1);
+    assert!(
+        fs::read_to_string(&mode).unwrap().starts_with("-r--r--r--"),
+        "{}",
+        fs::read_to_string(&mode).unwrap()
+    );
+    let captured = ran.captured.unwrap();
+    assert!(captured.added);
+    let paths: Vec<&str> = captured
+        .output
+        .files
+        .iter()
+        .map(|f| f.path.as_str())
+        .collect();
+    assert_eq!(paths, ["Data/Patch.esp"]);
+    assert!(game.join("Data/Stray.esp").exists());
+    // and the store's copy is writable again
+    let body = game.join("Data/meshes/body.nif");
+    assert!(!body.metadata().unwrap().permissions().readonly());
+}
+
 /// Resolves every mod to `<dir>/<loader>.jar` (which has to be there), at
 /// a version naming the game version and loader it was told about. Every
 /// mod says it's only for fabric.

@@ -9,6 +9,7 @@ use patchwork_builtin::{
     ThunderstoreExtension,
 };
 use patchwork_core::account::Account;
+use patchwork_core::capture::ToolOutput;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
@@ -249,6 +250,24 @@ enum Command {
         /// The mod to keep the files in. It's added to the end of the
         /// profile, or added to if it was captured into before.
         name: Option<String>,
+    },
+    /// Run a tool (DynDOLOD, Nemesis, Synthesis, BodySlide...) for the
+    /// profile, deploying it first if it needs it, and keep what it writes
+    /// into the game's folder as a mod, as `capture` does. A Windows tool
+    /// runs in the game's Wine prefix.
+    Tool {
+        /// The mod to keep what it writes in. Defaults to `<tool> Output`,
+        /// after the exe's name.
+        #[arg(long)]
+        into: Option<String>,
+        /// Show how it would be run without running it.
+        #[arg(long)]
+        dry_run: bool,
+        /// The tool's exe.
+        exe: PathBuf,
+        /// Arguments for the tool.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// List the profile's past deploys and what changed in each.
     History,
@@ -969,28 +988,7 @@ async fn run(cli: Cli) -> Result<()> {
                 Some(name) => pw.capture(&profile, name).await?.output,
                 None => pw.tool_output(&profile)?,
             };
-            for file in &output.files {
-                match &file.replaces {
-                    Some(m) => println!("{}  (replaces {m}'s)", file.path),
-                    None => println!("{}", file.path),
-                }
-            }
-            if !output.changed.is_empty() {
-                eprintln!(
-                    "warning: the game's own {} changed, and can't be kept as a mod: {}",
-                    if output.changed.len() == 1 {
-                        "file was"
-                    } else {
-                        "files were"
-                    },
-                    output
-                        .changed
-                        .iter()
-                        .map(|p| p.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            }
+            print_tool_output(&output);
             let n = output.files.len();
             let files = format!("{n} file{}", if n == 1 { "" } else { "s" });
             match name {
@@ -1003,6 +1001,79 @@ async fn run(cli: Cli) -> Result<()> {
                     let plan = pw.plan_deploy(&profile).await?;
                     finish(&pw, &plan, false)?;
                 }
+            }
+        }
+        Command::Tool {
+            into,
+            dry_run,
+            exe,
+            args,
+        } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let exe = std::path::absolute(&exe)
+                .with_context(|| format!("can't find {}", exe.display()))?;
+            let into = match into {
+                Some(into) => into,
+                None => format!(
+                    "{} Output",
+                    exe.file_stem().unwrap_or_default().to_string_lossy()
+                ),
+            };
+            if pw.deploy_status(&profile)? != DeployStatus::Deployed {
+                if dry_run {
+                    println!("would deploy {} first", loaded.label());
+                } else {
+                    let plan = pw.plan_deploy(&profile).await?;
+                    finish(&pw, &plan, false)?;
+                }
+            }
+            let tool = pw.plan_tool(&profile, &exe, args)?;
+            if dry_run {
+                println!(
+                    "would run {} {}, in {}, then capture what it writes into `{into}`:",
+                    exe.display(),
+                    tool.via,
+                    tool.cwd.display()
+                );
+                println!("{tool}");
+                return Ok(());
+            }
+            println!("running {} {}...", exe.display(), tool.via);
+            let ran = pw.run_tool(&profile, &tool, &into).await?;
+            if ran.protected > 0 {
+                println!(
+                    "{} deployed {} linked to patchwork's store, so {} read-only while it ran",
+                    ran.protected,
+                    if ran.protected == 1 {
+                        "file is"
+                    } else {
+                        "files are"
+                    },
+                    if ran.protected == 1 {
+                        "it was"
+                    } else {
+                        "they were"
+                    },
+                );
+            }
+            let Some(captured) = ran.captured else {
+                bail!(
+                    "the tool failed ({}); what it printed is in {}, and anything it wrote is still in the game's folder, where `patchwork capture` can keep it",
+                    ran.status,
+                    ran.log.display()
+                );
+            };
+            print_tool_output(&captured.output);
+            let n = captured.output.files.len();
+            if n == 0 {
+                println!("the tool didn't write anything to capture");
+            } else {
+                println!(
+                    "captured {n} file{} into `{into}`",
+                    if n == 1 { "" } else { "s" }
+                );
+                let plan = pw.plan_deploy(&profile).await?;
+                finish(&pw, &plan, false)?;
             }
         }
         Command::History => {
@@ -1727,6 +1798,33 @@ fn stop_own_daemon() -> bool {
             eprintln!("warning: couldn't stop the sync daemon to update it: {e:#}");
             false
         }
+    }
+}
+
+/// Lists what tools wrote, and warns about the game's own files they
+/// changed.
+fn print_tool_output(output: &ToolOutput) {
+    for file in &output.files {
+        match &file.replaces {
+            Some(m) => println!("{}  (replaces {m}'s)", file.path),
+            None => println!("{}", file.path),
+        }
+    }
+    if !output.changed.is_empty() {
+        eprintln!(
+            "warning: the game's own {} changed, and can't be kept as a mod: {}",
+            if output.changed.len() == 1 {
+                "file was"
+            } else {
+                "files were"
+            },
+            output
+                .changed
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 }
 
