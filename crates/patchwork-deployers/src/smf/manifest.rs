@@ -165,24 +165,31 @@ impl ModData {
     /// Features this data uses that patchwork can't deploy yet.
     pub fn unsupported(&self) -> Vec<&'static str> {
         let mut found = Vec::new();
-        let used = |v: &Option<Value>| match v {
-            None | Some(Value::Null) => false,
-            Some(Value::Object(o)) => o.values().any(|v| match v {
-                Value::Object(inner) => !inner.is_empty(),
-                _ => true,
-            }),
-            Some(_) => true,
-        };
-        if used(&self.localisation) {
-            found.push("localisation");
-        }
-        if used(&self.localised_lines) {
-            found.push("localisedLines");
-        }
         if !self.scripts.is_empty() {
             found.push("scripts");
         }
         found
+    }
+}
+
+/// A new string from a mod's `localisation`, named `key`, for `language`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalisedString {
+    pub language: String,
+    pub key: String,
+    pub text: String,
+}
+
+/// A value that should be an object, with null as an empty one.
+fn object(
+    value: &Value,
+    feature: &str,
+    what: &str,
+) -> Result<serde_json::Map<String, Value>, String> {
+    match value {
+        Value::Object(o) => Ok(o.clone()),
+        Value::Null => Ok(Default::default()),
+        _ => Err(format!("`{feature}`: {what} isn't an object")),
     }
 }
 
@@ -197,6 +204,46 @@ pub struct LocalisationOverride {
 }
 
 impl ModData {
+    /// The strings `localisation` adds, in order. It's an object of
+    /// languages, each an object of strings.
+    pub fn localisation(&self) -> Result<Vec<LocalisedString>, String> {
+        const FEATURE: &str = "localisation";
+        let mut found = Vec::new();
+        let Some(localisation) = &self.localisation else {
+            return Ok(found);
+        };
+        for (language, strings) in object(localisation, FEATURE, "it")? {
+            for (key, text) in object(&strings, FEATURE, &format!("`{language}`"))? {
+                let Value::String(text) = text else {
+                    return Err(format!("`{FEATURE}`: `{language}`.`{key}` isn't a string"));
+                };
+                found.push(LocalisedString {
+                    language: language.clone(),
+                    key,
+                    text,
+                });
+            }
+        }
+        Ok(found)
+    }
+
+    /// `localisedLines`: runtime IDs (or paths), and the name of the string
+    /// each is a line for.
+    pub fn localised_lines(&self) -> Result<Vec<(String, String)>, String> {
+        const FEATURE: &str = "localisedLines";
+        let mut found = Vec::new();
+        let Some(lines) = &self.localised_lines else {
+            return Ok(found);
+        };
+        for (line, name) in object(lines, FEATURE, "it")? {
+            let Value::String(name) = name else {
+                return Err(format!("`{FEATURE}`: `{line}` isn't a string"));
+            };
+            found.push((line, name));
+        }
+        Ok(found)
+    }
+
     /// The strings `localisationOverrides` changes, in order. It's an object
     /// of LOCRs, each an object of languages, each an object of strings.
     pub fn localisation_overrides(&self) -> Result<Vec<LocalisationOverride>, String> {
@@ -204,14 +251,10 @@ impl ModData {
         let Some(overrides) = &self.localisation_overrides else {
             return Ok(found);
         };
-        let object = |value: &Value, what: &str| match value {
-            Value::Object(o) => Ok(o.clone()),
-            Value::Null => Ok(Default::default()),
-            _ => Err(format!("`localisationOverrides`: {what} isn't an object")),
-        };
-        for (locr, languages) in object(overrides, "it")? {
-            for (language, strings) in object(&languages, &format!("`{locr}`"))? {
-                for (key, text) in object(&strings, &format!("`{locr}`.`{language}`"))? {
+        const FEATURE: &str = "localisationOverrides";
+        for (locr, languages) in object(overrides, FEATURE, "it")? {
+            for (language, strings) in object(&languages, FEATURE, &format!("`{locr}`"))? {
+                for (key, text) in object(&strings, FEATURE, &format!("`{locr}`.`{language}`"))? {
                     let Value::String(text) = text else {
                         return Err(format!(
                             "`localisationOverrides`: `{locr}`.`{language}`.`{key}` isn't a string"

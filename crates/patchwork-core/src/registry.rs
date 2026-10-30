@@ -258,6 +258,13 @@ impl Registry {
         self.games.values()
     }
 
+    /// Adds an entry as a built-in one, without any files.
+    #[cfg(test)]
+    pub(crate) fn add_data(&mut self, kind: &str, id: &str, text: &str) {
+        self.try_insert(Origin::Builtin, kind, id, text, Path::new("<test>"))
+            .unwrap();
+    }
+
     pub fn data(&self, kind: &str, id: &str) -> Option<&Entry<toml::Table>> {
         self.data.get(&(kind.to_owned(), id.to_owned()))
     }
@@ -270,10 +277,13 @@ impl Registry {
             .map(|(_, id)| id.as_str())
     }
 
-    /// The hash of every entry that isn't a game, keyed by kind and id.
+    /// The hash of every entry that isn't a game, keyed by kind and id,
+    /// except runners: how a game is started has no effect on what's deployed
+    /// to it, like the `launch` in [`COSMETIC_GAME_FIELDS`].
     pub fn data_hashes(&self) -> impl Iterator<Item = (&str, &str, ContentHash)> {
         self.data
             .iter()
+            .filter(|((kind, _), _)| kind != crate::launch::runner::KIND)
             .map(|((kind, id), entry)| (kind.as_str(), id.as_str(), entry.hash))
     }
 }

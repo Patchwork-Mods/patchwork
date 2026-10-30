@@ -1,8 +1,10 @@
 //! Starting games, in one of the ways their definitions list (see
-//! [`LaunchDefs`]).
+//! [`LaunchDefs`]). What's run comes from there, and what runs it from the
+//! first of its [`runner`]s that can.
 //!
-//! A game Steam installed is started through Steam unless it needs another
-//! exe or environment variables, which Steam can't be asked for. Wine DLL
+//! By default, a game Steam installed is started through Steam unless it
+//! needs another exe or environment variables, which Steam can't be asked
+//! for. Wine DLL
 //! overrides don't stop that: they're written into the Proton prefix's
 //! registry first, the way r2modman does, since Steam's launch can't be
 //! given `WINEDLLOVERRIDES`.
@@ -31,9 +33,13 @@ use crate::game::{GameDef, LaunchDef, LaunchDefs};
 use crate::locate::{self, SteamInstall};
 use crate::patchwork::GameInstall;
 use crate::relpath::RelPath;
+use crate::settings::{Origin, SettingState};
 use crate::{Error, Result};
 
 pub mod java;
+pub mod runner;
+
+pub use runner::{Fit, RunContext, Runner, Runners};
 
 /// DLLs that mods put next to a game's exe to be loaded in place of the
 /// system's: loaders like BepInEx's (`winhttp`), ReShade and ENB (`dxgi`,
@@ -76,8 +82,9 @@ pub struct LaunchOption {
 }
 
 /// The ways `game`, installed in `install`, can be started: the usual way
-/// first, then the definition's others by id.
-pub fn options(game: &GameDef, install: &Path) -> Vec<LaunchOption> {
+/// first, then the definition's others by id. The default is `preferred` (the
+/// user's pick) if it can be used, otherwise what the definition says.
+pub fn options(game: &GameDef, install: &Path, preferred: Option<&str>) -> Vec<LaunchOption> {
     let usual = game.launch.get(LaunchDefs::GAME);
     let mut options = vec![LaunchOption {
         id: LaunchDefs::GAME.to_owned(),
@@ -98,15 +105,19 @@ pub fn options(game: &GameDef, install: &Path) -> Vec<LaunchOption> {
                 unavailable: missing_exe(def, install),
             }),
     );
-    let default = game
-        .launch
-        .iter()
-        .find(|(_, def)| def.default)
-        .map(|(id, _)| id)
-        .filter(|id| {
-            options
+    let usable = |id: &&str| {
+        options
+            .iter()
+            .any(|o| o.id == *id && o.unavailable.is_none())
+    };
+    let default = preferred
+        .filter(usable)
+        .or_else(|| {
+            game.launch
                 .iter()
-                .any(|o| o.id == *id && o.unavailable.is_none())
+                .find(|(_, def)| def.default)
+                .map(|(id, _)| id)
+                .filter(usable)
         })
         .unwrap_or(LaunchDefs::GAME);
     for option in &mut options {
@@ -142,6 +153,12 @@ pub struct Setup {
     pub fhs: Option<PathBuf>,
     /// Files patchwork has deployed to the game's folder.
     pub deployed: Vec<RelPath>,
+    /// The launch option the user picked, used when none is asked for.
+    pub launch: Option<String>,
+    /// The runner the user picked, used instead of the launch's own list.
+    pub runner: Option<String>,
+    /// The user's settings for runners, by runner id.
+    pub runner_settings: BTreeMap<String, toml::Table>,
 }
 
 impl Setup {
@@ -158,11 +175,16 @@ impl Setup {
             (None, Os::Windows) => None,
             (None, _) => locate::proton_prefix(game, &install.path),
         };
-        let proton = prefix
+        // only a prefix Proton made can be run by one, chosen or not
+        let compat_data = prefix
             .as_deref()
             .filter(|p| p.file_name().is_some_and(|n| n == "pfx"))
-            .and_then(Path::parent)
-            .and_then(locate::proton_install);
+            .and_then(Path::parent);
+        let proton = compat_data.and_then(|compat_data| {
+            setting(&install.runners, runner::PROTON, runner::PROTON_FOLDER.key)
+                .map(PathBuf::from)
+                .or_else(|| locate::proton_install(compat_data))
+        });
         let runtime = proton
             .as_deref()
             .and_then(locate::proton_runtime_app)
@@ -188,8 +210,24 @@ impl Setup {
             runtime,
             fhs: fhs_wrapper(os),
             deployed,
+            launch: install.launch.clone(),
+            runner: install.runner.clone(),
+            runner_settings: install.runners.clone(),
         }
     }
+
+    /// The user's setting `key` for the runner `runner`, if it's text.
+    pub fn setting(&self, runner: &str, key: &str) -> Option<&str> {
+        setting(&self.runner_settings, runner, key)
+    }
+}
+
+fn setting<'a>(
+    settings: &'a BTreeMap<String, toml::Table>,
+    runner: &str,
+    key: &str,
+) -> Option<&'a str> {
+    settings.get(runner)?.get(key)?.as_str()
 }
 
 /// `steam-run` on NixOS, whose programs don't use the usual Linux file
@@ -245,6 +283,8 @@ pub enum Via {
     Wine { prefix: PathBuf },
     /// A game patchwork set up is run by the Java at `java`.
     Java { java: PathBuf },
+    /// The exe is run by a runner defined by data (see [`runner::Template`]).
+    Runner { name: String },
 }
 
 impl fmt::Display for Via {
@@ -255,116 +295,190 @@ impl fmt::Display for Via {
             Via::Proton { proton } => write!(f, "Proton at {}", proton.display()),
             Via::Wine { prefix } => write!(f, "Wine in {}", prefix.display()),
             Via::Java { java } => write!(f, "with the Java at {}", java.display()),
+            Via::Runner { name } => write!(f, "with {name}"),
         }
     }
 }
 
-/// How to start `game` the way `option` says (by id), or the default way.
-pub fn plan(game: &GameDef, option: Option<&str>, setup: &Setup) -> Result<Launch> {
-    let options = options(game, &setup.install);
-    let chosen = match option {
-        Some(id) => options.iter().find(|o| o.id == id).ok_or_else(|| {
-            let ids: Vec<&str> = options.iter().map(|o| o.id.as_str()).collect();
-            Error::invalid(format!(
-                "{} can't be launched as `{id}`; it can be {}",
-                game.name,
-                ids.join(", ")
-            ))
-        })?,
-        None => options
-            .iter()
-            .find(|o| o.default)
-            .expect("one option is always the default"),
+/// How to start `game` the way `option` says (by id), or the default way,
+/// with the first of its runners that can.
+pub fn plan(
+    game: &GameDef,
+    option: Option<&str>,
+    setup: &Setup,
+    runners: &Runners<'_>,
+) -> Result<Launch> {
+    let prepared = Prepared::new(game, option, setup)?;
+    let ctx = prepared.context(game, setup);
+    let ids = match &setup.runner {
+        Some(runner) => std::slice::from_ref(runner),
+        None => prepared.def.runners.as_slice(),
     };
-    if let Some(why) = &chosen.unavailable {
-        return Err(Error::invalid(format!(
-            "can't launch {}: {why}",
-            chosen.name
-        )));
-    }
-    let def = game.launch.get(&chosen.id).cloned().unwrap_or_default();
+    runners.pick(ids, &ctx)?.plan(&ctx)
+}
 
-    let exe = match &def.exe {
-        Some(exe) => Some(exe.clone()),
-        None => usual_exe(game, &setup.install),
-    };
-    let under_wine = setup.os != Os::Windows
-        && exe
-            .as_ref()
-            .is_some_and(|e| e.file_name().to_ascii_lowercase().ends_with(".exe"));
-    let overrides = if under_wine {
-        dll_overrides(&def, exe.as_ref(), &setup.deployed)
-    } else {
-        Vec::new()
-    };
+/// What's to be run for a launch option, before it's known what runs it.
+struct Prepared {
+    option: String,
+    def: LaunchDef,
+    exe: Option<PathBuf>,
+    env: BTreeMap<String, String>,
+    overrides: Vec<String>,
+}
 
-    // Steam can't be asked to start another exe or set variables
-    let custom = def.exe.is_some() || !def.env.is_empty();
-    if let Some(steam) = &setup.steam
-        && !custom
-    {
-        let prefix_overrides = if overrides.is_empty() {
-            None
-        } else {
-            let prefix = setup.prefix.clone().ok_or_else(|| {
+impl Prepared {
+    fn new(game: &GameDef, option: Option<&str>, setup: &Setup) -> Result<Self> {
+        let options = options(game, &setup.install, setup.launch.as_deref());
+        let chosen = match option {
+            Some(id) => options.iter().find(|o| o.id == id).ok_or_else(|| {
+                let ids: Vec<&str> = options.iter().map(|o| o.id.as_str()).collect();
                 Error::invalid(format!(
-                    "can't find {}'s Proton prefix, where Wine has to be told to load its mods' {}; start it from Steam once so Proton sets it up, then try again",
+                    "{} can't be launched as `{id}`; it can be {}",
                     game.name,
-                    overrides
-                        .iter()
-                        .map(|d| format!("{d}.dll"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    ids.join(", ")
                 ))
-            })?;
-            Some(PrefixOverrides {
-                prefix,
-                dlls: overrides,
-            })
+            })?,
+            None => options
+                .iter()
+                .find(|o| o.default)
+                .expect("one option is always the default"),
         };
-        let (program, mut args) = steam_command(setup.os, setup.steam_client.as_deref())?;
-        args.extend(["-applaunch".to_owned(), steam.app.to_string()]);
-        args.extend(def.args);
-        return Ok(Launch {
+        if let Some(why) = &chosen.unavailable {
+            return Err(Error::invalid(format!(
+                "can't launch {}: {why}",
+                chosen.name
+            )));
+        }
+        let def = game.launch.get(&chosen.id).cloned().unwrap_or_default();
+
+        let exe = match &def.exe {
+            Some(exe) => Some(exe.clone()),
+            None => usual_exe(game, &setup.install),
+        };
+        let under_wine = setup.os != Os::Windows
+            && exe
+                .as_ref()
+                .is_some_and(|e| e.file_name().to_ascii_lowercase().ends_with(".exe"));
+        let overrides = if under_wine {
+            dll_overrides(&def, exe.as_ref(), &setup.deployed)
+        } else {
+            Vec::new()
+        };
+        let mut env = def.env.clone();
+        if let Some(steam) = &setup.steam {
+            // Without these, a Steam game started outside Steam asks Steam to
+            // start it again, the usual way.
+            env.insert("SteamAppId".to_owned(), steam.app.to_string());
+            env.insert("SteamGameId".to_owned(), steam.app.to_string());
+        }
+        Ok(Self {
             option: chosen.id.clone(),
-            via: Via::Steam { app: steam.app },
-            program,
-            args,
-            env: BTreeMap::new(),
-            cwd: setup.install.clone(),
-            prefix_overrides,
-        });
+            exe: exe.map(|e| e.under(&setup.install)),
+            env,
+            overrides,
+            def,
+        })
     }
 
-    let Some(exe) = exe else {
-        return Err(Error::invalid(format!(
-            "patchwork doesn't know which file starts {}; its definition needs `exe` in `[launch.{}]` or `[detect]`",
-            game.name, chosen.id
-        )));
-    };
-    let path = exe.under(&setup.install);
-    if !path.is_file() {
-        return Err(Error::invalid(format!(
-            "{exe} isn't in {}",
-            setup.install.display()
-        )));
+    fn context<'a>(&'a self, game: &'a GameDef, setup: &'a Setup) -> RunContext<'a> {
+        RunContext {
+            game,
+            setup,
+            option: &self.option,
+            exe: self.exe.clone(),
+            args: &self.def.args,
+            env: &self.env,
+            overrides: &self.overrides,
+            custom: self.def.exe.is_some() || !self.def.env.is_empty(),
+        }
     }
-    let mut env = def.env;
-    if let Some(steam) = &setup.steam {
-        // Without these, a Steam game started outside Steam asks Steam to
-        // start it again, the usual way.
-        env.insert("SteamAppId".to_owned(), steam.app.to_string());
-        env.insert("SteamGameId".to_owned(), steam.app.to_string());
+}
+
+/// A runner, as offered to the user for a game.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerChoice {
+    pub id: String,
+    pub name: String,
+    /// Why it can't run the game's default launch option, if it can't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
+    pub settings: Vec<SettingState>,
+}
+
+/// The runners that can be picked for a game.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerChoices {
+    /// The id of the runner used if none is picked, if one can be.
+    pub automatic: Option<String>,
+    /// The one the user picked.
+    pub picked: Option<String>,
+    pub runners: Vec<RunnerChoice>,
+}
+
+/// Every runner there is, and how each would do with `game`'s default launch
+/// option. A runner whose definition is broken is listed with what's wrong.
+pub fn runner_choices(game: &GameDef, setup: &Setup, runners: &Runners<'_>) -> RunnerChoices {
+    let prepared = Prepared::new(game, None, setup);
+    let ctx = prepared.as_ref().ok().map(|p| p.context(game, setup));
+    let automatic = prepared
+        .as_ref()
+        .ok()
+        .zip(ctx.as_ref())
+        .and_then(|(p, ctx)| {
+            let runner = runners.pick(&p.def.runners, ctx).ok()?;
+            Some(runner.id().to_owned())
+        });
+    let choices = runners
+        .ids()
+        .into_iter()
+        .map(|id| {
+            let runner = match runners.get(&id) {
+                Ok(runner) => runner,
+                Err(e) => {
+                    return RunnerChoice {
+                        name: id.clone(),
+                        id,
+                        unavailable: Some(e.to_string()),
+                        settings: Vec::new(),
+                    };
+                }
+            };
+            let unavailable = match (&prepared, &ctx) {
+                (Err(e), _) => Some(e.to_string()),
+                (_, Some(ctx)) => match runner.check(ctx) {
+                    Fit::Ready => None,
+                    Fit::Unsuited(why) | Fit::Missing(why) => Some(why),
+                },
+                (_, None) => None,
+            };
+            let set = setup.runner_settings.get(&id);
+            let settings = runner
+                .settings()
+                .into_iter()
+                .map(|setting| {
+                    let value = set.and_then(|t| t.get(setting.spec.key)).cloned();
+                    SettingState {
+                        origin: value.as_ref().map(|_| Origin::File),
+                        value,
+                        ..setting
+                    }
+                })
+                .collect();
+            RunnerChoice {
+                name: runner.name().to_owned(),
+                id,
+                unavailable,
+                settings,
+            }
+        })
+        .collect();
+    RunnerChoices {
+        automatic,
+        picked: setup.runner.clone(),
+        runners: choices,
     }
-    run_exe(
-        game,
-        setup,
-        chosen.id.clone(),
-        path,
-        def.args,
-        env,
-        &overrides,
-    )
 }
 
 /// The id of the [`Launch::option`] that [`plan_tool`] makes.
@@ -373,150 +487,36 @@ pub const TOOL: &str = "tool";
 /// How to run the tool at `exe`, which can be anywhere, for `game`: the
 /// way the game's own exe would be run directly, so a Windows tool runs in
 /// the game's Wine prefix and finds it there.
-pub fn plan_tool(game: &GameDef, setup: &Setup, exe: &Path, args: Vec<String>) -> Result<Launch> {
+pub fn plan_tool(
+    game: &GameDef,
+    setup: &Setup,
+    exe: &Path,
+    args: Vec<String>,
+    runners: &Runners<'_>,
+) -> Result<Launch> {
     if !exe.is_file() {
         return Err(Error::invalid(format!("{} isn't a file", exe.display())));
     }
-    run_exe(
+    let env = BTreeMap::new();
+    // what the user picked, if it can run tools, which Steam can't
+    let ids: Vec<String> = match &setup.runner {
+        Some(runner) => std::iter::once(runner.as_str())
+            .chain(runner::DEFAULT.iter().copied())
+            .map(str::to_owned)
+            .collect(),
+        None => Vec::new(),
+    };
+    let ctx = RunContext {
         game,
         setup,
-        TOOL.to_owned(),
-        exe.to_owned(),
-        args,
-        BTreeMap::new(),
-        &[],
-    )
-}
-
-/// How to run the exe at `path` directly for `game`: as it is, or through
-/// Proton or Wine if it's for Windows and this isn't.
-fn run_exe(
-    game: &GameDef,
-    setup: &Setup,
-    option: String,
-    path: PathBuf,
-    args: Vec<String>,
-    mut env: BTreeMap<String, String>,
-    overrides: &[String],
-) -> Result<Launch> {
-    let under_wine = setup.os != Os::Windows
-        && path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
-    let cwd = path.parent().unwrap_or(&setup.install).to_owned();
-    if !under_wine {
-        return Ok(Launch {
-            option,
-            via: Via::Direct,
-            program: path,
-            args,
-            env,
-            cwd,
-            prefix_overrides: None,
-        });
-    }
-    if !overrides.is_empty() {
-        let mut value = overrides
-            .iter()
-            .map(|dll| format!("{dll}=n,b"))
-            .collect::<Vec<_>>()
-            .join(";");
-        if let Some(own) = env.get("WINEDLLOVERRIDES") {
-            value = format!("{value};{own}");
-        }
-        env.insert("WINEDLLOVERRIDES".to_owned(), value);
-    }
-    match (&setup.steam, &setup.prefix, &setup.proton) {
-        (Some(_), Some(prefix), Some(proton)) => {
-            let client = setup.steam_client.as_ref().ok_or_else(|| {
-                Error::invalid(format!(
-                    "can't find the Steam install that has {}, which Proton needs",
-                    setup.install.display()
-                ))
-            })?;
-            let compat_data = prefix
-                .parent()
-                .expect("a prefix Proton made is in a folder");
-            env.insert(
-                "STEAM_COMPAT_DATA_PATH".to_owned(),
-                compat_data.to_string_lossy().into_owned(),
-            );
-            env.insert(
-                "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_owned(),
-                client.to_string_lossy().into_owned(),
-            );
-            // the way Steam runs it: inside its runtime, if it has one, and
-            // waiting for the game so the runtime stays up while it runs
-            let mut command = Vec::new();
-            let verb = match &setup.runtime {
-                None => "run",
-                Some((_, Some(runtime))) => {
-                    command.extend([
-                        runtime.join("_v2-entry-point"),
-                        "--verb=waitforexitandrun".into(),
-                        "--".into(),
-                    ]);
-                    "waitforexitandrun"
-                }
-                Some((app, None)) => {
-                    return Err(Error::invalid(format!(
-                        "{} needs the Steam Linux Runtime (Steam app {app}) to run in, and it isn't installed; start {} from Steam once so it installs it",
-                        proton.display(),
-                        game.name
-                    )));
-                }
-            };
-            command.push(proton.join("proton"));
-            command.extend([verb.into(), path]);
-            if let Some(fhs) = &setup.fhs {
-                command.insert(0, fhs.clone());
-            }
-            let mut command = command
-                .into_iter()
-                .map(|p| p.to_string_lossy().into_owned());
-            let program = PathBuf::from(command.next().expect("there's always Proton"));
-            let args = command.chain(args).collect();
-            Ok(Launch {
-                option,
-                via: Via::Proton {
-                    proton: proton.clone(),
-                },
-                program,
-                args,
-                env,
-                cwd,
-                prefix_overrides: None,
-            })
-        }
-        (_, Some(prefix), _) if setup.steam.is_none() || !is_proton_prefix(prefix) => {
-            env.insert(
-                "WINEPREFIX".to_owned(),
-                prefix.to_string_lossy().into_owned(),
-            );
-            let args = std::iter::once(path.to_string_lossy().into_owned())
-                .chain(args)
-                .collect();
-            Ok(Launch {
-                option,
-                via: Via::Wine {
-                    prefix: prefix.clone(),
-                },
-                program: PathBuf::from("wine"),
-                args,
-                env,
-                cwd,
-                prefix_overrides: None,
-            })
-        }
-        (Some(_), _, _) => Err(Error::invalid(format!(
-            "can't find which Proton runs {}; start it from Steam once so Proton sets it up, then try again",
-            game.name
-        ))),
-        (None, _, _) => Err(Error::invalid(format!(
-            "{} is a Windows game that isn't from Steam, so patchwork needs to know which Wine prefix it runs in: `patchwork game set {} prefix <path>`",
-            game.name, game.id
-        ))),
-    }
+        option: TOOL,
+        exe: Some(exe.to_owned()),
+        args: &args,
+        env: &env,
+        overrides: &[],
+        custom: true,
+    };
+    runners.pick(&ids, &ctx)?.plan(&ctx)
 }
 
 /// The exe the game usually starts with: the first of its definition's

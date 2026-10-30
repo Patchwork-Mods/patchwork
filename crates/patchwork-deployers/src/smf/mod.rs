@@ -19,9 +19,10 @@
 //! one staged it, otherwise the game's. So are entities, whole or as patches
 //! (see [`entity`]); like SMF, a mod's entity patches are applied once the
 //! rest of its content is staged. Textures are converted from TGA (see
-//! [`texture`]). Changes to the game's localised strings
-//! (`localisationOverrides`) are applied once every mod's staged, like SMF
-//! does, to the current version of each LOCR (see [`locr`]).
+//! [`texture`]). Changes to the game's localised strings (`localisation`,
+//! `localisationOverrides`) are applied once every mod's staged, like SMF
+//! does, to the current version of each LOCR (see [`locr`]), and
+//! `localisedLines` become LINE resources.
 //!
 //! Dialogue (`.dlge.json`, `.ditl.json`,
 //! `.clng.json`) is rebuilt natively (see [`dlge`]), and so are materials
@@ -29,8 +30,7 @@
 //!
 //! Not supported yet: SMF's other special file types (sounds,
 //! other language files and deltas), entities made for QuickEntity versions
-//! before 3.1, new localised strings (`localisation`, `localisedLines`),
-//! scripts and choosing options (those enabled by default are used). Mods that need them fail to deploy rather than half
+//! before 3.1, scripts and choosing options (those enabled by default are used). Mods that need them fail to deploy rather than half
 //! working.
 
 mod dlge;
@@ -91,6 +91,13 @@ const UNSUPPORTED_TYPES: &[&str] = &["locr.json", "rtlv.json", "sfx.wem", "delta
 
 /// The partition SMF puts edits to the game's lookup tables in.
 const BASE: &str = "chunk0";
+
+/// The manifest keys string changes come from.
+const LOCALISATION: &str = "localisation";
+const LOCALISATION_OVERRIDES: &str = "localisationOverrides";
+
+/// The flag a LINE resource's reference to its LOCR has.
+const LINE_REFERENCE: u8 = 0x1F;
 
 impl Deployer for SmfDeployer {
     fn kind(&self) -> &str {
@@ -173,12 +180,14 @@ struct Build<'a> {
     /// The current mod's entity patches, applied once its content's staged.
     entity_patches: Vec<EntityPatch>,
     /// Every mod's changes to localised strings, applied once all mods are
-    /// staged.
+    /// staged: `localisation` first, then `localisationOverrides`, like SMF.
     string_overrides: Vec<StringOverride>,
 }
 
 struct StringOverride {
     label: String,
+    /// The manifest key it comes from.
+    feature: &'static str,
     locr: u64,
     language: usize,
     hash: u32,
@@ -354,7 +363,9 @@ impl<'a> Build<'a> {
             self.package_definition
                 .extend(data.packagedefinition.iter().cloned());
             self.thumbs.extend(data.thumbs.iter().cloned());
+            self.queue_localisation(&label, data);
             self.queue_string_overrides(&label, data);
+            self.stage_lines(&label, data);
             for dependency in &data.dependencies {
                 self.stage_dependency(&label, dependency)?;
             }
@@ -684,6 +695,79 @@ impl<'a> Build<'a> {
         Ok(())
     }
 
+    fn queue_localisation(&mut self, label: &str, data: &manifest::ModData) {
+        let strings = match data.localisation() {
+            Ok(strings) => strings,
+            Err(e) => {
+                self.errors.push(format!("{label}: {e}"));
+                return;
+            }
+        };
+        for s in strings {
+            let Some(language) = locr::language(&s.language) else {
+                self.errors.push(format!(
+                    "{label}: `localisation` has strings for `{}`, which isn't a language the game has",
+                    s.language
+                ));
+                continue;
+            };
+            self.queue_string(StringOverride {
+                label: label.to_owned(),
+                feature: LOCALISATION,
+                locr: locr::MOD_STRINGS,
+                language,
+                hash: locr::name_hash(&s.key),
+                text: s.text,
+            });
+        }
+    }
+
+    /// Queues a change to a string. Like SMF, English strings are the
+    /// fallback language's too.
+    fn queue_string(&mut self, string: StringOverride) {
+        if string.language == locr::ENGLISH {
+            self.string_overrides.push(StringOverride {
+                label: string.label.clone(),
+                feature: string.feature,
+                locr: string.locr,
+                language: locr::FALLBACK,
+                hash: string.hash,
+                text: string.text.clone(),
+            });
+        }
+        self.string_overrides.push(string);
+    }
+
+    /// Stages `localisedLines`: each a LINE resource naming a string. Like
+    /// SMF's, they go in chunk0 and don't say what memory they need.
+    fn stage_lines(&mut self, label: &str, data: &manifest::ModData) {
+        let lines = match data.localised_lines() {
+            Ok(lines) => lines,
+            Err(e) => {
+                self.errors.push(format!("{label}: {e}"));
+                return;
+            }
+        };
+        for (line, name) in lines {
+            let data = locr::line(&name);
+            let header = Header {
+                references: vec![(RuntimeResourceID::from(locr::MOD_STRINGS), LINE_REFERENCE)],
+                compressed: false,
+                system_memory: u32::MAX,
+                ..Header::default_for(data.len() as u32)
+            };
+            self.stage_built(
+                BASE,
+                u64::from(meta::parse_hash(&line)),
+                Loaded {
+                    resource_type: "LINE".to_owned(),
+                    header,
+                    data,
+                },
+            );
+        }
+    }
+
     fn queue_string_overrides(&mut self, label: &str, data: &manifest::ModData) {
         let overrides = match data.localisation_overrides() {
             Ok(overrides) => overrides,
@@ -700,8 +784,9 @@ impl<'a> Build<'a> {
                 ));
                 continue;
             };
-            self.string_overrides.push(StringOverride {
+            self.queue_string(StringOverride {
                 label: label.to_owned(),
+                feature: LOCALISATION_OVERRIDES,
                 locr: u64::from(meta::parse_hash(&o.locr)),
                 language,
                 hash: locr::string_hash(&o.key),
@@ -714,8 +799,10 @@ impl<'a> Build<'a> {
     /// the current version of each LOCR. Each is staged in the partition
     /// its current version is in.
     fn apply_string_overrides(&mut self) -> Result<(), String> {
+        let mut strings = std::mem::take(&mut self.string_overrides);
+        strings.sort_by_key(|o| o.feature == LOCALISATION_OVERRIDES);
         let mut by_locr: Vec<(u64, Vec<StringOverride>)> = Vec::new();
-        for o in std::mem::take(&mut self.string_overrides) {
+        for o in strings {
             match by_locr.iter_mut().find(|(hash, _)| *hash == o.locr) {
                 Some((_, group)) => group.push(o),
                 None => by_locr.push((o.locr, vec![o])),
@@ -723,9 +810,9 @@ impl<'a> Build<'a> {
         }
         for (hash, overrides) in by_locr {
             let Some(partition) = self.partition_of(hash)? else {
-                for label in labels(&overrides) {
+                for (label, feature) in sources(&overrides) {
                     self.errors.push(format!(
-                        "{label}: `localisationOverrides`: the game has no LOCR {hash:016X}"
+                        "{label}: `{feature}`: the game has no LOCR {hash:016X}"
                     ));
                 }
                 continue;
@@ -734,9 +821,9 @@ impl<'a> Build<'a> {
             let mut strings = match locr::Locr::parse(&current.data) {
                 Ok(strings) => strings,
                 Err(e) => {
-                    for label in labels(&overrides) {
+                    for (label, feature) in sources(&overrides) {
                         self.errors.push(format!(
-                            "{label}: `localisationOverrides`: couldn't read LOCR {hash:016X}: {e}"
+                            "{label}: `{feature}`: couldn't read LOCR {hash:016X}: {e}"
                         ));
                     }
                     continue;
@@ -745,8 +832,8 @@ impl<'a> Build<'a> {
             for o in &overrides {
                 if let Err(e) = strings.set(o.language, o.hash, &o.text) {
                     self.errors.push(format!(
-                        "{}: `localisationOverrides`: string {:08X}: {e}",
-                        o.label, o.hash
+                        "{}: `{}`: string {:08X}: {e}",
+                        o.label, o.feature, o.hash
                     ));
                 }
             }
@@ -1078,11 +1165,15 @@ fn patch_entity(
         .map_err(|e| format!("{first_file}: couldn't rebuild entity {factory_hash:016X}: {e}"))
 }
 
-/// The mods a group of string overrides come from, each once.
-fn labels(overrides: &[StringOverride]) -> Vec<String> {
-    let mut labels: Vec<String> = overrides.iter().map(|o| o.label.clone()).collect();
-    dedupe(&mut labels);
-    labels
+/// The mods and manifest keys a group of string changes come from, each
+/// once.
+fn sources(overrides: &[StringOverride]) -> Vec<(&str, &'static str)> {
+    let mut seen = HashSet::new();
+    overrides
+        .iter()
+        .map(|o| (o.label.as_str(), o.feature))
+        .filter(|source| seen.insert(*source))
+        .collect()
 }
 
 /// Removes repeats, keeping the first of each.

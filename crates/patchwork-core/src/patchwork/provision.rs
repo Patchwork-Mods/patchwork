@@ -159,18 +159,26 @@ impl Patchwork {
 
     /// How to start `profile`'s game: in its instance, as it was last set
     /// up, if it uses one, otherwise as [`Patchwork::plan_launch`] does.
+    /// `runner` only means anything for the latter.
     /// Deploying and setting up first are up to the caller.
     pub fn plan_profile_launch(
         &self,
         profile: &ProfileRef,
         option: Option<&str>,
+        runner: Option<&str>,
     ) -> Result<LaunchCommand> {
         let loaded = self.load_profile(profile)?;
         if !self.uses_instance(&loaded)? {
-            return self.plan_launch(&loaded.game, option);
+            return self.plan_launch(&loaded.game, option, runner);
         }
         let registry = self.registry();
         let game = &registry.game(&loaded.game)?.value;
+        if let Some(runner) = runner {
+            return Err(Error::invalid(format!(
+                "patchwork starts {} itself in a profile's own instance, so it can't be run with `{runner}`",
+                game.name
+            )));
+        }
         if let Some(option) = option.filter(|o| *o != LaunchDefs::GAME) {
             return Err(Error::invalid(format!(
                 "{} can't be launched as `{option}` in an instance of its own",

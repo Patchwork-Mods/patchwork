@@ -288,8 +288,12 @@ enum Command {
         /// Which way to start it, from `--list`. Defaults to the game's
         /// default one.
         option: Option<String>,
+        /// What to run it with this time, from `game runners`, instead of
+        /// what's picked for the game.
+        #[arg(long)]
+        runner: Option<String>,
         /// List the ways the game can be started.
-        #[arg(long, conflicts_with_all = ["option", "dry_run", "no_deploy"])]
+        #[arg(long, conflicts_with_all = ["option", "runner", "dry_run", "no_deploy"])]
         list: bool,
         /// Show the command that would start the game without running it.
         #[arg(long)]
@@ -416,11 +420,16 @@ enum GameCommand {
         set: bool,
     },
     /// List a game's settings: how mods are linked into it, its deployer's
-    /// settings, and where its other folders are.
+    /// settings, how it's started, and where its other folders are.
     Settings { id: String },
+    /// List what can run a game, and what each one's settings are.
+    Runners { id: String },
     /// Change one of a game's settings (see `game settings`). `prefix` is
-    /// the Wine prefix a Windows game runs in, and `root.<id>` moves one of
-    /// its other folders.
+    /// the Wine prefix a Windows game runs in, `root.<id>` moves one of its
+    /// other folders, `launch` is the way to start it by default (see
+    /// `launch --list`), `runner` is what to run it with, and
+    /// `runner.<runner>.<setting>` changes a runner's setting (see `game
+    /// runners`).
     Set {
         id: String,
         key: String,
@@ -1127,6 +1136,7 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Command::Launch {
             option,
+            runner,
             list,
             dry_run,
             no_deploy,
@@ -1160,7 +1170,7 @@ async fn run(cli: Cli) -> Result<()> {
                 }
                 provision(&pw, &profile, &loaded).await?;
             }
-            let launch = pw.plan_profile_launch(&profile, option.as_deref())?;
+            let launch = pw.plan_profile_launch(&profile, option.as_deref(), runner.as_deref())?;
             let name = options
                 .iter()
                 .find(|o| o.id == launch.option)
@@ -1345,6 +1355,18 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
             for setting in pw.deployer_settings(&id)? {
                 print_setting(&setting);
             }
+            if let Some(launch) = install.as_ref().and_then(|i| i.launch.as_ref()) {
+                println!("launch = {}", toml::Value::from(launch.as_str()));
+            }
+            if let Some(choices) = pw.runner_choices(&id)? {
+                print_picked_runner(&choices);
+                for runner in &choices.runners {
+                    for setting in runner.settings.iter().filter(|s| s.origin.is_some()) {
+                        print!("runner.{}.", runner.id);
+                        print_setting(setting);
+                    }
+                }
+            }
             let Some(roots) = pw.resolve_roots(&DeployTarget::Game(id.clone()))? else {
                 return Ok(());
             };
@@ -1373,22 +1395,72 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
                 }
             }
         }
+        GameCommand::Runners { id } => {
+            let choices = pw.runner_choices(&id)?.with_context(|| {
+                format!("patchwork doesn't know where {id} is installed; run `patchwork game set-path {id} <dir>` first")
+            })?;
+            print_picked_runner(&choices);
+            for runner in &choices.runners {
+                match &runner.unavailable {
+                    Some(why) => println!("{}  {}  [unavailable: {why}]", runner.id, runner.name),
+                    None => println!("{}  {}", runner.id, runner.name),
+                }
+                for setting in &runner.settings {
+                    print!("  ");
+                    print_setting(setting);
+                }
+            }
+        }
         GameCommand::Set { id, key, value } => {
             let mut install = game_install(pw, &id)?;
             if key == "link" {
                 install.link = Some(toml::Value::String(value).try_into()?);
             } else if key == "prefix" {
                 install.prefix = Some(PathBuf::from(value));
+            } else if key == "launch" {
+                install.launch = Some(value);
+            } else if key == "runner" {
+                install.runner = Some(value);
+            } else if let Some(rest) = key.strip_prefix("runner.") {
+                let (runner, setting) = runner_setting_key(rest)?;
+                let choices = pw
+                    .runner_choices(&id)?
+                    .unwrap_or_else(|| unreachable!("game_install found that it's set up"));
+                let Some(found) = choices.runners.iter().find(|r| r.id == runner) else {
+                    bail!("no runner named `{runner}`; see `patchwork game runners {id}`");
+                };
+                let Some(spec) = found.settings.iter().find(|s| s.spec.key == setting) else {
+                    let keys: Vec<_> = found.settings.iter().map(|s| s.spec.key).collect();
+                    if keys.is_empty() {
+                        bail!("the runner `{runner}` doesn't have any settings");
+                    }
+                    bail!(
+                        "the runner `{runner}` has no setting `{setting}`; it has {}",
+                        keys.join(", ")
+                    );
+                };
+                install
+                    .runners
+                    .entry(runner.to_owned())
+                    .or_default()
+                    .insert(setting.to_owned(), spec.spec.parse(&value)?);
             } else if let Some(root) = key.strip_prefix("root.") {
                 let root = RootId::new(root).map_err(anyhow::Error::msg)?;
                 install.roots.insert(root, PathBuf::from(value));
             } else {
                 let settings = pw.deployer_settings(&id)?;
                 let Some(setting) = settings.iter().find(|s| s.spec.key == key) else {
-                    let keys: Vec<_> = ["link", "prefix", "root.<id>"]
-                        .into_iter()
-                        .chain(settings.iter().map(|s| s.spec.key))
-                        .collect();
+                    let keys: Vec<_> = [
+                        "link",
+                        "prefix",
+                        "root.<id>",
+                        "launch",
+                        "runner",
+                        "runner.<runner>.<setting>",
+                    ]
+                    .into_iter()
+                    .chain(settings.iter().map(|s| s.spec.key))
+                    .collect();
                     bail!("{id} has no setting `{key}`; it has {}", keys.join(", "));
                 };
                 install
@@ -1407,6 +1479,23 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
                 if install.prefix.take().is_none() {
                     bail!("prefix isn't set for {id}");
                 }
+            } else if key == "launch" {
+                if install.launch.take().is_none() {
+                    bail!("launch isn't set for {id}");
+                }
+            } else if key == "runner" {
+                if install.runner.take().is_none() {
+                    bail!("runner isn't set for {id}");
+                }
+            } else if let Some(rest) = key.strip_prefix("runner.") {
+                let (runner, setting) = runner_setting_key(rest)?;
+                let set = install.runners.get_mut(runner);
+                if set.and_then(|s| s.remove(setting)).is_none() {
+                    bail!("{key} isn't set for {id}");
+                }
+                if install.runners[runner].is_empty() {
+                    install.runners.remove(runner);
+                }
             } else if let Some(root) = root {
                 if install.roots.remove(&root).is_none() {
                     bail!("{key} isn't set for {id}");
@@ -1419,6 +1508,32 @@ fn game(pw: &Patchwork, command: GameCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The runner and setting in what follows `runner.` in a setting's key.
+fn runner_setting_key(key: &str) -> Result<(&str, &str)> {
+    key.split_once('.').with_context(|| {
+        format!("`runner.{key}` isn't a setting; expected `runner.<runner>.<setting>`")
+    })
+}
+
+fn print_picked_runner(choices: &launch::RunnerChoices) {
+    let name = |id: &str| {
+        choices
+            .runners
+            .iter()
+            .find(|r| r.id == id)
+            .map_or_else(|| id.to_owned(), |r| r.name.clone())
+    };
+    match (&choices.picked, &choices.automatic) {
+        (Some(picked), _) => println!("runner = {}", toml::Value::from(picked.as_str())),
+        (None, Some(id)) => println!(
+            "runner = {} (automatic: {})",
+            toml::Value::from(id.as_str()),
+            name(id)
+        ),
+        (None, None) => println!("runner = (automatic, but nothing can run it right now)"),
+    }
 }
 
 fn game_install(pw: &Patchwork, id: &str) -> Result<GameInstall> {

@@ -465,7 +465,7 @@ fn mods_needing_unsupported_features_fail() {
             (
                 "manifest.json",
                 br#"{ id: "M", name: "M", contentFolders: ["c"],
-                      localisation: { english: { UI_X: "x" } } }"#,
+                      scripts: ["script.ts"] }"#,
             ),
             ("c/chunk0/thing.locr.json", b"{}"),
             ("c/chunk0/other.locr.json", b"{}"),
@@ -473,7 +473,7 @@ fn mods_needing_unsupported_features_fail() {
     );
     let err = env.build(&[m]).unwrap_err().to_string();
     assert_eq!(err.matches(".locr.json").count(), 1, "{err}");
-    assert!(err.contains("localisation"), "{err}");
+    assert!(err.contains("scripts"), "{err}");
 }
 
 #[test]
@@ -1226,6 +1226,80 @@ fn localisation_overrides_change_the_current_locr() {
     assert_eq!(strings.get(en, added).as_deref(), Some("Added"));
     assert_eq!(strings.get(fr, 0x1111_1111).as_deref(), Some("Gardé"));
     assert_eq!(strings.get(de, 0x2222_2222).as_deref(), Some("Erste"));
+}
+
+#[test]
+fn localisation_adds_strings_for_lines_to_use() {
+    let env = Env::new();
+    env.archive(
+        "chunk0",
+        PatchId::Base,
+        &[(locr::MOD_STRINGS, "LOCR", game_locr(), &[])],
+    );
+    let (en, fr) = (1, 2);
+    let name = crc32fast::hash(b"UI_MY_STRING");
+    // A name made of digits is still a name here, unlike in overrides.
+    let digits = crc32fast::hash(b"123");
+    let first = env.installed(
+        "first",
+        &[(
+            "manifest.json",
+            format!(
+                r#"{{ id: "first", name: "first",
+                    localisation: {{
+                        english: {{ ui_my_string: "First", "123": "Digits" }},
+                        french: {{ UI_MY_STRING: "Premier" }},
+                    }},
+                    localisationOverrides: {{
+                        "{:016X}": {{ french: {{ "{name}": "Remplacé" }} }},
+                    }},
+                    localisedLines: {{ "00A3000000000002": "ui_my_string" }} }}"#,
+                locr::MOD_STRINGS
+            )
+            .as_bytes(),
+        )],
+    );
+    let second = env.installed(
+        "second",
+        &[(
+            "manifest.json",
+            br#"{ id: "second", name: "second",
+                  localisation: { english: { UI_MY_STRING: "Second" } } }"#,
+        )],
+    );
+    let desired = env.build(&[first, second]).unwrap();
+
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
+    let strings = locr::Locr::parse(&resource(&archive, locr::MOD_STRINGS).data).unwrap();
+    assert_eq!(strings.get(en, 0x1111_1111).as_deref(), Some("Kept"));
+    assert_eq!(strings.get(en, name).as_deref(), Some("Second"));
+    assert_eq!(strings.get(0, name).as_deref(), Some("Second"));
+    assert_eq!(strings.get(en, digits).as_deref(), Some("Digits"));
+    assert_eq!(strings.get(fr, name).as_deref(), Some("Remplacé"));
+
+    let line = resource(&archive, 0x00A3_0000_0000_0002);
+    assert_eq!(line.resource_type, "LINE");
+    let mut expected = name.to_le_bytes().to_vec();
+    expected.push(0);
+    assert_eq!(line.data, expected);
+    assert_eq!(references(&line), vec![(locr::MOD_STRINGS, 0x1F)]);
+}
+
+#[test]
+fn localisation_that_cant_be_applied_fails() {
+    let env = Env::new();
+    let m = env.installed(
+        "m",
+        &[(
+            "manifest.json",
+            br#"{ id: "M", name: "M",
+                  localisation: { klingon: { UI_X: "x" } },
+                  localisedLines: { "00A3000000000002": 5 } }"#,
+        )],
+    );
+    let err = env.build(&[m]).unwrap_err().to_string();
+    assert!(err.contains("`klingon`"), "{err}");
+    assert!(err.contains("`localisedLines`"), "{err}");
 }
 
 #[test]

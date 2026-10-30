@@ -477,6 +477,9 @@ impl std::fmt::Display for Folder {
 /// # of its own. Patchwork adds the usual ones mods replace (`winhttp`,
 /// # `dxgi`, ...) by itself when it deploys them next to the exe.
 /// dll_overrides = ["d3dcompiler_47"]
+/// # What can run it, in order; the first that can is used. Leave it out for
+/// # the usual steam, native, proton, wine. See `launch::runner`.
+/// runners = ["umu", "wine"]
 /// # Used when nothing else is asked for, if it's available.
 /// default = true
 /// ```
@@ -564,6 +567,9 @@ pub struct LaunchDef {
     /// Wine DLL overrides, by name without `.dll`, set to native first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dll_overrides: Vec<String>,
+    /// The ids of what can run it, in order, instead of the usual ones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runners: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub default: bool,
 }

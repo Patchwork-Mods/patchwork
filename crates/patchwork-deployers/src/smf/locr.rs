@@ -1,6 +1,6 @@
 //! LOCR resources, the game's localised strings: for each language, a list
 //! of strings encrypted with XTEA, each under a CRC32 of its name. Mods'
-//! `localisationOverrides` change strings in them.
+//! `localisation` and `localisationOverrides` change strings in them.
 //!
 //! Strings that aren't changed are kept as they're stored, so rebuilding a
 //! LOCR never has to decrypt (or re-encrypt) the game's own text.
@@ -28,6 +28,14 @@ const CODES: [&str; 10] = ["xx", "en", "fr", "it", "de", "es", "ru", "cn", "tc",
 /// Marks a language a LOCR has no strings for.
 const NO_STRINGS: u32 = u32::MAX;
 
+/// The LOCR mods' `localisation` strings go in, and that LINE resources use.
+pub const MOD_STRINGS: u64 = 0x00F5_8178_76E6_91F1;
+
+/// The language whose strings are also used as `xx`.
+pub const ENGLISH: usize = 1;
+/// The language the game falls back on.
+pub const FALLBACK: usize = 0;
+
 /// A language's index in a LOCR, by name or code.
 pub fn language(name: &str) -> Option<usize> {
     LANGUAGES
@@ -42,8 +50,20 @@ pub fn language(name: &str) -> Option<usize> {
 pub fn string_hash(key: &str) -> u32 {
     match key.parse::<u32>() {
         Ok(hash) if key.bytes().all(|b| b.is_ascii_digit()) => hash,
-        _ => crc32fast::hash(key.to_ascii_uppercase().as_bytes()),
+        _ => name_hash(key),
     }
+}
+
+/// The hash of a string's name, as the game does it (uppercase).
+pub fn name_hash(name: &str) -> u32 {
+    crc32fast::hash(name.to_ascii_uppercase().as_bytes())
+}
+
+/// The contents of a LINE resource, which names a string in [`MOD_STRINGS`].
+pub fn line(name: &str) -> Vec<u8> {
+    let mut data = name_hash(name).to_le_bytes().to_vec();
+    data.push(0);
+    data
 }
 
 /// A language's strings, by hash, still encrypted.

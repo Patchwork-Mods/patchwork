@@ -23,6 +23,7 @@ use serde::de::DeserializeOwned;
 
 use crate::check::Check;
 use crate::deploy::Deployer;
+use crate::launch::Runner;
 use crate::list::OrderedList;
 use crate::options::{ModOptions, ModTransform};
 use crate::provision::Provisioner;
@@ -106,6 +107,13 @@ impl Registrar<'_> {
         self
     }
 
+    /// Adds a way of running games, which their `[launch.<id>]` tables can
+    /// list in `runners` by its id.
+    pub fn runner(&mut self, runner: impl Runner + 'static) -> &mut Self {
+        self.registered.runner(Some(self.ext), runner);
+        self
+    }
+
     /// Adds a list the user puts in order, as `<extension>.<name>`. Its
     /// config is the game's `[ext.<extension>.<name>]` table, and its saved
     /// order is kept in the extension's state under `name`.
@@ -172,6 +180,7 @@ pub(crate) struct Registered {
     pub deployers: BTreeMap<String, Arc<dyn Deployer>>,
     pub provisioners: BTreeMap<String, Arc<dyn Provisioner>>,
     pub formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
+    pub runners: BTreeMap<String, Arc<dyn Runner>>,
     pub extensions: BTreeMap<String, Arc<dyn Extension>>,
     /// By hook id.
     pub lists: BTreeMap<String, Hook<dyn OrderedList>>,
@@ -236,6 +245,13 @@ impl Registered {
         let id = format.id().to_owned();
         if self.claim("profile format", &id, owner) {
             self.formats.insert(id, Arc::new(format));
+        }
+    }
+
+    pub fn runner(&mut self, owner: Option<&'static str>, runner: impl Runner + 'static) {
+        let id = runner.id().to_owned();
+        if self.claim("runner", &id, owner) {
+            self.runners.insert(id, Arc::new(runner));
         }
     }
 

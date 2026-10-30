@@ -69,6 +69,17 @@ pub struct GameInstall {
     /// isn't the one Steam made for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<PathBuf>,
+    /// The launch option to use when none is asked for, instead of the
+    /// definition's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch: Option<String>,
+    /// The runner to start it with, instead of the first of its launch's
+    /// `runners` that can.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
+    /// The user's settings for runners, by runner id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub runners: BTreeMap<String, toml::Table>,
 }
 
 impl GameInstall {
@@ -79,6 +90,9 @@ impl GameInstall {
             deployer: toml::Table::new(),
             roots: BTreeMap::new(),
             prefix: None,
+            launch: None,
+            runner: None,
+            runners: BTreeMap::new(),
         }
     }
 }
@@ -274,6 +288,12 @@ impl Builder {
         self
     }
 
+    /// Adds a runner outside of any extension, as tests do.
+    pub fn runner(mut self, runner: impl launch::Runner + 'static) -> Self {
+        self.registered.runner(None, runner);
+        self
+    }
+
     pub fn reporter(mut self, reporter: impl Reporter + 'static) -> Self {
         self.reporter = Arc::new(reporter);
         self
@@ -303,6 +323,7 @@ impl Builder {
             deployers: registered.deployers,
             provisioners: registered.provisioners,
             formats: registered.formats,
+            runners: registered.runners,
             extensions: registered.extensions,
             lists: registered.lists,
             transforms: registered.transforms,
@@ -334,6 +355,7 @@ pub struct Patchwork {
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
     provisioners: BTreeMap<String, Arc<dyn Provisioner>>,
     formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
+    runners: BTreeMap<String, Arc<dyn launch::Runner>>,
     extensions: BTreeMap<String, Arc<dyn Extension>>,
     /// By hook id; see [`crate::list`].
     lists: BTreeMap<String, Hook<dyn OrderedList>>,
@@ -469,6 +491,9 @@ impl Patchwork {
             deployer,
             roots,
             prefix,
+            launch,
+            runner,
+            runners,
         } = install;
         let path = existing_dir(&path)?;
         let roots = roots
@@ -500,15 +525,48 @@ impl Patchwork {
         for (key, value) in &deployer {
             SettingSpec::find(specs, &format!("{}'s deployer", def.name), key)?.check(value)?;
         }
+        let saved = self.game_install(game)?;
+        // What's already saved isn't checked: a definition changing shouldn't
+        // stop anything else being changed, and it's ignored or explained
+        // when it comes to launching.
+        let known = launch::Runners::new(&self.runners, &registry);
+        if let Some(id) = &runner
+            && saved.as_ref().and_then(|s| s.runner.as_ref()) != Some(id)
+        {
+            known.get(id)?;
+        }
+        if let Some(id) = &launch
+            && saved.as_ref().and_then(|s| s.launch.as_ref()) != Some(id)
+        {
+            let options = launch::options(def, &path, None);
+            if !options.iter().any(|o| o.id == *id) {
+                let ids: Vec<_> = options.iter().map(|o| o.id.as_str()).collect();
+                return Err(Error::invalid(format!(
+                    "{} can't be launched as `{id}`; it can be {}",
+                    def.name,
+                    ids.join(", ")
+                )));
+            }
+        }
+        for (id, set) in &runners {
+            let Ok(found) = known.get(id) else { continue };
+            let specs: Vec<_> = found.settings().into_iter().map(|s| s.spec).collect();
+            for (key, value) in set {
+                SettingSpec::find(&specs, &format!("the runner `{id}`"), key)?.check(value)?;
+            }
+        }
         let install = GameInstall {
             path,
             link,
             deployer,
             roots,
             prefix,
+            launch,
+            runner,
+            runners,
         };
         // Instances use the install's link method and other roots too.
-        let was = self.game_install(game)?.and_then(|i| i.link);
+        let was = saved.and_then(|i| i.link);
         for target in self.targets_of(game)? {
             let state = self.deploy_state(&target)?;
             let undeploy = self.undeploy_command(&target)?;
@@ -600,18 +658,46 @@ impl Patchwork {
         Ok(Some(launch::options(
             &registry.game(game)?.value,
             &install.path,
+            install.launch.as_deref(),
+        )))
+    }
+
+    /// The runners that can be picked for `game`, and how each would do with
+    /// its default launch option. `None` if it hasn't been set up.
+    pub fn runner_choices(&self, game: &str) -> Result<Option<launch::RunnerChoices>> {
+        let Some(install) = self.game_install(game)? else {
+            return Ok(None);
+        };
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
+        let state = self.deploy_state(&DeployTarget::Game(game.to_owned()))?;
+        Ok(Some(launch::runner_choices(
+            def,
+            &launch::Setup::find(def, &install, &state),
+            &launch::Runners::new(&self.runners, &registry),
         )))
     }
 
     /// How to start `game` the way `option` says (by id), or the default
     /// way, with whatever's deployed to it now. Deploying a profile first
-    /// is up to the caller.
-    pub fn plan_launch(&self, game: &str, option: Option<&str>) -> Result<Launch> {
+    /// is up to the caller. `runner` is a runner to use this once, instead
+    /// of the one picked for the game or the launch's own list.
+    pub fn plan_launch(
+        &self,
+        game: &str,
+        option: Option<&str>,
+        runner: Option<&str>,
+    ) -> Result<Launch> {
         let registry = self.registry();
         let def = &registry.game(game)?.value;
         let install = self.game_install(game)?.ok_or_else(|| not_installed(def))?;
         let state = self.deploy_state(&DeployTarget::Game(game.to_owned()))?;
-        launch::plan(def, option, &launch::Setup::find(def, &install, &state))
+        let runners = launch::Runners::new(&self.runners, &registry);
+        let mut setup = launch::Setup::find(def, &install, &state);
+        if let Some(runner) = runner {
+            setup.runner = Some(runner.to_owned());
+        }
+        launch::plan(def, option, &setup, &runners)
     }
 
     fn install_file(&self, game: &str) -> PathBuf {

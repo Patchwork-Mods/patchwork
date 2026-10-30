@@ -665,6 +665,11 @@ struct GameSettings {
     uses_prefix: bool,
     /// The prefix the folders were looked for in.
     prefix: Option<String>,
+    /// The ways the game can be started. Empty until it's been set up.
+    launch_options: Vec<LaunchOption>,
+    /// What can run the game. `None` if patchwork starts it itself, or until
+    /// it's been set up.
+    runners: Option<launch::RunnerChoices>,
 }
 
 #[derive(Serialize)]
@@ -708,6 +713,16 @@ fn game_settings(app: State<'_, App>, game: String) -> CmdResult<GameSettings> {
             .as_ref()
             .and_then(|r| r.prefix())
             .map(|p| p.display().to_string()),
+        launch_options: app
+            .pw
+            .launch_options(&game)
+            .map_err(msg)?
+            .unwrap_or_default(),
+        runners: if def.provision.is_some() {
+            None
+        } else {
+            app.pw.runner_choices(&game).map_err(msg)?
+        },
     })
 }
 
@@ -780,6 +795,26 @@ struct GameEnvInfo {
 fn set_game_settings(app: State<'_, App>, game: String, settings: GameInstall) -> CmdResult<()> {
     app.pw
         .set_game_install(&game, settings)
+        .map(drop)
+        .map_err(msg)
+}
+
+/// Remembers the way to start a game by default, as Play's menu does.
+#[tauri::command]
+fn set_launch_option(app: State<'_, App>, game: String, option: String) -> CmdResult<()> {
+    let install = app
+        .pw
+        .game_install(&game)
+        .map_err(msg)?
+        .ok_or_else(|| format!("{game} hasn't been set up"))?;
+    app.pw
+        .set_game_install(
+            &game,
+            GameInstall {
+                launch: Some(option),
+                ..install
+            },
+        )
         .map(drop)
         .map_err(msg)
 }
@@ -1291,7 +1326,7 @@ async fn launch_game(app: State<'_, App>, id: String, option: Option<String>) ->
     }
     let launch = app
         .pw
-        .plan_profile_launch(&r, option.as_deref())
+        .plan_profile_launch(&r, option.as_deref(), None)
         .map_err(msg)?;
     let name = app
         .pw
@@ -1310,12 +1345,13 @@ async fn launch_game(app: State<'_, App>, id: String, option: Option<String>) ->
     .await
     .map_err(msg)?;
     let started = started.map_err(msg)?;
-    let how = match launch.via {
-        Via::Steam { .. } => " through Steam",
-        Via::Direct => "",
-        Via::Proton { .. } => " with Proton",
-        Via::Wine { .. } => " with Wine",
-        Via::Java { .. } => " with Java",
+    let how = match &launch.via {
+        Via::Steam { .. } => " through Steam".to_owned(),
+        Via::Direct => String::new(),
+        Via::Proton { .. } => " with Proton".to_owned(),
+        Via::Wine { .. } => " with Wine".to_owned(),
+        Via::Java { .. } => " with Java".to_owned(),
+        Via::Runner { name } => format!(" with {name}"),
     };
     let mut said = format!("Started {name}{how}");
     if !started.added_overrides.is_empty() {
@@ -1586,6 +1622,7 @@ fn main() {
             plan_undeploy,
             apply_plan,
             launch_game,
+            set_launch_option,
             lock_profile,
             provide_download,
             links::handle_links,

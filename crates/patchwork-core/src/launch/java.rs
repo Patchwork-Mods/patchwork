@@ -103,7 +103,7 @@ pub fn plan(name: &str, java: &JavaLaunch, ctx: &JavaContext) -> Result<Launch> 
 
 /// `arg` with its `${name}` placeholders that are in `vars` filled in.
 /// Others are left as they are.
-fn fill(arg: &str, vars: &BTreeMap<String, String>) -> String {
+pub(super) fn fill(arg: &str, vars: &BTreeMap<String, String>) -> String {
     let mut out = String::with_capacity(arg.len());
     let mut rest = arg;
     while let Some(start) = rest.find("${") {

@@ -1,6 +1,6 @@
-// Playing. Play starts the game the way last picked from its menu, or the
-// game's default way; picking one from the menu starts it that way and
-// remembers it for the game. A profile that isn't deployed as it is now is
+// Playing. Play starts the game the way last picked from its menu or the game
+// settings, or the game's default way; picking one from the menu starts it
+// that way and remembers it for the game. A profile that isn't deployed as it is now is
 // deployed first, once the user has seen what that changes.
 
 import { run, state, status } from "./state.js";
@@ -8,29 +8,17 @@ import { $, h } from "./dom.js";
 import { deployFirst } from "./deploy.js";
 import { openSettings } from "./settings.js";
 
-const storageKey = (game) => `launchOption.${game}`;
-
-function remembered(game) {
-  try {
-    return localStorage.getItem(storageKey(game));
-  } catch {
-    return null;
-  }
-}
-
-function remember(game, id) {
-  try {
-    localStorage.setItem(storageKey(game), id);
-  } catch {
-    // only a convenience
-  }
-}
-
-/** The option Play uses for profile `p`: the one last picked, if it can still be used. */
+/** The option Play uses for profile `p`: the game's default, if it can be used. */
 function picked(p) {
   const usable = p.launchOptions.filter((o) => !o.unavailable);
-  const last = remembered(p.game);
-  return usable.find((o) => o.id === last) ?? usable.find((o) => o.default) ?? usable[0];
+  return usable.find((o) => o.default) ?? usable[0];
+}
+
+/** Makes `id` what Play starts for profile `p`, here and in the CLI. */
+async function remember(p, id) {
+  if (p.launchOptions.length < 2 || p.launchOptions.find((o) => o.id === id)?.default) return;
+  await run("set_launch_option", { game: p.game, option: id });
+  for (const o of p.launchOptions) o.default = o.id === id;
 }
 
 /** Shows Play, and its menu of launch options, once the game's folder is known. */
@@ -52,8 +40,9 @@ export function renderPlay(p) {
           disabled: !!o.unavailable,
           title: o.unavailable,
           onclick: () => {
-            remember(p.game, o.id);
-            play(o.id).catch(() => {});
+            remember(p, o.id)
+              .then(() => play(o.id))
+              .catch(() => {});
           },
         },
         h("span", { class: "tick", "aria-hidden": "true" }, o.id === pick?.id ? "✓" : ""),
@@ -62,6 +51,19 @@ export function renderPlay(p) {
           ? h("span", { class: "muted" }, "unavailable")
           : o.default && h("span", { class: "muted" }, "default"),
       ),
+    ),
+    h(
+      "button",
+      {
+        type: "button",
+        role: "menuitem",
+        onclick: () => {
+          $("#play-menu").open = false;
+          $("#game-settings").click();
+        },
+      },
+      h("span", { class: "tick", "aria-hidden": "true" }),
+      "Launch settings…",
     ),
   );
 }

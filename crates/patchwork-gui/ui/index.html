@@ -353,6 +353,22 @@
 					</label>
 					<div id="game-settings-deployer" class="stack"></div>
 				</fieldset>
+				<!-- Filled in from the ways to start the game and what can run it;
+             see games.js. -->
+				<fieldset id="game-settings-launching" class="stack" hidden>
+					<legend>Launching</legend>
+					<label id="game-settings-launch" class="field" hidden>
+						<span>Start</span>
+						<select name="launch"></select>
+						<small class="muted">What Play starts. Its menu can start the others.</small>
+					</label>
+					<label class="field">
+						<span>Run with</span>
+						<select name="runner"></select>
+						<small id="game-settings-runner-note" class="muted"></small>
+					</label>
+					<div id="game-settings-runner-fields" class="stack"></div>
+				</fieldset>
 				<!-- Filled in from the game's other roots; see games.js. -->
 				<fieldset id="game-settings-roots" class="stack" hidden>
 					<legend>Other folders</legend>

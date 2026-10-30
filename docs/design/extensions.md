@@ -62,7 +62,7 @@ The docs for rung 3 are mostly a "you need X → use hook Y" table:
 | the user to make choices about a mod | `ModOptions` | FOMOD wizard |
 | an order the user arranges, apart from mod order | `OrderedList` | plugin load order |
 | the game itself downloaded and set up | `Provisioner` | Minecraft |
-| a new way to start a game | `Launcher` | Java |
+| a new way to start a game | `Runner` | Steam, Proton, Wine, umu |
 | the user to sign in as someone | `AccountKind` | Minecraft offline/Microsoft |
 | a button or command that runs once | `Action` | "sort with LOOT" (future) |
 | problems reported before deploying | `Check` | plugin limit, missing masters |
@@ -414,21 +414,34 @@ Frontends get **one** generic reorderable-list screen with a tab per list
 that's on for the game. Future lists, such as a Minecraft resource-pack
 order or Cyberpunk REDmod load order, need no frontend work.
 
-### `Launcher` and `AccountKind`: starting games
+### `Runner` and `AccountKind`: starting games
 
-`Launch::Java` and `Via::Java` become one registered launcher out of
-several. Java is a reasonable built-in extension of its own, since games
-other than Minecraft (Starsector, Project Zomboid) run on Java too.
+A game's `[launch.<id>]` says *what* to run. Runners are *how*, and work
+like the `rules` deployer and its rulesets: the involved ones are code, and
+simple ones are data in `registry/runners/<id>.toml`. A launch can list
+`runners`, tried in order; without a list it's `steam`, `native`, `proton`,
+`wine`. See `launch/runner.rs`.
 
 ```rust
-pub trait Launcher: Send + Sync {
-    /// What a provisioner's `Setup::launch` is tagged with, like `java`.
-    fn via(&self) -> &str;
-    /// The command to run. Placeholders such as `${auth_name}` come from the
-    /// account, if the game needs one.
-    fn command(&self, ctx: &LaunchContext<'_>, launch: &toml::Table) -> Result<Command>;
+pub trait Runner: Send + Sync {
+    fn id(&self) -> &str;
+    fn name(&self) -> &str;
+    /// What the user can change, for frontends to show.
+    fn settings(&self) -> Vec<SettingState>;
+    /// `Ready`, `Unsuited(why)` (wrong kind of runner for this) or
+    /// `Missing(why)` (right kind, but something it needs isn't there).
+    fn check(&self, ctx: &RunContext<'_>) -> Fit;
+    /// Describes the command; the host runs it.
+    fn plan(&self, ctx: &RunContext<'_>) -> Result<Launch>;
 }
+```
 
+`Launch::Java` and `Via::Java` are still separate, and become a runner of
+their own when accounts move here, since Java's placeholders come from the
+account. Java is a reasonable built-in extension, since games other than
+Minecraft (Starsector, Project Zomboid) run on Java too.
+
+```rust
 pub trait AccountKind: Send + Sync {
     fn id(&self) -> &str;           // "offline", "microsoft"
     fn title(&self) -> &str;
@@ -688,9 +701,18 @@ Each step leaves `main` working and shippable.
      reads plugin headers each time a profile is shown. If that gets slow
      on big profiles, cache the result by deploy inputs.
    - Deploy plans get the same issues' messages as warnings.
-5. **`Launcher` + `AccountKind`.** Port Java and Minecraft accounts. This
-   should be done *before* Microsoft sign-in is built, so that sign-in is
-   built on the new hook rather than ported afterwards.
+5. **`Runner` + `AccountKind`.** This should be done *before* Microsoft
+   sign-in is built, so that sign-in is built on the new hook rather than
+   ported afterwards.
+   - Done: `Runner`, with Steam, native, Proton and Wine ported to it,
+     `Registrar::runner`, `runners` in `[launch.<id>]`, and runners as data
+     (`registry/runners/`, starting with `umu`).
+   - Done: picking a runner and a launch option for a game, and runner
+     settings (`Runner::settings`, `[settings.<key>]` in data), in both
+     frontends. They're kept in `GameInstall`.
+   - Not done: porting Java and Minecraft accounts.
+   - Tools (`plan_tool`) use the runner picked for the game if it can run
+     them, then the usual ones; they don't use a launch's `runners` list.
 6. **`Action`.** Add it when the first real action (LOOT sorting) is
    wanted.
 7. **Reorganize crates** into per-game extensions (step 1 of the original

@@ -246,13 +246,83 @@ document.addEventListener("click", (e) => {
 
 // Game settings, sent back to set_game_settings as a GameInstall (see
 // patchwork-core): the folder, how files are linked, the deployer's
-// settings, and where the game's other folders are.
+// settings, how it's started, and where the game's other folders are.
 
 const settingsForm = $("#game-settings-form");
 /** The deployer's settings as last shown. */
 let deployerSettings = [];
 /** The game's other roots as last shown. */
 let rootSettings = [];
+
+/** What can run the game as last shown, if anything can be picked. */
+let runnerChoices = null;
+/** The game's settings as last shown, for what the form doesn't show. */
+let shownInstall = {};
+
+/**
+ * The runner's settings under names of their own, since runners can share keys
+ * with each other and with the rest of the form.
+ */
+function runnerSetting(runner, setting) {
+  return { ...setting, key: `runner-${runner.id}-${setting.key}` };
+}
+
+/** Shows the settings and any problem of the runner the form says will be used. */
+function showRunner() {
+  const picked = settingsForm.elements.runner.value;
+  const id = picked || runnerChoices?.automatic;
+  for (const group of $("#game-settings-runner-fields").children) {
+    group.hidden = group.dataset.runner !== id;
+  }
+  const runner = runnerChoices?.runners.find((r) => r.id === id);
+  $("#game-settings-runner-note").textContent = picked
+    ? (runner?.unavailable ?? "")
+    : runner
+      ? "Patchwork uses the first runner that can start the game."
+      : "Nothing can start the game right now.";
+}
+
+function renderLaunching(settings, install) {
+  const options = settings.launchOptions;
+  runnerChoices = settings.runners;
+  $("#game-settings-launching").hidden = !runnerChoices;
+  if (!runnerChoices) return;
+
+  const launch = settingsForm.elements.launch;
+  $("#game-settings-launch").hidden = options.length < 2;
+  launch.replaceChildren(
+    h("option", { value: "" }, "The game's default"),
+    ...options.map((o) =>
+      h("option", { value: o.id, disabled: !!o.unavailable, title: o.unavailable }, o.name),
+    ),
+  );
+  launch.value = install.launch ?? "";
+
+  const name = (id) => runnerChoices.runners.find((r) => r.id === id)?.name ?? id;
+  const automatic = runnerChoices.automatic;
+  const runner = settingsForm.elements.runner;
+  runner.replaceChildren(
+    h("option", { value: "" }, automatic ? `Automatic (${name(automatic)})` : "Automatic"),
+    ...runnerChoices.runners.map((r) =>
+      h("option", { value: r.id, title: r.unavailable }, r.unavailable ? `${r.name} (unavailable)` : r.name),
+    ),
+  );
+  runner.value = install.runner ?? "";
+  $("#game-settings-runner-fields").replaceChildren(
+    ...runnerChoices.runners
+      .filter((r) => r.settings.length)
+      .map((r) =>
+        h(
+          "div",
+          { class: "stack", "data-runner": r.id },
+          ...r.settings.map((s) => settingField(runnerSetting(r, s), { idPrefix: "game-setting" })),
+        ),
+      ),
+  );
+  showRunner();
+}
+
+settingsForm.elements.runner.addEventListener("change", showRunner);
 
 const rootOrigins = { set: "", definition: "", prefix: " in the Wine prefix" };
 
@@ -293,6 +363,8 @@ $("#game-settings").addEventListener("click", async () => {
   rootSettings = settings.roots;
   const install = settings.install ?? {};
   $("#game-settings-roots").hidden = rootSettings.length === 0;
+  shownInstall = install;
+  renderLaunching(settings, install);
   $("#game-settings-prefix").hidden = !settings.usesPrefix;
   settingsForm.elements.prefix.value = install.prefix ?? "";
   settingsForm.elements.prefix.placeholder = settings.prefix ?? "Not found";
@@ -327,12 +399,26 @@ settingsForm.addEventListener("submit", async (e) => {
     const value = settingsForm.elements[`root-${root.id}`].value.trim();
     if (value) roots[root.id] = value;
   }
+  // what isn't shown stays as it is, like settings for a runner that's gone
+  const runners = structuredClone(shownInstall.runners ?? {});
+  for (const runner of runnerChoices?.runners ?? []) {
+    const set = {};
+    for (const setting of runner.settings) {
+      const value = readSetting(settingsForm, runnerSetting(runner, setting));
+      if (value != null) set[setting.key] = value;
+    }
+    if (Object.keys(set).length) runners[runner.id] = set;
+    else delete runners[runner.id];
+  }
   const settings = {
     path: settingsForm.elements.path.value,
     link: settingsForm.elements.link.value || null,
     deployer,
     roots,
     prefix: settingsForm.elements.prefix.value.trim() || null,
+    launch: runnerChoices ? settingsForm.elements.launch.value || null : (shownInstall.launch ?? null),
+    runner: runnerChoices ? settingsForm.elements.runner.value || null : (shownInstall.runner ?? null),
+    runners,
   };
   const submit = settingsForm.querySelector("[type=submit]");
   submit.disabled = true;

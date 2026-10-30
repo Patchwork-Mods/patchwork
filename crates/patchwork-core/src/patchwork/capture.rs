@@ -83,7 +83,14 @@ impl Patchwork {
             .game_install(&loaded.game)?
             .ok_or_else(|| not_installed(def))?;
         let state = self.deploy_state(&self.deploy_target(&loaded)?)?;
-        launch::plan_tool(def, &launch::Setup::find(def, &install, &state), exe, args)
+        let runners = launch::Runners::new(&self.runners, &registry);
+        launch::plan_tool(
+            def,
+            &launch::Setup::find(def, &install, &state),
+            exe,
+            args,
+            &runners,
+        )
     }
 
     /// Runs `tool` (from [`Patchwork::plan_tool`]) for `profile`, which has

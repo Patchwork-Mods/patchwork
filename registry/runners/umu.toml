@@ -1,0 +1,32 @@
+# umu-launcher, which runs Windows games with Proton outside Steam. It isn't in
+# the usual list of runners; a game opts in with `runners = ["umu"]` in its
+# `[launch.<id>]`. With no PROTONPATH, umu downloads its own Proton.
+#
+#   command  what to run; `${args...}` has to be a whole argument, and becomes
+#            the launch's arguments. The others are ${exe}, ${install} (the
+#            game's folder), ${prefix} and ${steam_app}; a runner that uses one
+#            that isn't known for a game can't run it.
+#   env      set on top of patchwork's environment; the game's own win
+#   applies  what it's for: `exe`, a glob matched against the exe's file name
+#            ignoring case, and `os`, any of windows, linux, macos
+#   settings what the user can change, as `${key}` in `command` and `env`. Each
+#            has a `label`, and can have a `kind` ("text" or "path"), `help`
+#            and `default`. An argument or variable that uses one with no value
+#            is left out.
+name = "umu"
+command = ["umu-run", "${exe}", "${args...}"]
+env = { WINEPREFIX = "${prefix}", GAMEID = "${game_id}", PROTONPATH = "${proton}" }
+
+[applies]
+exe = "*.exe"
+os = ["linux"]
+
+[settings.proton]
+label = "Proton"
+kind = "path"
+help = "The Proton folder to use. Leave it empty for umu to download its own."
+
+[settings.game_id]
+label = "Game ID"
+help = "The umu-protonfixes entry to apply, like umu-1245620."
+default = "umu-default"

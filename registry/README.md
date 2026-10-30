@@ -35,5 +35,10 @@ of its own for them whatever the schema's install rules say.
 Any other directory is loaded as raw TOML, for sources and deployers that need
 their own shared data.
 
+`runners/` holds ways of running games that are just a command to fill in. A
+game opts in with `runners = ["umu"]` in its `[launch.<id>]`, and users can pick
+any runner for a game; `umu.toml` explains the format, including settings users
+can change.
+
 While working on definitions, set `PATCHWORK_REGISTRY_PATH` to this directory
 to load them at runtime without rebuilding.
