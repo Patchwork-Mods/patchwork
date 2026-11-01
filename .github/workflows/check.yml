@@ -1,20 +1,21 @@
-# Checks every push to main and every pull request: formatting, clippy, the
-# tests, the UI's JavaScript, and that the workspace still builds with the
-# rust-version in Cargo.toml.
+# Checks every pull request and every release (release.yml calls this before
+# publishing): formatting, clippy, the tests, the UI's JavaScript, and that the
+# workspace still builds with the rust-version in Cargo.toml. Pushes to main
+# aren't checked; run it by hand from Actions -> Check to check one.
 #
 # Tests run on Linux only. macOS and Windows get a `cargo check`, which
 # catches cfg(windows)/cfg(target_os = "macos") code that no longer
 # compiles; their tests haven't been run there yet, so they aren't enforced.
 #
-# As in release.yml, caches are only saved from main.
+# As in release.yml, caches are only saved from main, so here that means runs
+# from a release or by hand.
 
 name: Check
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: check-${{ github.ref }}
@@ -24,6 +25,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  # Full debug info fills the runner's disk while linking the test binaries,
+  # which shows up as the linker dying with a bus error.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   lint:

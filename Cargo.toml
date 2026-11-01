@@ -7,8 +7,8 @@ exclude = ["vendor"]
 [workspace.package]
 version = "0.1.0-alpha.1"
 edition = "2024"
-# iroh needs 1.91
-rust-version = "1.91"
+# glacier-bin1 needs 1.95
+rust-version = "1.95"
 license = "MIT"
 
 [workspace.dependencies]
@@ -43,7 +43,6 @@ roxmltree = "0.21.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_norway = "0.9.42"
-# 0.21 and later need a newer Rust than rust-version above
 sevenz-rust2 = { version = "0.20.2", default-features = false, features = ["bzip2", "deflate", "ppmd"] }
 tauri = "2.12.4"
 tauri-build = "2.7.3"
