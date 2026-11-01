@@ -28,6 +28,9 @@
 //! `.clng.json`) is rebuilt natively (see [`dlge`]), and so are materials
 //! (`.material.json`, see [`material`]).
 //!
+//! Peacock plugins are placed in the game's folder, listed in a deploy summary
+//! Peacock can read (see [`peacock`]).
+//!
 //! Not supported yet: SMF's other special file types (sounds,
 //! other language files and deltas), entities made for QuickEntity versions
 //! before 3.1, scripts and choosing options (those enabled by default are used). Mods that need them fail to deploy rather than half
@@ -42,6 +45,7 @@ mod manifest;
 mod material;
 mod meta;
 mod ores;
+mod peacock;
 mod resource;
 mod text;
 mod texture;
@@ -182,6 +186,9 @@ struct Build<'a> {
     /// Every mod's changes to localised strings, applied once all mods are
     /// staged: `localisation` first, then `localisationOverrides`, like SMF.
     string_overrides: Vec<StringOverride>,
+    server_side: peacock::ServerSide,
+    /// The plugins to place, from the mods they're in.
+    plugin_placements: Vec<Placement>,
 }
 
 struct StringOverride {
@@ -218,6 +225,8 @@ impl<'a> Build<'a> {
             checks: Vec::new(),
             entity_patches: Vec::new(),
             string_overrides: Vec::new(),
+            server_side: peacock::ServerSide::default(),
+            plugin_placements: Vec::new(),
         }
     }
 
@@ -245,14 +254,14 @@ impl<'a> Build<'a> {
         if !self.errors.is_empty() {
             return Err(self.errors.join("\n"));
         }
+        let mut placements = self.write_server_side()?;
         if self.staged.is_empty() && self.package_definition.is_empty() && self.thumbs.is_empty() {
             return Ok(DesiredState {
-                placements: Vec::new(),
+                placements,
                 warnings: self.warnings,
             });
         }
 
-        let mut placements = Vec::new();
         let partitions = game::partitions(&self.ctx.game).map_err(|e| e.to_string())?;
         for (partition, resources) in std::mem::take(&mut self.staged) {
             self.ctx.reporter.report(Event::Building {
@@ -346,10 +355,8 @@ impl<'a> Build<'a> {
                     "{label} uses `{feature}`, which patchwork can't deploy yet"
                 ));
             }
-            if !data.peacock_plugins.is_empty() {
-                self.warnings.push(format!(
-                    "{label} has Peacock plugins, which patchwork doesn't install yet"
-                ));
+            for plugin in &data.peacock_plugins {
+                self.stage_plugin(m, &manifest.id, &label, &files, plugin);
             }
             for folder in &data.content_folders {
                 self.stage_content(&label, &files, folder);
@@ -376,6 +383,38 @@ impl<'a> Build<'a> {
         self.ids.insert(manifest.id.clone());
         self.checks.push((label, requirements, incompatibilities));
         Ok(())
+    }
+
+    /// Places a Peacock plugin, to be listed in the deploy summary.
+    fn stage_plugin(
+        &mut self,
+        m: &InstalledMod,
+        id: &str,
+        label: &str,
+        files: &ModFiles<'_>,
+        plugin: &str,
+    ) {
+        let rel = plugin.replace('\\', "/");
+        let Some(file) = files.get(rel.strip_prefix("./").unwrap_or(&rel)) else {
+            self.errors
+                .push(format!("{label}: Peacock plugin {plugin} isn't in the mod"));
+            return;
+        };
+        let Some(dst) = peacock::plugin_path(id, plugin) else {
+            self.errors.push(format!(
+                "{label}: Peacock plugin {plugin} can't be placed under a path made from its id"
+            ));
+            return;
+        };
+        if self.server_side.plugins.contains(&dst) {
+            return;
+        }
+        self.plugin_placements.push(Placement {
+            dst: Dest::game(RelPath::new(&dst).unwrap()),
+            src: m.src(file),
+            mod_name: BUILT_BY.to_owned(),
+        });
+        self.server_side.plugins.push(dst);
     }
 
     /// Stages a content folder: `<folder>/<partition>/...` holding raw
@@ -449,7 +488,7 @@ impl<'a> Build<'a> {
             };
             let resource_type = match &meta {
                 Some(meta) => meta.resource_type.clone(),
-                None => name[stem.len() + 1..].to_owned(),
+                None => name[stem.len() + 1..].to_ascii_uppercase(),
             };
             self.staged.entry(partition).or_default().insert(
                 u64::from(rrid),
@@ -585,6 +624,7 @@ impl<'a> Build<'a> {
             self.destinations.push(destination);
         }
         let data = json::to_bytes(&contract);
+        self.server_side.contracts.insert(id, contract);
         let loaded = match self.current(BASE, hash)? {
             Some(existing) => existing.with_data(data),
             None => Loaded {
@@ -613,7 +653,27 @@ impl<'a> Build<'a> {
             .current(partition, hash)?
             .ok_or_else(|| format!("the game has no {target} to patch"))?;
         let data = json::apply_patch(resource_type, &current.data, operations)?;
+        self.note_patched_contract(hash, &data)?;
         self.stage_built(partition, hash, current.with_data(data));
+        Ok(())
+    }
+
+    /// Peacock serves contracts itself, so it has to hear about patches to
+    /// them too.
+    fn note_patched_contract(&mut self, hash: u64, data: &[u8]) -> Result<(), String> {
+        let Some(contracts) = self.current(BASE, json::CONTRACTS)? else {
+            return Ok(());
+        };
+        let Ores::Hashes(entries) = Ores::parse(&contracts.data)? else {
+            return Ok(());
+        };
+        if entries.iter().any(|(entry, _)| *entry == hash) {
+            let contract = json::parse(data)?;
+            if let Some(id) = contract.pointer("/Metadata/Id").and_then(Value::as_str) {
+                let id = id.to_owned();
+                self.server_side.contracts.insert(id, contract);
+            }
+        }
         Ok(())
     }
 
@@ -1008,6 +1068,39 @@ impl<'a> Build<'a> {
                 }
             }
         }
+    }
+
+    /// Writes the deploy summary for Peacock, if any framework mods are being
+    /// deployed, and returns it with the plugins to place.
+    fn write_server_side(&mut self) -> Result<Vec<Placement>, String> {
+        if self.ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Mods' unlockables are what Peacock serves instead of its own, so
+        // it only gets them if one changed them.
+        let changed = self
+            .staged
+            .get(BASE)
+            .is_some_and(|s| s.contains_key(&json::UNLOCKABLES));
+        let unlockables = if changed {
+            let current = self.current_game(BASE, json::UNLOCKABLES)?;
+            let Ores::Json(text) = Ores::parse(&current.data)? else {
+                return Err("the unlockables ORES isn't JSON".to_owned());
+            };
+            Some(json::parse(text.as_bytes())?)
+        } else {
+            None
+        };
+        let root = self.ctx.game.root();
+        let summary = peacock::summary(root, &self.ids, &self.server_side, unlockables);
+        let out = self.output(peacock::SUMMARY)?;
+        fs::write(&out, summary).map_err(|e| format!("{}: {e}", out.display()))?;
+        if !self.server_side.plugins.is_empty() {
+            self.warnings.push(peacock::setup_warning(root));
+        }
+        let mut placements = std::mem::take(&mut self.plugin_placements);
+        placements.push(placement(peacock::SUMMARY));
+        Ok(placements)
     }
 
     fn write_package_definition(&mut self) -> Result<Placement, String> {

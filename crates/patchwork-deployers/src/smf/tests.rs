@@ -477,6 +477,86 @@ fn mods_needing_unsupported_features_fail() {
 }
 
 #[test]
+fn peacock_gets_plugins_and_what_it_serves() {
+    let env = Env::new();
+    let m = env.installed(
+        "m",
+        &[
+            (
+                "manifest.json",
+                br#"{ id: "Some.Mod", name: "M", contentFolders: ["c"],
+                      peacockPlugins: ["p/a.plugin.js"] }"#,
+            ),
+            ("p/a.plugin.js", b"module.exports = () => {}"),
+            ("c/chunk0/gun.unlockables.json", br#"{"NEW":{"Id":"NEW"}}"#),
+            (
+                "c/chunk0/c.contract.json",
+                br#"{"Metadata":{"Id":"contract-id","Location":"LOC"}}"#,
+            ),
+        ],
+    );
+    let desired = env.build(std::slice::from_ref(&m)).unwrap();
+
+    let plugin = "patchwork-peacock/plugins/Some.Mod/p/a.plugin.js";
+    let out = env.tmp.path().join("out");
+    let roots = ResolvedRoots::game(&env.game);
+    let resolved = deploy::resolve(
+        "smf",
+        desired.placements.clone(),
+        std::slice::from_ref(&m),
+        Some(&out),
+        &roots,
+    )
+    .unwrap();
+    let placed_at = |dst: &str| resolved.iter().find(|p| p.dst.to_string() == dst).unwrap();
+    assert_eq!(
+        fs::read(&placed_at(plugin).src).unwrap(),
+        b"module.exports = () => {}"
+    );
+
+    let summary: Value =
+        serde_json::from_slice(&fs::read(&placed_at(peacock::SUMMARY).src).unwrap()).unwrap();
+    assert_eq!(summary["loadOrder"], serde_json::json!(["Some.Mod"]));
+    let states = &summary["lastServerSideStates"];
+    let path = states["peacockPlugins"][0].as_str().unwrap();
+    assert!(path.starts_with("Z:\\"), "{path}");
+    assert!(path.ends_with("patchwork-peacock\\plugins\\Some.Mod\\p\\a.plugin.js"));
+    assert_eq!(
+        states["contracts"]["contract-id"]["Metadata"]["Location"],
+        "LOC"
+    );
+    let ids: Vec<_> = states["unlockables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["Id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"NEW") && ids.contains(&"GUN"), "{ids:?}");
+    assert!(
+        desired
+            .warnings
+            .iter()
+            .any(|w| w.contains("frameworkDeploySummaryPath=Z:\\")),
+        "{:?}",
+        desired.warnings
+    );
+}
+
+#[test]
+fn missing_peacock_plugins_fail() {
+    let env = Env::new();
+    let m = env.installed(
+        "m",
+        &[(
+            "manifest.json",
+            br#"{ id: "M", name: "M", peacockPlugins: ["gone.plugin.js"] }"#,
+        )],
+    );
+    let err = env.build(&[m]).unwrap_err().to_string();
+    assert!(err.contains("gone.plugin.js"), "{err}");
+}
+
+#[test]
 fn nothing_to_deploy_leaves_the_game_alone() {
     let env = Env::new();
     let readme = env.installed("readme", &[("readme.txt", b"hi")]);
@@ -780,6 +860,15 @@ fn json_patches_apply_to_each_kind_of_resource() {
     );
     let err = env.build(&[missing]).unwrap_err().to_string();
     assert!(err.contains("00DD000000000001"), "{err}");
+}
+
+#[test]
+fn raw_resource_types_are_uppercase_whatever_the_file_name() {
+    let env = Env::new();
+    let m = content_mod(&env, "M", &[("00123456789ABCDE.json", "{}")]);
+    let desired = env.build(&[m]).unwrap();
+    let archive = placed(&env, &desired, "Runtime/chunk0patch300.rpkg");
+    assert_eq!(resource(&archive, 0x00123456789ABCDE).resource_type, "JSON");
 }
 
 #[test]
