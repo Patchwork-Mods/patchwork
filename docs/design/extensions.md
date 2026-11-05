@@ -1,15 +1,19 @@
 # Extensions: game-specific behaviour without game-specific core
 
-Status: proposal (2026-10-29). Steps 1 (the skeleton), 2 (`OrderedList`),
+Status (2026-11-05): steps 1 (the skeleton), 2 (`OrderedList`),
 3 (`ModTransform` + `ModOptions`), 4 (`Check`), 6 (`Action`, with `uses`)
 and 7 (crates per game) of "Order of work" are built, and so is step 5's
-`Runner`; see the notes under each. `AccountKind`
-and `Provisioner` wait for Minecraft's launcher, which was taken out of
-`main` (2026-11-05) and kept on the `minecraft-launcher` branch.
+`Runner`. `AccountKind` and `Provisioner` wait for Minecraft's launcher,
+which was taken out of `main` (2026-11-05) and kept on the
+`minecraft-launcher` branch. The sections below are the original proposal
+(2026-10-29). Where what was built differs from it, the notes under each
+step in "Order of work" say so, and those notes win.
 
 ## The problem
 
-Core, the CLI and the GUI know about particular games:
+Before this work, core, the CLI and the GUI knew about particular games.
+Most of these rows are gone now (see "Order of work"); the Minecraft
+accounts row is still there:
 
 | Where | What | Whose |
 |---|---|---|
@@ -22,7 +26,7 @@ Core, the CLI and the GUI know about particular games:
 | `account.rs`, `Launch::Java`, `Via::Java` (on the `minecraft-launcher` branch now) | accounts and launching | Minecraft |
 | CLI `installer`, `plugins`, `account`; GUI `installer.js`, `plugins.js` | commands and screens | all of the above |
 
-Every new game that needs something "special" adds another row. This
+Every new game that needed something "special" added another row. This
 proposal replaces the rows with a few **generic extension points**. Core
 provides the machinery (saving, syncing, hashing, ordering, showing forms).
 Extensions only describe what is specific to their game.
