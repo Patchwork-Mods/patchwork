@@ -14,7 +14,7 @@ use patchwork_core::profile::ProfileRef;
 use patchwork_core::source::ModSpec;
 use patchwork_deployers::RulesDeployer;
 use patchwork_sources::LocalSource;
-use patchwork_sync::{Joined, Node, Outcome};
+use patchwork_sync::{Addresses, Joined, Node, Outcome};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -71,7 +71,10 @@ async fn a_profile_and_its_local_mods_reach_the_other_machine() {
         .unwrap();
     a.lock(&profile, false).await.unwrap();
     let a_node = node(&a).await;
-    let ticket = a_node.share(&a, &profile, true).await.unwrap();
+    let ticket = a_node
+        .share(&a, &profile, true, Addresses::Included)
+        .await
+        .unwrap();
 
     let b = patchwork(&tmp.path().join("b"));
     let b_node = node(&b).await;
@@ -144,7 +147,10 @@ async fn a_running_node_takes_changes_as_they_come() {
         .await
         .unwrap();
     let a_node = node(&a).await;
-    let ticket = a_node.share(&a, &profile, true).await.unwrap();
+    let ticket = a_node
+        .share(&a, &profile, true, Addresses::Included)
+        .await
+        .unwrap();
     let b = patchwork(&tmp.path().join("b"));
     let b_node = node(&b).await;
     b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
@@ -185,14 +191,20 @@ async fn a_follower_keeps_its_own_changes_to_itself() {
     a.set_hidden_tags(&profile, &["library".to_owned()])
         .unwrap();
     let a_node = node(&a).await;
-    let ticket = a_node.share(&a, &profile, false).await.unwrap();
+    let ticket = a_node
+        .share(&a, &profile, false, Addresses::Included)
+        .await
+        .unwrap();
 
     let b = patchwork(&tmp.path().join("b"));
     let b_node = node(&b).await;
     b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
     assert!(!b_node.synced_profile(&profile).unwrap().unwrap().writable);
     // and it can't be passed on as something others can change
-    let err = b_node.share(&b, &profile, true).await.unwrap_err();
+    let err = b_node
+        .share(&b, &profile, true, Addresses::Included)
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("only follows"), "{err}");
 
     // b's own change stays on b, and doesn't go anywhere
@@ -286,7 +298,10 @@ async fn friends_pass_changes_on_without_whoever_shared() {
     let a = patchwork(&tmp.path().join("a"));
     let profile = a.create_profile("my-game", "default").unwrap();
     let a_node = node(&a).await;
-    let ticket = a_node.share(&a, &profile, true).await.unwrap();
+    let ticket = a_node
+        .share(&a, &profile, true, Addresses::Included)
+        .await
+        .unwrap();
     let b = patchwork(&tmp.path().join("b"));
     let b_node = node(&b).await;
     b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
@@ -308,4 +323,58 @@ async fn friends_pass_changes_on_without_whoever_shared() {
 
     b_node.shutdown().await.unwrap();
     c_node.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_machine_keeps_syncing_after_its_id_is_reset() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = patchwork(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    let a_node = node(&a).await;
+    let ticket = a_node
+        .share(&a, &profile, true, Addresses::Included)
+        .await
+        .unwrap();
+    let b = patchwork(&tmp.path().join("b"));
+    let b_node = node(&b).await;
+    b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
+    // a hears where b is, which offline it couldn't look up
+    a_node.sync_once(&a, Duration::from_secs(2)).await.unwrap();
+
+    let old = a_node.id();
+    let new = a_node.reset_id().await.unwrap();
+    assert_ne!(old, new);
+    let a_node = node(&a).await;
+    assert_eq!(a_node.id(), new);
+
+    a.set_hidden_tags(&profile, &["library".to_owned()])
+        .unwrap();
+    let b_gets_it = until(|| {
+        b.load_profile(&profile)
+            .is_ok_and(|p| p.hidden_tags == ["library"])
+    });
+    both_running((&a_node, &a), (&b_node, &b), b_gets_it).await;
+
+    a_node.shutdown().await.unwrap();
+    b_node.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ticket_can_leave_out_ip_addresses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = patchwork(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    let a_node = node(&a).await;
+    let addrs = async |addresses| {
+        let ticket = a_node.share(&a, &profile, false, addresses).await.unwrap();
+        let ticket: iroh_docs::DocTicket = ticket.parse().unwrap();
+        ticket
+            .nodes
+            .iter()
+            .map(|n| n.ip_addrs().count())
+            .sum::<usize>()
+    };
+    assert!(addrs(Addresses::Included).await > 0);
+    assert_eq!(addrs(Addresses::Hidden).await, 0);
+    a_node.shutdown().await.unwrap();
 }

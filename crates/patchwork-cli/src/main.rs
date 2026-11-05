@@ -24,7 +24,7 @@ use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::update;
 use patchwork_core::{DeployStatus, GameInstall, ImportOptions, ModOptionsView, Patchwork};
 use patchwork_sync::daemon::{self, service};
-use patchwork_sync::{Joined, Node};
+use patchwork_sync::{Addresses, Joined, Node};
 
 #[derive(Parser)]
 #[command(name = "patchwork", version, about = "A universal mod manager")]
@@ -444,6 +444,11 @@ enum SyncCommand {
         /// change it can't be taken back once they have the ticket.
         #[arg(long)]
         read_only: bool,
+        /// Leave this computer's IP addresses out of the ticket, so it can
+        /// be posted publicly. Others reach it through its relay instead,
+        /// and may still learn them once connected.
+        #[arg(long)]
+        hide_addresses: bool,
     },
     /// Join a profile someone shared, or link this computer to another of
     /// yours, with the ticket from `share` or `link`. The other computer
@@ -457,6 +462,13 @@ enum SyncCommand {
     /// Keep every synced profile in step until stopped with Ctrl-C. Changes
     /// from other machines are saved and downloaded, never deployed.
     Run,
+    /// Print the id other computers know this one by.
+    Id,
+    /// Give this computer a new id, e.g. if its old one got out alongside
+    /// its addresses. Profiles stay synced, and the others are told the old
+    /// id is gone the next time this one syncs. Tickets handed out before
+    /// still work, but only while someone else syncing it is online.
+    ResetId,
 }
 
 #[derive(Subcommand)]
@@ -2326,6 +2338,13 @@ async fn sync(
     explicit: &Option<String>,
 ) -> Result<()> {
     let node = Node::spawn(&pw.paths().sync()).await?;
+    if matches!(command, Some(SyncCommand::ResetId)) {
+        let old = node.id();
+        let new = node.reset_id().await?;
+        println!("{new}");
+        eprintln!("this computer was {old}; others hear it's gone the next time it syncs");
+        return Ok(());
+    }
     let result = sync_with(pw, &node, command, explicit).await;
     node.shutdown().await?;
     result
@@ -2366,9 +2385,17 @@ async fn sync_with(
                 "unlinked; profiles synced so far stay synced (`patchwork sync leave` stops one)"
             );
         }
-        SyncCommand::Share { read_only } => {
+        SyncCommand::Share {
+            read_only,
+            hide_addresses,
+        } => {
             let (profile, loaded) = selected(pw, explicit)?;
-            let ticket = node.share(pw, &profile, !read_only).await?;
+            let addresses = if hide_addresses {
+                Addresses::Hidden
+            } else {
+                Addresses::Included
+            };
+            let ticket = node.share(pw, &profile, !read_only, addresses).await?;
             println!("{ticket}");
             let who = if read_only {
                 "Whoever joins with it can follow the profile, but not change it for anyone else."
@@ -2436,6 +2463,8 @@ async fn sync_with(
             println!("stopped syncing {}", loaded.label());
         }
         SyncCommand::Run => run_sync(pw, node).await?,
+        SyncCommand::Id => println!("{}", node.id()),
+        SyncCommand::ResetId => unreachable!("handled by `sync`"),
     }
     Ok(())
 }

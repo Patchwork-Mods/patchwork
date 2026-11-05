@@ -88,6 +88,10 @@ Run `patchwork help`, or `patchwork <command> --help`, for more commands
     can edit.
   - `patchwork sync share --read-only` lets others follow your profile:
     they get your changes, and anything they add stays on their computer.
+    Add `--hide-addresses` to keep your IP addresses out of a ticket you
+    post publicly.
+  - `patchwork sync reset-id` gives this computer a new id. Profiles stay
+    synced, and the others stop trying to reach the old one.
 
   Changes from elsewhere are downloaded but never deployed without you.
   The background daemon (`patchwork daemon install`, or **Settings →

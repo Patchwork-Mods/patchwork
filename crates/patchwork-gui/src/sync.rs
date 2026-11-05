@@ -129,9 +129,14 @@ pub async fn sync_share(
     writable: bool,
 ) -> CmdResult<String> {
     let node = node(&handle).await?;
-    node.share(&app.pw, &profile_ref(&id)?, writable)
-        .await
-        .map_err(msg)
+    node.share(
+        &app.pw,
+        &profile_ref(&id)?,
+        writable,
+        patchwork_sync::Addresses::Included,
+    )
+    .await
+    .map_err(msg)
 }
 
 /// Joins a profile shared from another computer, or links this one to the

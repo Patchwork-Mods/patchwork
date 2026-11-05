@@ -131,6 +131,28 @@ pub enum Joined {
     Devices { profiles: usize },
 }
 
+/// What a ticket says about where to find this machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Addresses {
+    /// Its relay and its IP addresses, so others can connect straight to
+    /// it. For tickets handed to people the user knows.
+    #[default]
+    Included,
+    /// Only its relay, to start from, which keeps its IP addresses out of a
+    /// ticket that's posted publicly. Once others connect they may still
+    /// learn them, since iroh trades them to connect directly.
+    Hidden,
+}
+
+impl Addresses {
+    fn options(self) -> AddrInfoOptions {
+        match self {
+            Addresses::Included => AddrInfoOptions::RelayAndAddresses,
+            Addresses::Hidden => AddrInfoOptions::Relay,
+        }
+    }
+}
+
 /// A document [`Node::run`] hears from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Watched {
@@ -232,6 +254,49 @@ impl Node {
         Ok(())
     }
 
+    /// The id other machines know this one by. It's the same in every
+    /// document, until [`Node::reset_id`].
+    pub fn id(&self) -> PublicKey {
+        self.router.endpoint().id()
+    }
+
+    /// Gives this machine a new id, which it's known by from when it's
+    /// next started. Every document it could announce itself in is told
+    /// the old id is gone, so others stop trying to reach it there; that
+    /// goes out the next time it syncs. Profiles stay synced as they are,
+    /// since what lets a machine into a document is its ticket, not its
+    /// id. Tickets handed out before still work, but as they point at the
+    /// old id, joining with one finds this machine only through others
+    /// already syncing.
+    pub async fn reset_id(self) -> Result<PublicKey> {
+        let old = self.id();
+        let key = format!("{PEER}{old}");
+        let mut docs = Vec::new();
+        if let Some(doc) = self.devices_doc().await? {
+            docs.push(doc);
+        }
+        for synced in self.synced()? {
+            if synced.writable
+                && let Some(doc) = self.doc(synced.namespace()?).await?
+            {
+                docs.push(doc);
+            }
+        }
+        let mut written = Ok(());
+        for doc in &docs {
+            written = self.write(doc, vec![(key.clone(), REMOVED.to_vec())]).await;
+            if written.is_err() {
+                break;
+            }
+        }
+        let dir = self.dir.clone();
+        self.shutdown().await?;
+        // a machine that's still `old` writes itself back the next time it
+        // syncs, so a failure part way leaves nothing to undo
+        written?;
+        new_secret_key(&dir.join("secret.key"))
+    }
+
     /// The profiles this machine syncs.
     pub fn synced(&self) -> Result<Vec<SyncedProfile>> {
         synced_profiles(&self.dir)
@@ -277,6 +342,7 @@ impl Node {
         pw: &Patchwork,
         profile: &ProfileRef,
         writable: bool,
+        addresses: Addresses,
     ) -> Result<String> {
         let doc = match self.synced_profile(profile)? {
             Some(synced) => {
@@ -309,7 +375,7 @@ impl Node {
         } else {
             ShareMode::Read
         };
-        ticket(&doc, mode).await
+        ticket(&doc, mode, addresses).await
     }
 
     /// Joins whatever a ticket from [`Node::share`] or
@@ -412,7 +478,7 @@ impl Node {
         self.watch(Watched::Devices, &doc).await?;
         self.start(&doc).await?;
         self.sync_devices(pw, &doc).await?;
-        ticket(&doc, ShareMode::Write).await
+        ticket(&doc, ShareMode::Write, Addresses::Included).await
     }
 
     /// Stops keeping every profile in step with the user's other computers.
@@ -520,7 +586,9 @@ impl Node {
                 continue;
             }
             let writable = self.synced_profile(&profile)?.is_none_or(|s| s.writable);
-            let ticket = self.share(pw, &profile, writable).await?;
+            let ticket = self
+                .share(pw, &profile, writable, Addresses::Included)
+                .await?;
             self.write(doc, vec![(key, serde_json::to_vec(&ticket)?)])
                 .await?;
         }
@@ -538,6 +606,8 @@ impl Node {
     pub async fn sync_once(&self, pw: &Patchwork, timeout: Duration) -> Result<Vec<Outcome>> {
         if let Some(doc) = self.devices_doc().await? {
             let events = doc.subscribe().await?;
+            // in case this machine's id has changed since it was linked
+            self.announce(&doc).await?;
             self.start(&doc).await?;
             wait_for_sync(events, timeout).await;
             self.sync_devices(pw, &doc).await?;
@@ -580,6 +650,7 @@ impl Node {
         let mut changes = pw.watch_profiles();
         let mut hand_edits = tokio::time::interval(HAND_EDITS_EVERY);
         if let Some(doc) = self.devices_doc().await? {
+            self.announce(&doc).await?;
             self.watch(Watched::Devices, &doc).await?;
             self.start(&doc).await?;
             if let Err(e) = self.sync_devices(pw, &doc).await {
@@ -828,6 +899,8 @@ impl Node {
             }
             // where it was last, if that's arrived; otherwise it's looked up
             let addr = match self.blobs.get_bytes(entry.content_hash()).await {
+                // its id was reset (see `Node::reset_id`), so it's not there
+                Ok(value) if *value == *REMOVED => continue,
                 Ok(value) => serde_json::from_slice::<EndpointAddr>(&value)
                     .ok()
                     .filter(|a| a.id == id),
@@ -944,8 +1017,8 @@ fn read_list(dir: &Path) -> Result<SyncedProfiles> {
 }
 
 /// A ticket to `doc`, as text.
-async fn ticket(doc: &Doc, mode: ShareMode) -> Result<String> {
-    let ticket = doc.share(mode, AddrInfoOptions::RelayAndAddresses).await?;
+async fn ticket(doc: &Doc, mode: ShareMode, addresses: Addresses) -> Result<String> {
+    let ticket = doc.share(mode, addresses.options()).await?;
     Ok(iroh_tickets::Ticket::encode_string(&ticket))
 }
 
@@ -1004,6 +1077,22 @@ fn secret_key(path: &Path) -> Result<SecretKey> {
         }
         Err(e) => Err(e).context(path.display().to_string()),
     }
+}
+
+/// Replaces the key at `path` with a new one, returning the id it gives.
+/// It's written beside the old one first, so a failure leaves the old one.
+fn new_secret_key(path: &Path) -> Result<PublicKey> {
+    let key = SecretKey::generate();
+    let staged = path.with_extension("key.new");
+    match fs::remove_file(&staged) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err(e).context(staged.display().to_string());
+        }
+        _ => {}
+    }
+    write_private(&staged, &key.to_bytes())?;
+    fs::rename(&staged, path).with_context(|| path.display().to_string())?;
+    Ok(key.public())
 }
 
 /// Writes a file only this user can read, where that's up to the file.
