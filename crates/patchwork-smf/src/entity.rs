@@ -62,6 +62,12 @@ pub struct Resources {
     pub blueprint: (u64, Loaded),
 }
 
+impl Resources {
+    pub fn into_vec(self) -> Vec<(u64, Loaded)> {
+        vec![self.factory, self.blueprint]
+    }
+}
+
 /// Builds the game's resources for an entity.
 pub fn generate(entity: &Entity) -> Result<Resources, String> {
     let (factory, factory_meta, blueprint, blueprint_meta) =

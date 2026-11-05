@@ -36,6 +36,7 @@
 //! before 3.1, scripts and choosing options (those enabled by default are used). Mods that need them fail to deploy rather than half
 //! working.
 
+mod cache;
 mod dlge;
 mod entity;
 mod game;
@@ -221,6 +222,8 @@ struct EntityPatch {
     blueprint: u64,
     file: RelPath,
     patch: Patch,
+    /// The patch file's contents, for the cache key.
+    source: Vec<u8>,
 }
 
 impl<'a> Build<'a> {
@@ -693,27 +696,49 @@ impl<'a> Build<'a> {
 
     fn stage_entity(&mut self, file: &ModFile, partition: &str) -> Result<(), String> {
         let data = fs::read(&file.src).map_err(|e| e.to_string())?;
-        let entity = entity::parse_entity(&data)?;
-        let resources = entity::generate(&entity)?;
-        self.stage_entity_resources(partition, resources);
+        let mut key = cache::Key::new("entity");
+        key.field(&data);
+        let built = self.cached(&key, &format!("entity {}", file.rel), || {
+            let entity = entity::parse_entity(&data)?;
+            Ok(entity::generate(&entity)?.into_vec())
+        })?;
+        for (hash, loaded) in built {
+            self.stage_built(partition, hash, loaded);
+        }
         Ok(())
     }
 
-    fn stage_entity_resources(&mut self, partition: &str, resources: entity::Resources) {
-        let entity::Resources { factory, blueprint } = resources;
-        self.stage_built(partition, factory.0, factory.1);
-        self.stage_built(partition, blueprint.0, blueprint.1);
+    /// What `make` makes, or what it made last time from the same `key`
+    /// if that's in the cache. `step` is the progress shown while making.
+    fn cached(
+        &self,
+        key: &cache::Key,
+        step: &str,
+        make: impl FnOnce() -> Result<Vec<(u64, Loaded)>, String>,
+    ) -> Result<Vec<(u64, Loaded)>, String> {
+        if let Some(built) = cache::get(self.ctx.cache, key) {
+            return Ok(built);
+        }
+        self.ctx.reporter.report(Event::Building {
+            step: step.to_owned(),
+        });
+        let built = make()?;
+        let kept: Vec<_> = built.iter().map(|(h, l)| (*h, l)).collect();
+        cache::put(self.ctx.cache, key, &kept);
+        Ok(built)
     }
 
     fn queue_entity_patch(&mut self, file: &ModFile, partition: &str) -> Result<(), String> {
         let data = fs::read(&file.src).map_err(|e| e.to_string())?;
         let patch = entity::parse_patch(&data)?;
+        let source = data;
         self.entity_patches.push(EntityPatch {
             partition: partition.to_owned(),
             factory: u64::from(meta::parse_hash(&patch.factory_hash)),
             blueprint: u64::from(meta::parse_hash(&patch.blueprint_hash)),
             file: file.rel.clone(),
             patch,
+            source,
         });
         Ok(())
     }
@@ -745,9 +770,6 @@ impl<'a> Build<'a> {
             let first = &group[0];
             let (partition, factory_hash, blueprint_hash) =
                 (first.partition.clone(), first.factory, first.blueprint);
-            self.ctx.reporter.report(Event::Building {
-                step: format!("entity {factory_hash:016X} ({}/{total})", i + 1),
-            });
             let factory = self.current(&partition, factory_hash)?;
             let blueprint = self.current(&partition, blueprint_hash)?;
             let (Some(factory), Some(blueprint)) = (&factory, &blueprint) else {
@@ -761,8 +783,22 @@ impl<'a> Build<'a> {
                 ));
                 continue;
             };
-            match patch_entity(group, factory, blueprint) {
-                Ok(resources) => self.stage_entity_resources(&partition, resources),
+            let mut key = cache::Key::new("entity patch");
+            key.resource(factory_hash, factory)
+                .resource(blueprint_hash, blueprint);
+            for patch in &group {
+                key.field(&patch.source);
+            }
+            let step = format!("entity {factory_hash:016X} ({}/{total})", i + 1);
+            let built = self.cached(&key, &step, || {
+                patch_entity(group, factory, blueprint).map(entity::Resources::into_vec)
+            });
+            match built {
+                Ok(built) => {
+                    for (hash, loaded) in built {
+                        self.stage_built(&partition, hash, loaded);
+                    }
+                }
                 Err(e) => self.errors.push(format!("{label}: {e}")),
             }
         }
@@ -1005,12 +1041,16 @@ impl<'a> Build<'a> {
             .ok_or("the texture has no .meta from HMTextureTools next to it")?;
         let meta = fs::read(&meta.src).map_err(|e| format!("{}: {e}", meta.rel))?;
         let tga = fs::read(&file.src).map_err(|e| e.to_string())?;
-        self.ctx.reporter.report(Event::Building {
-            step: format!("texture {text:016X}"),
-        });
-        let texture::Resources { text, texd } = texture::build(&tga, &meta, text, texd)?;
-        self.stage_built(partition, text.0, text.1);
-        if let Some((hash, loaded)) = texd {
+        let mut key = cache::Key::new("texture");
+        key.hash(text)
+            .hash(texd.unwrap_or_default())
+            .field(&meta)
+            .field(&tga);
+        let built = self.cached(&key, &format!("texture {text:016X}"), || {
+            let texture::Resources { text, texd } = texture::build(&tga, &meta, text, texd)?;
+            Ok([Some(text), texd].into_iter().flatten().collect())
+        })?;
+        for (hash, loaded) in built {
             self.stage_built(partition, hash, loaded);
         }
         Ok(())

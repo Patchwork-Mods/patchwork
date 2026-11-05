@@ -1,5 +1,4 @@
 use patchwork_core::deploy::{self, DeployState, ResolvedRoots, Roots};
-use patchwork_core::event::Silent;
 use patchwork_core::game::{DeployerSpec, GameDef};
 use patchwork_core::registry::Registry;
 use rpkg_rs::resource::package_builder::{PackageBuilder, PackageResourceBuilder};
@@ -34,6 +33,19 @@ const DESTINATIONS_JSON: &str = r#"{"Root":{"Children":[{"Id":"m1"},{"Id":"m2"}]
 struct Env {
     tmp: tempfile::TempDir,
     game: PathBuf,
+    steps: Steps,
+}
+
+/// Records the steps a build shows.
+#[derive(Default)]
+struct Steps(std::sync::Mutex<Vec<String>>);
+
+impl patchwork_core::event::Reporter for Steps {
+    fn report(&self, event: Event) {
+        if let Event::Building { step } = event {
+            self.0.lock().unwrap().push(step);
+        }
+    }
 }
 
 impl Env {
@@ -52,7 +64,11 @@ impl Env {
             text::encrypt(THUMBS_TEXT.to_owned()).unwrap(),
         )
         .unwrap();
-        let env = Self { tmp, game };
+        let env = Self {
+            tmp,
+            game,
+            steps: Steps::default(),
+        };
         env.archive(
             "chunk0",
             PatchId::Base,
@@ -177,6 +193,11 @@ impl Env {
         }
     }
 
+    /// What the last build showed it was doing.
+    fn steps(&self) -> Vec<String> {
+        self.steps.0.lock().unwrap().clone()
+    }
+
     fn build(&self, mods: &[InstalledMod]) -> Result<DesiredState> {
         let def = GameDef {
             schema: 1,
@@ -215,9 +236,10 @@ impl Env {
             game: GameFiles::new(&self.game, &state),
             out: &out,
             cache: &cache,
-            reporter: &Silent,
+            reporter: &self.steps,
             lists: &[],
         };
+        self.steps.0.lock().unwrap().clear();
         SmfDeployer.build(&ctx, &build, mods)
     }
 }
@@ -1078,7 +1100,10 @@ fn entity_patches_apply_in_order_to_the_current_entity() {
             ),
         ],
     );
-    let desired = env.build(&[first, later]).unwrap();
+    let mods = [first, later];
+    let desired = env.build(&mods).unwrap();
+    let patching = |steps: Vec<String>| steps.iter().filter(|s| s.starts_with("entity ")).count();
+    assert_eq!(patching(env.steps()), 2);
 
     let entity = built_entity(&placed(&env, &desired, "Runtime/chunk2patch300.rpkg"));
     let child = &entity["entities"][CHILD];
@@ -1086,6 +1111,28 @@ fn entity_patches_apply_in_order_to_the_current_entity() {
     assert_eq!(child["properties"]["m_nCount"]["value"], 3);
     assert_eq!(child["properties"]["m_bFlag"]["value"], true);
     assert_eq!(child["name"], "Renamed");
+
+    // Building again reuses the patched entities rather than patching them
+    // again, for the same result.
+    let again = env.build(&mods).unwrap();
+    assert_eq!(patching(env.steps()), 0, "{:?}", env.steps());
+    let again = built_entity(&placed(&env, &again, "Runtime/chunk2patch300.rpkg"));
+    assert_eq!(again, entity);
+
+    // Changing the first mod's patches means the later mod's patch is to a
+    // different entity, so both are patched again.
+    let first = env.installed(
+        "first",
+        &[
+            ("manifest.json", manifest.as_bytes()),
+            (
+                "content/chunk2/a.entity.patch.json",
+                set_count(5).as_bytes(),
+            ),
+        ],
+    );
+    env.build(&[first, mods[1].clone()]).unwrap();
+    assert_eq!(patching(env.steps()), 2);
 }
 
 #[test]
@@ -1223,6 +1270,68 @@ fn textures_named_with_a_texd_are_split_between_text_and_texd() {
     assert_eq!((top.width, top.height), (256, 256));
     // BC1: 8 bytes per 4x4 block.
     assert_eq!(top.data.len(), 64 * 64 * 8);
+}
+
+#[test]
+fn converted_textures_are_reused_from_the_cache() {
+    let env = Env::new();
+    let name = format!("{TEXTURE_TEXT:016X}~{TEXTURE_TEXD:016X}");
+    let pixels = vec![7; 256 * 256 * 4];
+    let m = texture_mod(
+        &env,
+        &name,
+        &tga(256, 256, &pixels),
+        Some(&texture_meta(0x49)),
+    );
+    let archive = |desired: &DesiredState| {
+        let archive = placed(&env, desired, "Runtime/chunk0patch300.rpkg");
+        (
+            resource(&archive, TEXTURE_TEXT),
+            resource(&archive, TEXTURE_TEXD),
+        )
+    };
+    let converting = format!("texture {TEXTURE_TEXT:016X}");
+
+    let first = archive(&env.build(std::slice::from_ref(&m)).unwrap());
+    assert!(env.steps().contains(&converting));
+    let second = archive(&env.build(std::slice::from_ref(&m)).unwrap());
+    assert!(!env.steps().contains(&converting), "{:?}", env.steps());
+    assert_eq!(first, second);
+
+    // A changed texture is converted again.
+    let changed = texture_mod(
+        &env,
+        &name,
+        &tga(256, 256, &[9; 256 * 256 * 4]),
+        Some(&texture_meta(0x49)),
+    );
+    env.build(&[changed]).unwrap();
+    assert!(env.steps().contains(&converting));
+}
+
+#[test]
+fn broken_cache_entries_are_converted_again() {
+    let env = Env::new();
+    let m = content_mod(
+        &env,
+        "Entity",
+        &[("thing.entity.json", &entity_json().to_string())],
+    );
+    let first = env.build(std::slice::from_ref(&m)).unwrap();
+    let first = built_entity(&placed(&env, &first, "Runtime/chunk0patch300.rpkg"));
+    let dir = env.tmp.path().join("cache/resources");
+    for entry in fs::read_dir(&dir).unwrap().flatten() {
+        let bytes = fs::read(entry.path()).unwrap();
+        fs::write(entry.path(), &bytes[..bytes.len() / 2]).unwrap();
+    }
+    let second = env.build(&[m]).unwrap();
+    assert!(
+        env.steps().iter().any(|s| s.starts_with("entity ")),
+        "{:?}",
+        env.steps()
+    );
+    let second = built_entity(&placed(&env, &second, "Runtime/chunk0patch300.rpkg"));
+    assert_eq!(first, second);
 }
 
 #[test]
