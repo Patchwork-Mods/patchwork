@@ -1,8 +1,9 @@
 # Extensions: game-specific behaviour without game-specific core
 
 Status: proposal (2026-10-29). Steps 1 (the skeleton), 2 (`OrderedList`),
-3 (`ModTransform` + `ModOptions`) and 4 (`Check`) of "Order of work" are
-built, and so is step 5's `Runner`; see the notes under each. `AccountKind`
+3 (`ModTransform` + `ModOptions`), 4 (`Check`) and 7 (crates per game) of
+"Order of work" are built, and so is step 5's `Runner`; see the notes under
+each. Step 6 (`Action`) waits for its first real use. `AccountKind`
 and `Provisioner` wait for Minecraft's launcher, which was taken out of
 `main` (2026-11-05) and kept on the `minecraft-launcher` branch.
 
@@ -598,7 +599,7 @@ Each step leaves `main` working and shippable.
      current one.
    - The extensions live in a new `patchwork-builtin` crate (`generic`,
      `thunderstore`, `nexus`, `modrinth`, `bethesda`, `smf`, `minecraft`),
-     which step 7 splits up.
+     which step 7 split up.
    - Not done yet: `uses`/`reads_state`, the test harness and moving
      `[fomod]` under `ext`. (`off` and the schema bumps came with step 2,
      `[fomod]` with step 3.)
@@ -663,6 +664,7 @@ Each step leaves `main` working and shippable.
      `[[mod.ext.fomod.picks]]`, on any load, so sync entries and archive
      imports from older builds are moved too. `PROFILE_SCHEMA` stays 3.
    - The FOMOD parser moved from core to `patchwork-builtin` (`fomod.rs`,
+     now in `patchwork-bethesda` since step 7,
      with the hooks in `fomod/hooks.rs`). Core's `fomod` module, `GameDef::fomod`,
      `ProfileMod::fomod` and `Patchwork::installer`/`set_installer`/`installers`
      are gone, replaced by `mods_with_options`, `mod_options` and
@@ -731,6 +733,26 @@ Each step leaves `main` working and shippable.
    wanted.
 7. **Reorganize crates** into per-game extensions (step 1 of the original
    plan). By this point it is mostly moving files.
+
+   Built (2026-11-05), with these differences:
+   - Only games' code got crates of its own, not every extension:
+     `patchwork-bethesda` (the `bethesda` and `fomod` extensions) and
+     `patchwork-smf` (`smf`). Each crate's `lib.rs` has its `Extension`s.
+     FOMOD stays its own extension, so other games can turn it on, but
+     lives with Bethesda's code since that's who uses it now.
+   - Sources, formats and the `rules` deployer stay in `patchwork-sources`,
+     `patchwork-formats` and `patchwork-deployers`: they aren't about one
+     game, share their dependencies, and splitting them would only add
+     crates. `generic`, `thunderstore`, `nexus` and `modrinth` stay in
+     `patchwork-builtin`.
+   - `patchwork-builtin` has a feature per game crate (`bethesda`, `smf`, both
+     on by default) and `register(builder)`, which adds every extension the
+     build has. The frontends call that instead of naming each extension,
+     so they need no `cfg`s. They don't pass the features through yet; a
+     build without one sets `default-features = false` on
+     `patchwork-builtin` itself.
+   - The `opt-level = 2` dev profile override moved from
+     `patchwork-deployers` to `patchwork-smf`, since it was for SMF.
 8. Remove the version-2 compatibility code once enough releases have
    passed.
 

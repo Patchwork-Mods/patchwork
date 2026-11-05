@@ -5,11 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = ["bethesda", "smf"]
+bethesda = ["dep:patchwork-bethesda"]
+smf = ["dep:patchwork-smf"]
+
 [dependencies]
 patchwork-core.workspace = true
 patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
 patchwork-formats.workspace = true
-roxmltree.workspace = true
-serde.workspace = true
-toml.workspace = true
+patchwork-bethesda = { workspace = true, optional = true }
+patchwork-smf = { workspace = true, optional = true }

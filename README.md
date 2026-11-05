@@ -69,7 +69,10 @@ existing installs can't be updated.
 |---|---|
 | `patchwork-core` | registry, profiles, lockfiles, content store, deploy engine, the `Source` and `Deployer` traits |
 | `patchwork-sources` | built-in sources (`local`) |
-| `patchwork-deployers` | built-in deployers (`rules`) |
+| `patchwork-deployers` | deployers that aren't about one game (`rules`) |
+| `patchwork-bethesda` | Bethesda games: the deployer, load order, plugin limit and FOMOD installers |
+| `patchwork-smf` | HITMAN World of Assassination, with Simple Mod Framework mods |
+| `patchwork-builtin` | registers the bundled extensions; `bethesda` and `smf` are features |
 | `patchwork-cli` | the `patchwork` binary, a thin layer over core |
 | `patchwork-gui` | the Patchwork app (Tauri), also a thin layer over core |
 | `patchwork-sync` | keeping profiles in step between machines with iroh; core has no networking of its own |

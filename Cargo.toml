@@ -12,11 +12,13 @@ rust-version = "1.95"
 license = "MIT"
 
 [workspace.dependencies]
+patchwork-bethesda = { path = "crates/patchwork-bethesda" }
 patchwork-builtin = { path = "crates/patchwork-builtin" }
 patchwork-core = { path = "crates/patchwork-core" }
 patchwork-sources = { path = "crates/patchwork-sources" }
 patchwork-deployers = { path = "crates/patchwork-deployers" }
 patchwork-formats = { path = "crates/patchwork-formats" }
+patchwork-smf = { path = "crates/patchwork-smf" }
 patchwork-sync = { path = "crates/patchwork-sync" }
 
 anyhow = "1.0.104"
@@ -66,10 +68,10 @@ inherits = "release"
 lto = "thin"
 
 # Unoptimized, a full Hitman deploy takes over ten minutes rather than a few:
-# mostly serde and QuickEntity converting entities. The deployers are included
-# because that generic code gets compiled into them.
+# mostly serde and QuickEntity converting entities. The SMF deployer is
+# included because that generic code gets compiled into it.
 [profile.dev.package."*"]
 opt-level = 2
 
-[profile.dev.package.patchwork-deployers]
+[profile.dev.package.patchwork-smf]
 opt-level = 2

@@ -16,7 +16,7 @@ use patchwork_core::settings::SettingSpec;
 use patchwork_core::{Error, Result};
 use serde::Deserialize;
 
-use crate::RulesDeployer;
+use patchwork_deployers::RulesDeployer;
 
 /// Bethesda's games since Oblivion: mods' files are laid out by the same
 /// rules as [`RulesDeployer`], and the plugins among them (`.esp`, `.esm`

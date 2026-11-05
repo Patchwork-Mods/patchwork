@@ -15,9 +15,6 @@ use std::fmt::Display;
 use std::sync::Mutex;
 
 use base64::prelude::*;
-use patchwork_builtin::{
-    Bethesda, Fomod, Generic, ModrinthExtension, NexusExtension, Smf, ThunderstoreExtension,
-};
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
@@ -1484,14 +1481,7 @@ const BUILTIN_HEADER: &str = "\
 
 /// Opens patchwork with every extension there is.
 fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Result<Patchwork> {
-    Patchwork::builder(paths)
-        .extension(Generic)
-        .extension(ThunderstoreExtension)
-        .extension(NexusExtension)
-        .extension(ModrinthExtension)
-        .extension(Bethesda)
-        .extension(Fomod)
-        .extension(Smf)
+    patchwork_builtin::register(Patchwork::builder(paths))
         .reporter(reporter)
         .open()
 }

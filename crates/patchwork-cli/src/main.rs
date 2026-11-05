@@ -4,9 +4,6 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use patchwork_builtin::{
-    Bethesda, Fomod, Generic, ModrinthExtension, NexusExtension, Smf, ThunderstoreExtension,
-};
 use patchwork_core::capture::ToolOutput;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
@@ -561,14 +558,7 @@ async fn main() -> ExitCode {
 
 /// Opens patchwork with every extension there is.
 fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Result<Patchwork> {
-    Patchwork::builder(paths)
-        .extension(Generic)
-        .extension(ThunderstoreExtension)
-        .extension(NexusExtension)
-        .extension(ModrinthExtension)
-        .extension(Bethesda)
-        .extension(Fomod)
-        .extension(Smf)
+    patchwork_builtin::register(Patchwork::builder(paths))
         .reporter(reporter)
         .open()
 }

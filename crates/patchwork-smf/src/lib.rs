@@ -62,6 +62,7 @@ use patchwork_core::deploy::{
 };
 use patchwork_core::error::IoContext;
 use patchwork_core::event::Event;
+use patchwork_core::ext::{Extension, Registrar};
 use patchwork_core::hash::ContentHash;
 use patchwork_core::relpath::RelPath;
 use patchwork_core::{Error, Result};
@@ -77,6 +78,19 @@ use manifest::{Dependency, Manifest, PackageDefinitionEntry};
 use meta::Meta;
 use ores::Ores;
 use resource::{Archives, Header, Loaded, Resource, read_package};
+
+/// HITMAN World of Assassination, with mods made for Simple Mod Framework.
+pub struct Smf;
+
+impl Extension for Smf {
+    fn id(&self) -> &'static str {
+        "smf"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.deployer(SmfDeployer);
+    }
+}
 
 pub struct SmfDeployer;
 

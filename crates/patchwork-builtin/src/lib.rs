@@ -1,23 +1,37 @@
-//! The extensions that come with patchwork, each bundling what one game or
-//! family of games needs. Frontends register the ones they want with
-//! [`patchwork_core::Builder::extension`].
+//! The extensions that come with patchwork. Frontends register them all
+//! with [`register`].
 //!
-//! For now they gather up the sources, deployers and formats
-//! from the crates those live in; those will move into a crate per
-//! extension. The ids can't change once released, since game definitions
-//! and profiles name them.
+//! The ones that aren't about any game are here, gathering up the sources,
+//! deployers and formats from the crates those live in. Games' own are in
+//! a crate each, behind a feature of the same name (all on by default):
+//! `bethesda` ([`Bethesda`] and [`Fomod`]) and `smf` ([`Smf`]). The ids
+//! can't change once released, since game definitions and profiles name
+//! them.
 
-mod fomod;
-
-pub use fomod::FOMOD_EXTENSION;
-use fomod::FomodInstaller;
+use patchwork_core::Builder;
 use patchwork_core::ext::{Extension, Registrar};
-use patchwork_deployers::{
-    BETHESDA_EXTENSION, BETHESDA_LIMIT, BETHESDA_LIST, BethesdaDeployer, BethesdaLoadOrder,
-    PluginLimit, RulesDeployer, SmfDeployer,
-};
+use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
+
+#[cfg(feature = "bethesda")]
+pub use patchwork_bethesda::{Bethesda, Fomod};
+#[cfg(feature = "smf")]
+pub use patchwork_smf::Smf;
+
+/// Adds every extension this build has to `builder`.
+pub fn register(builder: Builder) -> Builder {
+    let builder = builder
+        .extension(Generic)
+        .extension(ThunderstoreExtension)
+        .extension(NexusExtension)
+        .extension(ModrinthExtension);
+    #[cfg(feature = "bethesda")]
+    let builder = builder.extension(Bethesda).extension(Fomod);
+    #[cfg(feature = "smf")]
+    let builder = builder.extension(Smf);
+    builder
+}
 
 /// What isn't about any game in particular: local files and URLs, the
 /// data-driven `rules` deployer, and patchwork's own sharing formats.
@@ -73,52 +87,5 @@ impl Extension for ModrinthExtension {
 
     fn register(&self, ext: &mut Registrar<'_>) {
         ext.source(Modrinth);
-    }
-}
-
-/// Games on Bethesda's engines: Skyrim, Fallout and the like. Its
-/// `plugins` list is the order the game loads mods' plugins in, and its
-/// `limit` check warns when more are enabled than the game can load.
-pub struct Bethesda;
-
-impl Extension for Bethesda {
-    /// The deployer looks for its load order under this id.
-    fn id(&self) -> &'static str {
-        BETHESDA_EXTENSION
-    }
-
-    fn register(&self, ext: &mut Registrar<'_>) {
-        ext.deployer(BethesdaDeployer)
-            .ordered_list(BETHESDA_LIST, BethesdaLoadOrder)
-            .check(BETHESDA_LIMIT, PluginLimit);
-    }
-}
-
-/// FOMOD installers, which most of Bethesda games' bigger mods come with:
-/// the options picked in a mod's installer say which of its files are
-/// installed where. Games turn it on with `[ext.fomod.installer]`.
-pub struct Fomod;
-
-impl Extension for Fomod {
-    fn id(&self) -> &'static str {
-        FOMOD_EXTENSION
-    }
-
-    fn register(&self, ext: &mut Registrar<'_>) {
-        ext.mod_transform("installer", FomodInstaller)
-            .mod_options("installer", FomodInstaller);
-    }
-}
-
-/// HITMAN World of Assassination, with mods made for Simple Mod Framework.
-pub struct Smf;
-
-impl Extension for Smf {
-    fn id(&self) -> &'static str {
-        "smf"
-    }
-
-    fn register(&self, ext: &mut Registrar<'_>) {
-        ext.deployer(SmfDeployer);
     }
 }
