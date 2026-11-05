@@ -381,6 +381,10 @@ fn record_outcome(shared: &Shared, pw: &Patchwork, outcome: Result<Outcome>) {
         .map(|p| p.label())
         .unwrap_or_else(|_| outcome.profile.to_string());
     match &outcome.applied {
+        _ if outcome.moved => shared.record(
+            format!("{label}: moved to a new document this computer hasn't been told about"),
+            true,
+        ),
         Some(applied) if applied.created => shared.record(format!("{label}: added"), false),
         Some(applied) if applied.changed => shared.record(format!("{label}: updated"), false),
         _ => {}

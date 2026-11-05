@@ -378,3 +378,131 @@ async fn a_ticket_can_leave_out_ip_addresses() {
     assert_eq!(addrs(Addresses::Hidden).await, 0);
     a_node.shutdown().await.unwrap();
 }
+
+/// Three friends sharing a profile, who all know where each other are.
+async fn three_friends(tmp: &Path) -> ([Patchwork; 3], [Node; 3], ProfileRef) {
+    let a = patchwork(&tmp.join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    let a_node = node(&a).await;
+    let ticket = a_node
+        .share(&a, &profile, true, Addresses::Included)
+        .await
+        .unwrap();
+    let b = patchwork(&tmp.join("b"));
+    let b_node = node(&b).await;
+    b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
+    let c = patchwork(&tmp.join("c"));
+    let c_node = node(&c).await;
+    c_node.join(&c, &ticket, TIMEOUT).await.unwrap();
+    // offline, each only finds the others at the addresses they announce
+    let short = Duration::from_secs(3);
+    let (a_out, b_out, c_out) = tokio::join!(
+        a_node.sync_once(&a, short),
+        b_node.sync_once(&b, short),
+        c_node.sync_once(&c, short),
+    );
+    a_out.unwrap();
+    b_out.unwrap();
+    c_out.unwrap();
+    let mut peers = a_node.peers(&profile).await.unwrap();
+    peers.sort();
+    let mut expected = vec![b_node.id(), c_node.id()];
+    expected.sort();
+    assert_eq!(peers, expected);
+    ([a, b, c], [a_node, b_node, c_node], profile)
+}
+
+fn doc_of(node: &Node, profile: &ProfileRef) -> String {
+    node.synced_profile(profile).unwrap().unwrap().doc
+}
+
+/// Waits up to `within` for `check` to hold.
+async fn until_within(within: Duration, check: impl Fn() -> bool) {
+    let wait = async {
+        while !check() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+    tokio::time::timeout(within, wait).await.expect("timed out");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_removed_friend_stops_getting_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ([a, b, c], [a_node, b_node, c_node], profile) = three_friends(tmp.path()).await;
+    let old = doc_of(&a_node, &profile);
+
+    let steps = async {
+        let removed = a_node
+            .remove_peers(&a, &profile, &[c_node.id()])
+            .await
+            .unwrap();
+        assert_eq!(removed.told, 1);
+        assert_eq!(removed.to_tell, 0);
+        let new = doc_of(&a_node, &profile);
+        assert_ne!(new, old);
+        assert_eq!(doc_of(&b_node, &profile), new);
+        assert_eq!(b_node.peers(&profile).await.unwrap(), [a_node.id()]);
+        // c heard the old document was left, so takes nothing more from it
+        until(|| c_node.synced_profile(&profile).unwrap().unwrap().moved).await;
+        assert_eq!(doc_of(&c_node, &profile), old);
+
+        // a and b still sync with each other
+        a.set_hidden_tags(&profile, &["library".to_owned()])
+            .unwrap();
+        until(|| {
+            b.load_profile(&profile)
+                .is_ok_and(|p| p.hidden_tags == ["library"])
+        })
+        .await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(c.load_profile(&profile).unwrap().hidden_tags.is_empty());
+    };
+    tokio::select! {
+        result = a_node.run(&a, |_| {}) => panic!("stopped running: {result:?}"),
+        result = b_node.run(&b, |_| {}) => panic!("stopped running: {result:?}"),
+        result = c_node.run(&c, |_| {}) => panic!("stopped running: {result:?}"),
+        () = steps => {}
+    }
+
+    // nor can c remove anyone now
+    assert!(
+        c_node
+            .remove_peers(&c, &profile, &[a_node.id()])
+            .await
+            .is_err()
+    );
+
+    a_node.shutdown().await.unwrap();
+    b_node.shutdown().await.unwrap();
+    c_node.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_friend_offline_during_a_removal_is_told_later() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ([a, b, _c], [a_node, b_node, c_node], profile) = three_friends(tmp.path()).await;
+    let c_id = c_node.id();
+    b_node.shutdown().await.unwrap();
+    c_node.shutdown().await.unwrap();
+
+    let removed = a_node.remove_peers(&a, &profile, &[c_id]).await.unwrap();
+    assert_eq!(removed.told, 0);
+    assert_eq!(removed.to_tell, 1);
+    let new = doc_of(&a_node, &profile);
+
+    let b_node = node(&b).await;
+    let b_moves = until_within(Duration::from_secs(60), || doc_of(&b_node, &profile) == new);
+    both_running((&a_node, &a), (&b_node, &b), b_moves).await;
+    assert!(
+        a_node
+            .synced_profile(&profile)
+            .unwrap()
+            .unwrap()
+            .to_tell
+            .is_empty()
+    );
+
+    a_node.shutdown().await.unwrap();
+    b_node.shutdown().await.unwrap();
+}

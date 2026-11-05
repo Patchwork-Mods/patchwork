@@ -90,6 +90,10 @@ Run `patchwork help`, or `patchwork <command> --help`, for more commands
     they get your changes, and anything they add stays on their computer.
     Add `--hide-addresses` to keep your IP addresses out of a ticket you
     post publicly.
+  - `patchwork sync remove <id>` removes a friend's computer from a shared
+    profile (`patchwork sync peers` lists them). Everyone else moves to a
+    new document and gets told about it the next time they're online.
+    Followers need a new ticket.
   - `patchwork sync reset-id` gives this computer a new id. Profiles stay
     synced, and the others stop trying to reach the old one.
 

@@ -24,9 +24,10 @@
 //! - `lock-env`: the `env` the lockfile was locked for (see
 //!   [`LockedGame::env`]), there once anything's been locked
 //!
-//! Keys starting with `file/` or `peer/` belong to the sync layer, which
-//! hands local mods' files to machines that don't have them that way, and
-//! keeps track of who's syncing; they're ignored here.
+//! Keys starting with `file/` or `peer/`, and `moved`, belong to the sync
+//! layer, which hands local mods' files to machines that don't have them
+//! that way, keeps track of who's syncing, and marks a document everyone's
+//! moved on from; they're ignored here.
 //!
 //! A mod, locked mod or extension's state that's been removed has `null` for its value; nothing
 //! is ever deleted outright, so a removal replaces older values like any
@@ -73,6 +74,7 @@ pub const EXT: &str = "ext/";
 /// Keys the sync layer keeps for itself.
 pub const FILE: &str = "file/";
 pub const PEER: &str = "peer/";
+pub const MOVED: &str = "moved";
 /// The value of a removed mod, locked mod or extension's state.
 pub const REMOVED: &[u8] = b"null";
 

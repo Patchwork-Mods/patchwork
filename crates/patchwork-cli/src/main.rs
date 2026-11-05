@@ -459,6 +459,17 @@ enum SyncCommand {
     /// Stop syncing the profile here. It stays as it is, here and
     /// elsewhere, and linked computers no longer pick it up.
     Leave,
+    /// List the other computers that can change the profile, by the id
+    /// each prints with `patchwork sync id`.
+    Peers,
+    /// Stop the computers with these ids (see `peers`) syncing the profile
+    /// with anyone else. Everyone else moves to a new document, which
+    /// they're told about when they're next online; whoever follows the
+    /// profile needs a new ticket.
+    Remove {
+        #[arg(required = true)]
+        ids: Vec<String>,
+    },
     /// Keep every synced profile in step until stopped with Ctrl-C. Changes
     /// from other machines are saved and downloaded, never deployed.
     Run,
@@ -2462,6 +2473,38 @@ async fn sync_with(
             node.leave(pw, &profile).await?;
             println!("stopped syncing {}", loaded.label());
         }
+        SyncCommand::Peers => {
+            let (profile, _) = selected(pw, explicit)?;
+            for peer in node.peers(&profile).await? {
+                println!("{peer}");
+            }
+        }
+        SyncCommand::Remove { ids } => {
+            let (profile, loaded) = selected(pw, explicit)?;
+            let peers = ids
+                .iter()
+                .map(|id| {
+                    id.parse()
+                        .map_err(|_| anyhow::anyhow!("`{id}` isn't a computer's id"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            eprintln!("moving everyone else to a new document...");
+            let removed = node.remove_peers(pw, &profile, &peers).await?;
+            println!(
+                "removed {} from {}; told {} of the others",
+                ids.join(", "),
+                loaded.label(),
+                removed.told
+            );
+            if removed.to_tell > 0 {
+                eprintln!(
+                    "{} couldn't be reached yet; they're told when they and a computer \
+                     syncing {} are next online (`patchwork daemon install` keeps this one trying)",
+                    removed.to_tell,
+                    loaded.label()
+                );
+            }
+        }
         SyncCommand::Run => run_sync(pw, node).await?,
         SyncCommand::Id => println!("{}", node.id()),
         SyncCommand::ResetId => unreachable!("handled by `sync`"),
@@ -2585,6 +2628,11 @@ fn print_sync(pw: &Patchwork, outcome: &Result<patchwork_sync::Outcome>, running
         .map(|p| p.label())
         .unwrap_or_else(|_| outcome.profile.to_string());
     match &outcome.applied {
+        _ if outcome.moved => println!(
+            "{label}: moved to a new document; another computer syncing it hands that over \
+             when you're both online, unless you were removed or only follow it, \
+             in which case you need a new ticket"
+        ),
         Some(applied) if applied.created => println!("{label}: added"),
         Some(applied) if applied.changed => println!("{label}: updated"),
         _ if running => {}

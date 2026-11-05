@@ -92,11 +92,21 @@ async fn node(handle: &AppHandle) -> Result<&Node, String> {
 
 fn emit(handle: &AppHandle, outcome: Result<Outcome, impl std::fmt::Display>) {
     let synced = match outcome {
-        Ok(o) => Synced {
-            profile: Some(o.profile.to_string()),
-            changed: o.applied.is_some_and(|a| a.changed),
-            warnings: o.warnings,
-        },
+        Ok(mut o) => {
+            if o.moved {
+                o.warnings.push(
+                    "the profile moved to a new document; another computer syncing it hands \
+                     that over when you're both online, unless you were removed or only \
+                     follow it, in which case you need a new ticket"
+                        .to_owned(),
+                );
+            }
+            Synced {
+                profile: Some(o.profile.to_string()),
+                changed: o.applied.is_some_and(|a| a.changed),
+                warnings: o.warnings,
+            }
+        }
         Err(e) => Synced {
             profile: None,
             changed: false,

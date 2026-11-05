@@ -32,15 +32,19 @@
 //!
 //! Synced changes are saved and downloaded straight away, but never
 //! deployed: that's always up to whoever's at the machine.
+//!
+//! Write access can't be taken back from a document, so removing a friend
+//! moves everyone else to a new one (see [`moves`]).
 
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt};
 use iroh::endpoint::presets::{self, Preset};
 use iroh::protocol::Router;
@@ -55,7 +59,7 @@ use iroh_docs::protocol::Docs;
 use iroh_docs::store::Query;
 use iroh_docs::{AuthorId, CapabilityKind, DocTicket, NamespaceId};
 use patchwork_core::profile::ProfileRef;
-use patchwork_core::sync::{Entries, FILE, MOD, PEER, REMOVED};
+use patchwork_core::sync::{Entries, FILE, MOD, MOVED, PEER, REMOVED};
 use patchwork_core::{Error, Patchwork, SyncApplied};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
@@ -63,6 +67,9 @@ use uuid::Uuid;
 
 pub mod daemon;
 pub mod files;
+pub mod moves;
+
+pub use moves::Removed;
 
 /// How long a one-off sync waits to hear from other machines.
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(20);
@@ -99,9 +106,32 @@ pub struct SyncedProfile {
     /// removed, rather than not having arrived yet.
     #[serde(default)]
     pub arrived: bool,
+    /// Whether its document has moved somewhere this machine hasn't been
+    /// told about yet (see [`moves`]), so changes from it aren't taken.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub moved: bool,
+    /// The document it was synced through before it last moved, so word
+    /// of that move is known to be old news.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved_from: Option<String>,
+    /// The machines, by endpoint id, still to be told it moved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub to_tell: Vec<String>,
 }
 
 impl SyncedProfile {
+    fn new(profile: Uuid, doc: &Doc, writable: bool, arrived: bool) -> Self {
+        Self {
+            profile,
+            doc: doc.id().to_string(),
+            writable,
+            arrived,
+            moved: false,
+            moved_from: None,
+            to_tell: Vec::new(),
+        }
+    }
+
     pub fn reference(&self) -> ProfileRef {
         ProfileRef { uuid: self.profile }
     }
@@ -173,6 +203,42 @@ pub struct Outcome {
     /// Things that didn't work but didn't stop the sync, like a mod that
     /// couldn't be locked or downloaded.
     pub warnings: Vec<String>,
+    /// Whether the profile's document has moved (see [`moves`]) without
+    /// this machine being told where, so nothing was synced. Someone
+    /// syncing it hands the new one over when they're next both online,
+    /// unless this machine was removed, or only follows the profile, in
+    /// which case it needs a new ticket.
+    pub moved: bool,
+}
+
+impl Outcome {
+    fn nothing(profile: ProfileRef) -> Self {
+        Self {
+            profile,
+            applied: None,
+            received_files: 0,
+            sent_files: 0,
+            warnings: Vec::new(),
+            moved: false,
+        }
+    }
+}
+
+/// A `peer/` entry: a machine syncing a document.
+struct Peer {
+    id: PublicKey,
+    /// Where it was last, if that's arrived.
+    addr: Option<EndpointAddr>,
+    /// Its id was reset (see [`Node::reset_id`]), so it's not there.
+    gone: bool,
+}
+
+impl Peer {
+    fn addr(&self) -> EndpointAddr {
+        self.addr
+            .clone()
+            .unwrap_or_else(|| EndpointAddr::new(self.id))
+    }
 }
 
 /// This machine's iroh node: its endpoint, and the documents and blobs it
@@ -193,6 +259,11 @@ pub struct Node {
     /// handle it gives out, and won't drop a document until they're all
     /// closed, so each is only opened once.
     open_docs: Mutex<HashMap<NamespaceId, Doc>>,
+    /// Word of moves from other machines, for [`Node::run`] or
+    /// [`Node::sync_once`] to take.
+    moves_rx: Mutex<Option<mpsc::UnboundedReceiver<moves::Incoming>>>,
+    /// The machines being told of a move right now, by profile.
+    telling: Mutex<HashSet<(Uuid, PublicKey)>>,
 }
 
 impl Node {
@@ -224,10 +295,12 @@ impl Node {
             .spawn(endpoint.clone(), (*blobs).clone(), gossip.clone())
             .await
             .context("opening the document store")?;
+        let (moves_tx, moves_rx) = mpsc::unbounded_channel();
         let router = Router::builder(endpoint)
             .accept(iroh_blobs::ALPN, BlobsProtocol::new(&blobs, None))
             .accept(iroh_gossip::ALPN, gossip)
             .accept(iroh_docs::ALPN, docs.clone())
+            .accept(moves::ALPN, moves::Handler::new(moves_tx))
             .spawn();
         let author = docs.author_default().await?;
         let downloader = blobs.downloader(router.endpoint());
@@ -243,6 +316,8 @@ impl Node {
             doc_events_rx: Mutex::new(Some(rx)),
             watching: Mutex::default(),
             open_docs: Mutex::default(),
+            moves_rx: Mutex::new(Some(moves_rx)),
+            telling: Mutex::default(),
         })
     }
 
@@ -336,7 +411,7 @@ impl Node {
     /// it if it isn't yet. With `writable`, whoever has the ticket can
     /// change the profile too; otherwise they can only follow it. Write
     /// access can't be taken back once it's given, short of moving
-    /// everyone else to a new document.
+    /// everyone else to a new document ([`Node::remove_peers`]).
     pub async fn share(
         &self,
         pw: &Patchwork,
@@ -357,12 +432,7 @@ impl Node {
                 let doc = self.keep(self.docs.create().await?).await?;
                 let entries = pw.start_sync(profile)?;
                 self.write(&doc, entries.into_iter().collect()).await?;
-                self.remember(SyncedProfile {
-                    profile: profile.uuid,
-                    doc: doc.id().to_string(),
-                    writable: true,
-                    arrived: true,
-                })?;
+                self.remember(SyncedProfile::new(profile.uuid, &doc, true, true))?;
                 self.announce(&doc).await?;
                 files::publish(self, pw, &doc, profile).await?;
                 doc
@@ -401,12 +471,7 @@ impl Node {
             return self.join_devices(pw, doc, &entries).await;
         }
         let applied = pw.apply_synced(&entries, writable)?;
-        let synced = SyncedProfile {
-            profile: applied.profile.uuid,
-            doc: doc.id().to_string(),
-            writable,
-            arrived: true,
-        };
+        let synced = SyncedProfile::new(applied.profile.uuid, &doc, writable, true);
         self.remember(synced.clone())?;
         self.watch(Watched::Profile(synced.profile), &doc).await?;
         let outcome = self
@@ -540,6 +605,11 @@ impl Node {
         if let Some(watcher) = self.watching.lock().unwrap().remove(&watched) {
             watcher.abort();
         }
+        self.forget_doc(id).await
+    }
+
+    /// Removes document `id` from this machine, leaving whatever watches it.
+    async fn forget_doc(&self, id: NamespaceId) -> Result<()> {
         if let Some(doc) = self.doc(id).await? {
             self.open_docs.lock().unwrap().remove(&id);
             doc.leave().await?;
@@ -570,12 +640,7 @@ impl Node {
             let ticket: DocTicket = ticket.parse().context("that isn't a sync ticket")?;
             let writable = matches!(ticket.capability.kind(), CapabilityKind::Write);
             let profile_doc = self.keep(self.docs.import(ticket).await?).await?;
-            self.remember(SyncedProfile {
-                profile: uuid,
-                doc: profile_doc.id().to_string(),
-                writable,
-                arrived: false,
-            })?;
+            self.remember(SyncedProfile::new(uuid, &profile_doc, writable, false))?;
             self.watch(Watched::Profile(uuid), &profile_doc).await?;
             self.start(&profile_doc).await?;
         }
@@ -604,6 +669,7 @@ impl Node {
     /// Syncs every synced profile once with whichever other machines can be
     /// reached within `timeout`, then stops.
     pub async fn sync_once(&self, pw: &Patchwork, timeout: Duration) -> Result<Vec<Outcome>> {
+        let mut outcomes = self.take_moves(pw).await;
         if let Some(doc) = self.devices_doc().await? {
             let events = doc.subscribe().await?;
             // in case this machine's id has changed since it was linked
@@ -613,10 +679,16 @@ impl Node {
             self.sync_devices(pw, &doc).await?;
             doc.leave().await?;
         }
-        let mut outcomes = Vec::new();
         for synced in self.synced()? {
             if self.removed(pw, &synced) {
                 self.leave(pw, &synced.reference()).await?;
+                continue;
+            }
+            if synced.moved {
+                outcomes.push(Outcome {
+                    moved: true,
+                    ..Outcome::nothing(synced.reference())
+                });
                 continue;
             }
             let doc = self.open(&synced).await?;
@@ -634,6 +706,13 @@ impl Node {
             doc.leave().await?;
             outcomes.push(outcome);
         }
+        // others were told while this was syncing
+        outcomes.append(&mut self.take_moves(pw).await);
+        for synced in self.synced()? {
+            if !synced.to_tell.is_empty() {
+                self.tell_now(&synced).await?;
+            }
+        }
         Ok(outcomes)
     }
 
@@ -647,8 +726,16 @@ impl Node {
             .unwrap()
             .take()
             .ok_or_else(|| anyhow!("the node is already running"))?;
+        let mut moves_rx = self
+            .moves_rx
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| anyhow!("the node is already running"))?;
         let mut changes = pw.watch_profiles();
         let mut hand_edits = tokio::time::interval(HAND_EDITS_EVERY);
+        let mut tell_moves = tokio::time::interval(moves::TELL_EVERY);
+        let mut telling = FuturesUnordered::new();
         if let Some(doc) = self.devices_doc().await? {
             self.announce(&doc).await?;
             self.watch(Watched::Devices, &doc).await?;
@@ -664,6 +751,9 @@ impl Node {
                 }
                 continue;
             }
+            if synced.moved {
+                continue;
+            }
             let doc = self.open(&synced).await?;
             self.watch(Watched::Profile(synced.profile), &doc).await?;
             self.start(&doc).await?;
@@ -672,6 +762,32 @@ impl Node {
         loop {
             let watched = tokio::select! {
                 Some(watched) = doc_events.recv() => watched,
+                Some(incoming) = moves_rx.recv() => {
+                    if let Some(outcome) = self.take_move(pw, incoming).await {
+                        on_sync(outcome);
+                    }
+                    continue;
+                }
+                _ = tell_moves.tick() => {
+                    match self.synced() {
+                        Ok(synced) => {
+                            for synced in synced.iter().filter(|s| !s.to_tell.is_empty()) {
+                                match self.notices(synced).await {
+                                    Ok(notices) => telling.extend(notices),
+                                    Err(e) => on_sync(Err(e)),
+                                }
+                            }
+                        }
+                        Err(e) => on_sync(Err(e)),
+                    }
+                    continue;
+                }
+                Some(told) = telling.next(), if !telling.is_empty() => {
+                    if let Err(e) = self.told(told) {
+                        on_sync(Err(e));
+                    }
+                    continue;
+                }
                 change = changes.recv() => match change {
                     Ok(change) if !change.synced => Watched::Profile(change.profile.uuid),
                     Ok(_) => continue,
@@ -682,6 +798,7 @@ impl Node {
                 _ = hand_edits.tick() => {
                     for synced in self.synced()? {
                         let changed = synced.writable
+                            && !synced.moved
                             && !self.removed(pw, &synced)
                             && !pw.unsynced_changes(&synced.reference()).unwrap_or_default().is_empty();
                         if changed {
@@ -723,6 +840,7 @@ impl Node {
         let profile = ProfileRef { uuid };
         match self.synced_profile(&profile)? {
             Some(synced) if self.removed(pw, &synced) => self.leave(pw, &profile).await?,
+            Some(synced) if synced.moved => {}
             Some(synced) => on_sync(self.sync_profile(pw, &synced).await),
             // a new profile, which linked computers get
             None => {
@@ -756,7 +874,7 @@ impl Node {
     ) -> Result<Vec<String>> {
         let profile = synced.reference();
         let mut warnings = Vec::new();
-        if !synced.writable || pw.load_profile(&profile).is_err() {
+        if !synced.writable || synced.moved || pw.load_profile(&profile).is_err() {
             return Ok(warnings);
         }
         let mut changes = pw.unsynced_changes(&profile)?;
@@ -775,15 +893,21 @@ impl Node {
     /// Takes what the document has now, publishes anything of this
     /// machine's it hasn't got yet, and fetches what the profile needs.
     async fn step(&self, pw: &Patchwork, doc: &Doc, synced: &SyncedProfile) -> Result<Outcome> {
+        if synced.moved || self.has_moved(doc).await? {
+            if !synced.moved {
+                self.remember(SyncedProfile {
+                    moved: true,
+                    ..synced.clone()
+                })?;
+            }
+            return Ok(Outcome {
+                moved: true,
+                ..Outcome::nothing(synced.reference())
+            });
+        }
         let entries = self.read_entries(doc).await?;
         if entries.is_empty() {
-            return Ok(Outcome {
-                profile: synced.reference(),
-                applied: None,
-                received_files: 0,
-                sent_files: 0,
-                warnings: Vec::new(),
-            });
+            return Ok(Outcome::nothing(synced.reference()));
         }
         let applied = pw.apply_synced(&entries, synced.writable)?;
         if !synced.arrived {
@@ -838,6 +962,7 @@ impl Node {
             received_files,
             sent_files,
             warnings,
+            moved: false,
         })
     }
 
@@ -859,7 +984,7 @@ impl Node {
             let Some(key) = entry_key(entry.key()) else {
                 continue;
             };
-            if key.starts_with(FILE) || key.starts_with(PEER) {
+            if key.starts_with(FILE) || key.starts_with(PEER) || key == MOVED {
                 continue;
             }
             match self.blobs.get_bytes(entry.content_hash()).await {
@@ -882,9 +1007,23 @@ impl Node {
     /// Starts syncing `doc` with whoever's online of those known to sync
     /// it: those it was synced with before, and those in its `peer/` keys.
     async fn start(&self, doc: &Doc) -> Result<()> {
-        let me = self.router.endpoint().id();
-        let mut peers: Vec<EndpointAddr> = Vec::new();
-        let stream = doc.get_many(Query::key_prefix(PEER).build()).await?;
+        let me = self.id();
+        let peers = self
+            .peers_in(doc)
+            .await?
+            .into_iter()
+            .filter(|p| p.id != me && !p.gone)
+            .map(|p| p.addr())
+            .collect();
+        doc.start_sync(peers).await?;
+        Ok(())
+    }
+
+    /// The machines in `doc`'s `peer/` keys, as last written.
+    async fn peers_in(&self, doc: &Doc) -> Result<Vec<Peer>> {
+        let mut peers = Vec::new();
+        let query = Query::single_latest_per_key().key_prefix(PEER).build();
+        let stream = doc.get_many(query).await?;
         let mut stream = std::pin::pin!(stream);
         while let Some(entry) = stream.next().await {
             let entry = entry?;
@@ -894,22 +1033,28 @@ impl Node {
             else {
                 continue;
             };
-            if id == me {
-                continue;
-            }
-            // where it was last, if that's arrived; otherwise it's looked up
-            let addr = match self.blobs.get_bytes(entry.content_hash()).await {
-                // its id was reset (see `Node::reset_id`), so it's not there
-                Ok(value) if *value == *REMOVED => continue,
-                Ok(value) => serde_json::from_slice::<EndpointAddr>(&value)
-                    .ok()
-                    .filter(|a| a.id == id),
-                Err(_) => None,
+            // otherwise it's looked up
+            let (addr, gone) = match self.blobs.get_bytes(entry.content_hash()).await {
+                Ok(value) if *value == *REMOVED => (None, true),
+                Ok(value) => (
+                    serde_json::from_slice::<EndpointAddr>(&value)
+                        .ok()
+                        .filter(|a| a.id == id),
+                    false,
+                ),
+                Err(_) => (None, false),
             };
-            peers.push(addr.unwrap_or_else(|| EndpointAddr::new(id)));
+            peers.push(Peer { id, addr, gone });
         }
-        doc.start_sync(peers).await?;
-        Ok(())
+        Ok(peers)
+    }
+
+    /// Whether `doc` has been left for another (see [`moves`]).
+    async fn has_moved(&self, doc: &Doc) -> Result<bool> {
+        Ok(doc
+            .get_one(Query::key_exact(doc_key(MOVED)))
+            .await?
+            .is_some())
     }
 
     /// Puts this computer in `doc`'s `peer/` keys, with where it can be
