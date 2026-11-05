@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# `ext::testing`, a harness for testing extensions end to end.
+testing = []
+
 [dependencies]
 async-trait.workspace = true
 axoupdater.workspace = true

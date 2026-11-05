@@ -564,17 +564,39 @@ arbitrary JS.
 already build by hand:
 
 ```rust
-let t = TestGame::new("skyrim-se.toml")   // or an inline TOML
+let t = TestGame::builtin("skyrim-se")    // or from_toml / from_def
     .extension(Bethesda)
     .extension(Fomod)
     .mod_from_dir("SkyUI", "tests/fixtures/skyui")
+    .mod_files("Patch", [("Patch.esp", bytes)])
     .game_file("Data/Skyrim.esm", b"...");
 
-let order = t.list("bethesda.plugins")?;
-t.answer_options("SkyUI", answers)?;
+let order = t.order("bethesda.plugins")?;
+t.answer_options("SkyUI", &answers)?;
 let plan = t.deploy()?;
 assert!(plan.places("Data/SkyUI_SE.esp"));
+assert!(t.read("appdata:plugins.txt")?.contains("*SkyUI_SE.esp"));
 ```
+
+Built (2026-11-05):
+- It's behind core's `testing` feature; extension crates turn it on in
+  their dev-dependencies. `patchwork-bethesda/tests/harness.rs` runs the
+  Bethesda load order and FOMOD installers through it.
+- Everything is under one temporary directory: patchwork's state, the
+  game's folder, a Wine prefix and every other root the game defines, so
+  nothing is looked for or deployed outside it. Paths are written as plans
+  show them (`Data/x.esp`, `appdata:plugins.txt`).
+- Mods come from its own `test` source (a mod's id is its name), from a
+  folder, archive or file, or from files given inline. They're added
+  enabled and locked when the game is set up.
+- Nothing is set up until the game is first used, so the builder methods
+  come first. Setting up panics if it fails; the rest return `Result`s.
+- It wraps lists (`list`, `order`, `set_order`, `set_list_enabled`),
+  options (`options`, `options_for`, `answer_options`), `issues`,
+  `ext_state`/`set_ext_state`, `set_enabled`, and `plan`/`deploy`, which
+  return a `TestPlan` (`places`, `placed_by`, `placed`, `removed`), plus
+  `deployed`, `read` and `path`. `patchwork()`, `profile()` and
+  `block_on` are there for anything else.
 
 ## Order of work
 
@@ -600,9 +622,9 @@ Each step leaves `main` working and shippable.
    - The extensions live in a new `patchwork-builtin` crate (`generic`,
      `thunderstore`, `nexus`, `modrinth`, `bethesda`, `smf`, `minecraft`),
      which step 7 split up.
-   - Not done yet: `uses`/`reads_state`, the test harness and moving
-     `[fomod]` under `ext`. (`off` and the schema bumps came with step 2,
-     `[fomod]` with step 3.)
+   - Not done yet: `uses`/`reads_state` and moving `[fomod]` under
+     `ext`. (`off` and the schema bumps came with step 2, `[fomod]` with
+     step 3, and the test harness later; see "Test harness".)
 2. **`OrderedList`.** Port the Bethesda load order, add the generic list
    command and screen, migrate `plugin` → `ext.bethesda`. This is the
    smallest port, and it proves state, sync, hashing and generic UI end to

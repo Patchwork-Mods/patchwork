@@ -488,5 +488,8 @@ fn ext_error(ext: &dyn Extension, message: String) -> Error {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 #[cfg(test)]
 mod tests;
