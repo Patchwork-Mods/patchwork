@@ -35,5 +35,9 @@ tauri-plugin-updater.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 toml.workspace = true
 
+# malloc_trim, to give memory back after a deploy's build.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2.190"
+
 [build-dependencies]
 tauri-build.workspace = true

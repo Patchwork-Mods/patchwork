@@ -1270,8 +1270,21 @@ async fn plan_deploy(
         .pw
         .plan_deploy_checked(&profile_ref(&id)?, check)
         .await
-        .map_err(lock_msg(&handle))?;
-    Ok(hold_plan(&app, plan))
+        .map_err(lock_msg(&handle));
+    release_memory();
+    Ok(hold_plan(&app, plan?))
+}
+
+/// Hands memory freed since the last call back to the OS. Building a deploy
+/// can take gigabytes (converting Hitman's entities, say), and glibc keeps
+/// what's freed in its per-thread arenas instead, so the GUI would hold on
+/// to all of it until it quits.
+fn release_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: malloc_trim only releases free memory; it has no preconditions.
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
 
 /// Works out how to take everything patchwork deployed back out of `game`,
@@ -1313,8 +1326,10 @@ fn apply_plan(app: State<'_, App>) -> CmdResult<usize> {
         .ok_or("there's no deploy waiting to be applied")?;
     let state = app.pw.apply(&plan).map_err(|e| {
         format!("deploy failed partway; what was done is recorded and can be undeployed: {e}")
-    })?;
-    Ok(state.files.len())
+    });
+    drop(plan);
+    release_memory();
+    Ok(state?.files.len())
 }
 
 /// Starts the game of the profile `id` the way `option` says (by id), or

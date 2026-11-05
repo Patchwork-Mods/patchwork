@@ -5827,6 +5827,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "jiff",
+ "libc",
  "patchwork-builtin",
  "patchwork-core",
  "patchwork-sync",
