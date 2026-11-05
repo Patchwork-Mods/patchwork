@@ -776,3 +776,9 @@ fn runners_from_data_have_settings() {
     let table = toml::from_str(reserved).unwrap();
     assert!(runner::Template::parse("mine", &table).is_err());
 }
+
+#[test]
+fn filling_leaves_unclosed_placeholders_alone() {
+    let vars = BTreeMap::from([("a".to_owned(), "1".to_owned())]);
+    assert_eq!(runner::fill("x${a}y${b}z${a", &vars), "x1y${b}z${a");
+}

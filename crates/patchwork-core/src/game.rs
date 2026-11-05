@@ -58,10 +58,6 @@ pub struct GameDef {
     /// profile is deployed to the game's folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instances: Option<InstancesDef>,
-    /// What sets up the game itself in a profile's instance, so patchwork
-    /// can start it there. Without it, an instance only has mods in it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provision: Option<ProvisionSpec>,
     /// The extensions the game turns on, each with its config, by
     /// extension id; see [`crate::ext`]. A table for an extension this
     /// build doesn't have is reported as an issue, not an error.
@@ -683,20 +679,6 @@ impl Detect {
 pub struct DeployerSpec {
     pub kind: String,
     /// Everything else in the table, handed to the deployer to interpret.
-    #[serde(flatten)]
-    pub config: toml::Table,
-}
-
-/// Which [`Provisioner`](crate::provision::Provisioner) sets up the game.
-///
-/// ```toml
-/// [provision]
-/// kind = "minecraft"
-/// # Anything else is for the provisioner.
-/// ```
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProvisionSpec {
-    pub kind: String,
     #[serde(flatten)]
     pub config: toml::Table,
 }

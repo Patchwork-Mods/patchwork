@@ -1,10 +1,8 @@
 // How the open profile's game is set up to run: what it picks for the
-// game's [env] axes (its mod loader, say), whether it's deployed to an
-// instance of its own, and setting the game up there. Also who the user
-// plays as, on the Playing tab of Settings. Like the CLI's `env`,
-// `instance`, `provision` and `account`.
+// game's [env] axes (its mod loader, say) and whether it's deployed to an
+// instance of its own. Like the CLI's `env` and `instance`.
 
-import { invoke, run, state, status } from "./state.js";
+import { invoke, state, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { openProfile, showProfile } from "./profile.js";
 
@@ -59,23 +57,6 @@ function showError(err) {
   $("#profile-settings-error").hidden = !err;
 }
 
-/** Says whether the profile's instance is set up as it picks now. */
-async function renderProvision(p) {
-  const section = $("#profile-settings-provision");
-  section.hidden = !p.setup.provisions;
-  if (!p.setup.provisions) return;
-  const line = $("#profile-settings-provisioned");
-  line.textContent = "Checking…";
-  const setup = await invoke("provisioned", { id: p.id }).catch((err) => {
-    line.textContent = String(err);
-    return undefined;
-  });
-  if (setup === undefined) return;
-  line.textContent = setup
-    ? `Set up with ${setup}. Setting up again checks for missing files.`
-    : "Not set up yet for what this profile picks. It's set up when you play, or you can do it now.";
-}
-
 async function openSetup() {
   const p = state.profile;
   form.reset();
@@ -95,7 +76,6 @@ async function openSetup() {
   }
 
   dialog.showModal();
-  await renderProvision(p);
 }
 
 $("#profile-settings").addEventListener("click", () => openSetup().catch(() => {}));
@@ -140,79 +120,4 @@ form.addEventListener("submit", async (e) => {
     showProfile(detail);
     status(`Saved ${p.label}'s settings`);
   }
-});
-
-$("#profile-settings-provision-now").addEventListener("click", async () => {
-  const p = state.profile;
-  const button = $("#profile-settings-provision-now");
-  button.disabled = true;
-  showError(null);
-  $("#profile-settings-provisioned").textContent =
-    "Setting up… The first time can take a few minutes, since it downloads the game.";
-  status(`Setting up ${p.label}…`);
-  try {
-    const done = await invoke("provision_profile", { id: p.id });
-    const fetched = done.downloaded
-      ? `downloaded ${done.downloaded} of its ${done.files} files (${(done.bytes / 1e6).toFixed(1)} MB)`
-      : "nothing needed downloading";
-    status(`Set up ${p.label} with ${done.setup}: ${fetched}`);
-  } catch (err) {
-    showError(err);
-    status(`Couldn't set up ${p.label}`, true);
-  } finally {
-    button.disabled = false;
-    await renderProvision(p);
-  }
-});
-
-// Playing: who the user plays as. Only offline names until signing in with
-// Microsoft is supported.
-
-function showAccountError(err) {
-  $("#account-error").textContent = String(err);
-  $("#account-error").hidden = !err;
-}
-
-function showAccount(account) {
-  $("#account-state").textContent = account
-    ? `Playing offline as ${account.name}.`
-    : "No name picked yet; games Patchwork starts itself need one.";
-  $("#account-forget").hidden = !account;
-  $("#account-name").value = account?.name ?? "";
-}
-
-/** Fills in the Playing tab; settings.js calls this when Settings opens. */
-export async function renderAccount() {
-  showAccountError(null);
-  showAccount(await run("account"));
-}
-
-async function saveAccount(name) {
-  showAccountError(null);
-  let account;
-  try {
-    account = await invoke("set_offline_account", { name });
-  } catch (err) {
-    showAccountError(err);
-    return;
-  }
-  showAccount(account);
-  status(account ? `Playing as ${account.name}` : "Forgot who you play as");
-  // Play stops asking for a name
-  if (state.profile) await openProfile(state.profile.id).catch(() => {});
-}
-
-// Not checked with a pattern on the field: it's in the settings form, where
-// a bad name on a hidden tab would quietly stop sources' settings saving.
-// Core says what's wrong with one instead.
-$("#account-save").addEventListener("click", () => saveAccount($("#account-name").value.trim()));
-
-$("#account-forget").addEventListener("click", () => saveAccount(null));
-
-// Enter would otherwise submit the settings form, which saves sources'
-// settings instead.
-$("#account-name").addEventListener("keydown", (e) => {
-  if (e.key !== "Enter") return;
-  e.preventDefault();
-  $("#account-save").click();
 });

@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex};
 use globset::{GlobBuilder, GlobMatcher};
 use serde::Deserialize;
 
-use super::java::fill;
 use super::{Launch, PrefixOverrides, Setup, Via, is_proton_prefix, steam_command};
 use crate::deploy::Os;
 use crate::game::GameDef;
@@ -893,4 +892,31 @@ impl Runner for Template {
             prefix_overrides: None,
         })
     }
+}
+
+/// `arg` with its `${name}` placeholders that are in `vars` filled in.
+/// Others are left as they are.
+pub(super) fn fill(arg: &str, vars: &BTreeMap<String, String>) -> String {
+    let mut out = String::with_capacity(arg.len());
+    let mut rest = arg;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find('}') {
+            Some(end) => {
+                let name = &after[..end];
+                match vars.get(name) {
+                    Some(value) => out.push_str(value),
+                    None => out.push_str(&rest[start..start + 2 + end + 1]),
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }

@@ -17,7 +17,6 @@ patchwork-core = { path = "crates/patchwork-core" }
 patchwork-sources = { path = "crates/patchwork-sources" }
 patchwork-deployers = { path = "crates/patchwork-deployers" }
 patchwork-formats = { path = "crates/patchwork-formats" }
-patchwork-provisioners = { path = "crates/patchwork-provisioners" }
 patchwork-sync = { path = "crates/patchwork-sync" }
 
 anyhow = "1.0.104"

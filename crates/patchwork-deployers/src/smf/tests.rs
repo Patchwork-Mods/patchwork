@@ -198,7 +198,6 @@ impl Env {
             launch: Default::default(),
             capture: None,
             instances: None,
-            provision: None,
             ext: Default::default(),
         };
         let registry = Registry::default();

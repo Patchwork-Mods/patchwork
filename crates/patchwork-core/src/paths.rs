@@ -129,12 +129,6 @@ impl Paths {
         self.data.join("instances")
     }
 
-    /// What a kind of provisioner downloaded to set games up, shared by
-    /// every profile it set up; see [`crate::provision`].
-    pub fn runtime(&self, kind: &str) -> PathBuf {
-        self.data.join("runtimes").join(kind)
-    }
-
     pub fn deployments(&self) -> PathBuf {
         self.data.join("deployments")
     }
@@ -168,12 +162,6 @@ impl Paths {
     /// What a tool printed the last time patchwork ran one for `game`.
     pub fn tool_log(&self, game: &str) -> PathBuf {
         self.data.join("logs").join(format!("tool-{game}.log"))
-    }
-
-    /// Who the user plays as in games patchwork starts itself; see
-    /// [`crate::account`].
-    pub fn account_file(&self) -> PathBuf {
-        self.data.join("account.toml")
     }
 
     pub fn state_file(&self) -> PathBuf {

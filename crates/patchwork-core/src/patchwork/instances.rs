@@ -14,6 +14,8 @@ use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::event::Event;
 use crate::fsutil;
+use crate::game::LaunchDefs;
+use crate::launch::{Launch, LaunchOption};
 use crate::profile::{Profile, ProfileRef};
 use crate::{Error, Result};
 
@@ -70,6 +72,44 @@ impl Patchwork {
             )));
         }
         fsutil::write_toml(&self.local_settings_file(profile), &settings)
+    }
+
+    /// The ways `profile`'s game can be started, the default one marked:
+    /// as for the game (see [`Patchwork::launch_options`]) unless it uses
+    /// an instance, which patchwork can't start games in. `None` if the
+    /// game hasn't been set up.
+    pub fn profile_launch_options(&self, profile: &Profile) -> Result<Option<Vec<LaunchOption>>> {
+        if !self.uses_instance(profile)? {
+            return self.launch_options(&profile.game);
+        }
+        let registry = self.registry();
+        let game = &registry.game(&profile.game)?.value;
+        Ok(Some(vec![LaunchOption {
+            id: LaunchDefs::GAME.to_owned(),
+            name: game.name.clone(),
+            default: true,
+            unavailable: Some("patchwork can't start it in an instance of its own".to_owned()),
+        }]))
+    }
+
+    /// How to start `profile`'s game, as [`Patchwork::plan_launch`] does,
+    /// unless it uses an instance. Deploying first is up to the caller.
+    pub fn plan_profile_launch(
+        &self,
+        profile: &ProfileRef,
+        option: Option<&str>,
+        runner: Option<&str>,
+    ) -> Result<Launch> {
+        let loaded = self.load_profile(profile)?;
+        if !self.uses_instance(&loaded)? {
+            return self.plan_launch(&loaded.game, option, runner);
+        }
+        let registry = self.registry();
+        Err(Error::invalid(format!(
+            "patchwork can't start {} in an instance of its own; start it from the launcher the instance is for, or run `patchwork --profile {} instance off` to deploy it to the game's folder",
+            registry.game(&loaded.game)?.value.name,
+            loaded.label()
+        )))
     }
 
     /// The folder `profile`'s instance is in. It's only made when

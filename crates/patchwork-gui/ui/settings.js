@@ -9,7 +9,6 @@ import { invoke, run, status } from "./state.js";
 import { $, h, link, pickFolder } from "./dom.js";
 import { renderComputers } from "./sync.js";
 import { renderDaemon } from "./daemon.js";
-import { renderAccount } from "./setup.js";
 import { renderLinks } from "./links.js";
 
 /** What to say under a field about where its value came from. */
@@ -168,7 +167,7 @@ function showError(err) {
   $("#settings-error").hidden = false;
 }
 
-/** Shows one of the dialog's tabs: "accounts", "computers", "daemon" or "playing". */
+/** Shows one of the dialog's tabs: "accounts", "computers" or "daemon". */
 function selectSettingsTab(key) {
   for (const tab of document.querySelectorAll("#settings-tabs [role=tab]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
@@ -187,7 +186,7 @@ for (const tab of document.querySelectorAll("#settings-tabs [role=tab]")) {
 export async function openSettings(tab) {
   $("#settings-error").hidden = true;
   if (tab) selectSettingsTab(tab);
-  await Promise.all([render(), renderComputers(), renderDaemon(), renderAccount(), renderLinks()]);
+  await Promise.all([render(), renderComputers(), renderDaemon(), renderLinks()]);
   dialog.showModal();
 }
 

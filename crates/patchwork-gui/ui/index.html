@@ -400,9 +400,8 @@
 
 		<!-- Settings for every game, in tabs: one section per source that takes
          any (see settings.js), linking the user's own computers (see
-         sync.js), the sync daemon (see daemon.js), and who the user plays
-         as (see setup.js), plus which program opens nxm:// links (see
-         links.js). Only the sources' settings wait for Save; every other
+         sync.js) and the sync daemon (see daemon.js), plus which program
+         opens nxm:// links (see links.js). Only the sources' settings wait for Save; every other
          button acts straight away. -->
 		<dialog id="settings-dialog">
 			<form id="settings-form" method="dialog" class="stack">
@@ -411,7 +410,6 @@
 					<button type="button" role="tab" data-tab="accounts" aria-selected="true">Accounts</button>
 					<button type="button" role="tab" data-tab="computers">My computers</button>
 					<button type="button" role="tab" data-tab="daemon">Background sync</button>
-					<button type="button" role="tab" data-tab="playing">Playing</button>
 				</div>
 				<div id="settings-sources" class="stack" data-panel="accounts"></div>
 				<fieldset id="links" class="stack" data-panel="accounts">
@@ -470,22 +468,6 @@
 						<button type="button" id="daemon-install" class="primary">Install</button>
 					</div>
 				</fieldset>
-				<fieldset id="playing" class="stack" data-panel="playing" hidden>
-					<legend>Playing</legend>
-					<p class="muted">Who you play as in games Patchwork starts itself, like Minecraft in a profile's own instance.
-						Signing in with a Microsoft account isn't supported yet. An offline name works on your own and on servers
-						that don't check who joins.</p>
-					<p id="account-state"></p>
-					<label class="field">
-						<span>Offline name <small class="muted">3 to 16 letters, digits and underscores</small></span>
-						<input id="account-name" autocomplete="off" spellcheck="false">
-					</label>
-					<p id="account-error" class="error" hidden></p>
-					<div class="row end">
-						<button type="button" id="account-forget" class="danger-text" hidden>Forget</button>
-						<button type="button" id="account-save" class="primary">Use this name</button>
-					</div>
-				</fieldset>
 				<p id="settings-error" class="error" hidden></p>
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Close</button>
@@ -494,9 +476,9 @@
 			</form>
 		</dialog>
 
-		<!-- The open profile's settings: what it picks about the game it runs,
-		     whether it has an instance of its own on this machine, and setting
-		     the game up there; see setup.js. -->
+		<!-- The open profile's settings: what it picks about the game it runs
+		     and whether it has an instance of its own on this machine; see
+		     setup.js. -->
 		<dialog id="profile-settings-dialog">
 			<form id="profile-settings-form" method="dialog" class="stack">
 				<h2 id="profile-settings-title">Profile settings</h2>
@@ -518,13 +500,6 @@
 						<small id="profile-settings-dir" class="muted"></small>
 						<small class="muted">Only on this computer. Undeploy first to change this while it's deployed.</small>
 					</label>
-				</fieldset>
-				<fieldset id="profile-settings-provision" class="stack" hidden>
-					<legend>Setting up the game</legend>
-					<p id="profile-settings-provisioned" class="muted"></p>
-					<div class="row end">
-						<button type="button" id="profile-settings-provision-now">Set up now</button>
-					</div>
 				</fieldset>
 				<p id="profile-settings-error" class="error" hidden></p>
 				<div class="row end">

@@ -5725,7 +5725,6 @@ dependencies = [
  "patchwork-core",
  "patchwork-deployers",
  "patchwork-formats",
- "patchwork-provisioners",
  "patchwork-sources",
  "roxmltree",
  "serde",
@@ -5760,12 +5759,10 @@ dependencies = [
  "globset",
  "jiff",
  "keyring",
- "md-5",
  "reqwest",
  "serde",
  "serde_json",
  "sevenz-rust2",
- "sha1",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -5840,18 +5837,6 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tokio",
- "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "patchwork-provisioners"
-version = "0.1.0-alpha.1"
-dependencies = [
- "async-trait",
- "patchwork-core",
- "reqwest",
- "serde",
- "serde_json",
  "toml 1.1.6+spec-1.1.0",
 ]
 

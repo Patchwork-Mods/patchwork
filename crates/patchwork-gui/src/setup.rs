@@ -1,16 +1,13 @@
 //! How a profile's game is set up to run: what it picks for the game's
-//! `[env]` (its mod loader, say), whether it's deployed to an instance of
-//! its own, setting the game up in that instance, and who the user plays
-//! as. Also capturing what tools wrote into the game's folder as a mod.
-//! These are the CLI's `env`, `instance`, `provision`, `account` and
-//! `capture`.
+//! `[env]` (its mod loader, say) and whether it's deployed to an instance
+//! of its own. Also capturing what tools wrote into the game's folder as a
+//! mod. These are the CLI's `env`, `instance` and `capture`.
 
 use std::collections::BTreeMap;
 
-use patchwork_core::account::Account;
 use patchwork_core::capture::ToolOutput;
 use patchwork_core::profile::Profile;
-use patchwork_core::{Captured, Patchwork, Provisioned};
+use patchwork_core::{Captured, Patchwork};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -46,11 +43,6 @@ pub struct UiInstance {
 pub struct ProfileSetup {
     env: Vec<UiEnvAxis>,
     instance: Option<UiInstance>,
-    /// Whether patchwork sets the game up in the profile's instance itself
-    /// (and starts it), so there's something to provision.
-    provisions: bool,
-    /// Whether starting it needs an account and there isn't one yet.
-    needs_account: bool,
     /// Whether the game has somewhere tools write files that can be
     /// captured.
     capture: bool,
@@ -76,12 +68,9 @@ pub fn profile_setup(pw: &Patchwork, profile: &Profile) -> CmdResult<ProfileSetu
         default: def.default,
         dir: pw.instance_dir(&profile.reference()).display().to_string(),
     });
-    let provisions = uses_instance && game.provision.is_some();
     Ok(ProfileSetup {
         env,
         instance,
-        provisions,
-        needs_account: provisions && pw.account().map_err(msg)?.is_none(),
         capture: game.capture.is_some(),
     })
 }
@@ -124,64 +113,6 @@ pub fn set_profile_instance(
 ) -> CmdResult<ProfileDetail> {
     app.pw.set_instance(&profile_ref(&id)?, on).map_err(msg)?;
     profile_detail(&app.pw, id)
-}
-
-/// What the profile's instance was last set up with, if it's still what
-/// the profile picks: the setup's id, like `fabric-1.21.1-0.16.5`.
-#[tauri::command]
-pub fn provisioned(app: State<'_, App>, id: String) -> CmdResult<Option<String>> {
-    let setup = app.pw.provisioned(&profile_ref(&id)?).map_err(msg)?;
-    Ok(setup.map(|(setup, _)| setup.id))
-}
-
-/// Downloads what the profile's instance needs to run the game as it
-/// picks. Files already there aren't downloaded again.
-#[tauri::command]
-pub async fn provision_profile(app: State<'_, App>, id: String) -> CmdResult<Provisioned> {
-    let _work = app.work.start()?;
-    app.pw.provision(&profile_ref(&id)?).await.map_err(msg)
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UiAccount {
-    /// `offline`, for now.
-    kind: &'static str,
-    name: String,
-    uuid: String,
-}
-
-impl From<Account> for UiAccount {
-    fn from(account: Account) -> Self {
-        let kind = match account {
-            Account::Offline { .. } => "offline",
-        };
-        UiAccount {
-            kind,
-            name: account.name().to_owned(),
-            uuid: account.uuid(),
-        }
-    }
-}
-
-/// Who the user plays as in games patchwork starts itself.
-#[tauri::command]
-pub fn account(app: State<'_, App>) -> CmdResult<Option<UiAccount>> {
-    Ok(app.pw.account().map_err(msg)?.map(UiAccount::from))
-}
-
-/// Plays offline under `name`, or with `None` forgets the account.
-#[tauri::command]
-pub fn set_offline_account(
-    app: State<'_, App>,
-    name: Option<String>,
-) -> CmdResult<Option<UiAccount>> {
-    let account = name
-        .map(|name| Account::offline(name.trim()))
-        .transpose()
-        .map_err(msg)?;
-    app.pw.set_account(account.as_ref()).map_err(msg)?;
-    Ok(account.map(UiAccount::from))
 }
 
 /// What tools have written into the game's folder since the profile was

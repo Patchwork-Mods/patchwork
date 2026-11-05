@@ -6,7 +6,6 @@
 import { run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { deployFirst } from "./deploy.js";
-import { openSettings } from "./settings.js";
 
 /** The option Play uses for profile `p`: the game's default, if it can be used. */
 function picked(p) {
@@ -72,12 +71,6 @@ export function renderPlay(p) {
 async function play(option) {
   $("#play-menu").open = false;
   const p = state.profile;
-  if (p.setup.needsAccount) {
-    status("Pick a name to play as first");
-    await openSettings("playing");
-    $("#account-name").focus();
-    return;
-  }
   $("#play").disabled = true;
   try {
     if (p.deployStatus !== "deployed") {

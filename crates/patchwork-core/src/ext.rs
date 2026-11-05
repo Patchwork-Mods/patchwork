@@ -9,7 +9,7 @@
 //! Core saves, syncs, versions and hashes that state for every extension;
 //! extensions never touch those maps themselves.
 //!
-//! Sources, deployers, provisioners and profile formats keep the ids they
+//! Sources, deployers and profile formats keep the ids they
 //! have always had (profiles and game definitions name them). Other hooks,
 //! like [`OrderedList`]s, [`ModTransform`]s and [`Check`]s, are `<extension>.<name>`; each is configured by the
 //! game's `[ext.<extension>.<name>]` table, and can be turned off with
@@ -26,7 +26,6 @@ use crate::deploy::Deployer;
 use crate::launch::Runner;
 use crate::list::OrderedList;
 use crate::options::{ModOptions, ModTransform};
-use crate::provision::Provisioner;
 use crate::share::ProfileFormat;
 use crate::source::Source;
 use crate::{Error, Result};
@@ -94,11 +93,6 @@ impl Registrar<'_> {
 
     pub fn deployer(&mut self, deployer: impl Deployer + 'static) -> &mut Self {
         self.registered.deployer(Some(self.ext), deployer);
-        self
-    }
-
-    pub fn provisioner(&mut self, provisioner: impl Provisioner + 'static) -> &mut Self {
-        self.registered.provisioner(Some(self.ext), provisioner);
         self
     }
 
@@ -178,7 +172,6 @@ pub fn hook_id(ext: &str, name: &str) -> String {
 pub(crate) struct Registered {
     pub sources: BTreeMap<String, Arc<dyn Source>>,
     pub deployers: BTreeMap<String, Arc<dyn Deployer>>,
-    pub provisioners: BTreeMap<String, Arc<dyn Provisioner>>,
     pub formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
     pub runners: BTreeMap<String, Arc<dyn Runner>>,
     pub extensions: BTreeMap<String, Arc<dyn Extension>>,
@@ -227,17 +220,6 @@ impl Registered {
         let id = deployer.kind().to_owned();
         if self.claim("deployer", &id, owner) {
             self.deployers.insert(id, Arc::new(deployer));
-        }
-    }
-
-    pub fn provisioner(
-        &mut self,
-        owner: Option<&'static str>,
-        provisioner: impl Provisioner + 'static,
-    ) {
-        let id = provisioner.kind().to_owned();
-        if self.claim("provisioner", &id, owner) {
-            self.provisioners.insert(id, Arc::new(provisioner));
         }
     }
 

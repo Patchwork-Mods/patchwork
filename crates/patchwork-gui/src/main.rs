@@ -16,8 +16,7 @@ use std::sync::Mutex;
 
 use base64::prelude::*;
 use patchwork_builtin::{
-    Bethesda, Fomod, Generic, Minecraft, ModrinthExtension, NexusExtension, Smf,
-    ThunderstoreExtension,
+    Bethesda, Fomod, Generic, ModrinthExtension, NexusExtension, Smf, ThunderstoreExtension,
 };
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
@@ -480,7 +479,6 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         launch: Default::default(),
         capture: None,
         instances: None,
-        provision: None,
         ext: Default::default(),
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
@@ -718,11 +716,7 @@ fn game_settings(app: State<'_, App>, game: String) -> CmdResult<GameSettings> {
             .launch_options(&game)
             .map_err(msg)?
             .unwrap_or_default(),
-        runners: if def.provision.is_some() {
-            None
-        } else {
-            app.pw.runner_choices(&game).map_err(msg)?
-        },
+        runners: app.pw.runner_choices(&game).map_err(msg)?,
     })
 }
 
@@ -1312,18 +1306,14 @@ fn apply_plan(app: State<'_, App>) -> CmdResult<usize> {
 
 /// Starts the game of the profile `id` the way `option` says (by id), or
 /// the default way, like `patchwork launch --no-deploy`: deploying first
-/// is up to the UI, but a profile with an instance has the game set up in
-/// it first if it isn't. Says how it was started, with a warning if Steam
-/// is needed and isn't running.
+/// is up to the UI. Says how it was started, with a warning if Steam is
+/// needed and isn't running.
 #[tauri::command]
 async fn launch_game(app: State<'_, App>, id: String, option: Option<String>) -> CmdResult<String> {
     let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     let loaded = app.pw.load_profile(&r).map_err(msg)?;
     let game = loaded.game.clone();
-    if app.pw.needs_provisioning(&r).map_err(msg)? {
-        app.pw.provision(&r).await.map_err(msg)?;
-    }
     let launch = app
         .pw
         .plan_profile_launch(&r, option.as_deref(), None)
@@ -1350,7 +1340,6 @@ async fn launch_game(app: State<'_, App>, id: String, option: Option<String>) ->
         Via::Direct => String::new(),
         Via::Proton { .. } => " with Proton".to_owned(),
         Via::Wine { .. } => " with Wine".to_owned(),
-        Via::Java { .. } => " with Java".to_owned(),
         Via::Runner { name } => format!(" with {name}"),
     };
     let mut said = format!("Started {name}{how}");
@@ -1503,7 +1492,6 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
         .extension(Bethesda)
         .extension(Fomod)
         .extension(Smf)
-        .extension(Minecraft)
         .reporter(reporter)
         .open()
 }
@@ -1586,10 +1574,6 @@ fn main() {
             set_game_settings,
             setup::set_profile_env,
             setup::set_profile_instance,
-            setup::provisioned,
-            setup::provision_profile,
-            setup::account,
-            setup::set_offline_account,
             setup::tool_output,
             setup::capture,
             source_settings,

@@ -2,7 +2,9 @@
 
 Status: proposal (2026-10-29). Steps 1 (the skeleton), 2 (`OrderedList`),
 3 (`ModTransform` + `ModOptions`) and 4 (`Check`) of "Order of work" are
-built; see the notes under each.
+built, and so is step 5's `Runner`; see the notes under each. `AccountKind`
+and `Provisioner` wait for Minecraft's launcher, which was taken out of
+`main` (2026-11-05) and kept on the `minecraft-launcher` branch.
 
 ## The problem
 
@@ -16,7 +18,7 @@ Core, the CLI and the GUI know about particular games:
 | `Deployer::plugins`, `BuildContext::load_order` | a trait method only one deployer uses | Bethesda |
 | `deploy_inputs` | hashes `plugins` and `fomod` by name | both |
 | `sync.rs` `PLUGINS` entry | syncs the load order specially | Bethesda |
-| `account.rs`, `Launch::Java`, `Via::Java` | accounts and launching | Minecraft |
+| `account.rs`, `Launch::Java`, `Via::Java` (on the `minecraft-launcher` branch now) | accounts and launching | Minecraft |
 | CLI `installer`, `plugins`, `account`; GUI `installer.js`, `plugins.js` | commands and screens | all of the above |
 
 Every new game that needs something "special" adds another row. This
@@ -61,9 +63,9 @@ The docs for rung 3 are mostly a "you need X → use hook Y" table:
 | to change which files a mod installs, before deploying | `ModTransform` | FOMOD |
 | the user to make choices about a mod | `ModOptions` | FOMOD wizard |
 | an order the user arranges, apart from mod order | `OrderedList` | plugin load order |
-| the game itself downloaded and set up | `Provisioner` | Minecraft |
+| the game itself downloaded and set up | `Provisioner` (not on `main`; see step 5) | Minecraft |
 | a new way to start a game | `Runner` | Steam, Proton, Wine, umu |
-| the user to sign in as someone | `AccountKind` | Minecraft offline/Microsoft |
+| the user to sign in as someone | `AccountKind` (not built; see step 5) | Minecraft offline/Microsoft |
 | a button or command that runs once | `Action` | "sort with LOOT" (future) |
 | problems reported before deploying | `Check` | plugin limit, missing masters |
 | a new profile share format | `ProfileFormat` | r2modman codes |
@@ -436,9 +438,10 @@ pub trait Runner: Send + Sync {
 }
 ```
 
-`Launch::Java` and `Via::Java` are still separate, and become a runner of
-their own when accounts move here, since Java's placeholders come from the
-account. Java is a reasonable built-in extension, since games other than
+Java launching isn't on `main`: it went to the `minecraft-launcher` branch
+with accounts and provisioning (see step 5). When it comes back it should
+be a runner of its own rather than `Launch::Java` and `Via::Java`, since
+Java's placeholders come from the account. Java is a reasonable built-in extension, since games other than
 Minecraft (Starsector, Project Zomboid) run on Java too.
 
 ```rust
@@ -710,7 +713,18 @@ Each step leaves `main` working and shippable.
    - Done: picking a runner and a launch option for a game, and runner
      settings (`Runner::settings`, `[settings.<key>]` in data), in both
      frontends. They're kept in `GameInstall`.
-   - Not done: porting Java and Minecraft accounts.
+   - Deferred (2026-11-05): `AccountKind`, a Java runner and `Provisioner`.
+     A design for accounts with only offline ones to test it against would
+     likely be wrong about Microsoft's (tokens, refreshing, a browser
+     sign-in). So Minecraft's launcher was taken out of `main` and kept on
+     the `minecraft-launcher` branch: `account.rs`, `launch/java.rs`,
+     `provision.rs`, `patchwork/provision.rs`, the `patchwork-provisioners`
+     crate, the CLI's `provision` and `account`, the GUI's Playing tab and
+     "Set up now", `GameDef::provision` and `Paths::runtime`. Minecraft
+     stays as a game for managing an instance from a launcher like Prism,
+     with Modrinth, `[env]` and instances. Profiles that use an instance
+     can't be launched now. It comes back as an extension, with Microsoft
+     sign-in, once that's possible.
    - Tools (`plan_tool`) use the runner picked for the game if it can run
      them, then the usual ones; they don't use a launch's `runners` list.
 6. **`Action`.** Add it when the first real action (LOOT sorting) is

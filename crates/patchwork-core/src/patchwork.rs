@@ -34,7 +34,6 @@ use crate::options::{ModOptions, ModTransform};
 use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
 use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
-use crate::provision::Provisioner;
 use crate::registry::Registry;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::{Origin, SettingSpec, SettingState, Settings};
@@ -276,12 +275,6 @@ impl Builder {
         self
     }
 
-    /// Adds a provisioner outside of any extension, as tests do.
-    pub fn provisioner(mut self, provisioner: impl Provisioner + 'static) -> Self {
-        self.registered.provisioner(None, provisioner);
-        self
-    }
-
     /// Adds a profile format outside of any extension, as tests do.
     pub fn format(mut self, format: impl ProfileFormat + 'static) -> Self {
         self.registered.format(None, format);
@@ -321,7 +314,6 @@ impl Builder {
             paths: self.paths,
             sources: registered.sources,
             deployers: registered.deployers,
-            provisioners: registered.provisioners,
             formats: registered.formats,
             runners: registered.runners,
             extensions: registered.extensions,
@@ -353,7 +345,6 @@ pub struct Patchwork {
     store: Store,
     sources: BTreeMap<String, Arc<dyn Source>>,
     deployers: BTreeMap<String, Arc<dyn Deployer>>,
-    provisioners: BTreeMap<String, Arc<dyn Provisioner>>,
     formats: BTreeMap<String, Arc<dyn ProfileFormat>>,
     runners: BTreeMap<String, Arc<dyn launch::Runner>>,
     extensions: BTreeMap<String, Arc<dyn Extension>>,
@@ -756,11 +747,6 @@ impl Patchwork {
         }
         if !self.deployers.contains_key(&def.deployer.kind) {
             return Err(Error::UnknownDeployer(def.deployer.kind.clone()));
-        }
-        if let Some(spec) = &def.provision
-            && !self.provisioners.contains_key(&spec.kind)
-        {
-            return Err(Error::UnknownProvisioner(spec.kind.clone()));
         }
         if let Some(source) = def.sources.keys().find(|s| !self.has_source(s)) {
             return Err(Error::UnknownSource(source.clone()));
@@ -2894,14 +2880,12 @@ mod lists;
 mod local;
 mod options;
 mod profiles;
-mod provision;
 mod sync;
 
 pub use capture::{Captured, ToolRan};
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use lists::ListInfo;
 pub use options::{ModOptionsInfo, ModOptionsView};
-pub use provision::Provisioned;
 pub use sync::{Applied as SyncApplied, ProfileChange};
 
 #[cfg(test)]

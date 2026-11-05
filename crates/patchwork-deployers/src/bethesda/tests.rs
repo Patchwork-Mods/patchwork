@@ -81,7 +81,6 @@ impl Env {
             launch: Default::default(),
             capture: None,
             instances: None,
-            provision: None,
             ext: [(
                 EXTENSION.to_owned(),
                 toml::Table::from_iter([(

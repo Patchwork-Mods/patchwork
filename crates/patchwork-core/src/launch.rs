@@ -15,9 +15,6 @@
 //! Steam Linux Runtime container it asks for, as Steam runs it, since
 //! newer ones don't work outside it; on NixOS that in turn is run through
 //! `steam-run`, which gives it the usual Linux file layout.
-//!
-//! Games patchwork set up itself, in a profile's instance, are started
-//! with Java instead (see [`java`]).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -36,7 +33,6 @@ use crate::relpath::RelPath;
 use crate::settings::{Origin, SettingState};
 use crate::{Error, Result};
 
-pub mod java;
 pub mod runner;
 
 pub use runner::{Fit, RunContext, Runner, Runners};
@@ -281,8 +277,6 @@ pub enum Via {
     Proton { proton: PathBuf },
     /// The exe is run by Wine, in the prefix the user set.
     Wine { prefix: PathBuf },
-    /// A game patchwork set up is run by the Java at `java`.
-    Java { java: PathBuf },
     /// The exe is run by a runner defined by data (see [`runner::Template`]).
     Runner { name: String },
 }
@@ -294,7 +288,6 @@ impl fmt::Display for Via {
             Via::Direct => f.write_str("directly"),
             Via::Proton { proton } => write!(f, "Proton at {}", proton.display()),
             Via::Wine { prefix } => write!(f, "Wine in {}", prefix.display()),
-            Via::Java { java } => write!(f, "with the Java at {}", java.display()),
             Via::Runner { name } => write!(f, "with {name}"),
         }
     }

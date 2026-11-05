@@ -38,8 +38,6 @@ pub enum Error {
     UnknownSource(String),
     #[error("unknown deployer `{0}`")]
     UnknownDeployer(String),
-    #[error("unknown provisioner `{0}`")]
-    UnknownProvisioner(String),
     #[error("unknown profile format `{0}`")]
     UnknownFormat(String),
     #[error("{format_id}: {message}")]
@@ -50,8 +48,6 @@ pub enum Error {
     UuidError(#[from] uuid::Error),
     #[error("deployer `{kind}`: {message}")]
     Deployer { kind: String, message: String },
-    #[error("provisioner `{kind}`: {message}")]
-    Provisioner { kind: String, message: String },
     #[error("extension `{id}`: {message}")]
     Extension { id: String, message: String },
     #[error("another patchwork process is running (lock held on {})", .0.display())]

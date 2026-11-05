@@ -9,7 +9,6 @@ license.workspace = true
 patchwork-core.workspace = true
 patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
-patchwork-provisioners.workspace = true
 patchwork-formats.workspace = true
 roxmltree.workspace = true
 serde.workspace = true

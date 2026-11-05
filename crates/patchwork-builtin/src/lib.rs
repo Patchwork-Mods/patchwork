@@ -2,7 +2,7 @@
 //! family of games needs. Frontends register the ones they want with
 //! [`patchwork_core::Builder::extension`].
 //!
-//! For now they gather up the sources, deployers, provisioners and formats
+//! For now they gather up the sources, deployers and formats
 //! from the crates those live in; those will move into a crate per
 //! extension. The ids can't change once released, since game definitions
 //! and profiles name them.
@@ -17,7 +17,6 @@ use patchwork_deployers::{
     PluginLimit, RulesDeployer, SmfDeployer,
 };
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
-use patchwork_provisioners::MinecraftProvisioner;
 use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
 
 /// What isn't about any game in particular: local files and URLs, the
@@ -121,17 +120,5 @@ impl Extension for Smf {
 
     fn register(&self, ext: &mut Registrar<'_>) {
         ext.deployer(SmfDeployer);
-    }
-}
-
-pub struct Minecraft;
-
-impl Extension for Minecraft {
-    fn id(&self) -> &'static str {
-        "minecraft"
-    }
-
-    fn register(&self, ext: &mut Registrar<'_>) {
-        ext.provisioner(MinecraftProvisioner);
     }
 }

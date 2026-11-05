@@ -5,10 +5,8 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use patchwork_builtin::{
-    Bethesda, Fomod, Generic, Minecraft, ModrinthExtension, NexusExtension, Smf,
-    ThunderstoreExtension,
+    Bethesda, Fomod, Generic, ModrinthExtension, NexusExtension, Smf, ThunderstoreExtension,
 };
-use patchwork_core::account::Account;
 use patchwork_core::capture::ToolOutput;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
@@ -135,18 +133,6 @@ enum Command {
         /// Go back to the game's default.
         #[arg(long, conflicts_with = "value")]
         reset: bool,
-    },
-    /// Download what the profile's instance needs to run the game as it
-    /// picks with `env` (the game itself and its mod loader), for games
-    /// patchwork can set up. Files that are already there aren't
-    /// downloaded again.
-    Provision,
-    /// Show who you play as in games patchwork starts itself (Minecraft),
-    /// or set it: `account offline <name>` plays under that name without
-    /// signing in.
-    Account {
-        #[command(subcommand)]
-        action: Option<AccountAction>,
     },
     /// Show the choices to make about a mod, like the options in its FOMOD
     /// installer, and which are picked, or pick them. Until some are picked,
@@ -282,8 +268,7 @@ enum Command {
         dry_run: bool,
     },
     /// Start the profile's game, deploying the profile first if it isn't
-    /// deployed as it is now, and for a profile with an instance, setting
-    /// the game up in it first if it isn't.
+    /// deployed as it is now.
     Launch {
         /// Which way to start it, from `--list`. Defaults to the game's
         /// default one.
@@ -373,15 +358,6 @@ impl MoveTo {
             unreachable!("clap requires one of them")
         }
     }
-}
-
-#[derive(Subcommand)]
-enum AccountAction {
-    /// Play under `name` without signing in: fine on your own, and on
-    /// servers that don't check who joins.
-    Offline { name: String },
-    /// Forget the account.
-    Forget,
 }
 
 #[derive(Subcommand)]
@@ -593,7 +569,6 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
         .extension(Bethesda)
         .extension(Fomod)
         .extension(Smf)
-        .extension(Minecraft)
         .reporter(reporter)
         .open()
 }
@@ -793,25 +768,6 @@ async fn run(cli: Cli) -> Result<()> {
                     pw.instance_dir(&profile).display()
                 ),
                 Some(_) => println!("{} is deployed to the game's folder", loaded.label()),
-            }
-        }
-        Command::Provision => {
-            let (profile, loaded) = selected(&pw, &cli.profile)?;
-            provision(&pw, &profile, &loaded).await?;
-        }
-        Command::Account { action } => {
-            match action {
-                Some(AccountAction::Offline { name }) => {
-                    pw.set_account(Some(&Account::offline(&name)?))?
-                }
-                Some(AccountAction::Forget) => pw.set_account(None)?,
-                None => {}
-            }
-            match pw.account()? {
-                Some(account @ Account::Offline { .. }) => {
-                    println!("playing offline as {} ({})", account.name(), account.uuid())
-                }
-                None => println!("no account; pick a name with `patchwork account offline <name>`"),
             }
         }
         Command::Options {
@@ -1152,6 +1108,10 @@ async fn run(cli: Cli) -> Result<()> {
                 print_launch_options(&options);
                 return Ok(());
             }
+            if pw.uses_instance(&loaded)? {
+                // says why it can't, before anything's deployed for nothing
+                pw.plan_profile_launch(&profile, option.as_deref(), runner.as_deref())?;
+            }
             if !no_deploy && pw.deploy_status(&profile)? != DeployStatus::Deployed {
                 if dry_run {
                     println!("would deploy {} first", loaded.label());
@@ -1159,16 +1119,6 @@ async fn run(cli: Cli) -> Result<()> {
                     let plan = pw.plan_deploy(&profile).await?;
                     finish(&pw, &plan, false)?;
                 }
-            }
-            if pw.needs_provisioning(&profile)? {
-                if dry_run {
-                    println!(
-                        "would set the game up in {}'s instance first",
-                        loaded.label()
-                    );
-                    return Ok(());
-                }
-                provision(&pw, &profile, &loaded).await?;
             }
             let launch = pw.plan_profile_launch(&profile, option.as_deref(), runner.as_deref())?;
             let name = options
@@ -2566,18 +2516,4 @@ fn selected(pw: &Patchwork, explicit: &Option<String>) -> Result<(ProfileRef, Pr
     };
     let loaded = pw.load_profile(&profile)?;
     Ok((profile, loaded))
-}
-
-async fn provision(pw: &Patchwork, profile: &ProfileRef, loaded: &Profile) -> Result<()> {
-    let done = pw.provision(profile).await?;
-    let fetched = match done.downloaded {
-        0 => "nothing needed downloading".to_owned(),
-        n => format!(
-            "downloaded {n} of its {} files ({:.1} MB)",
-            done.files,
-            done.bytes as f64 / 1e6
-        ),
-    };
-    println!("set up {} with {}: {fetched}", loaded.label(), done.setup);
-    Ok(())
 }
