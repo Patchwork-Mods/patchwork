@@ -94,6 +94,10 @@ Run `patchwork help`, or `patchwork <command> --help`, for more commands
     profile (`patchwork sync peers` lists them). Everyone else moves to a
     new document and gets told about it the next time they're online.
     Followers need a new ticket.
+  - `patchwork sync name <id> <name>` gives another computer a nickname,
+    shown wherever it's listed. Names stay on your computer. In the app,
+    name people in a profile's **Share…** dialog, or your own computers
+    under **Settings → My computers**.
   - `patchwork sync reset-id` gives this computer a new id. Profiles stay
     synced, and the others stop trying to reach the old one.
 

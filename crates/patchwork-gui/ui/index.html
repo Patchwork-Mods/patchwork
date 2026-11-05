@@ -430,6 +430,12 @@
 						later, are on all of them, and a change on one goes to the rest. Profiles you share with friends or follow
 						come along too.</p>
 					<p id="computers-state" class="muted" hidden>This computer is linked to your others.</p>
+					<div id="computers-peers" class="field" hidden>
+						<span>Your other computers <small class="muted">name them to tell them apart; names stay on this
+								computer</small></span>
+						<ul id="computers-peer-list" class="peer-list"></ul>
+						<small id="computers-me" class="muted"></small>
+					</div>
 					<div id="computers-ticket" class="field" hidden>
 						<label for="computers-text">On your other computer, open <b>Settings</b> and paste this ticket under <b>My
 								computers</b></label>
@@ -616,6 +622,12 @@
 			<form id="share-form" method="dialog" class="stack">
 				<h2 id="share-title">Share profile</h2>
 				<p id="share-state" class="muted" hidden></p>
+				<div id="share-peers" class="field" hidden>
+					<span>Computers that can change it <small class="muted">name them to tell them apart; names stay on
+							this computer</small></span>
+					<ul id="share-peer-list" class="peer-list"></ul>
+					<small id="share-me" class="muted"></small>
+				</div>
 				<div id="share-modes" class="stack">
 					<label class="row">
 						<input type="radio" name="mode" value="write" checked>

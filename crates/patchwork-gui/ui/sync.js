@@ -4,10 +4,11 @@
 // follow. Either makes a ticket to paste on the other computer. sync.rs then
 // keeps things in step in the background, and sends patchwork://synced
 // whenever a profile changes. Changes that come in are shown, but never
-// deployed by themselves.
+// deployed by themselves. Both list the other computers syncing, which the
+// user can name to tell apart; names stay on this computer.
 
 import { invoke, listen, run, state, status } from "./state.js";
-import { $, copyText } from "./dom.js";
+import { $, copyText, h } from "./dom.js";
 import { closeProfileMenu, menuTarget, openProfile, refresh, renderSidebar } from "./profile.js";
 import { openGame } from "./games.js";
 import { go } from "./nav.js";
@@ -21,7 +22,86 @@ listen("patchwork://synced", ({ payload: e }) => {
     }
     refresh().catch(() => {});
   }
+  // someone may have joined while the dialog's open
+  if (e.profile && $("#share-dialog").open && sharingStatus && e.profile === sharing?.id) {
+    renderPeers("share", sharing.id).catch(() => {});
+  }
 });
+
+// Other computers, named.
+
+/** A computer's id, short enough to show; it's in full on hover. */
+const shortId = (id) => (id.length > 12 ? `${id.slice(0, 12)}…` : id);
+
+/** Lists the computers that can change profile `profile`, or with null,
+ * the user's other computers, in the `#<prefix>-peers` block. A name is
+ * saved as soon as it's changed. */
+async function renderPeers(prefix, profile) {
+  const block = $(`#${prefix}-peers`);
+  const list = $(`#${prefix}-peer-list`);
+  // a list being typed in isn't pulled out from under the user
+  if (list.contains(document.activeElement)) return;
+  let found;
+  try {
+    found = await invoke("sync_peers", { id: profile });
+  } catch {
+    block.hidden = true;
+    return;
+  }
+  $(`#${prefix}-me`).textContent = `This computer is ${shortId(found.me)}`;
+  $(`#${prefix}-me`).title = found.me;
+  list.replaceChildren(
+    ...found.peers.map((peer) => h("li", { class: "peer" }, peerName(peer), peerId(peer.id))),
+  );
+  if (!found.peers.length) {
+    list.append(h("li", { class: "muted" }, "No one else yet; they appear here once they've joined."));
+  }
+  block.hidden = false;
+}
+
+function peerId(id) {
+  return h("code", { class: "peer-id", title: id }, shortId(id));
+}
+
+function peerName(peer) {
+  let saved = peer.name ?? "";
+  const input = h("input", {
+    class: "peer-name",
+    type: "text",
+    value: saved,
+    placeholder: "Give them a name",
+    maxlength: 64,
+    spellcheck: "false",
+    "aria-label": `Name for ${peer.id}`,
+  });
+  input.addEventListener("keydown", (e) => {
+    // Enter would submit the dialog's form
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      input.value = saved;
+      input.blur();
+    }
+  });
+  input.addEventListener("change", async () => {
+    const name = input.value.trim();
+    if (name === saved) return;
+    try {
+      await invoke("sync_name_peer", { peer: peer.id, name });
+    } catch (err) {
+      status(String(err), true);
+      input.value = saved;
+      return;
+    }
+    saved = name;
+    input.value = name;
+    status(name ? `Named ${shortId(peer.id)} ${name}` : `Forgot the name of ${shortId(peer.id)}`);
+  });
+  return input;
+}
 
 // Sharing, from the profile's menu in the sidebar.
 
@@ -46,6 +126,8 @@ $("#share-profile").addEventListener("click", async () => {
     ? "You follow this profile, so you can only pass it on read only. Mods you add stay on this computer."
     : "This profile is already synced; a new ticket lets more people join.";
   $("#share-leave").hidden = !sharingStatus;
+  $("#share-peers").hidden = true;
+  if (sharingStatus) renderPeers("share", sharing.id).catch(() => {});
   $("#share-offer").replaceChildren();
   showTicket(null);
   $("#share-dialog").showModal();
@@ -92,6 +174,8 @@ shareForm.addEventListener("submit", async (e) => {
     : "Keep Patchwork open here until they've joined. They get your mods and your changes, and can pass the " +
       "profile on to each other, but only you can change what everyone gets.";
   showTicket(ticket);
+  sharingStatus ??= { writable };
+  renderPeers("share", profile.id).catch(() => {});
   status(`Sharing ${profile.label}; keep Patchwork open until they've joined`);
   state.overview = await run("overview");
   renderSidebar();
@@ -178,7 +262,9 @@ export async function renderComputers() {
   $("#computers-text").value = "";
   $("#computers-paste").value = "";
   $("#computers-offer").replaceChildren();
-  showComputers(await run("sync_linked"), null);
+  const isLinked = await run("sync_linked");
+  showComputers(isLinked, null);
+  if (isLinked) await renderPeers("computers", null);
 }
 
 /** Shows whether this computer's linked, and the ticket made for linking
@@ -186,6 +272,7 @@ export async function renderComputers() {
 function showComputers(isLinked, ticket) {
   $("#computers-state").hidden = !isLinked;
   $("#computers-unlink").hidden = !isLinked;
+  if (!isLinked) $("#computers-peers").hidden = true;
   $("#computers-ticket").hidden = !ticket;
   $("#computers-copy").hidden = !ticket;
   $("#computers-create").hidden = !!ticket;
@@ -219,6 +306,7 @@ $("#computers-create").addEventListener("click", async () => {
     create.disabled = false;
   }
   showComputers(true, ticket);
+  renderPeers("computers", null).catch(() => {});
   status("Keep Patchwork open until your other computer has linked");
   await refresh().catch(() => {});
   await offerDaemon($("#computers-offer"));
@@ -248,6 +336,7 @@ $("#computers-submit").addEventListener("click", async () => {
   $("#computers-paste").value = "";
   if (joined.kind === "devices") {
     showComputers(true, null);
+    renderPeers("computers", null).catch(() => {});
     await linked(joined);
     await offerDaemon($("#computers-offer"));
   } else {

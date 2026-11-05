@@ -460,8 +460,11 @@ enum SyncCommand {
     /// elsewhere, and linked computers no longer pick it up.
     Leave,
     /// List the other computers that can change the profile, by the id
-    /// each prints with `patchwork sync id`.
+    /// each prints with `patchwork sync id`, and the name you gave each.
     Peers,
+    /// Give another computer a name to know it by here (see `peers`), or
+    /// forget its name if none is given. Names aren't synced.
+    Name { id: String, name: Vec<String> },
     /// Stop the computers with these ids (see `peers`) syncing the profile
     /// with anyone else. Everyone else moves to a new document, which
     /// they're told about when they're next online; whoever follows the
@@ -2348,6 +2351,19 @@ async fn sync(
     command: Option<SyncCommand>,
     explicit: &Option<String>,
 ) -> Result<()> {
+    if let Some(SyncCommand::Name { id, name }) = &command {
+        let peer = id
+            .parse()
+            .map_err(|_| anyhow::anyhow!("`{id}` isn't a computer's id"))?;
+        let name = name.join(" ");
+        patchwork_sync::set_peer_name(&pw.paths().sync(), &peer, &name)?;
+        if name.trim().is_empty() {
+            println!("forgot the name of {id}");
+        } else {
+            println!("{id} is now called {}", name.trim());
+        }
+        return Ok(());
+    }
     let node = Node::spawn(&pw.paths().sync()).await?;
     if matches!(command, Some(SyncCommand::ResetId)) {
         let old = node.id();
@@ -2475,8 +2491,12 @@ async fn sync_with(
         }
         SyncCommand::Peers => {
             let (profile, _) = selected(pw, explicit)?;
+            let names = node.peer_names()?;
             for peer in node.peers(&profile).await? {
-                println!("{peer}");
+                match names.get(&peer.to_string()) {
+                    Some(name) => println!("{peer}  {name}"),
+                    None => println!("{peer}"),
+                }
             }
         }
         SyncCommand::Remove { ids } => {
@@ -2507,7 +2527,7 @@ async fn sync_with(
         }
         SyncCommand::Run => run_sync(pw, node).await?,
         SyncCommand::Id => println!("{}", node.id()),
-        SyncCommand::ResetId => unreachable!("handled by `sync`"),
+        SyncCommand::ResetId | SyncCommand::Name { .. } => unreachable!("handled by `sync`"),
     }
     Ok(())
 }

@@ -199,6 +199,34 @@ impl Node {
             .collect())
     }
 
+    /// The user's other computers, by endpoint id, that this one is linked
+    /// to (see [`Node::link_devices`]); none if it isn't linked.
+    pub async fn device_peers(&self) -> Result<Vec<PublicKey>> {
+        let Some(doc) = self.devices_doc().await? else {
+            return Ok(Vec::new());
+        };
+        let me = self.id();
+        Ok(self
+            .peers_in(&doc)
+            .await?
+            .into_iter()
+            .filter(|p| !p.gone && p.id != me)
+            .map(|p| p.id)
+            .collect())
+    }
+
+    /// The nicknames given to other machines here, by endpoint id (see
+    /// [`names`](crate::names)).
+    pub fn peer_names(&self) -> Result<std::collections::BTreeMap<String, String>> {
+        crate::names::peer_names(&self.dir)
+    }
+
+    /// Calls the machine `peer` `name` here, or forgets its name if `name`
+    /// is blank.
+    pub fn set_peer_name(&self, peer: &PublicKey, name: &str) -> Result<()> {
+        crate::names::set_peer_name(&self.dir, peer, name)
+    }
+
     /// Stops the machines `peers` (endpoint ids, see [`Node::peers`])
     /// syncing `profile` with anyone else: it moves to a new document,
     /// which the others are told about, and the old one's left to whoever

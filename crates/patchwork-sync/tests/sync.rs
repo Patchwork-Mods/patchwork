@@ -268,6 +268,8 @@ async fn linked_computers_get_each_others_profiles_including_new_ones() {
     let has = |pw: &Patchwork, profile: &ProfileRef| pw.load_profile(profile).is_ok();
     let steps = async {
         until(|| has(&a, &on_b) && has(&b, &on_a)).await;
+        // each lists the other, and not itself
+        assert_eq!(b_node.device_peers().await.unwrap(), [a_node.id()]);
 
         // a profile made later goes over too, and so do changes to it
         let later = a.create_profile("my-game", "later").unwrap();

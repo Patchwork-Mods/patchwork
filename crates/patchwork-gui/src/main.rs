@@ -1651,6 +1651,8 @@ fn main() {
             sync::sync_linked,
             sync::sync_link,
             sync::sync_unlink,
+            sync::sync_peers,
+            sync::sync_name_peer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running patchwork");

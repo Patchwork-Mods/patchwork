@@ -40,5 +40,6 @@ and `<data>` are the platform's usual config and data directories, such as
 
 ## Sync
 
-- `<data>/sync/`: this machine's iroh key, which profiles it syncs, iroh's
-  data, and the daemon's log
+- `<data>/sync/`: this machine's iroh key, which profiles it syncs, the
+  nicknames the user gave other machines (`names.toml`, never synced),
+  iroh's data, and the daemon's log

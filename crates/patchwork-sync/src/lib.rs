@@ -68,8 +68,10 @@ use uuid::Uuid;
 pub mod daemon;
 pub mod files;
 pub mod moves;
+pub mod names;
 
 pub use moves::Removed;
+pub use names::{peer_names, set_peer_name};
 
 /// How long a one-off sync waits to hear from other machines.
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(20);

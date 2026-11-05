@@ -198,3 +198,55 @@ pub async fn sync_leave(handle: AppHandle, app: State<'_, App>, id: String) -> C
     let node = node(&handle).await?;
     node.leave(&app.pw, &profile_ref(&id)?).await.map_err(msg)
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Peers {
+    /// This computer's id, so people can tell which of them is which.
+    me: String,
+    peers: Vec<PeerInfo>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerInfo {
+    id: String,
+    /// What the user calls it here, if they've named it.
+    name: Option<String>,
+}
+
+/// The other computers that can change the profile `id`, or the user's
+/// other computers without one, with the names they've been given here.
+#[tauri::command]
+pub async fn sync_peers(handle: AppHandle, id: Option<String>) -> CmdResult<Peers> {
+    let node = node(&handle).await?;
+    let peers = match id {
+        Some(id) => node.peers(&profile_ref(&id)?).await,
+        None => node.device_peers().await,
+    }
+    .map_err(msg)?;
+    let mut names = node.peer_names().map_err(msg)?;
+    Ok(Peers {
+        me: node.id().to_string(),
+        peers: peers
+            .into_iter()
+            .map(|p| {
+                let id = p.to_string();
+                PeerInfo {
+                    name: names.remove(&id),
+                    id,
+                }
+            })
+            .collect(),
+    })
+}
+
+/// Calls the computer `peer` `name` here, or forgets its name if `name`'s
+/// blank. Names aren't synced.
+#[tauri::command]
+pub fn sync_name_peer(app: State<'_, App>, peer: String, name: String) -> CmdResult<()> {
+    let peer = peer
+        .parse()
+        .map_err(|_| format!("`{peer}` isn't a computer's id"))?;
+    patchwork_sync::set_peer_name(&app.pw.paths().sync(), &peer, &name).map_err(msg)
+}
