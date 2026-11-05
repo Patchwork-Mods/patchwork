@@ -80,6 +80,22 @@ impl Patchwork {
         self.extensions[id].as_ref()
     }
 
+    /// Whether extension `ext`'s hook `name` is on for `def`: the game turns
+    /// it on, and everything the extension uses is on too.
+    pub(super) fn hook_on(&self, def: &GameDef, ext: &str, name: &str) -> bool {
+        def.hook_on(ext, name)
+            && self.uses.get(ext).into_iter().flatten().all(|id| {
+                self.lists
+                    .get(*id)
+                    .is_some_and(|used| def.hook_on(used.ext, used.name))
+            })
+    }
+
+    /// The other extensions' hooks extension `ext` uses.
+    pub(super) fn uses_of(&self, ext: &str) -> &[&'static str] {
+        self.uses.get(ext).map_or(&[], Vec::as_slice)
+    }
+
     /// Extension `id`, if it's on for `loaded`'s game.
     fn extension_on(&self, loaded: &Profile, id: &str) -> Result<&dyn Extension> {
         let Some(extension) = self.extensions.get(id) else {

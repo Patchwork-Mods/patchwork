@@ -294,7 +294,8 @@ impl Builder {
 
     /// Takes the state lock and loads the registry.
     pub fn open(self) -> Result<Patchwork> {
-        let registered = self.registered;
+        let mut registered = self.registered;
+        registered.check_uses();
         if !registered.problems.is_empty() {
             return Err(Error::invalid(format!(
                 "patchwork was built with conflicting extensions: {}",
@@ -321,6 +322,8 @@ impl Builder {
             transforms: registered.transforms,
             options: registered.options,
             checks: registered.checks,
+            actions: registered.actions,
+            uses: registered.uses,
             reporter: self.reporter,
             categories: Mutex::default(),
             fetching_versions: Mutex::default(),
@@ -356,6 +359,10 @@ pub struct Patchwork {
     options: BTreeMap<String, Hook<dyn ModOptions>>,
     /// By hook id, which is the order they run in; see [`crate::check`].
     checks: BTreeMap<String, Hook<dyn crate::check::Check>>,
+    /// By hook id; see [`crate::action`].
+    actions: BTreeMap<String, Hook<dyn crate::action::Action>>,
+    /// The other extensions' hooks each extension uses, by extension.
+    uses: BTreeMap<&'static str, Vec<&'static str>>,
     reporter: Arc<dyn Reporter>,
     /// Each source's search categories for each game, by `(source, game)`.
     /// They hardly ever change, and a search by category needs them, so
@@ -2871,6 +2878,7 @@ fn visit<'a>(
     order.push(locked);
 }
 
+mod actions;
 mod capture;
 mod checks;
 mod extensions;

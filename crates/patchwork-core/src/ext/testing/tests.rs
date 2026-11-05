@@ -1,6 +1,7 @@
 use std::fs;
 
 use super::*;
+use crate::action::{Action, ActionContext, Outcome, StateChange};
 use crate::deploy::{
     BuildContext, DeployContext, Deployer, DesiredState, Dest, InstalledMod, Placement, Src,
 };
@@ -177,4 +178,134 @@ fn mods_are_added_before_the_game_is_used() {
     let t = TestGame::from_toml(GAME).extension(SimpleExt);
     t.patchwork();
     let _ = t.mod_files("late", [("x", "x")]);
+}
+
+/// Reverses the `simple.names` list, reading it if `read`.
+struct Reverse {
+    read: bool,
+}
+
+#[async_trait]
+impl Action for Reverse {
+    fn title(&self) -> &str {
+        "Reverse"
+    }
+
+    fn shown_with(&self) -> Option<&str> {
+        Some("simple.names")
+    }
+
+    async fn run(&self, ctx: &ActionContext<'_>) -> Result<Outcome> {
+        let order = if self.read {
+            let list = ctx.list("simple.names")?;
+            list.items
+                .iter()
+                .rev()
+                .map(|i| i.item.name.clone())
+                .collect()
+        } else {
+            vec!["b".to_owned(), "a".to_owned()]
+        };
+        Ok(Outcome {
+            message: Some("Reversed".to_owned()),
+            changes: vec![StateChange::List {
+                id: "simple.names".to_owned(),
+                order,
+            }],
+            warnings: Vec::new(),
+        })
+    }
+}
+
+/// `Reverse` in extension `rev`, declaring that it uses `simple.names` if
+/// `declare`.
+struct RevExt {
+    declare: bool,
+    read: bool,
+}
+
+impl Extension for RevExt {
+    fn id(&self) -> &'static str {
+        "rev"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        if self.declare {
+            ext.uses("simple.names");
+        }
+        ext.action("reverse", Reverse { read: self.read });
+    }
+}
+
+fn with_rev(game: &str, declare: bool, read: bool) -> TestGame {
+    TestGame::from_toml(&format!("{game}\n[ext.rev]\n"))
+        .extension(SimpleExt)
+        .extension(RevExt { declare, read })
+        .mod_files("a", [("a.txt", "a")])
+        .mod_files("b", [("b.txt", "b")])
+        .mod_files("c", [("c.txt", "c")])
+}
+
+#[test]
+fn actions_change_lists_they_use_only_when_applied() {
+    let t = with_rev(GAME, true, true);
+    let actions = t.actions().unwrap();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].id, "rev.reverse");
+    assert_eq!(actions[0].shown_with.as_deref(), Some("simple.names"));
+
+    let report = t.run_action("rev.reverse", false).unwrap();
+    assert!(!report.applied);
+    assert_eq!(report.message.as_deref(), Some("Reversed"));
+    let change = &report.lists[0];
+    let after: Vec<&str> = change.after.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(after, ["c", "b", "a"]);
+    assert_eq!(change.moved.len(), 2);
+    assert_eq!(t.order("simple.names").unwrap(), ["a", "b", "c"]);
+
+    t.run_action("rev.reverse", true).unwrap();
+    assert_eq!(t.order("simple.names").unwrap(), ["c", "b", "a"]);
+}
+
+#[test]
+fn names_left_out_keep_their_order_after_the_rest() {
+    let t = with_rev(GAME, true, false);
+    let report = t.run_action("rev.reverse", true).unwrap();
+    assert!(report.warnings.is_empty());
+    assert_eq!(t.order("simple.names").unwrap(), ["b", "a", "c"]);
+}
+
+#[test]
+fn undeclared_lists_cant_be_read_or_changed() {
+    let t = with_rev(GAME, false, true);
+    let e = t.run_action("rev.reverse", false).unwrap_err().to_string();
+    assert!(e.contains("without declaring it"), "{e}");
+    let t = with_rev(GAME, false, false);
+    let e = t.run_action("rev.reverse", true).unwrap_err().to_string();
+    assert!(e.contains("without declaring it"), "{e}");
+    assert_eq!(t.order("simple.names").unwrap(), ["a", "b", "c"]);
+}
+
+#[test]
+fn actions_are_off_where_what_they_use_is_off() {
+    let game = GAME.replace("[ext.simple.names]", "[ext.simple]\noff = [\"names\"]");
+    let t = with_rev(&game, true, true);
+    assert!(t.actions().unwrap().is_empty());
+    let e = t.run_action("rev.reverse", false).unwrap_err().to_string();
+    assert!(e.contains("doesn't have the `rev.reverse` action"), "{e}");
+}
+
+#[test]
+fn using_what_isnt_built_in_stops_the_build() {
+    let tmp = tempfile::tempdir().unwrap();
+    let e = Patchwork::builder(Paths::rooted(tmp.path()))
+        .extension(RevExt {
+            declare: true,
+            read: true,
+        })
+        .open()
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(e.contains("uses `simple.names`, which isn't a list"), "{e}");
 }

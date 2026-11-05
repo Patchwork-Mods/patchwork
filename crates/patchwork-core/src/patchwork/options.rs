@@ -63,6 +63,7 @@ impl Patchwork {
                 .map(|h| h.name),
         );
         names.extend(self.check_names(ext));
+        names.extend(self.action_names(ext));
         names
     }
 
@@ -85,7 +86,7 @@ impl Patchwork {
         let transforms: Vec<&Hook<dyn ModTransform>> = self
             .transforms
             .iter()
-            .filter(|h| game.hook_on(h.ext, h.name))
+            .filter(|h| self.hook_on(game, h.ext, h.name))
             .collect();
         if transforms.is_empty() {
             return Ok((mods, warnings));
@@ -263,7 +264,7 @@ impl Patchwork {
     fn options_on(&self, def: &GameDef) -> Vec<(&str, &Hook<dyn ModOptions>)> {
         self.options
             .iter()
-            .filter(|(_, hook)| def.hook_on(hook.ext, hook.name))
+            .filter(|(_, hook)| self.hook_on(def, hook.ext, hook.name))
             .map(|(id, hook)| (id.as_str(), hook))
             .collect()
     }

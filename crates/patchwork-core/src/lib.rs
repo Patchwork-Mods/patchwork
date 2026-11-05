@@ -14,6 +14,7 @@
 //! game or family of games, which also get somewhere to keep state in
 //! profiles that core saves, syncs and versions for them.
 
+pub mod action;
 pub mod capture;
 pub mod changelog;
 pub mod check;

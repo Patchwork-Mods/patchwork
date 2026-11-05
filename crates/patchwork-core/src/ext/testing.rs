@@ -41,6 +41,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::{Extension, StateOf};
+use crate::action::{ActionInfo, ActionReport};
 use crate::deploy::{DeployOp, DeployPlan, RootId};
 use crate::error::IoContext;
 use crate::game::{GAME_SCHEMA, GameDef};
@@ -283,6 +284,16 @@ impl TestGame {
     pub fn set_list_enabled(&self, id: &str, name: &str, enabled: bool) -> Result<()> {
         self.patchwork()
             .set_list_enabled(self.profile(), id, name, enabled)
+    }
+
+    /// The actions that are on for the game.
+    pub fn actions(&self) -> Result<Vec<ActionInfo>> {
+        self.patchwork().actions(self.profile())
+    }
+
+    /// Runs action `id`, saving what it changes if `apply`.
+    pub fn run_action(&self, id: &str, apply: bool) -> Result<ActionReport> {
+        self.block_on(self.patchwork().run_action(self.profile(), id, apply))
     }
 
     /// Mod `name`'s choices (its only ones), worked out for what's saved.

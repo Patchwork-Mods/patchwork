@@ -45,6 +45,23 @@ function renderList(list) {
   state.list = list;
   $("#list-description").textContent = list.description ?? "";
   $("#list-description").hidden = !list.description;
+  const actions = (state.profile?.actions ?? []).filter((a) => a.shownWith === list.id);
+  $("#list-actions").hidden = !actions.length;
+  $("#list-actions").replaceChildren(
+    ...actions.map((a) =>
+      h(
+        "button",
+        {
+          type: "button",
+          class: "list-action",
+          "data-action": a.id,
+          title: a.description ?? "",
+          onclick: (e) => runAction(a, e.target),
+        },
+        a.title,
+      ),
+    ),
+  );
   $("#list-problems").replaceChildren(
     ...list.problems.map((p) => h("li", { class: p.severity }, p.message)),
   );
@@ -160,6 +177,45 @@ async function save(entries, message, old) {
     await run("set_list", { id, list, entries: old });
     status(`Undid: ${message}`);
     if (state.profile?.id === id) showProfile(await run("profile", { id }), { keepMods: true });
+  };
+}
+
+/** Runs `action` and saves what it changes, offering to undo it. */
+async function runAction(action, button) {
+  const { id } = state.profile;
+  button.disabled = true;
+  status(`${action.title}…`);
+  let report;
+  try {
+    report = await run("run_action", { id, action: action.id });
+  } catch {
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  const changed = report.lists.filter((l) => l.moved.length);
+  const moved = changed.reduce((n, l) => n + l.moved.length, 0);
+  const said = report.message ?? action.title;
+  const message = changed.length
+    ? `${said}; moved ${moved} ${plural(moved, "item", "items")}`
+    : `${said}; it was already in order`;
+  const warned = report.warnings.length ? ` (${report.warnings.join(" ")})` : "";
+  if (state.profile?.id === id) {
+    showProfile(await run("profile", { id }), { keepMods: true });
+    refreshList();
+  }
+  status(message + warned);
+  if (!changed.length) return;
+  const undo = $("#undo");
+  undo.hidden = false;
+  undo.onclick = async () => {
+    undo.hidden = true;
+    for (const l of changed) await run("set_list", { id, list: l.id, entries: l.before });
+    status(`Undid: ${action.title}`);
+    if (state.profile?.id === id) {
+      showProfile(await run("profile", { id }), { keepMods: true });
+      refreshList();
+    }
   };
 }
 

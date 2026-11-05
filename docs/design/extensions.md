@@ -1,9 +1,9 @@
 # Extensions: game-specific behaviour without game-specific core
 
 Status: proposal (2026-10-29). Steps 1 (the skeleton), 2 (`OrderedList`),
-3 (`ModTransform` + `ModOptions`), 4 (`Check`) and 7 (crates per game) of
-"Order of work" are built, and so is step 5's `Runner`; see the notes under
-each. Step 6 (`Action`) waits for its first real use. `AccountKind`
+3 (`ModTransform` + `ModOptions`), 4 (`Check`), 6 (`Action`, with `uses`)
+and 7 (crates per game) of "Order of work" are built, and so is step 5's
+`Runner`; see the notes under each. `AccountKind`
 and `Provisioner` wait for Minecraft's launcher, which was taken out of
 `main` (2026-11-05) and kept on the `minecraft-launcher` branch.
 
@@ -67,7 +67,7 @@ The docs for rung 3 are mostly a "you need X → use hook Y" table:
 | the game itself downloaded and set up | `Provisioner` (not on `main`; see step 5) | Minecraft |
 | a new way to start a game | `Runner` | Steam, Proton, Wine, umu |
 | the user to sign in as someone | `AccountKind` (not built; see step 5) | Minecraft offline/Microsoft |
-| a button or command that runs once | `Action` | "sort with LOOT" (future) |
+| a button or command that runs once | `Action` | "Sort with LOOT" |
 | problems reported before deploying | `Check` | plugin limit, missing masters |
 | a new profile share format | `ProfileFormat` | r2modman codes |
 
@@ -516,7 +516,7 @@ generic commands:
 | `patchwork options <mod>` | `mod_options`, `set_mod_options` | `installer`, `set_installer` |
 | `patchwork order [<list>] list/move/enable/disable` | `lists`, `list`, `set_list` | `plugins …`, `load_order`, `set_load_order` |
 | `patchwork account [add <kind>/list/use/forget]` | `accounts`, `sign_in` | `account offline/forget` |
-| `patchwork run <action>` | `actions`, `run_action` | (new) |
+| `patchwork action [<id>] [--dry-run]` | `actions` (in `profile`), `run_action` | (new) |
 | `patchwork game settings` (unchanged) | `game_settings` (now includes extension settings) | |
 
 `Patchwork` gets a small discovery API so frontends can show only what is
@@ -622,9 +622,9 @@ Each step leaves `main` working and shippable.
    - The extensions live in a new `patchwork-builtin` crate (`generic`,
      `thunderstore`, `nexus`, `modrinth`, `bethesda`, `smf`, `minecraft`),
      which step 7 split up.
-   - Not done yet: `uses`/`reads_state` and moving `[fomod]` under
-     `ext`. (`off` and the schema bumps came with step 2, `[fomod]` with
-     step 3, and the test harness later; see "Test harness".)
+   - Not done yet: `reads_state`. (`off` and the schema bumps came with
+     step 2, `[fomod]` under `ext` with step 3, `uses` with step 6, and the
+     test harness later; see "Test harness".)
 2. **`OrderedList`.** Port the Bethesda load order, add the generic list
    command and screen, migrate `plugin` → `ext.bethesda`. This is the
    smallest port, and it proves state, sync, hashing and generic UI end to
@@ -753,6 +753,45 @@ Each step leaves `main` working and shippable.
      them, then the usual ones; they don't use a launch's `runners` list.
 6. **`Action`.** Add it when the first real action (LOOT sorting) is
    wanted.
+
+   Built (2026-11-05), with LOOT sorting as the `loot` extension's `sort`
+   action (in `patchwork-bethesda`, `loot.rs`), with these differences:
+   - `run(&self, ctx)` takes no inputs: there's no `inputs()` form yet,
+     since nothing needs one. `scope()` is `shown_with()`, the id of a list
+     the action is about (frontends put it on that list's tab), or `None`
+     for the profile. Nothing has a mod or game scope yet.
+   - `Outcome` has `message`, `changes` and `warnings`. `StateChange` is
+     `#[non_exhaustive]` and only has `List { id, order }` so far. Items
+     `order` leaves out go after the ones it names, in their old order;
+     tiers and switches are kept.
+   - `Patchwork::run_action(profile, id, apply)` returns an `ActionReport`
+     with each list's `before`, `after` and `moved` (the fewest items that
+     moved, from a longest increasing run), so frontends can preview
+     (`--dry-run`) or undo. Changes are only saved once the action is
+     done, through `set_list`.
+   - `ActionContext` has `game()`, `config()`, `files()`, `mods()`,
+     `list(id)` (by full id: its own lists and those it `uses`) and
+     `fetch(url)`. Fetching is the host's: it keeps the last copy and its
+     ETag under `cache/actions/<extension>/`, and uses that copy, with a
+     warning, if fetching fails. That keeps network and file I/O out of
+     extensions for WASM.
+   - `Registrar::uses(id)` is built for lists only. `Builder::open` fails
+     if a used list isn't in the build; every hook of an extension is off
+     for games where something it uses is off (`Patchwork::hook_on`); and
+     reading or changing an undeclared list is an `Error::Extension`
+     saying so, rather than a separate `NotDeclared` error. `reads_state`
+     isn't built.
+   - The CLI command is `patchwork action`, not `patchwork run`, which
+     would be easy to confuse with `launch` and `tool`. In the GUI, a list
+     tab's actions are buttons in `#list-actions` (`.list-action`), with
+     undo. Profile-wide actions aren't shown in the GUI yet.
+   - The LOOT sort reads the masterlist with `serde_norway` (merge keys
+     applied), not libloot (GPL). Masters and unconditional `after`/`req`
+     rules always hold, then groups, then the user's order; each tier is
+     sorted on its own, and loops are broken with a warning. Not done:
+     `condition`s (those rules are skipped), the userlist, and LOOT's
+     sorting by overlapping records. Skyrim SE turns it on with
+     `[ext.loot.sort] masterlist = "…/v0.29/masterlist.yaml"`.
 7. **Reorganize crates** into per-game extensions (step 1 of the original
    plan). By this point it is mostly moving files.
 

@@ -29,7 +29,7 @@ impl Patchwork {
     pub(super) fn lists_on(&self, def: &GameDef) -> Vec<(&str, &Hook<dyn OrderedList>)> {
         self.lists
             .iter()
-            .filter(|(_, hook)| def.hook_on(hook.ext, hook.name))
+            .filter(|(_, hook)| self.hook_on(def, hook.ext, hook.name))
             .map(|(id, hook)| (id.as_str(), hook))
             .collect()
     }
@@ -198,7 +198,7 @@ impl Patchwork {
         let Some(hook) = self.lists.get(id) else {
             return Err(Error::invalid(format!("there's no list `{id}`")));
         };
-        if !def.hook_on(hook.ext, hook.name) {
+        if !self.hook_on(def, hook.ext, hook.name) {
             return Err(Error::invalid(format!(
                 "{} doesn't use the `{id}` list",
                 def.name

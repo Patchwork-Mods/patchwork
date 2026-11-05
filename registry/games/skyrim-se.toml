@@ -62,6 +62,11 @@ ccc = "Skyrim.ccc"
 limit = 254
 light_limit = 4096
 
+# "Sort with LOOT" on the Plugins tab (`patchwork action loot.sort`) puts
+# plugins in the order LOOT's masterlist gives.
+[ext.loot.sort]
+masterlist = "https://raw.githubusercontent.com/loot/skyrimse/v0.29/masterlist.yaml"
+
 [roots.appdata]
 path = "{localappdata}/Skyrim Special Edition"
 allow = ["plugins.txt", "loadorder.txt"]

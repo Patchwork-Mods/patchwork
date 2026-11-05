@@ -18,7 +18,7 @@ impl Patchwork {
     pub(super) fn checks_on(&self, def: &GameDef) -> Vec<(&str, &Hook<dyn Check>)> {
         self.checks
             .iter()
-            .filter(|(_, hook)| def.hook_on(hook.ext, hook.name))
+            .filter(|(_, hook)| self.hook_on(def, hook.ext, hook.name))
             .map(|(id, hook)| (id.as_str(), hook))
             .collect()
     }

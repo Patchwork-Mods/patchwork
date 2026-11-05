@@ -15,6 +15,7 @@ use std::fmt::Display;
 use std::sync::Mutex;
 
 use base64::prelude::*;
+use patchwork_core::action::{ActionInfo, ActionReport};
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
 use patchwork_core::environment::GameEnv;
@@ -178,6 +179,9 @@ struct ProfileDetail {
     /// The game's ordered lists (see [`patchwork_core::list`]), each on a
     /// tab of its own.
     lists: Vec<ListInfo>,
+    /// What extensions offer to run for the game (see
+    /// [`patchwork_core::action`]); those about a list are on its tab.
+    actions: Vec<ActionInfo>,
     /// Everything worth warning about, from [`Patchwork::issues`].
     issues: Vec<Issue>,
     /// The names of mods added here to a profile this computer follows,
@@ -362,6 +366,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         Vec::new()
     };
     let lists = pw.lists(&r).map_err(msg)?;
+    let actions = pw.actions(&r).map_err(msg)?;
     let mut options = pw.mods_with_options(&r).map_err(msg)?;
     let launch_options = pw
         .profile_launch_options(&loaded)
@@ -405,6 +410,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         mods,
         hidden_tags,
         lists,
+        actions,
         issues,
         unshared,
         id,
@@ -951,6 +957,16 @@ fn set_list(
     let r = profile_ref(&id)?;
     app.pw.set_list(&r, &list, entries).map_err(msg)?;
     ui_list(&app.pw, &r, &list)
+}
+
+/// Runs one of the profile's actions and saves what it changes. Async, as
+/// actions may fetch things (LOOT's masterlist, say).
+#[tauri::command]
+async fn run_action(app: State<'_, App>, id: String, action: String) -> CmdResult<ActionReport> {
+    app.pw
+        .run_action(&profile_ref(&id)?, &action, true)
+        .await
+        .map_err(msg)
 }
 
 /// A mod's choices as the options dialog shows them.
@@ -1579,6 +1595,7 @@ fn main() {
             reorder_mods,
             list,
             set_list,
+            run_action,
             mod_options,
             set_mod_options,
             conflicts,

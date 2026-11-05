@@ -11,7 +11,7 @@
 //!
 //! Sources, deployers and profile formats keep the ids they
 //! have always had (profiles and game definitions name them). Other hooks,
-//! like [`OrderedList`]s, [`ModTransform`]s and [`Check`]s, are `<extension>.<name>`; each is configured by the
+//! like [`OrderedList`]s, [`ModTransform`]s, [`Check`]s and [`Action`]s, are `<extension>.<name>`; each is configured by the
 //! game's `[ext.<extension>.<name>]` table, and can be turned off with
 //! `off = ["<name>"]` in `[ext.<extension>]`.
 
@@ -21,6 +21,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::action::Action;
 use crate::check::Check;
 use crate::deploy::Deployer;
 use crate::launch::Runner;
@@ -151,6 +152,26 @@ impl Registrar<'_> {
         self.registered.check(self.ext, name, check);
         self
     }
+
+    /// Adds something the user runs once, as `<extension>.<name>`,
+    /// configured by `[ext.<extension>.<name>]`.
+    pub fn action(&mut self, name: &'static str, action: impl Action + 'static) -> &mut Self {
+        self.registered.action(self.ext, name, action);
+        self
+    }
+
+    /// Says the extension uses another's hook `id` (`<extension>.<name>`),
+    /// such as a list its actions read and rearrange. The build can't open
+    /// without it, the extension's hooks are only on for games that have it
+    /// on, and using one that isn't declared is an error. Only lists can be
+    /// used for now.
+    pub fn uses(&mut self, id: &'static str) -> &mut Self {
+        let uses = self.registered.uses.entry(self.ext).or_default();
+        if !uses.contains(&id) {
+            uses.push(id);
+        }
+        self
+    }
 }
 
 /// A hook, as registered by an extension.
@@ -183,6 +204,10 @@ pub(crate) struct Registered {
     pub options: BTreeMap<String, Hook<dyn ModOptions>>,
     /// By hook id.
     pub checks: BTreeMap<String, Hook<dyn Check>>,
+    /// By hook id.
+    pub actions: BTreeMap<String, Hook<dyn Action>>,
+    /// The other extensions' hooks each extension uses, by extension.
+    pub uses: BTreeMap<&'static str, Vec<&'static str>>,
     /// Which extension registered each thing, by `(kind, id)`, so a clash
     /// can say who's involved. `None` for things registered directly.
     owners: HashMap<(&'static str, String), Option<&'static str>>,
@@ -293,6 +318,33 @@ impl Registered {
             };
             self.checks.insert(id, hook);
         }
+    }
+
+    pub fn action(&mut self, ext: &'static str, name: &'static str, action: impl Action + 'static) {
+        if let Some(id) = self.hook("action", ext, name) {
+            let hook = Hook {
+                ext,
+                name,
+                hook: Arc::new(action) as Arc<dyn Action>,
+            };
+            self.actions.insert(id, hook);
+        }
+    }
+
+    /// Records a problem for each hook an extension uses that isn't in
+    /// the build. Called once everything's registered.
+    pub fn check_uses(&mut self) {
+        let mut problems = Vec::new();
+        for (ext, uses) in &self.uses {
+            for id in uses {
+                if !self.lists.contains_key(*id) {
+                    problems.push(format!(
+                        "extension `{ext}` uses `{id}`, which isn't a list this build has"
+                    ));
+                }
+            }
+        }
+        self.problems.extend(problems);
     }
 
     /// The id of extension `ext`'s `kind` called `name`, if it's a valid

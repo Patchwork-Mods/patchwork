@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use patchwork_core::action::ActionReport;
 use patchwork_core::capture::ToolOutput;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
@@ -187,6 +188,16 @@ enum Command {
         list: Option<String>,
         #[command(subcommand)]
         action: OrderCommand,
+    },
+    /// Run something an extension offers for the profile's game, like
+    /// sorting Skyrim's plugins with LOOT. Without an id, list what there
+    /// is. Only locked mods count.
+    Action {
+        /// Which: its id, or the last part of it (`sort` for `loot.sort`).
+        id: Option<String>,
+        /// Show what it would change without saving it.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Show which mods provide the same files, and whose copy of each is
     /// deployed: the one latest in the load order. Only locked mods count.
@@ -902,6 +913,39 @@ async fn run(cli: Cli) -> Result<()> {
                     println!("disabled {name}");
                 }
             }
+        }
+        Command::Action { id, dry_run } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let actions = pw.actions(&profile)?;
+            let Some(wanted) = id else {
+                if actions.is_empty() {
+                    println!("{} doesn't have any actions", loaded.game);
+                }
+                for a in &actions {
+                    println!("{}  {}", a.id, a.title);
+                    if let Some(d) = &a.description {
+                        println!("    {d}");
+                    }
+                }
+                return Ok(());
+            };
+            let action = actions
+                .iter()
+                .find(|a| a.id == wanted || a.id.rsplit('.').next() == Some(wanted.as_str()))
+                .with_context(|| match actions.len() {
+                    0 => format!("{} doesn't have any actions", loaded.game),
+                    _ => format!(
+                        "{} has no action `{wanted}`; it has {}",
+                        loaded.game,
+                        actions
+                            .iter()
+                            .map(|a| a.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                })?;
+            let report = pw.run_action(&profile, &action.id, !dry_run).await?;
+            print_action(&report);
         }
         Command::Conflicts { name } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
@@ -2177,6 +2221,41 @@ fn print_list(list: &List) {
     }
     for problem in &list.problems {
         eprintln!("{}: {}", severity(problem.severity), problem.message);
+    }
+}
+
+fn print_action(report: &ActionReport) {
+    if let Some(message) = &report.message {
+        println!("{message}");
+    }
+    for change in &report.lists {
+        let title = change.title.to_lowercase();
+        if change.moved.is_empty() {
+            println!("{title}: already in order");
+            continue;
+        }
+        let verb = if report.applied {
+            "moved"
+        } else {
+            "would move"
+        };
+        let n = change.moved.len();
+        println!("{title}: {verb} {n} of {}", change.after.len());
+        let width = change.after.len().to_string().len();
+        for m in &change.moved {
+            println!(
+                "  {:>width$} -> {:>width$}  {}",
+                m.from + 1,
+                m.to + 1,
+                m.name
+            );
+        }
+    }
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    if !report.applied && report.lists.iter().any(|c| !c.moved.is_empty()) {
+        println!("nothing was saved; run it without --dry-run to");
     }
 }
 
