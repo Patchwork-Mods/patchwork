@@ -1,0 +1,92 @@
+schema = 1
+id = "enderal-se"
+name = "Enderal: Forgotten Stories (Special Edition)"
+description = "Enderal: Forgotten Stories, the total conversion on Skyrim Special Edition's engine. Mods' plugins (.esp, .esm, .esl) are loaded in the order you set on the profile's Plugins tab. SKSE mods need SKSE64 for Skyrim Special Edition."
+# A load order is often tens of gigabytes of meshes and textures.
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "enderalspecialedition"
+
+[deployer]
+kind = "bethesda"
+
+# Mods are packed every which way: from the game folder (`Data/...`), from
+# inside Data (`meshes/...`, `Plugin.esp`), or with a wrapper folder around
+# either. Each mod's top is found from what Data usually holds.
+[deployer.root]
+markers = [
+    "Data",
+    "*.esp", "*.esm", "*.esl", "*.bsa",
+    "meshes", "textures", "scripts", "interface", "sound", "music", "strings",
+    "seq", "video", "lodsettings", "grass", "shadersfx", "materials", "SKSE",
+]
+
+# Mods with a FOMOD installer are installed from the options picked in it,
+# which put files in Data.
+[ext.fomod.installer]
+folder = "Data"
+
+# Tools like DynDOLOD, Nemesis, Synthesis and BodySlide write their output
+# into Data. `patchwork capture` keeps whatever's new there since the
+# profile was deployed as a mod of its own, so it's deployed (and its
+# plugins loaded) like any other.
+[capture]
+folders = ["Data"]
+ignore = ["**/*.log"]
+
+[[deployer.rules]]
+folder = "Data"
+to = "Data/{path}"
+
+# Script extenders, their loaders and engine fixes go next to SkyrimSE.exe.
+# Only files at the top match, so `SKSE/Plugins/*.dll` still goes in Data.
+[[deployer.rules]]
+files = "*.exe"
+to = "{path}"
+
+[[deployer.rules]]
+files = "*.dll"
+to = "{path}"
+
+[[deployer.rules]]
+to = "Data/{path}"
+
+# The load order goes in plugins.txt. Skyrim's masters always load first;
+# Enderal's own plugins only load from plugins.txt, so they're in the load
+# order like mods' plugins.
+[ext.bethesda.plugins]
+folder = "Data"
+file = "appdata:plugins.txt"
+implicit = ["Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm"]
+shipped = ["Enderal - Forgotten Stories.esm", "SkyUI_SE.esp"]
+limit = 254
+light_limit = 4096
+
+# "Sort with LOOT" on the Plugins tab (`patchwork action loot.sort`) puts
+# plugins in the order LOOT's masterlist gives.
+[ext.loot.sort]
+masterlist = "https://raw.githubusercontent.com/loot/enderal/v0.29/masterlist.yaml"
+
+[roots.appdata]
+path = "{localappdata}/Enderal Special Edition"
+allow = ["plugins.txt", "loadorder.txt"]
+rewritten = ["plugins.txt"]
+
+# Once SKSE is deployed, the game starts through its loader. On Linux that
+# means Proton is run directly, since Steam only starts Enderal's launcher.
+[launch.skse]
+name = "Enderal with SKSE"
+exe = "skse64_loader.exe"
+default = true
+
+[detect]
+steam = [976620]
+folder = "Enderal Special Edition"
+# It has a SkyrimSE.exe too; the launcher is what tells it apart.
+exe = ["Enderal Launcher.exe"]
+
+[[detect.version]]
+kind = "exe"
+file = "SkyrimSE.exe"
+parts = 3

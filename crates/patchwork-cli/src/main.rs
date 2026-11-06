@@ -2277,11 +2277,16 @@ fn print_list(list: &List) {
         } else {
             format!(" ({})", item.item.badges.join(", "))
         };
+        // The game's own items aren't from a mod.
+        let from = if item.item.mod_name.is_empty() {
+            String::new()
+        } else {
+            format!("  ({})", item.item.mod_name)
+        };
         println!(
-            "{:>width$}. [{mark}] {}{badges}  ({})",
+            "{:>width$}. [{mark}] {}{badges}{from}",
             i + 1,
-            item.item.name,
-            item.item.mod_name
+            item.item.name
         );
     }
     for problem in &list.problems {

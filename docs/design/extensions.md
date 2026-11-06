@@ -795,7 +795,12 @@ Each step leaves `main` working and shippable.
      sorted on its own, and loops are broken with a warning. Not done:
      `condition`s (those rules are skipped), the userlist, and LOOT's
      sorting by overlapping records. Skyrim SE turns it on with
-     `[ext.loot.sort] masterlist = "…/v0.29/masterlist.yaml"`.
+     `[ext.loot.sort] masterlist = "…/v0.29/masterlist.yaml"`, and so do
+     Skyrim VR, Enderal SE, Fallout 4 (and VR) and Starfield (added
+     2026-11-06). For those, `[ext.bethesda.plugins]` grew `shipped` (the
+     game's own plugins that only load from plugins.txt, like Enderal's)
+     and `light_flag`, `medium_flag` and `medium_limit` (Starfield's
+     header flags and medium plugins).
 7. **Reorganize crates** into per-game extensions (step 1 of the original
    plan). By this point it is mostly moving files.
 

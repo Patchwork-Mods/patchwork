@@ -191,8 +191,7 @@ fn headers_say_what_a_plugin_is_and_needs() {
     assert_eq!(
         read_header(&path).unwrap(),
         Header {
-            master: true,
-            light: true,
+            flags: MASTER_FLAG | LIGHT_FLAG,
             masters: vec!["Skyrim.esm".to_owned(), "Base.esm".to_owned()],
         }
     );
@@ -455,4 +454,111 @@ fn too_many_light_plugins_are_warned_about() {
         enabled: false,
     }];
     assert!(env.limit(&off, &mods).is_empty());
+}
+
+/// Starfield's light flag is 0x100, and 0x400 makes a plugin medium.
+fn starfield(env: &mut Env, medium_limit: i64) {
+    let table = env.def.ext.get_mut(EXTENSION).unwrap()[LIST]
+        .as_table_mut()
+        .unwrap();
+    table.insert("light_flag".to_owned(), toml::Value::Integer(0x100));
+    table.insert("medium_flag".to_owned(), toml::Value::Integer(0x400));
+    table.insert(
+        "medium_limit".to_owned(),
+        toml::Value::Integer(medium_limit),
+    );
+    table.insert("limit".to_owned(), toml::Value::Integer(253));
+}
+
+#[test]
+fn games_can_say_which_flags_make_plugins_light_or_medium() {
+    let mut env = Env::new();
+    starfield(&mut env, 256);
+    let mods = [env.installed(
+        "M",
+        &[
+            ("Small.esm", plugin_bytes(MASTER_FLAG | 0x100, &[])),
+            ("Medium.esm", plugin_bytes(MASTER_FLAG | 0x400, &[])),
+            // a medium flag on a light plugin is ignored
+            ("Both.esp", plugin_bytes(0x100 | 0x400, &[])),
+            // Skyrim's light flag is something else in Starfield
+            ("Update.esp", plugin_bytes(0x200, &[])),
+            ("Light.esl", plugin_bytes(0, &[])),
+        ],
+    )];
+    let badges: Vec<_> = env
+        .items(&mods)
+        .items
+        .iter()
+        .map(|p| (p.name.clone(), p.badges.join(",")))
+        .collect();
+    let want = [
+        ("Small.esm", "light"),
+        ("Medium.esm", "medium"),
+        ("Both.esp", "light"),
+        ("Update.esp", ""),
+        ("Light.esl", "light"),
+    ];
+    for (name, badge) in want {
+        assert!(
+            badges.iter().any(|(n, b)| n == name && b == badge),
+            "{name}: {badges:?}"
+        );
+    }
+}
+
+#[test]
+fn too_many_medium_plugins_are_warned_about() {
+    let mut env = Env::new();
+    let mods = [env.installed(
+        "M",
+        &[
+            ("A.esm", plugin_bytes(MASTER_FLAG | 0x400, &[])),
+            ("B.esm", plugin_bytes(MASTER_FLAG | 0x400, &[])),
+            ("C.esp", plugin_bytes(0, &[])),
+        ],
+    )];
+    starfield(&mut env, 2);
+    assert!(env.limit(&[], &mods).is_empty());
+    starfield(&mut env, 1);
+    let problems = env.limit(&[], &mods);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].message.starts_with("2 medium plugins"),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn plugins_the_game_ships_but_doesnt_load_are_in_the_load_order() {
+    let mut env = Env::new();
+    env.def.ext.get_mut(EXTENSION).unwrap()[LIST]
+        .as_table_mut()
+        .unwrap()
+        .insert(
+            "shipped".to_owned(),
+            toml::Value::Array(vec![
+                toml::Value::String("Enderal - Forgotten Stories.esm".to_owned()),
+                toml::Value::String("Missing.esp".to_owned()),
+            ]),
+        );
+    let data = env.game.join("Data");
+    fs::write(
+        data.join("enderal - forgotten stories.esm"),
+        plugin_bytes(MASTER_FLAG, &["Skyrim.esm"]),
+    )
+    .unwrap();
+    let mods = [env.installed("M", &[("A.esp", plugin_bytes(0, &[]))])];
+    let (found, list) = env.list(&[], &mods);
+    // named as on disk, first, and not warned about
+    let names: Vec<_> = found.items.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["enderal - forgotten stories.esm", "A.esp"]);
+    assert!(found.warnings.is_empty(), "{:?}", found.warnings);
+    assert_eq!(found.items[0].after, ["Skyrim.esm"]);
+    // and written for the game, unlike the implicit ones
+    let (_, text) = env.build(&list);
+    assert!(
+        text.contains("*enderal - forgotten stories.esm\r\n*A.esp"),
+        "{text}"
+    );
 }

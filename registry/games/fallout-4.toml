@@ -1,0 +1,90 @@
+schema = 1
+id = "fallout-4"
+name = "Fallout 4"
+description = "Fallout 4, with or without the Next-Gen update. Mods' plugins (.esp, .esm, .esl) are loaded in the order you set on the profile's Plugins tab. For loose files to win over the game's archives, set `bInvalidateOlderFiles=1` and `sResourceDataDirsFinal=` under `[Archive]` in Fallout4Custom.ini."
+# A load order is often tens of gigabytes of meshes and textures.
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "fallout4"
+
+[deployer]
+kind = "bethesda"
+
+# Mods are packed every which way: from the game folder (`Data/...`), from
+# inside Data (`meshes/...`, `Plugin.esp`), or with a wrapper folder around
+# either. Each mod's top is found from what Data usually holds.
+[deployer.root]
+markers = [
+    "Data",
+    "*.esp", "*.esm", "*.esl", "*.ba2",
+    "meshes", "textures", "materials", "scripts", "interface", "sound", "music",
+    "strings", "video", "vis", "lodsettings", "programs", "shadersfx", "F4SE", "MCM",
+]
+
+# Mods with a FOMOD installer are installed from the options picked in it,
+# which put files in Data.
+[ext.fomod.installer]
+folder = "Data"
+
+# Tools like xEdit, BodySlide and PRP write their output into Data.
+# `patchwork capture` keeps whatever's new there since the profile was
+# deployed as a mod of its own.
+[capture]
+folders = ["Data"]
+ignore = ["**/*.log"]
+
+[[deployer.rules]]
+folder = "Data"
+to = "Data/{path}"
+
+# Script extenders, their loaders and engine fixes go next to Fallout4.exe.
+# Only files at the top match, so `F4SE/Plugins/*.dll` still goes in Data.
+[[deployer.rules]]
+files = "*.exe"
+to = "{path}"
+
+[[deployer.rules]]
+files = "*.dll"
+to = "{path}"
+
+[[deployer.rules]]
+to = "Data/{path}"
+
+# The load order goes in plugins.txt. The game's own masters and the
+# Creation Club content it lists in Fallout4.ccc always load first.
+[ext.bethesda.plugins]
+folder = "Data"
+file = "appdata:plugins.txt"
+implicit = [
+    "Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm", "DLCCoast.esm",
+    "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm",
+    "DLCUltraHighResolution.esm",
+]
+ccc = "Fallout4.ccc"
+limit = 254
+light_limit = 4096
+
+[ext.loot.sort]
+masterlist = "https://raw.githubusercontent.com/loot/fallout4/v0.29/masterlist.yaml"
+
+[roots.appdata]
+path = "{localappdata}/Fallout4"
+allow = ["plugins.txt", "loadorder.txt"]
+rewritten = ["plugins.txt"]
+
+# Once F4SE is deployed, the game starts through its loader.
+[launch.f4se]
+name = "Fallout 4 with F4SE"
+exe = "f4se_loader.exe"
+default = true
+
+[detect]
+steam = [377160]
+folder = "Fallout 4"
+exe = ["Fallout4.exe"]
+
+[[detect.version]]
+kind = "exe"
+file = "Fallout4.exe"
+parts = 3

@@ -1,0 +1,96 @@
+schema = 1
+id = "starfield"
+name = "Starfield"
+description = "Starfield. Mods' plugins (.esp, .esm, .esl) are loaded in the order you set on the profile's Plugins tab. For loose files to load, set `bInvalidateOlderFiles=1` and `sResourceDataDirsFinal=` under `[Archive]` in StarfieldCustom.ini, in Documents/My Games/Starfield. Files in that folder's own Data win over the mods patchwork deploys, so keep it empty."
+# A load order is often tens of gigabytes of meshes and textures.
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "starfield"
+
+[deployer]
+kind = "bethesda"
+
+# Mods are packed every which way: from the game folder (`Data/...`), from
+# inside Data (`meshes/...`, `Plugin.esm`), or with a wrapper folder around
+# either. Each mod's top is found from what Data usually holds.
+[deployer.root]
+markers = [
+    "Data",
+    "*.esp", "*.esm", "*.esl", "*.ba2",
+    "meshes", "textures", "materials", "geometries", "interface", "scripts",
+    "sound", "strings", "video", "terrain", "particles", "SFSE",
+]
+
+# Mods with a FOMOD installer are installed from the options picked in it,
+# which put files in Data.
+[ext.fomod.installer]
+folder = "Data"
+
+# Tools like xEdit write their output into Data. `patchwork capture` keeps
+# whatever's new there since the profile was deployed as a mod of its own.
+[capture]
+folders = ["Data"]
+ignore = ["**/*.log"]
+
+[[deployer.rules]]
+folder = "Data"
+to = "Data/{path}"
+
+# Script extenders, their loaders and engine fixes go next to Starfield.exe.
+# Only files at the top match, so `SFSE/Plugins/*.dll` still goes in Data.
+[[deployer.rules]]
+files = "*.exe"
+to = "{path}"
+
+[[deployer.rules]]
+files = "*.dll"
+to = "{path}"
+
+[[deployer.rules]]
+to = "Data/{path}"
+
+# The load order goes in plugins.txt. The game's own masters and the
+# Creation content it lists in Starfield.ccc always load first.
+#
+# Starfield's plugins come in three sizes, set by flags that differ from
+# the older games': full, medium (0x400) and small, which patchwork calls
+# light (0x100). It loads 253 full ones when it has both other kinds.
+[ext.bethesda.plugins]
+folder = "Data"
+file = "appdata:plugins.txt"
+implicit = [
+    "Starfield.esm", "Constellation.esm", "OldMars.esm", "ShatteredSpace.esm",
+    "SFBGS003.esm", "SFBGS004.esm", "SFBGS006.esm", "SFBGS007.esm", "SFBGS008.esm",
+    "SFBGS00D.esm", "SFBGS047.esm", "SFBGS050.esm",
+]
+ccc = "Starfield.ccc"
+limit = 253
+light_flag = 0x100
+light_limit = 4096
+medium_flag = 0x400
+medium_limit = 256
+
+[ext.loot.sort]
+masterlist = "https://raw.githubusercontent.com/loot/starfield/v0.29/masterlist.yaml"
+
+[roots.appdata]
+path = "{localappdata}/Starfield"
+allow = ["plugins.txt"]
+rewritten = ["plugins.txt"]
+
+# Once SFSE is deployed, the game starts through its loader.
+[launch.sfse]
+name = "Starfield with SFSE"
+exe = "sfse_loader.exe"
+default = true
+
+[detect]
+steam = [1716740]
+folder = "Starfield"
+exe = ["Starfield.exe"]
+
+[[detect.version]]
+kind = "exe"
+file = "Starfield.exe"
+parts = 3

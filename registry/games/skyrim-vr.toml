@@ -1,0 +1,89 @@
+schema = 1
+id = "skyrim-vr"
+name = "The Elder Scrolls V: Skyrim VR"
+description = "Skyrim VR. Mods' plugins (.esp, .esm, .esl) are loaded in the order you set on the profile's Plugins tab. Light plugins (.esl) only load with the Skyrim VR ESL Support mod for SKSEVR. Most Skyrim Special Edition mods work too, and Nexus has VR mods with them."
+# A load order is often tens of gigabytes of meshes and textures.
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "skyrimspecialedition"
+
+[deployer]
+kind = "bethesda"
+
+# Mods are packed every which way: from the game folder (`Data/...`), from
+# inside Data (`meshes/...`, `Plugin.esp`), or with a wrapper folder around
+# either. Each mod's top is found from what Data usually holds.
+[deployer.root]
+markers = [
+    "Data",
+    "*.esp", "*.esm", "*.esl", "*.bsa",
+    "meshes", "textures", "scripts", "interface", "sound", "music", "strings",
+    "seq", "video", "lodsettings", "grass", "shadersfx", "materials", "SKSE",
+]
+
+# Mods with a FOMOD installer are installed from the options picked in it,
+# which put files in Data.
+[ext.fomod.installer]
+folder = "Data"
+
+# Tools like DynDOLOD, Nemesis, Synthesis and BodySlide write their output
+# into Data. `patchwork capture` keeps whatever's new there since the
+# profile was deployed as a mod of its own, so it's deployed (and its
+# plugins loaded) like any other.
+[capture]
+folders = ["Data"]
+ignore = ["**/*.log"]
+
+[[deployer.rules]]
+folder = "Data"
+to = "Data/{path}"
+
+# Script extenders, their loaders and engine fixes go next to SkyrimVR.exe.
+# Only files at the top match, so `SKSE/Plugins/*.dll` still goes in Data.
+[[deployer.rules]]
+files = "*.exe"
+to = "{path}"
+
+[[deployer.rules]]
+files = "*.dll"
+to = "{path}"
+
+[[deployer.rules]]
+to = "Data/{path}"
+
+# The load order goes in plugins.txt. The game's own masters always load
+# first; there's no Creation Club content in VR.
+[ext.bethesda.plugins]
+folder = "Data"
+file = "appdata:plugins.txt"
+implicit = ["Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm", "SkyrimVR.esm"]
+limit = 254
+light_limit = 4096
+
+# "Sort with LOOT" on the Plugins tab (`patchwork action loot.sort`) puts
+# plugins in the order LOOT's masterlist gives.
+[ext.loot.sort]
+masterlist = "https://raw.githubusercontent.com/loot/skyrimvr/v0.21/masterlist.yaml"
+
+[roots.appdata]
+path = "{localappdata}/Skyrim VR"
+allow = ["plugins.txt", "loadorder.txt"]
+rewritten = ["plugins.txt"]
+
+# Once SKSEVR is deployed, the game starts through its loader. On Linux that
+# means Proton is run directly, since Steam only starts SkyrimVR.exe.
+[launch.sksevr]
+name = "Skyrim VR with SKSEVR"
+exe = "sksevr_loader.exe"
+default = true
+
+[detect]
+steam = [611670]
+folder = "SkyrimVR"
+exe = ["SkyrimVR.exe"]
+
+[[detect.version]]
+kind = "exe"
+file = "SkyrimVR.exe"
+parts = 3

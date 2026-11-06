@@ -33,8 +33,15 @@ use patchwork_deployers::RulesDeployer;
 /// file = "appdata:plugins.txt"    # the load order, in one of the game's roots
 /// implicit = ["Skyrim.esm"]       # always loaded first
 /// ccc = "Skyrim.ccc"              # lists Creation Club plugins, also loaded first
-/// limit = 254                     # how many plugins that aren't light it can load
+/// # The game's own plugins that it only loads when they're in the load
+/// # order (Enderal's, for one). They're in it like mods' plugins.
+/// shipped = ["Enderal - Forgotten Stories.esm"]
+/// limit = 254                     # how many full plugins it can load
 /// light_limit = 4096              # and how many light ones
+/// # Starfield only: its header flags differ, and it has medium plugins.
+/// light_flag = 0x100              # 0x200 if left out
+/// medium_flag = 0x400             # no medium plugins if left out
+/// medium_limit = 256
 /// ```
 pub struct BethesdaDeployer;
 
@@ -43,9 +50,10 @@ pub struct BethesdaDeployer;
 /// [`BethesdaDeployer`]).
 pub struct BethesdaLoadOrder;
 
-/// Warns when more plugins are enabled than the game can load: more that
-/// aren't light than the `limit` in `[ext.bethesda.plugins]`, or more
-/// light ones than its `light_limit`. The Bethesda
+/// Warns when more plugins are enabled than the game can load: more full
+/// ones (neither light nor medium) than the `limit` in
+/// `[ext.bethesda.plugins]`, or more light or medium ones than its
+/// `light_limit` or `medium_limit`. The Bethesda
 /// extension's `limit` check, so a game can turn it off with
 /// `off = ["limit"]` in `[ext.bethesda]`.
 pub struct PluginLimit;
@@ -71,9 +79,14 @@ struct PluginsConfig {
     file: String,
     #[serde(default)]
     implicit: Vec<String>,
+    #[serde(default)]
+    shipped: Vec<String>,
     ccc: Option<String>,
     limit: Option<usize>,
     light_limit: Option<usize>,
+    light_flag: Option<u32>,
+    medium_flag: Option<u32>,
+    medium_limit: Option<usize>,
 }
 
 impl PluginsConfig {
@@ -164,35 +177,72 @@ impl PluginsConfig {
         Ok(implicit)
     }
 
-    /// Those of `implicit` that are light, going by the header of the copy
+    /// The size of each of `implicit`, going by the header of the copy
     /// among `present`, or the extension if it can't be read (or isn't
     /// there, as for the game's masters on a test install).
-    fn light(&self, game: &GameFiles<'_>, implicit: &[String], present: &[String]) -> Vec<String> {
+    fn implicit_scales(
+        &self,
+        game: &GameFiles<'_>,
+        implicit: &[String],
+        present: &[String],
+    ) -> Vec<Scale> {
         implicit
             .iter()
-            .filter(|name| {
-                let header = present
+            .map(|name| {
+                let flags = present
                     .iter()
                     .find(|p| p.eq_ignore_ascii_case(name))
                     .and_then(|p| RelPath::new(&format!("{}/{p}", self.folder)).ok())
                     .and_then(|rel| game.original(&rel))
-                    .and_then(|path| read_header(&path).ok());
-                header.is_some_and(|h| h.light) || name.to_lowercase().ends_with(".esl")
+                    .and_then(|path| read_header(&path).ok())
+                    .map_or(0, |h| h.flags);
+                self.scale(flags, name)
             })
-            .cloned()
             .collect()
+    }
+
+    /// How much of the load order a plugin with these header flags takes
+    /// up. The `.esl` extension makes any plugin light; a medium flag on a
+    /// light plugin is ignored.
+    fn scale(&self, flags: u32, name: &str) -> Scale {
+        let light = flags & self.light_flag.unwrap_or(LIGHT_FLAG) != 0
+            || name.to_lowercase().ends_with(".esl");
+        if light {
+            Scale::Light
+        } else if self.medium_flag.is_some_and(|f| flags & f != 0) {
+            Scale::Medium
+        } else {
+            Scale::Full
+        }
     }
 }
 
-/// What a plugin's header says about it.
+/// How much of the load order a plugin takes up: games load a few hundred
+/// full plugins, and thousands of light ones (Starfield's "small" ones).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scale {
+    Full,
+    Medium,
+    Light,
+}
+
+/// Whether a plugin loads with the masters, by its header's flags or its
+/// extension (the game goes by both).
+fn is_master(flags: u32, name: &str) -> bool {
+    let lower = name.to_lowercase();
+    flags & MASTER_FLAG != 0 || lower.ends_with(".esm") || lower.ends_with(".esl")
+}
+
+/// What a plugin's header says about it: its flags, which mean different
+/// things in different games, and the masters it needs.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Header {
-    master: bool,
-    light: bool,
+    flags: u32,
     masters: Vec<String>,
 }
 
 const MASTER_FLAG: u32 = 0x1;
+/// The light flag in every game but Starfield.
 const LIGHT_FLAG: u32 = 0x200;
 
 /// Reads the header record (`TES4`) at the start of a plugin. Skyrim's
@@ -244,11 +294,7 @@ fn read_header(path: &Path) -> std::result::Result<Header, String> {
         }
         at = end;
     }
-    Ok(Header {
-        master: flags & MASTER_FLAG != 0,
-        light: flags & LIGHT_FLAG != 0,
-        masters,
-    })
+    Ok(Header { flags, masters })
 }
 
 /// The load order as the game reads it: a `*` before each enabled plugin.
@@ -340,6 +386,7 @@ const MASTERS: u8 = 0;
 const OTHERS: u8 = 1;
 const MASTER: &str = "master";
 const LIGHT: &str = "light";
+const MEDIUM: &str = "medium";
 
 impl OrderedList for BethesdaLoadOrder {
     fn title(&self) -> &str {
@@ -375,7 +422,6 @@ impl OrderedList for BethesdaLoadOrder {
                 continue;
             };
             let name = placement.dst.path.file_name().to_owned();
-            let lower = name.to_lowercase();
             let header = read_header(&src.src).unwrap_or_else(|why| {
                 warnings.push(format!(
                     "couldn't read {name} from `{}`: {why}",
@@ -383,14 +429,13 @@ impl OrderedList for BethesdaLoadOrder {
                 ));
                 Header::default()
             });
-            // The game goes by the extension as well as the flags.
-            let master = header.master || lower.ends_with(".esm") || lower.ends_with(".esl");
-            let light = header.light || lower.ends_with(".esl");
+            let master = is_master(header.flags, &name);
+            let scale = plugins.scale(header.flags, &name);
             found.push(plugin_item(
                 name,
                 placement.mod_name,
                 master,
-                light,
+                scale,
                 header.masters,
             ));
         }
@@ -402,7 +447,32 @@ impl OrderedList for BethesdaLoadOrder {
             .filter(|name| is_plugin(name))
             .collect();
         let implicit = plugins.implicit(game, &present)?;
-        let light_implicit = plugins.light(game, &implicit, &present);
+        let scales = plugins.implicit_scales(game, &implicit, &present);
+        // The game's own plugins that aren't loaded unless they're listed
+        // go first, as they would in a fresh plugins.txt.
+        let mut shipped = Vec::new();
+        for name in &plugins.shipped {
+            let Some(on_disk) = present.iter().find(|p| p.eq_ignore_ascii_case(name)) else {
+                continue;
+            };
+            let taken = |n: &String| n.eq_ignore_ascii_case(on_disk);
+            if implicit.iter().any(taken) || found.iter().any(|p| taken(&p.name)) {
+                continue;
+            }
+            let header = RelPath::new(&format!("{}/{on_disk}", plugins.folder))
+                .ok()
+                .and_then(|rel| game.original(&rel))
+                .and_then(|path| read_header(&path).ok())
+                .unwrap_or_default();
+            shipped.push(plugin_item(
+                on_disk.clone(),
+                String::new(),
+                is_master(header.flags, on_disk),
+                plugins.scale(header.flags, on_disk),
+                header.masters,
+            ));
+        }
+        found.splice(0..0, shipped);
         let unlisted: Vec<_> = present
             .into_iter()
             .filter(|name| !implicit.iter().any(|i| i.eq_ignore_ascii_case(name)))
@@ -422,12 +492,10 @@ impl OrderedList for BethesdaLoadOrder {
         }
         let fixed = implicit
             .into_iter()
-            .map(|name| {
-                let light = light_implicit.contains(&name);
-                ListItem {
-                    can_disable: false,
-                    ..plugin_item(name, String::new(), true, light, Vec::new())
-                }
+            .zip(scales)
+            .map(|(name, scale)| ListItem {
+                can_disable: false,
+                ..plugin_item(name, String::new(), true, scale, Vec::new())
             })
             .collect();
         Ok(ListItems {
@@ -444,27 +512,40 @@ impl Check for PluginLimit {
         let (Some(list), Ok(Some(config))) = (ctx.list(LIST), PluginsConfig::of(ctx.game())) else {
             return Vec::new();
         };
-        let is_light = |item: &ListItem| item.badges.iter().any(|b| b == LIGHT);
-        let enabled = list
+        let has = |item: &ListItem, badge: &str| item.badges.iter().any(|b| b == badge);
+        let enabled: Vec<_> = list
             .fixed
             .iter()
-            .chain(list.items.iter().filter(|i| i.enabled).map(|i| &i.item));
-        let (light, full): (Vec<_>, Vec<_>) = enabled.partition(|i| is_light(i));
+            .chain(list.items.iter().filter(|i| i.enabled).map(|i| &i.item))
+            .collect();
+        let light = enabled.iter().filter(|i| has(i, LIGHT)).count();
+        let medium = enabled.iter().filter(|i| has(i, MEDIUM)).count();
+        let full = enabled.len() - light - medium;
         let mut problems = Vec::new();
         if let Some(limit) = config.limit
-            && full.len() > limit
+            && full > limit
+        {
+            let smaller = if config.medium_flag.is_some() {
+                "light or medium"
+            } else {
+                "light"
+            };
+            problems.push(Problem::warning(format!(
+                "{full} plugins that aren't {smaller} are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or use {smaller} versions of them"
+            )));
+        }
+        if let Some(limit) = config.medium_limit
+            && medium > limit
         {
             problems.push(Problem::warning(format!(
-                "{} plugins that aren't light are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or use light versions of them",
-                full.len()
+                "{medium} medium plugins are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or use light versions of them"
             )));
         }
         if let Some(limit) = config.light_limit
-            && light.len() > limit
+            && light > limit
         {
             problems.push(Problem::warning(format!(
-                "{} light plugins are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or merge some of them",
-                light.len()
+                "{light} light plugins are enabled, counting the game's own, but the game can only load {limit}; turn some off in the load order, or merge some of them"
             )));
         }
         problems.into_iter().map(|p| p.about_list(LIST)).collect()
@@ -476,14 +557,15 @@ fn plugin_item(
     name: String,
     mod_name: String,
     master: bool,
-    light: bool,
+    scale: Scale,
     masters: Vec<String>,
 ) -> ListItem {
     let mut badges = Vec::new();
-    if light {
-        badges.push(LIGHT.to_owned());
-    } else if master {
-        badges.push(MASTER.to_owned());
+    match scale {
+        Scale::Light => badges.push(LIGHT.to_owned()),
+        Scale::Medium => badges.push(MEDIUM.to_owned()),
+        Scale::Full if master => badges.push(MASTER.to_owned()),
+        Scale::Full => {}
     }
     let detail = if masters.is_empty() {
         "Doesn't need any other plugins".to_owned()
