@@ -4,7 +4,8 @@
 //! The ones that aren't about any game are here, gathering up the sources,
 //! deployers and formats from the crates those live in. Games' own are in
 //! a crate each, behind a feature of the same name (all on by default):
-//! `bethesda` ([`Bethesda`], [`Fomod`] and [`Loot`]) and `smf` ([`Smf`]). The ids
+//! `bethesda` ([`Bethesda`], [`Fomod`] and [`Loot`]), `helldivers`
+//! ([`Helldivers`]) and `smf` ([`Smf`]). The ids
 //! can't change once released, since game definitions and profiles name
 //! them.
 
@@ -16,6 +17,8 @@ use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
 
 #[cfg(feature = "bethesda")]
 pub use patchwork_bethesda::{Bethesda, Fomod, Loot};
+#[cfg(feature = "helldivers")]
+pub use patchwork_helldivers::Helldivers;
 #[cfg(feature = "smf")]
 pub use patchwork_smf::Smf;
 
@@ -28,6 +31,8 @@ pub fn register(builder: Builder) -> Builder {
         .extension(ModrinthExtension);
     #[cfg(feature = "bethesda")]
     let builder = builder.extension(Bethesda).extension(Fomod).extension(Loot);
+    #[cfg(feature = "helldivers")]
+    let builder = builder.extension(Helldivers);
     #[cfg(feature = "smf")]
     let builder = builder.extension(Smf);
     builder

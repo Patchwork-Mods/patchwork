@@ -1,0 +1,12 @@
+[package]
+name = "patchwork-helldivers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+patchwork-core.workspace = true
+
+[dev-dependencies]
+patchwork-core = { workspace = true, features = ["testing"] }

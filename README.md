@@ -16,6 +16,7 @@ A mod manager built to be flexible and convenient, with support for hundreds of 
 - An extensive library of games, including:
   - Almost all thunderstore games
   - Hitman 3,
+  - Helldivers 2,
 - You can easily add support for additional games, or customize how mods are managed
 for existing games.
 - Patchwork can get mods from thunderstore, nexus, and just local files.

@@ -6,8 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-default = ["bethesda", "smf"]
+default = ["bethesda", "helldivers", "smf"]
 bethesda = ["dep:patchwork-bethesda"]
+helldivers = ["dep:patchwork-helldivers"]
 smf = ["dep:patchwork-smf"]
 
 [dependencies]
@@ -16,4 +17,5 @@ patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
 patchwork-formats.workspace = true
 patchwork-bethesda = { workspace = true, optional = true }
+patchwork-helldivers = { workspace = true, optional = true }
 patchwork-smf = { workspace = true, optional = true }

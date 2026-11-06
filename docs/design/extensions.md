@@ -801,7 +801,8 @@ Each step leaves `main` working and shippable.
 
    Built (2026-11-05), with these differences:
    - Only games' code got crates of its own, not every extension:
-     `patchwork-bethesda` (the `bethesda` and `fomod` extensions) and
+     `patchwork-bethesda` (the `bethesda` and `fomod` extensions),
+     `patchwork-helldivers` (`helldivers`, added 2026-11-05) and
      `patchwork-smf` (`smf`). Each crate's `lib.rs` has its `Extension`s.
      FOMOD stays its own extension, so other games can turn it on, but
      lives with Bethesda's code since that's who uses it now.
@@ -810,8 +811,8 @@ Each step leaves `main` working and shippable.
      game, share their dependencies, and splitting them would only add
      crates. `generic`, `thunderstore`, `nexus` and `modrinth` stay in
      `patchwork-builtin`.
-   - `patchwork-builtin` has a feature per game crate (`bethesda`, `smf`, both
-     on by default) and `register(builder)`, which adds every extension the
+   - `patchwork-builtin` has a feature per game crate (`bethesda`,
+     `helldivers`, `smf`, all on by default) and `register(builder)`, which adds every extension the
      build has. The frontends call that instead of naming each extension,
      so they need no `cfg`s. They don't pass the features through yet; a
      build without one sets `default-features = false` on

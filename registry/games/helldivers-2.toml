@@ -1,0 +1,17 @@
+schema = 1
+id = "helldivers-2"
+name = "HELLDIVERS 2"
+description = "Takes mods made of patch files (`<archive>.patch_0` and the like). Each one is renumbered when it's deployed, so mods that change the same archive all load, later mods over earlier ones."
+# Patches with textures and sounds can be hundreds of megabytes.
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "helldivers2"
+
+[deployer]
+kind = "helldivers"
+
+[detect]
+steam = [553850]
+folder = "Helldivers 2"
+exe = ["bin/helldivers2.exe"]
