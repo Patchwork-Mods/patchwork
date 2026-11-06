@@ -27,6 +27,8 @@ function changeText(c) {
       return `Enabled ${c.name}`;
     case "disabled":
       return `Disabled ${c.name}`;
+    case "priority":
+      return `${c.name} priority ${c.from} → ${c.to}`;
     case "reordered":
       return "Reordered mods";
     case "list":

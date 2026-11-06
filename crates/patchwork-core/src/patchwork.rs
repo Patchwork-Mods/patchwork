@@ -836,6 +836,7 @@ impl Patchwork {
             id,
             version: spec.version,
             enabled,
+            priority: 0,
             game_versions: None,
             ext: Default::default(),
         };
@@ -944,6 +945,18 @@ impl Patchwork {
         let index = order::move_mod(&mut loaded.mods, &label, name, to)?;
         self.save_profile(profile, &loaded)?;
         Ok(index)
+    }
+
+    /// Gives a mod a new priority (see [`ProfileMod::priority`]). It stays
+    /// where it is in the profile; only the load order changes.
+    pub fn set_priority(&self, profile: &ProfileRef, name: &str, priority: i32) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        loaded
+            .find_mut(name)
+            .ok_or_else(|| no_such_mod(&label, name))?
+            .priority = priority;
+        self.save_profile(profile, &loaded)
     }
 
     /// Puts the profile's mods in the order of `names`, which has to name
@@ -2705,7 +2718,10 @@ fn deploy_order<'a>(loaded: &Profile, lock: &'a Lockfile) -> Vec<&'a LockedMod> 
     let by_key: HashMap<String, &LockedMod> = lock.mods.iter().map(|m| (m.key(), m)).collect();
     let mut order = Vec::new();
     let mut visited = HashSet::new();
-    for m in loaded.mods.iter().filter(|m| m.enabled) {
+    for m in order::load_order(&loaded.mods)
+        .into_iter()
+        .filter(|m| m.enabled)
+    {
         visit(
             &mod_key(&m.source, &m.id),
             &by_key,

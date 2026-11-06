@@ -29,6 +29,7 @@ fn profile_mod(source: &str, id: &str, enabled: bool) -> ProfileMod {
         id: id.to_owned(),
         version: None,
         enabled,
+        priority: 0,
         game_versions: None,
         ext: Default::default(),
     }

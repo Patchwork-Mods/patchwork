@@ -34,6 +34,39 @@ for (const button of document.querySelectorAll("#mods-view button")) {
   button.addEventListener("click", () => setModsView(button.dataset.view));
 }
 
+/**
+ * "arranged" (the profile's own order, which the user rearranges) or "load"
+ * (the order mods deploy in, with priorities applied); remembered between
+ * runs. The two only differ once a mod has a priority.
+ */
+let modsOrder = "arranged";
+try {
+  if (localStorage.getItem("modsOrder") === "load") modsOrder = "load";
+} catch {}
+
+function setModsOrder(order) {
+  modsOrder = order;
+  try {
+    localStorage.setItem("modsOrder", order);
+  } catch {}
+  if (state.profile) renderMods(state.profile.mods);
+}
+
+for (const button of document.querySelectorAll("#mods-order button")) {
+  button.addEventListener("click", () => setModsOrder(button.dataset.order));
+}
+
+/** Whether the load order is showing: picked, and different from the arrangement. */
+function showingLoadOrder(mods) {
+  const differs = mods.some((m) => m.priority);
+  $("#mods-order").hidden = !differs;
+  const load = differs && modsOrder === "load";
+  for (const button of document.querySelectorAll("#mods-order button")) {
+    button.setAttribute("aria-pressed", String((button.dataset.order === "load") === load));
+  }
+  return load;
+}
+
 /** The mods whose list rows are expanded, by key, so re-renders keep them open. */
 const expandedRows = new Set();
 
@@ -81,6 +114,54 @@ function optionsButtons(m) {
       o.title,
     ),
   );
+}
+
+const PRIORITY_TITLE =
+  "Priority: mods with a higher one load later, so they win when two change the same file, wherever they are in the list. Mods with the same priority go by their place in it.";
+
+/**
+ * A mod's priority, as a small number field. Changing it leaves the mod where
+ * it is, unless the load order is showing.
+ */
+function priorityInput(m) {
+  const input = h("input", {
+    type: "number",
+    class: m.priority ? "mod-priority set" : "mod-priority",
+    step: 1,
+    value: m.priority ?? 0,
+    title: PRIORITY_TITLE,
+    "aria-label": `Priority of ${m.name}`,
+    onchange: async () => {
+      const priority = Number(input.value);
+      if (!Number.isInteger(priority)) {
+        input.value = m.priority ?? 0;
+        return;
+      }
+      const { id } = state.profile;
+      let profile;
+      try {
+        profile = await run("set_priority", { id, name: m.name, priority });
+      } catch {
+        input.value = m.priority ?? 0;
+        return;
+      }
+      if (state.profile?.id !== id) return;
+      status(`${m.name} has priority ${priority}`);
+      const mods = state.profile.mods;
+      const same =
+        profile.mods.length === mods.length && profile.mods.every((n, i) => n.key === mods[i].key);
+      if (!same || modsOrder === "load") {
+        showProfile(profile);
+        return;
+      }
+      // the cards and rows on screen were made from these, so keep them up to date
+      profile.mods = profile.mods.map((n, i) => Object.assign(mods[i], n));
+      input.classList.toggle("set", priority !== 0);
+      showProfile(profile, { keepMods: true });
+      showingLoadOrder(profile.mods);
+    },
+  });
+  return input;
 }
 
 function modRow(m, { movable, onToggle, onRemove, onVersion }) {
@@ -140,6 +221,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
     movable && dragHandle(m),
     head,
     update,
+    priorityInput(m),
     h(
       "label",
       { class: "switch", title: "Disabled mods are left out when deploying" },
@@ -280,6 +362,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
         }),
         h("span", { "aria-hidden": "true" }, m.enabled ? "On" : "Off"),
       ),
+      priorityInput(m),
       ...optionsButtons(m),
       m.versioned
         ? versionSelect(m, onVersion)
@@ -438,7 +521,12 @@ export async function renderMods(mods) {
   const id = state.profile.id;
   const render = ++renders;
   const query = modQuery();
-  const shown = query ? await findMods(id, mods, query).catch(() => null) : mods;
+  const loadOrder = showingLoadOrder(mods);
+  const shown = query
+    ? await findMods(id, mods, query).catch(() => null)
+    : loadOrder
+      ? [...mods].sort((a, b) => a.loadIndex - b.loadIndex)
+      : mods;
   if (!shown || render !== renders) return;
   versionSelects.clear();
   summaryViews.clear();
@@ -446,8 +534,9 @@ export async function renderMods(mods) {
   const view = modsView === "cards" ? modCard : modRow;
   const item = (m) =>
     view(m, {
-      // search results come best match first, not in load order
-      movable: !query,
+      // search results come best match first, and the load order isn't
+      // what's rearranged
+      movable: !query && !loadOrder,
       onToggle: (e) => toggleMod(m, e.target),
       onRemove: async () => {
         if (!(await confirmRemove(m))) return;

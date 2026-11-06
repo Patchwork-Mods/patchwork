@@ -95,6 +95,12 @@ pub enum Change {
     Disabled {
         name: String,
     },
+    /// A mod's priority (see [`ProfileMod::priority`]) changed.
+    Priority {
+        name: String,
+        from: i32,
+        to: i32,
+    },
     /// The mods' order changed.
     Reordered,
     /// The order of one of the profile's lists changed (see
@@ -118,6 +124,9 @@ impl std::fmt::Display for Change {
             Change::Updated { name, from, to } => write!(f, "~ {name} {} -> {}", v(from), v(to)),
             Change::Enabled { name } => write!(f, "  enabled {name}"),
             Change::Disabled { name } => write!(f, "  disabled {name}"),
+            Change::Priority { name, from, to } => {
+                write!(f, "  {name} priority {from} -> {to}")
+            }
             Change::Reordered => write!(f, "  reordered mods"),
             Change::List { title, .. } => write!(f, "  rearranged {}", title.to_lowercase()),
             Change::Ext { id } => write!(f, "  changed what {id} keeps"),
@@ -375,6 +384,15 @@ fn changes(
                 name: m.name.clone(),
             }),
             _ => {}
+        }
+        if let Some(w) = was.get(&(m.source.as_str(), m.id.as_str()))
+            && w.priority != m.priority
+        {
+            changes.push(Change::Priority {
+                name: m.name.clone(),
+                from: w.priority,
+                to: m.priority,
+            });
         }
     }
 

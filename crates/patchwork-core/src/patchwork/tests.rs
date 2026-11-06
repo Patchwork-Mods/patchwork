@@ -950,6 +950,7 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         id: ContentHash::of(b"mod bytes").to_string(),
         version: None,
         enabled: false,
+        priority: 0,
         game_versions: None,
         ext: Default::default(),
     });
@@ -978,6 +979,56 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
     assert!(pw.load_profile(&copy).is_ok());
     let taken = pw.duplicate_profile(&copy, "copy").unwrap_err();
     assert!(taken.to_string().contains("already exists"), "{taken}");
+}
+
+#[test]
+fn priorities_change_the_load_order_but_not_the_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let mut loaded = pw.load_profile(&profile).unwrap();
+    for name in ["a", "b", "c"] {
+        loaded.mods.push(ProfileMod {
+            name: name.to_owned(),
+            source: "local".to_owned(),
+            id: name.to_owned(),
+            version: None,
+            enabled: true,
+            priority: 0,
+            game_versions: None,
+            ext: Default::default(),
+        });
+    }
+    pw.save_profile(&profile, &loaded).unwrap();
+
+    pw.set_priority(&profile, "a", 3).unwrap();
+    pw.set_priority(&profile, "c", -1).unwrap();
+    assert!(pw.set_priority(&profile, "missing", 1).is_err());
+    let loaded = pw.load_profile(&profile).unwrap();
+    let names = |mods: Vec<&ProfileMod>| -> Vec<String> {
+        mods.into_iter().map(|m| m.name.clone()).collect()
+    };
+    assert_eq!(names(loaded.mods.iter().collect()), ["a", "b", "c"]);
+    assert_eq!(
+        names(crate::order::load_order(&loaded.mods)),
+        ["c", "b", "a"]
+    );
+    // only priorities that aren't 0 are written down
+    let text = fs::read_to_string(pw.profile_file(&profile)).unwrap();
+    assert_eq!(text.matches("priority").count(), 2, "{text}");
+
+    // and back to 0 leaves everything where it was
+    pw.set_priority(&profile, "a", 0).unwrap();
+    pw.set_priority(&profile, "c", 0).unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    assert_eq!(
+        names(crate::order::load_order(&loaded.mods)),
+        ["a", "b", "c"]
+    );
 }
 
 #[tokio::test]
@@ -1104,6 +1155,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         id: path.to_string_lossy().into_owned(),
         version: None,
         enabled: true,
+        priority: 0,
         game_versions: None,
         ext: Default::default(),
     };

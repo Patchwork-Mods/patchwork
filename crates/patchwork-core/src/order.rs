@@ -2,6 +2,13 @@
 //! win when two provide the same file. Dependencies are always deployed
 //! before the mods that need them whatever the order, so no rearrangement
 //! can break a mod by putting it above what it needs.
+//!
+//! The profile's order is the user's own arrangement, which nothing but
+//! the user changes. The load order is that arrangement put in order of
+//! [`ProfileMod::priority`] (see [`load_order`]), so a mod's priority decides
+//! which mods it wins over wherever it's put, and its place among the mods
+//! with the same priority decides the rest. With every priority 0, the two
+//! are the same.
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -22,6 +29,15 @@ pub enum Position {
     Index(usize),
     Before(String),
     After(String),
+}
+
+/// `mods` in load order: lowest priority first, and mods with the same
+/// priority in the order they're in. Later mods win when two provide the
+/// same file.
+pub fn load_order(mods: &[ProfileMod]) -> Vec<&ProfileMod> {
+    let mut order: Vec<&ProfileMod> = mods.iter().collect();
+    order.sort_by_key(|m| m.priority);
+    order
 }
 
 /// Moves the mod called `name` to `to`, returning where it ended up.
@@ -191,7 +207,8 @@ pub fn dependency_facts(lock: &Lockfile) -> HashMap<String, ModFacts> {
 }
 
 /// Sorts `mods` by each key in turn, so later keys only break ties. The
-/// sort is stable: mods that tie on every key keep their order.
+/// sort is stable: mods that tie on every key keep their order. Priorities
+/// don't come into it: they apply on top, in [`load_order`].
 ///
 /// `facts` is keyed by `source:id`; mods missing from it have no tags or
 /// dependencies. Tags sort by `tag_order` (matched ignoring case) if it's

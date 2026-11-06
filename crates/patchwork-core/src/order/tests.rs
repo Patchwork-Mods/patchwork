@@ -10,6 +10,7 @@ fn profile_mod(name: &str) -> ProfileMod {
         id: name.to_owned(),
         version: None,
         enabled: true,
+        priority: 0,
         game_versions: None,
         ext: Default::default(),
     }
@@ -227,4 +228,30 @@ fn sorts_by_dependents_with_names_breaking_ties() {
     let mut list = mods(&["tool", "core", "app", "loader"]);
     sort_mods(&mut list, &keys(&["dependents:desc", "name"]), &[], &facts);
     assert_eq!(names(&list), ["loader", "core", "app", "tool"]);
+}
+
+fn with_priorities(entries: &[(&str, i32)]) -> Vec<ProfileMod> {
+    entries
+        .iter()
+        .map(|(name, priority)| ProfileMod {
+            priority: *priority,
+            ..profile_mod(name)
+        })
+        .collect()
+}
+
+#[test]
+fn higher_priorities_load_later_keeping_ties_in_order() {
+    let list = with_priorities(&[("a", 1), ("b", 0), ("c", -2), ("d", 0), ("e", 1)]);
+    let order: Vec<&str> = load_order(&list).iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(order, ["c", "b", "d", "a", "e"]);
+}
+
+#[test]
+fn priorities_dont_limit_moving_or_sorting() {
+    let mut list = with_priorities(&[("a", 0), ("b", 1), ("c", 0)]);
+    move_mod(&mut list, "p", "a", &Position::Bottom).unwrap();
+    assert_eq!(names(&list), ["b", "c", "a"]);
+    sort_mods(&mut list, &keys(&["name:desc"]), &[], &HashMap::new());
+    assert_eq!(names(&list), ["c", "b", "a"]);
 }

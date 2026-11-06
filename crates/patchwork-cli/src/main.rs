@@ -16,7 +16,7 @@ use patchwork_core::list::List;
 use patchwork_core::locate::Locator;
 use patchwork_core::lock::mod_key;
 use patchwork_core::options::{Answer, ItemState, Pick};
-use patchwork_core::order::{Position, SortKey};
+use patchwork_core::order::{self, Position, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
@@ -163,19 +163,35 @@ enum Command {
         #[arg(long)]
         new: bool,
     },
-    /// List the mods in the profile, in load order.
+    /// List the mods in the profile, in the order they've been put in.
+    /// That's the load order, apart from mods given a priority.
     List {
         /// Only list mods matching this, best match first. Mods are found by
         /// name, and by author and description once their details have been
         /// fetched (by sorting by tags, say). Close misspellings still match.
         query: Vec<String>,
+        /// List them in the order they load in, with priorities applied:
+        /// later mods win when two provide the same file.
+        #[arg(long, conflicts_with = "query")]
+        load_order: bool,
     },
-    /// Move a mod in the load order. Later mods win when two provide the
+    /// Move a mod in the profile's order, which is the load order among
+    /// mods with the same priority. Later mods win when two provide the
     /// same file; a mod's dependencies always load before it regardless.
     Move {
         name: String,
         #[command(flatten)]
         to: MoveTo,
+    },
+    /// Show or set a mod's priority, 0 unless set. Mods with a higher
+    /// priority load later, so they win when two provide the same file,
+    /// wherever they are in the list; mods with the same priority go by
+    /// their place in it. Setting it doesn't move the mod in the list.
+    Priority {
+        name: String,
+        /// The new priority; can be negative.
+        #[arg(allow_negative_numbers = true)]
+        priority: Option<i32>,
     },
     /// Put things in the profile's mods in an order of their own, apart from
     /// the mods' order, for games that have them: Skyrim's plugins (.esp,
@@ -884,13 +900,15 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("{}", entry.notes);
             }
         }
-        Command::List { query } => {
+        Command::List { query, load_order } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
             // only for showing ids, so a broken one isn't an error here
             let lock = pw.load_lock(&profile).ok().flatten();
             let ids = |m: &ProfileMod| pw.display_id(lock.as_ref(), m);
             if loaded.mods.is_empty() {
                 println!("{} has no mods", loaded.label());
+            } else if load_order {
+                print_mods(order::load_order(&loaded.mods).into_iter().enumerate(), ids);
             } else if query.is_empty() {
                 print_mods(loaded.mods.iter().enumerate(), ids);
             } else {
@@ -906,6 +924,23 @@ async fn run(cli: Cli) -> Result<()> {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
             let index = pw.move_mod(&profile, &name, &to.position())?;
             println!("moved {name} to {} of {}", index + 1, loaded.mods.len());
+        }
+        Command::Priority { name, priority } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            match priority {
+                Some(priority) => {
+                    pw.set_priority(&profile, &name, priority)?;
+                    println!("{name} has priority {priority}");
+                }
+                None => {
+                    let m = loaded
+                        .mods
+                        .iter()
+                        .find(|m| m.name == name)
+                        .with_context(|| format!("{} has no mod named `{name}`", loaded.label()))?;
+                    println!("{}", m.priority);
+                }
+            }
         }
         Command::Order { list, action } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
@@ -2040,8 +2075,12 @@ fn print_mods<'a>(
             .as_deref()
             .map(|v| format!(" @ {v}"))
             .unwrap_or_default();
+        let priority = match m.priority {
+            0 => String::new(),
+            p => format!("  priority {p}"),
+        };
         println!(
-            "{:>width$}. [{mark}] {}  ({}:{}{version})",
+            "{:>width$}. [{mark}] {}  ({}:{}{version}){priority}",
             i + 1,
             m.name,
             m.source,

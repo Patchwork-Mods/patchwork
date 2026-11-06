@@ -27,7 +27,7 @@ export function dragHandle(
   m,
   {
     save = saveMods,
-    title = "Drag to move in the load order. Mods further down win when two change the same file.",
+    title = "Drag to move in the load order. Mods further down win when two change the same file, unless they have different priorities.",
   } = {},
 ) {
   return h(

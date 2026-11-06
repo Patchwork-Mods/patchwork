@@ -77,6 +77,17 @@ patchwork launch
 ```
 Run `patchwork help`, or `patchwork <command> --help`, for more commands
 
+## Load order
+
+When two mods provide the same file, the one further down the mod list
+wins. You can also manually set priorities for each mod in the GUI
+
+```sh
+patchwork priority "Better Textures" 10   # win over every mod below 10
+patchwork list --load-order               # the order they deploy in
+patchwork conflicts                       # which mod wins each shared file
+```
+
 ## Sharing profiles
 
 - **Export and import**: `patchwork profile export` and `import` read and

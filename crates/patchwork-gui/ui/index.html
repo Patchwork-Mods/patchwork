@@ -202,6 +202,13 @@
 						<button type="button" data-view="cards" aria-pressed="true">Cards</button>
 						<button type="button" data-view="list" aria-pressed="false">List</button>
 					</div>
+					<!-- The mods as arranged, or in the order they deploy in with
+               priorities applied; only shown once a mod has a priority.
+               See setModsOrder() in mods.js. -->
+					<div id="mods-order" class="segmented" role="group" aria-label="Order" hidden>
+						<button type="button" data-order="arranged" aria-pressed="true" title="The order you've put the mods in. Mods with the same priority load in this order.">Your order</button>
+						<button type="button" data-order="load" aria-pressed="false" title="The order mods deploy in, with priorities applied: further down wins when two change the same file. Switch back to Your order to rearrange them.">Load order</button>
+					</div>
 				</div>
 				<ul id="mods" class="result-grid"></ul>
 				<details id="hidden-mods" hidden>

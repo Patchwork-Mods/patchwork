@@ -11,7 +11,9 @@
 //! - `mod/<source>:<id>`: a [`ProfileMod`]
 //! - `order`: the mods' load order, as `<source>:<id>` keys. It's one entry,
 //!   so of two reorders made at once only one survives. Mods it doesn't
-//!   mention (added while someone else reordered) go at the end.
+//!   mention (added while someone else reordered) go at the end. Each mod's
+//!   priority is part of its own entry, so changes to priorities made at
+//!   once all survive.
 //! - `ext/<id>`: what extension `<id>` keeps for the profile (see
 //!   [`Profile::ext`]), so two extensions' changes made at once both
 //!   survive. What extensions keep for a mod is part of the mod's entry.

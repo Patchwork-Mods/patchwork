@@ -1181,6 +1181,21 @@ dialog button.danger-text {
   margin: 0 10px 10px;
 }
 
+/* A mod's priority: a small number field, faint while it's 0. */
+.mod-priority {
+  flex: none;
+  width: 52px;
+  padding: 3px 4px;
+  font-size: 12px;
+  text-align: right;
+  color: var(--pw-muted);
+}
+
+.mod-priority.set {
+  color: var(--pw-text);
+  font-weight: 600;
+}
+
 /* The on/off switch, drawn from a checkbox. */
 .switch {
   display: flex;

@@ -10,6 +10,7 @@ fn profile_mod(id: &str) -> ProfileMod {
         id: id.to_owned(),
         version: None,
         enabled: true,
+        priority: 0,
         game_versions: None,
         ext: Default::default(),
     }
@@ -292,6 +293,21 @@ fn changes_to_different_mods_at_once_both_survive() {
     sync(&mut a, &mut b, &mut clock);
     assert!(changes(&a.base, &a.entries()).is_empty());
     assert!(changes(&b.base, &b.entries()).is_empty());
+}
+
+#[test]
+fn priorities_changed_at_once_both_survive() {
+    let (mut a, mut b, mut clock) = pair(&["One", "Two", "Three"]);
+    a.profile.find_mut("One").unwrap().priority = 2;
+    b.profile.find_mut("Three").unwrap().priority = -1;
+
+    sync(&mut a, &mut b, &mut clock);
+    for m in [&a, &b] {
+        // where they are is left alone
+        assert_eq!(m.names(), ["One", "Two", "Three"]);
+        let priorities: Vec<i32> = m.profile.mods.iter().map(|m| m.priority).collect();
+        assert_eq!(priorities, [2, 0, -1]);
+    }
 }
 
 #[test]

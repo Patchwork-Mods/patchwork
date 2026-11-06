@@ -149,6 +149,12 @@ pub struct ProfileMod {
     pub version: Option<String>,
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
+    /// Mods with a higher priority load later, so they win over ones with a
+    /// lower one when two provide the same file, wherever they are in the
+    /// profile. Mods with the same priority go by their order in it. See
+    /// [`crate::order::load_order`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub priority: i32,
     /// Which versions of the game the mod works with, in place of whatever
     /// its source says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -156,6 +162,10 @@ pub struct ProfileMod {
     /// What extensions keep for the mod, like [`Profile::ext`].
     #[serde(default, skip_serializing_if = "ExtTables::is_empty")]
     pub ext: ExtTables,
+}
+
+fn is_zero(n: &i32) -> bool {
+    *n == 0
 }
 
 /// A mod as saved, by any schema, like [`ProfileFile`].
@@ -168,6 +178,8 @@ struct ProfileModFile {
     version: Option<String>,
     #[serde(default = "enabled_by_default")]
     enabled: bool,
+    #[serde(default)]
+    priority: i32,
     #[serde(default)]
     game_versions: Option<GameVersions>,
     #[serde(default)]
@@ -196,6 +208,7 @@ impl From<ProfileModFile> for ProfileMod {
             id: file.id,
             version: file.version,
             enabled: file.enabled,
+            priority: file.priority,
             game_versions: file.game_versions,
             ext,
         }

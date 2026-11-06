@@ -10,7 +10,7 @@ mod selfupdate;
 mod setup;
 mod sync;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::sync::Mutex;
 
@@ -27,7 +27,7 @@ use patchwork_core::list::{List, ListEntry};
 use patchwork_core::lock::{Lockfile, mod_key};
 use patchwork_core::matching::{self, ModText};
 use patchwork_core::options::Answer;
-use patchwork_core::order::SortKey;
+use patchwork_core::order::{self, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
@@ -232,6 +232,9 @@ struct UiMod {
     /// The choices to make about it, like a FOMOD installer's options.
     /// Only known once it's been downloaded.
     options: Vec<ModOptionsInfo>,
+    /// Its place in the load order, which differs from its place in the
+    /// profile once mods have priorities; see [`order::load_order`].
+    load_index: usize,
 }
 
 #[derive(Serialize)]
@@ -377,6 +380,11 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let lookup = pw.lookup(&loaded).map_err(msg)?;
     let name = loaded.name.clone();
     let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
+    let load_index: HashMap<String, usize> = order::load_order(&loaded.mods)
+        .into_iter()
+        .enumerate()
+        .map(|(i, m)| (m.name.clone(), i))
+        .collect();
     let mods = loaded
         .mods
         .into_iter()
@@ -399,6 +407,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                     .and_then(|l| l.version.clone()),
                 key,
                 options: options.remove(&m.name).unwrap_or_default(),
+                load_index: load_index[&m.name],
                 profile: m,
             }
         })
@@ -825,6 +834,21 @@ fn set_enabled(
 ) -> CmdResult<ProfileDetail> {
     app.pw
         .set_enabled(&profile_ref(&id)?, &name, enabled)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Gives a mod a new priority; mods with a higher one load later, so they
+/// win when two provide the same file.
+#[tauri::command]
+fn set_priority(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    priority: i32,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .set_priority(&profile_ref(&id)?, &name, priority)
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
@@ -1601,6 +1625,7 @@ fn main() {
             set_source_setting,
             check_source_settings,
             set_enabled,
+            set_priority,
             remove_mod,
             revert_profile,
             profile_history,

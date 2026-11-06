@@ -103,6 +103,7 @@ impl ProfileFormat for UrlList {
                 id: resolved.id,
                 version: spec.version,
                 enabled: true,
+                priority: 0,
                 game_versions: None,
                 ext: Default::default(),
             });
