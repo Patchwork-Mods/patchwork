@@ -190,6 +190,7 @@ impl Env {
             hash: ContentHash::of(name.as_bytes()),
             files,
             kind: None,
+            ext: Default::default(),
         }
     }
 
@@ -199,28 +200,7 @@ impl Env {
     }
 
     fn build(&self, mods: &[InstalledMod]) -> Result<DesiredState> {
-        let def = GameDef {
-            schema: 1,
-            id: "hitman-woa".to_owned(),
-            name: "HITMAN World of Assassination".to_owned(),
-            description: None,
-            image: None,
-            hidden: false,
-            sources: Default::default(),
-            deployer: DeployerSpec {
-                kind: "smf".to_owned(),
-                config: toml::Table::new(),
-            },
-            link: Default::default(),
-            detect: Default::default(),
-            versions: Default::default(),
-            env: Default::default(),
-            roots: Default::default(),
-            launch: Default::default(),
-            capture: None,
-            instances: None,
-            ext: Default::default(),
-        };
+        let def = hitman_def();
         let registry = Registry::default();
         let ctx = DeployContext {
             game: &def,
@@ -241,6 +221,32 @@ impl Env {
         };
         self.steps.0.lock().unwrap().clear();
         SmfDeployer.build(&ctx, &build, mods)
+    }
+}
+
+/// The game as the deployer sees it in tests.
+fn hitman_def() -> GameDef {
+    GameDef {
+        schema: 1,
+        id: "hitman-woa".to_owned(),
+        name: "HITMAN World of Assassination".to_owned(),
+        description: None,
+        image: None,
+        hidden: false,
+        sources: Default::default(),
+        deployer: DeployerSpec {
+            kind: "smf".to_owned(),
+            config: toml::Table::new(),
+        },
+        link: Default::default(),
+        detect: Default::default(),
+        versions: Default::default(),
+        env: Default::default(),
+        roots: Default::default(),
+        launch: Default::default(),
+        capture: None,
+        instances: None,
+        ext: Default::default(),
     }
 }
 
@@ -379,6 +385,168 @@ fn framework_mods_are_built_into_a_patch_archive() {
     );
 }
 
+const OPTIONS_MANIFEST: &str = r#"{
+    id: "Someone.Options",
+    name: "Options",
+    contentFolders: [],
+    options: [
+        { name: "On", type: "checkbox", enabledByDefault: true, contentFolders: ["on"] },
+        { name: "Off", type: "checkbox", contentFolders: ["off"], tooltip: "Not by default" },
+        { name: "A", group: "Pick", type: "select", enabledByDefault: true, contentFolders: ["a"] },
+        { name: "B", group: "Pick", type: "select", contentFolders: ["b"] },
+        { name: "With other", type: "conditional", condition: '"Someone.Other" in config.loadOrder', contentFolders: ["with"] },
+        { name: "Without other", type: "conditional", condition: '"Someone.Other" not in config.loadOrder', contentFolders: ["without"] },
+        { name: "Unknown", type: "conditional", condition: 'config.modOptions', contentFolders: ["unknown"] },
+    ],
+}"#;
+
+/// A mod with [`OPTIONS_MANIFEST`], each of whose folders has one resource:
+/// `00B0000000000001` for `on`, and so on.
+fn options_mod(env: &Env) -> InstalledMod {
+    let folders = ["on", "off", "a", "b", "with", "without", "unknown"];
+    let files: Vec<(String, Vec<u8>)> = folders
+        .iter()
+        .enumerate()
+        .map(|(i, folder)| {
+            (
+                format!("Options/{folder}/chunk0/00B000000000000{}.TBLU", i + 1),
+                folder.as_bytes().to_vec(),
+            )
+        })
+        .chain([(
+            "Options/manifest.json".to_owned(),
+            OPTIONS_MANIFEST.as_bytes().to_vec(),
+        )])
+        .collect();
+    let files: Vec<(&str, &[u8])> = files.iter().map(|(p, d)| (p.as_str(), &d[..])).collect();
+    env.installed("options", &files)
+}
+
+/// Which of [`options_mod`]'s folders were deployed.
+fn deployed_folders(env: &Env, desired: &DesiredState) -> Vec<String> {
+    let archive = contents(&placed(env, desired, "Runtime/chunk0patch300.rpkg"));
+    archive
+        .values()
+        .map(|(data, _)| String::from_utf8(data.clone()).unwrap())
+        .collect()
+}
+
+#[test]
+fn options_are_picked_and_conditionals_follow_the_load_order() {
+    let env = Env::new();
+    let other = env.installed(
+        "other",
+        &[(
+            "manifest.json",
+            br#"{ id: "Someone.Other", name: "Other" }"#,
+        )],
+    );
+
+    // Nothing picked: the defaults, with conditionals for what's there.
+    let desired = env.build(&[options_mod(&env)]).unwrap();
+    assert_eq!(deployed_folders(&env, &desired), ["on", "a", "without"]);
+    assert!(
+        desired
+            .warnings
+            .iter()
+            .any(|w| w.contains("\"Unknown\" is left off") && w.contains("config.modOptions")),
+        "{:?}",
+        desired.warnings
+    );
+
+    // Picked as SMF saves them.
+    let mut m = options_mod(&env);
+    let picks: toml::Table = toml::from_str(r#"options = ["Off", "Pick:B"]"#).unwrap();
+    m.ext.insert("smf".to_owned(), picks);
+    let desired = env.build(&[m, other]).unwrap();
+    assert_eq!(deployed_folders(&env, &desired), ["off", "b", "with"]);
+}
+
+#[test]
+fn options_form_and_save() {
+    use patchwork_core::options::{Answer, ItemState, ModContext, ModOptions, ModPeek, Pick};
+
+    let env = Env::new();
+    let m = options_mod(&env);
+    let def = hitman_def();
+    let config = toml::Table::new();
+    let nothing = toml::Table::new();
+    let mods = [m.clone()];
+    let ctx = ModContext::new(&def, &config, "smf", &nothing, &mods, None);
+    let hook = options::SmfOptions;
+    assert!(hook.applies(&ctx, &ModPeek::of(&m)));
+    let plain = content_mod(&env, "plain", &[]);
+    assert!(!hook.applies(&ctx, &ModPeek::of(&plain)));
+
+    let form = hook.form(&ctx, &m, None).unwrap();
+    assert_eq!(form.title, "Options");
+    let groups = &form.pages[0].groups;
+    type Summary<'a> = Vec<(&'a str, Pick, Vec<(&'a str, bool)>)>;
+    let summary: Summary<'_> = groups
+        .iter()
+        .map(|g| {
+            (
+                g.id.as_str(),
+                g.pick,
+                g.items.iter().map(|i| (i.id.as_str(), i.picked)).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("Options", Pick::Any, vec![("On", true), ("Off", false)]),
+            ("Pick", Pick::ExactlyOne, vec![("A", true), ("B", false)]),
+            (
+                "Automatic",
+                Pick::Any,
+                vec![
+                    ("With other", false),
+                    ("Without other", true),
+                    ("Unknown", false)
+                ]
+            ),
+        ]
+    );
+    assert!(groups[0].defaulted);
+    assert_eq!(
+        groups[0].items[1].description.as_deref(),
+        Some("Not by default")
+    );
+    assert_eq!(groups[2].items[1].state, ItemState::Required);
+    assert_eq!(groups[2].items[0].state, ItemState::NotUsable);
+    assert_eq!(form.warnings.len(), 1, "{:?}", form.warnings);
+
+    // Answering one group keeps the defaults in the others.
+    let answers = [Answer {
+        group: "Pick".to_owned(),
+        items: vec!["B".to_owned()],
+    }];
+    let saved = hook.save(&ctx, &m, &answers).unwrap();
+    assert_eq!(saved.to_string(), "options = [\"On\", \"Pick:B\"]\n");
+
+    // And then what's saved is what's picked.
+    let ctx = ModContext::new(&def, &config, "smf", &saved, &mods, None);
+    let answers = [Answer {
+        group: "Options".to_owned(),
+        items: vec![],
+    }];
+    let saved = hook.save(&ctx, &m, &answers).unwrap();
+    assert_eq!(saved.to_string(), "options = [\"Pick:B\"]\n");
+
+    let wrong = |group: &str, items: &[&str]| {
+        let answers = [Answer {
+            group: group.to_owned(),
+            items: items.iter().map(|s| (*s).to_owned()).collect(),
+        }];
+        hook.save(&ctx, &m, &answers).unwrap_err().to_string()
+    };
+    assert!(wrong("Pick", &["A", "B"]).contains("pick one of"));
+    assert!(wrong("Pick", &[]).contains("pick one of"));
+    assert!(wrong("Pick", &["C"]).contains("no option \"C\""));
+    assert!(wrong("Nope", &["A"]).contains("no options \"Nope\""));
+}
+
 #[test]
 fn rpkg_mods_and_dependencies_are_staged() {
     let env = Env::new();
@@ -460,6 +628,46 @@ fn dependencies_take_the_latest_patch_and_can_include_chunk1() {
     assert_eq!(data(IN_CHUNK0), None);
 }
 
+/// SMF hands a dependency to rpkg-cli as a filter, so one can list several
+/// resources with commas.
+#[test]
+fn dependencies_can_list_several_resources() {
+    let env = Env::new();
+    let deps = env.installed(
+        "deps",
+        &[(
+            "manifest.json",
+            format!(
+                r#"{{ "id": "Deps", "name": "Deps",
+                      "dependencies": ["00F0000000000001,{ROOT:016X}", {{ "runtimeID": "{ROOT:016X}, 00F0000000000002", "toChunk": 1 }}] }}"#
+            )
+            .as_bytes(),
+        )],
+    );
+    let desired = env.build(&[deps]).unwrap();
+    for archive in ["chunk0", "chunk1"] {
+        let staged = contents(&placed(
+            &env,
+            &desired,
+            &format!("Runtime/{archive}patch300.rpkg"),
+        ));
+        assert_eq!(
+            staged.get(&ROOT).map(|(d, _)| d.as_slice()),
+            Some(&b"root"[..])
+        );
+    }
+    for id in ["00F0000000000001", "00F0000000000002"] {
+        assert!(
+            desired
+                .warnings
+                .iter()
+                .any(|w| w.ends_with(&format!("dependency {id}"))),
+            "{:?}",
+            desired.warnings
+        );
+    }
+}
+
 #[test]
 fn new_partitions_get_a_base_archive() {
     let env = Env::new();
@@ -488,12 +696,12 @@ fn mods_needing_unsupported_features_fail() {
                 br#"{ id: "M", name: "M", contentFolders: ["c"],
                       scripts: ["script.ts"] }"#,
             ),
-            ("c/chunk0/thing.locr.json", b"{}"),
-            ("c/chunk0/other.locr.json", b"{}"),
+            ("c/chunk0/thing.rtlv.json", b"{}"),
+            ("c/chunk0/other.rtlv.json", b"{}"),
         ],
     );
     let err = env.build(&[m]).unwrap_err().to_string();
-    assert_eq!(err.matches(".locr.json").count(), 1, "{err}");
+    assert_eq!(err.matches(".rtlv.json").count(), 1, "{err}");
     assert!(err.contains("scripts"), "{err}");
 }
 
@@ -1041,6 +1249,26 @@ fn entities_are_built_from_quickentity_json() {
     assert_eq!(entity["rootEntity"], "abcdef0000000001");
 }
 
+/// Mods can give an enum property a number the game's type data has no
+/// name for, as Freelancer Variations does to add destinations.
+#[test]
+fn entities_keep_enum_values_without_names() {
+    let mut json = entity_json();
+    json["entities"][CHILD]["properties"] = serde_json::json!({
+        "m_known": { "type": "IEvergreenTerritoryDefinition.EDestination", "value": "Paris" },
+        "m_unknown": { "type": "IEvergreenTerritoryDefinition.EDestination", "value": 22 },
+    });
+    let built =
+        entity::generate(&entity::parse_entity(json.to_string().as_bytes()).unwrap()).unwrap();
+    let entity = entity::decode(
+        (built.factory.0, &built.factory.1),
+        (built.blueprint.0, &built.blueprint.1),
+    )
+    .unwrap();
+    let entity = serde_json::to_value(entity).unwrap();
+    assert_eq!(entity["entities"], json["entities"]);
+}
+
 #[test]
 fn entity_patches_apply_in_order_to_the_current_entity() {
     let env = Env::new();
@@ -1423,6 +1651,88 @@ fn localisation_overrides_change_the_current_locr() {
     assert_eq!(strings.get(en, added).as_deref(), Some("Added"));
     assert_eq!(strings.get(fr, 0x1111_1111).as_deref(), Some("Gardé"));
     assert_eq!(strings.get(de, 0x2222_2222).as_deref(), Some("Erste"));
+}
+
+#[test]
+fn locr_json_replaces_the_locr_and_overrides_still_apply() {
+    let env = Env::new();
+    // Game LOCRs start with 1, which the rebuilt one keeps.
+    let mut game = game_locr();
+    game[0] = 1;
+    env.archive(
+        "chunk3",
+        PatchId::Base,
+        &[(LOCR, "LOCR", game, &[IN_CHUNK0])],
+    );
+    let json = format!(
+        r#"{{ "hash": "{LOCR:016X}", "languages": {{
+            "xx": {{ "UI_TITLE": "Title" }},
+            "en": {{ "UI_TITLE": "Title", "abc_key_title": "Key", "33333333": "By hash" }},
+            "fr": {{ "UI_TITLE": "Titre" }}
+        }} }}"#
+    );
+    let whole = env.installed(
+        "whole",
+        &[
+            (
+                "manifest.json",
+                br#"{ id: "W", name: "W", contentFolders: ["c"] }"#,
+            ),
+            ("c/chunk3/strings.locr.json", json.as_bytes()),
+        ],
+    );
+    let title = crc32fast::hash(b"UI_TITLE");
+    let over = locr_mod(
+        &env,
+        "over",
+        &format!(r#"{{ "{LOCR:016X}": {{ french: {{ "{title}": "Le titre" }} }} }}"#),
+    );
+    let desired = env.build(&[whole, over]).unwrap();
+
+    let archive = placed(&env, &desired, "Runtime/chunk3patch300.rpkg");
+    let built = resource(&archive, LOCR);
+    assert_eq!(built.data[0], 1);
+    assert_eq!(references(&built), vec![]);
+    let strings = locr::Locr::parse(&built.data).unwrap();
+    let (xx, en, fr, de) = (0, 1, 2, 4);
+    assert_eq!(strings.get(xx, title).as_deref(), Some("Title"));
+    assert_eq!(strings.get(en, title).as_deref(), Some("Title"));
+    let key = crc32fast::hash(b"ABC_KEY_TITLE");
+    assert_eq!(strings.get(en, key).as_deref(), Some("Key"));
+    assert_eq!(strings.get(en, 0x3333_3333).as_deref(), Some("By hash"));
+    assert_eq!(strings.get(fr, title).as_deref(), Some("Le titre"));
+    // The game's strings are gone, and every language has a table.
+    assert_eq!(strings.get(en, 0x1111_1111), None);
+    assert_eq!(strings.get(de, title), None);
+    assert!(!built.data[1..41].chunks(4).any(|o| o == [0xFF; 4]));
+}
+
+#[test]
+fn locr_json_errors_are_reported() {
+    let env = Env::new();
+    let m = env.installed(
+        "m",
+        &[
+            (
+                "manifest.json",
+                br#"{ id: "M", name: "M", contentFolders: ["c"] }"#,
+            ),
+            (
+                "c/chunk0/a.locr.json",
+                br#"{ "hash": "00A3000000000002", "languages": { "klingon": {} } }"#,
+            ),
+            (
+                "c/chunk0/b.locr.json",
+                br#"{ "hash": "00A3000000000003", "symmetric": true, "languages": {} }"#,
+            ),
+        ],
+    );
+    let err = env.build(&[m]).unwrap_err().to_string();
+    assert!(
+        err.contains("`klingon` isn't one of its languages"),
+        "{err}"
+    );
+    assert!(err.contains("symmetric"), "{err}");
 }
 
 #[test]

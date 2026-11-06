@@ -68,7 +68,8 @@ impl Patchwork {
     }
 
     /// `order`'s files, from the store, as `loaded`'s game installs them:
-    /// changed by whichever transforms are on for it and apply to each mod.
+    /// changed by whichever transforms are on for it and apply to each mod,
+    /// and with what the extensions that are on keep for each.
     /// `files` are the game's own, if it's been set up. Also returns
     /// problems the transforms found.
     pub(super) fn installed(
@@ -82,6 +83,14 @@ impl Patchwork {
             .iter()
             .map(|locked| self.packed(locked))
             .collect::<Result<Vec<_>>>()?;
+        for m in &mut mods {
+            for ext in self.extensions_on(game) {
+                let state = self.mod_state(loaded, ext, &m.name)?;
+                if !state.is_empty() {
+                    m.ext.insert(ext.to_owned(), state);
+                }
+            }
+        }
         let mut warnings = Vec::new();
         let transforms: Vec<&Hook<dyn ModTransform>> = self
             .transforms

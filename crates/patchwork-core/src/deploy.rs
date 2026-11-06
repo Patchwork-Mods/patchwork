@@ -15,6 +15,7 @@ use crate::capture::Baseline;
 use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter};
+use crate::ext::ExtTables;
 use crate::game::{GameDef, LinkMethod};
 use crate::hash::ContentHash;
 use crate::list::List;
@@ -50,6 +51,11 @@ pub struct InstalledMod {
     /// What sort of thing its source says it is, like `shader`, if it
     /// says.
     pub kind: Option<String>,
+    /// What the extensions that are on for the game keep for the mod, by
+    /// extension id, like the options picked for it. Lets a deployer act on
+    /// choices its extension's [`ModOptions`](crate::options::ModOptions)
+    /// saved.
+    pub ext: ExtTables,
 }
 
 pub struct DeployContext<'a> {

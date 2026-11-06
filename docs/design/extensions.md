@@ -701,6 +701,12 @@ Each step leaves `main` working and shippable.
      `options-*` (`.installer-option` is `.options-item`, `.mod-installer`
      is `.mod-options`), so user themes that styled them need updating.
    - Picking options isn't recorded as a `Change` in history yet.
+   - Later (2026-11-06), for SMF mods' options, which change what the
+     deployer builds rather than which files a mod installs: a deployer
+     sees what the extensions on for the game keep for each mod in
+     `InstalledMod::ext`, and `ModPeek::read_near_top(path)` lets
+     `applies` look inside a small file (SMF only offers options for
+     manifests that have some to pick).
 4. **`Check`.** Move the plugin limit, missing masters and env mismatches
    into checks.
 

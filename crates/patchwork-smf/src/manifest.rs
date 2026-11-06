@@ -1,13 +1,19 @@
 //! Simple Mod Framework's `manifest.json`, parsed as JSON5 like SMF does.
 //! Only what deploying needs is modelled; anything else is ignored.
 
+use std::collections::HashSet;
+
 use serde::Deserialize;
 use serde_json::Value;
+
+use crate::condition;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
     pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub options: Vec<ModOption>,
     #[serde(flatten)]
@@ -41,6 +47,17 @@ pub struct ModOption {
     pub kind: OptionKind,
     #[serde(default)]
     pub enabled_by_default: bool,
+    /// The group a `select` option is one of.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// When a `conditional` option is on.
+    #[serde(default)]
+    pub condition: Option<String>,
+    #[serde(default)]
+    pub tooltip: Option<String>,
+    /// A picture of it, relative to the manifest.
+    #[serde(default)]
+    pub image: Option<String>,
     #[serde(flatten)]
     pub data: ModData,
 }
@@ -135,29 +152,76 @@ impl Manifest {
         json5::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string())
     }
 
-    /// The manifest's data and that of the options in effect. Until options
-    /// can be chosen, that's the ones enabled by default. Returns warnings
-    /// for options that couldn't be decided.
-    pub fn active(&self) -> (Vec<&ModData>, Vec<String>) {
+    /// The manifest's data and that of the options in effect: the
+    /// checkboxes and selects `picked` (as [`ModOption::key`]s), or those
+    /// enabled by default if nothing's been picked, and the conditionals
+    /// whose condition holds for mods `load_order`. Returns warnings for
+    /// options that couldn't be decided.
+    pub fn active(
+        &self,
+        picked: Option<&[String]>,
+        load_order: &HashSet<String>,
+    ) -> (Vec<&ModData>, Vec<String>) {
         let mut data = vec![&self.data];
         let mut warnings = Vec::new();
         for option in &self.options {
-            match option.kind {
-                OptionKind::Checkbox | OptionKind::Select if option.enabled_by_default => {
-                    data.push(&option.data);
+            match option.on(picked, load_order) {
+                Ok(true) => data.push(&option.data),
+                Ok(false) => {}
+                Err(e) => {
+                    warnings.push(format!("option \"{}\" is left off, since {e}", option.name))
                 }
-                OptionKind::Checkbox | OptionKind::Select => {}
-                OptionKind::Conditional => warnings.push(format!(
-                    "option \"{}\" depends on a condition, which patchwork doesn't support yet; it's left off",
-                    option.name
-                )),
-                OptionKind::Unknown => warnings.push(format!(
-                    "option \"{}\" is of a kind patchwork doesn't know; it's left off",
-                    option.name
-                )),
             }
         }
         (data, warnings)
+    }
+
+    /// Whether any options are for the user to pick.
+    pub fn has_choices(&self) -> bool {
+        self.options.iter().any(ModOption::pickable)
+    }
+}
+
+impl ModOption {
+    /// What SMF saves to say the option's picked: its name, or for a
+    /// select, `group:name`.
+    pub fn key(&self) -> String {
+        match self.kind {
+            OptionKind::Select => format!(
+                "{}:{}",
+                self.group.as_deref().unwrap_or_default(),
+                self.name
+            ),
+            _ => self.name.clone(),
+        }
+    }
+
+    /// Whether it's for the user to pick.
+    pub fn pickable(&self) -> bool {
+        matches!(self.kind, OptionKind::Checkbox | OptionKind::Select)
+    }
+
+    /// Whether it's on, as [`Manifest::active`] says.
+    pub fn on(
+        &self,
+        picked: Option<&[String]>,
+        load_order: &HashSet<String>,
+    ) -> Result<bool, String> {
+        match self.kind {
+            OptionKind::Checkbox | OptionKind::Select => Ok(match picked {
+                Some(picked) => picked.contains(&self.key()),
+                None => self.enabled_by_default,
+            }),
+            OptionKind::Conditional => {
+                let condition = self
+                    .condition
+                    .as_deref()
+                    .ok_or_else(|| "it has no condition".to_owned())?;
+                condition::evaluate(condition, load_order)
+                    .map_err(|e| format!("its condition `{condition}` can't be worked out: {e}"))
+            }
+            OptionKind::Unknown => Err("it's of a kind patchwork doesn't know".to_owned()),
+        }
     }
 }
 

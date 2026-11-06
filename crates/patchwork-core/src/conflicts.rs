@@ -265,6 +265,7 @@ mod tests {
             hash,
             files,
             kind: None,
+            ext: Default::default(),
         };
         (m, placements)
     }

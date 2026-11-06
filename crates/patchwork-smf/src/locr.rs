@@ -4,8 +4,16 @@
 //!
 //! Strings that aren't changed are kept as they're stored, so rebuilding a
 //! LOCR never has to decrypt (or re-encrypt) the game's own text.
+//!
+//! Mods can also give a whole LOCR as TonyTools' `.locr.json` (see
+//! [`Locr::from_json`]).
 
 use rpkg_rs::encryption::xtea::Xtea;
+use rpkg_rs::resource::runtime_resource_id::RuntimeResourceID;
+use serde::Deserialize;
+use serde_json::{Map, Value};
+
+use super::meta;
 
 /// The game's languages in the order a LOCR lists them, as SMF names them
 /// in manifests.
@@ -66,6 +74,27 @@ pub fn line(name: &str) -> Vec<u8> {
     data
 }
 
+/// The hash of a `.locr.json` key: 8 hex digits are a hash already (as
+/// TonyTools writes strings it has no name for), anything else is a name.
+fn json_key_hash(key: &str) -> u32 {
+    match u32::from_str_radix(key, 16) {
+        Ok(hash) if key.len() == 8 => hash,
+        _ => name_hash(key),
+    }
+}
+
+/// TonyTools' JSON form of a LOCR.
+#[derive(Deserialize)]
+struct Json {
+    hash: String,
+    /// The languages' order, comma-separated, if not the game's.
+    langmap: Option<String>,
+    /// HITMAN (2016)'s other cipher, which World of Assassination doesn't use.
+    #[serde(default)]
+    symmetric: bool,
+    languages: Map<String, Value>,
+}
+
 /// A language's strings, by hash, still encrypted.
 type Strings = Vec<(u32, Vec<u8>)>;
 
@@ -113,6 +142,46 @@ impl Locr {
             languages.push(Some(strings));
         }
         Ok(Self { version, languages })
+    }
+
+    /// Builds a LOCR from TonyTools' `.locr.json`, returning its runtime ID
+    /// too. Every language gets a table, empty if the JSON has no strings
+    /// for it, and it starts with 0, like TonyTools writes them.
+    pub fn from_json(text: &str) -> Result<(RuntimeResourceID, Self), String> {
+        let json: Json =
+            serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string())?;
+        if json.symmetric {
+            return Err("it uses HITMAN (2016)'s `symmetric` cipher".to_owned());
+        }
+        let order: Vec<String> = match &json.langmap {
+            Some(map) => map.split(',').map(|l| l.trim().to_owned()).collect(),
+            None => CODES.iter().map(|&c| c.to_owned()).collect(),
+        };
+        let mut locr = Self {
+            version: 0,
+            languages: vec![Some(Vec::new()); order.len()],
+        };
+        for (language, strings) in &json.languages {
+            let index = order
+                .iter()
+                .position(|l| l.eq_ignore_ascii_case(language))
+                .ok_or_else(|| format!("`{language}` isn't one of its languages"))?;
+            let strings = strings
+                .as_object()
+                .ok_or_else(|| format!("`{language}` isn't an object of strings"))?;
+            for (key, text) in strings {
+                let text = text
+                    .as_str()
+                    .ok_or_else(|| format!("`{language}`.`{key}` isn't a string"))?;
+                locr.set(index, json_key_hash(key), text)?;
+            }
+        }
+        Ok((meta::parse_hash(&json.hash), locr))
+    }
+
+    /// Starts with the same byte as `other`.
+    pub fn keep_version(&mut self, other: &Locr) {
+        self.version = other.version;
     }
 
     /// Sets a string, replacing it if the language has it already.

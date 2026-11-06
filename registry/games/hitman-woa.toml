@@ -16,3 +16,6 @@ kind = "smf"
 steam = [1659040]
 folder = "HITMAN 3"
 exe = ["Retail/HITMAN3.exe"]
+
+# Mods' options, picked as in SMF's mod manager.
+[ext.smf]

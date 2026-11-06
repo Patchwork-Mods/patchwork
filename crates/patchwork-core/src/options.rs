@@ -14,7 +14,7 @@
 //! are.
 
 use std::cell::OnceCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -229,32 +229,47 @@ impl<'a> ModPeek<'a> {
     /// Whether it has `path`, in any case, at its top or in a folder at its
     /// top (since mods are often packed inside one).
     pub fn has_near_top(&self, path: &str) -> bool {
+        self.find_near_top(path).is_some()
+    }
+
+    /// The contents of `path`, found as [`ModPeek::has_near_top`] finds it,
+    /// for hooks that need to look inside a small file to know whether they
+    /// apply. `None` if it isn't there or can't be read.
+    pub fn read_near_top(&self, path: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.find_near_top(path)?).ok()
+    }
+
+    fn find_near_top(&self, path: &str) -> Option<PathBuf> {
         let want = path.to_lowercase();
         match self.files {
-            Peek::Files(files) => files.iter().any(|f| {
-                let lower = f.rel.as_str().to_lowercase();
-                lower == want
-                    || lower
-                        .strip_suffix(&want)
-                        .and_then(|top| top.strip_suffix('/'))
-                        .is_some_and(|top| !top.contains('/'))
+            Peek::Files(files) => files
+                .iter()
+                .find(|f| {
+                    let lower = f.rel.as_str().to_lowercase();
+                    lower == want
+                        || lower
+                            .strip_suffix(&want)
+                            .and_then(|top| top.strip_suffix('/'))
+                            .is_some_and(|top| !top.contains('/'))
+                })
+                .map(|f| f.src.clone()),
+            Peek::Dir(dir) => in_dir(dir, &want).or_else(|| {
+                let mut tops: Vec<_> = std::fs::read_dir(dir)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                    .map(|e| e.path())
+                    .collect();
+                tops.sort();
+                tops.iter().find_map(|top| in_dir(top, &want))
             }),
-            Peek::Dir(dir) => {
-                in_dir(dir, &want)
-                    || std::fs::read_dir(dir)
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .any(|e| {
-                            e.file_type().is_ok_and(|t| t.is_dir()) && in_dir(&e.path(), &want)
-                        })
-            }
         }
     }
 }
 
-/// Whether `dir` has `path` (lowercase, `/`-separated), in any case.
-fn in_dir(dir: &Path, path: &str) -> bool {
+/// Where `dir` has `path` (lowercase, `/`-separated), in any case.
+fn in_dir(dir: &Path, path: &str) -> Option<PathBuf> {
     let mut at = dir.to_owned();
     let mut parts = path.split('/').peekable();
     while let Some(part) = parts.next() {
@@ -265,12 +280,9 @@ fn in_dir(dir: &Path, path: &str) -> bool {
                     && e.file_type().is_ok_and(|t| t.is_dir() != last)
             })
         });
-        match found {
-            Some(e) => at = e.path(),
-            None => return false,
-        }
+        at = found?.path();
     }
-    true
+    Some(at)
 }
 
 /// Choices about a mod, as frontends show them.

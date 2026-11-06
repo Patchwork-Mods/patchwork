@@ -364,6 +364,7 @@ fn deploy(config: &str, files: &[&str]) -> Result<(Vec<String>, Vec<String>)> {
             })
             .collect(),
         kind: None,
+        ext: Default::default(),
     };
     let mut desired = DesiredState::default();
     RulesDeployer.plan_mod(&setup, &m, &mut desired)?;

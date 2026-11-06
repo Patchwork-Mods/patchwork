@@ -116,6 +116,7 @@ impl Env {
             hash: ContentHash::of(name.as_bytes()),
             files,
             kind: None,
+            ext: Default::default(),
         }
     }
 

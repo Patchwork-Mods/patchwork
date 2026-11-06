@@ -22,7 +22,8 @@
 //! [`texture`]). Changes to the game's localised strings (`localisation`,
 //! `localisationOverrides`) are applied once every mod's staged, like SMF
 //! does, to the current version of each LOCR (see [`locr`]), and
-//! `localisedLines` become LINE resources.
+//! `localisedLines` become LINE resources. Whole LOCRs can be given as
+//! `.locr.json`.
 //!
 //! Dialogue (`.dlge.json`, `.ditl.json`,
 //! `.clng.json`) is rebuilt natively (see [`dlge`]), and so are materials
@@ -31,12 +32,17 @@
 //! Peacock plugins are placed in the game's folder, listed in a deploy summary
 //! Peacock can read (see [`peacock`]).
 //!
+//! Mods' options are picked with the `smf.options` hook (see [`options`]),
+//! and conditional options are on or off by what else is deployed, as in
+//! SMF.
+//!
 //! Not supported yet: SMF's other special file types (sounds,
-//! other language files and deltas), entities made for QuickEntity versions
-//! before 3.1, scripts and choosing options (those enabled by default are used). Mods that need them fail to deploy rather than half
-//! working.
+//! `.rtlv.json` and deltas), entities made for QuickEntity versions
+//! before 3.1, and scripts. Mods that need them fail to deploy rather than
+//! half working.
 
 mod cache;
+mod condition;
 mod dlge;
 mod entity;
 mod game;
@@ -45,6 +51,7 @@ mod locr;
 mod manifest;
 mod material;
 mod meta;
+mod options;
 mod ores;
 mod peacock;
 mod resource;
@@ -89,7 +96,8 @@ impl Extension for Smf {
     }
 
     fn register(&self, ext: &mut Registrar<'_>) {
-        ext.deployer(SmfDeployer);
+        ext.deployer(SmfDeployer)
+            .mod_options("options", options::SmfOptions);
     }
 }
 
@@ -106,7 +114,7 @@ const BUILT_BY: &str = "SMF mods";
 
 /// SMF content files that are converted rather than copied, which patchwork
 /// can't do yet.
-const UNSUPPORTED_TYPES: &[&str] = &["locr.json", "rtlv.json", "sfx.wem", "delta"];
+const UNSUPPORTED_TYPES: &[&str] = &["rtlv.json", "sfx.wem", "delta"];
 
 /// The partition SMF puts edits to the game's lookup tables in.
 const BASE: &str = "chunk0";
@@ -195,6 +203,8 @@ struct Build<'a> {
     destinations: Vec<Destination>,
     /// Manifest ids of the mods being deployed, and what they require.
     ids: HashSet<String>,
+    /// What SMF's `config.loadOrder` would be, for conditional options.
+    load_order: HashSet<String>,
     checks: Vec<(String, Vec<String>, Vec<String>)>,
     /// The current mod's entity patches, applied once its content's staged.
     entity_patches: Vec<EntityPatch>,
@@ -239,6 +249,7 @@ impl<'a> Build<'a> {
             archives: Archives::default(),
             destinations: Vec::new(),
             ids: HashSet::new(),
+            load_order: HashSet::new(),
             checks: Vec::new(),
             entity_patches: Vec::new(),
             string_overrides: Vec::new(),
@@ -248,6 +259,7 @@ impl<'a> Build<'a> {
     }
 
     fn run(mut self, mods: &[InstalledMod]) -> Result<DesiredState, String> {
+        self.load_order = options::load_order(mods);
         for m in mods {
             self.ctx.reporter.report(Event::Building {
                 step: m.name.clone(),
@@ -309,12 +321,7 @@ impl<'a> Build<'a> {
     }
 
     fn stage_mod(&mut self, m: &InstalledMod) -> Result<(), String> {
-        let mut manifests: Vec<&ModFile> = m
-            .files
-            .iter()
-            .filter(|f| f.rel.file_name().eq_ignore_ascii_case("manifest.json"))
-            .collect();
-        manifests.sort_by(|a, b| a.rel.cmp(&b.rel));
+        let manifests = options::manifests(m);
         if !manifests.is_empty() {
             for file in manifests {
                 self.stage_framework_mod(m, file)?;
@@ -360,7 +367,12 @@ impl<'a> Build<'a> {
         let files = ModFiles::new(m, root.as_ref());
         let label = format!("`{}` ({})", m.name, manifest.id);
 
-        let (active, option_warnings) = manifest.active();
+        let picked = options::picked(m).unwrap_or_else(|e| {
+            self.warnings
+                .push(format!("{label} gets its default options, since {e}"));
+            None
+        });
+        let (active, option_warnings) = manifest.active(picked.as_deref(), &self.load_order);
         for warning in option_warnings {
             self.warnings.push(format!("{label}: {warning}"));
         }
@@ -477,6 +489,7 @@ impl<'a> Build<'a> {
                 "ditl.json" => Some(self.stage_dialogue(file, &partition, "DITL")),
                 "clng.json" => Some(self.stage_dialogue(file, &partition, "CLNG")),
                 "material.json" => Some(self.stage_material(file, &partition)),
+                "locr.json" => Some(self.stage_locr(file, &partition)),
                 _ => None,
             };
             if let Some(result) = special {
@@ -519,35 +532,36 @@ impl<'a> Build<'a> {
     }
 
     /// Copies what a resource depends on into a partition, without replacing
-    /// anything already staged there.
+    /// anything already staged there. Like SMF (which hands it to rpkg-cli
+    /// as a filter), a dependency can list several resources, separated by
+    /// commas.
     fn stage_dependency(&mut self, label: &str, dependency: &Dependency) -> Result<(), String> {
-        let Some(rrid) = meta::parse_hex_hash(dependency.runtime_id()) else {
-            self.errors.push(format!(
-                "{label}: dependency `{}` isn't a runtime ID",
-                dependency.runtime_id()
-            ));
-            return Ok(());
-        };
-        let found: Vec<_> = self
-            .game()?
-            .dependencies(rrid, dependency.includes_chunk1())
-            .into_iter()
-            .map(|(archive, info)| (archive.path.clone(), info.clone()))
-            .collect();
-        if found.is_empty() {
-            self.warnings.push(format!(
-                "{label}: the game has nothing to copy for dependency {}",
-                dependency.runtime_id()
-            ));
-        }
-        let staged = self
-            .staged
-            .entry(format!("chunk{}", dependency.to_chunk()))
-            .or_default();
-        for (archive, info) in found {
-            staged
-                .entry(u64::from(*info.rrid()))
-                .or_insert(Resource::Packaged { archive, info });
+        for id in dependency.runtime_id().split(',').map(str::trim) {
+            let Some(rrid) = meta::parse_hex_hash(id) else {
+                self.errors
+                    .push(format!("{label}: dependency `{id}` isn't a runtime ID"));
+                continue;
+            };
+            let found: Vec<_> = self
+                .game()?
+                .dependencies(rrid, dependency.includes_chunk1())
+                .into_iter()
+                .map(|(archive, info)| (archive.path.clone(), info.clone()))
+                .collect();
+            if found.is_empty() {
+                self.warnings.push(format!(
+                    "{label}: the game has nothing to copy for dependency {id}"
+                ));
+            }
+            let staged = self
+                .staged
+                .entry(format!("chunk{}", dependency.to_chunk()))
+                .or_default();
+            for (archive, info) in found {
+                staged
+                    .entry(u64::from(*info.rrid()))
+                    .or_insert(Resource::Packaged { archive, info });
+            }
         }
         Ok(())
     }
@@ -982,6 +996,17 @@ impl<'a> Build<'a> {
             "CLNG" => dlge::build_clng(&text)?,
             _ => dlge::build(&text)?,
         };
+        self.stage_rebuilt(partition, resource_type, built)
+    }
+
+    /// Stages a resource rebuilt from JSON, keeping the header of the
+    /// version it replaces if there is one.
+    fn stage_rebuilt(
+        &mut self,
+        partition: &str,
+        resource_type: &str,
+        built: dlge::Built,
+    ) -> Result<(), String> {
         let hash = u64::from(built.hash);
         let mut loaded = match self.current(partition, hash)? {
             Some(existing) => existing.with_data(built.data),
@@ -998,6 +1023,23 @@ impl<'a> Build<'a> {
         loaded.header.references = built.references;
         self.stage_built(partition, hash, loaded);
         Ok(())
+    }
+
+    /// Builds a whole LOCR from TonyTools JSON, replacing the current
+    /// version (whose first byte it keeps, as the game's differ from
+    /// TonyTools').
+    fn stage_locr(&mut self, file: &ModFile, partition: &str) -> Result<(), String> {
+        let text = fs::read_to_string(&file.src).map_err(|e| e.to_string())?;
+        let (hash, mut strings) = locr::Locr::from_json(&text)?;
+        if let Some(existing) = self.current(partition, u64::from(hash))? {
+            strings.keep_version(&locr::Locr::parse(&existing.data)?);
+        }
+        let built = dlge::Built {
+            hash,
+            data: strings.serialize(),
+            references: Vec::new(),
+        };
+        self.stage_rebuilt(partition, "LOCR", built)
     }
 
     /// Rebuilds a material's MATI, MATT and MATB from RPKG Tool JSON. Like

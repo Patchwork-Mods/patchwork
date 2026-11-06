@@ -2488,6 +2488,7 @@ impl Patchwork {
             hash: locked.hash,
             files,
             kind: locked.kind.clone(),
+            ext: Default::default(),
         })
     }
 

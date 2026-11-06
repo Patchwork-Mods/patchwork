@@ -18,7 +18,7 @@ crc32fast = "1.4.0"
 # Entities: QuickEntity converts and patches them, glacier-bin1 reads and
 # writes the game's binary form, and hitman-commons has the types between.
 quickentity-rs = { path = "../../vendor/quickentity-rs" }
-glacier-bin1 = { git = "https://github.com/atampy25/glacier-bin1", rev = "4755928", features = ["h3", "TEMP", "TBLU"] }
+glacier-bin1 = { git = "https://github.com/atampy25/glacier-bin1", rev = "2a64dc8", features = ["h3", "TEMP", "TBLU"] }
 hitman-commons = { git = "https://github.com/atampy25/glacier-commons", rev = "455c9fc2f17a87ce3d164b6de65ecc527de7fe21", features = ["resourcelib", "serde"] }
 serde_path_to_error = "0.1.20"
 # Textures: converts SMF's TGAs into the game's TEXT and TEXD resources.
