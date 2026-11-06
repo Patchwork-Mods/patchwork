@@ -15,7 +15,7 @@ use patchwork_core::launch::{self, LaunchOption};
 use patchwork_core::list::List;
 use patchwork_core::locate::Locator;
 use patchwork_core::lock::mod_key;
-use patchwork_core::options::{Answer, ItemState, Pick};
+use patchwork_core::options::{Answer, Field, FieldKind, ItemState, Pick, Value};
 use patchwork_core::order::{self, Position, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
@@ -148,12 +148,17 @@ enum Command {
         /// Repeat for more groups; the picks are saved.
         #[arg(long = "pick", value_name = "GROUP=OPTIONS")]
         picks: Vec<String>,
+        /// Set a setting, as `SETTING=VALUE`, or `GROUP/SETTING=VALUE` (or
+        /// `PAGE/GROUP/SETTING=VALUE`) if more than one has its name.
+        /// Repeat for more settings; they're saved.
+        #[arg(long = "set", value_name = "SETTING=VALUE")]
+        sets: Vec<String>,
         /// Save the options as they're shown, keeping the defaults in groups
         /// nothing's been picked in yet.
         #[arg(long)]
         save: bool,
         /// Forget the options picked, going back to the defaults.
-        #[arg(long, conflicts_with_all = ["picks", "save"])]
+        #[arg(long, conflicts_with_all = ["picks", "sets", "save"])]
         reset: bool,
     },
     /// Show a mod's changelog, newest first.
@@ -817,6 +822,7 @@ async fn run(cli: Cli) -> Result<()> {
             name,
             of,
             picks,
+            sets,
             save,
             reset,
         } => {
@@ -827,7 +833,7 @@ async fn run(cli: Cli) -> Result<()> {
             if reset {
                 pw.set_mod_options(&profile, &name, of, None)?;
                 view = pw.mod_options(&profile, &name, of, None)?;
-            } else if save || !picks.is_empty() {
+            } else if save || !picks.is_empty() || !sets.is_empty() {
                 let mut answers = view.form.answers.clone();
                 for pick in &picks {
                     // Each pick can show pages that the next is on.
@@ -836,6 +842,16 @@ async fn run(cli: Cli) -> Result<()> {
                     match answers.iter_mut().find(|a| a.group == picked.group) {
                         Some(a) => *a = picked,
                         None => answers.push(picked),
+                    }
+                }
+                for set in &sets {
+                    let now = pw.mod_options(&profile, &name, of, Some(&answers))?;
+                    let (group, field, value) = find_set(&now, set)?;
+                    match answers.iter_mut().find(|a| a.group == group) {
+                        Some(a) => {
+                            a.values.insert(field, value);
+                        }
+                        None => answers.push(Answer::values(group, [(field, value)].into())),
                     }
                 }
                 pw.set_mod_options(&profile, &name, of, Some(&answers))?;
@@ -2127,7 +2143,7 @@ fn find_pick(view: &ModOptionsView, pick: &str) -> Result<Answer> {
         .iter()
         .filter(|p| page.is_none_or(|page| p.title.eq_ignore_ascii_case(page)))
         .flat_map(|p| &p.groups)
-        .filter(|g| g.title.eq_ignore_ascii_case(group))
+        .filter(|g| g.pick().is_some() && g.title.eq_ignore_ascii_case(group))
         .collect();
     let g = match found.as_slice() {
         [found] => *found,
@@ -2139,12 +2155,12 @@ fn find_pick(view: &ModOptionsView, pick: &str) -> Result<Answer> {
         .map(str::trim)
         .filter(|o| !o.is_empty())
         .map(|o| {
-            g.items
+            g.items()
                 .iter()
                 .find(|i| i.title.eq_ignore_ascii_case(o))
                 .map(|i| i.id.clone())
                 .with_context(|| {
-                    let names: Vec<_> = g.items.iter().map(|i| i.title.as_str()).collect();
+                    let names: Vec<_> = g.items().iter().map(|i| i.title.as_str()).collect();
                     format!(
                         "`{}` has no option called `{o}`; it has {}",
                         g.title,
@@ -2153,10 +2169,72 @@ fn find_pick(view: &ModOptionsView, pick: &str) -> Result<Answer> {
                 })
         })
         .collect::<Result<_>>()?;
-    Ok(Answer {
-        group: g.id.clone(),
-        items,
-    })
+    Ok(Answer::picks(g.id.clone(), items))
+}
+
+/// The group and field a `--set` is for, with the value it sets, by the
+/// names the form shows.
+fn find_set(view: &ModOptionsView, set: &str) -> Result<(String, String, Value)> {
+    let (at, text) = set
+        .split_once('=')
+        .with_context(|| format!("`{set}` should be SETTING=VALUE"))?;
+    let mut path: Vec<&str> = at.split('/').map(str::trim).collect();
+    let name = path.pop().unwrap_or_default();
+    let (page, group) = match path.as_slice() {
+        [] => (None, None),
+        [group] => (None, Some(*group)),
+        [page, group] => (Some(*page), Some(*group)),
+        _ => bail!("`{at}` should be SETTING, GROUP/SETTING or PAGE/GROUP/SETTING"),
+    };
+    let found: Vec<_> = view
+        .form
+        .pages
+        .iter()
+        .filter(|p| page.is_none_or(|page| p.title.eq_ignore_ascii_case(page)))
+        .flat_map(|p| &p.groups)
+        .filter(|g| group.is_none_or(|group| g.title.eq_ignore_ascii_case(group)))
+        .flat_map(|g| g.fields().iter().map(move |f| (g, f)))
+        .filter(|(_, f)| f.title.eq_ignore_ascii_case(name) || f.id == name)
+        .collect();
+    let (g, field) = match found.as_slice() {
+        [found] => *found,
+        [] => bail!("there's no setting called `{at}` with the options picked so far"),
+        _ => bail!("more than one group has a setting called `{name}`; say which, as GROUP/{name}"),
+    };
+    let text = text.trim();
+    let bad = || anyhow::anyhow!("`{}` should be {}", field.title, field.kind.describe());
+    let value = match &field.kind {
+        FieldKind::Toggle => match text.to_lowercase().as_str() {
+            "true" | "on" | "yes" | "1" => Value::Bool(true),
+            "false" | "off" | "no" | "0" => Value::Bool(false),
+            _ => return Err(bad()),
+        },
+        FieldKind::Int { .. } => Value::Int(text.parse().map_err(|_| bad())?),
+        FieldKind::Float { .. } => Value::Float(text.parse().map_err(|_| bad())?),
+        FieldKind::Choice { choices } => {
+            let choice = choices
+                .iter()
+                .find(|c| c.title.eq_ignore_ascii_case(text) || c.id == text)
+                .with_context(|| {
+                    let names: Vec<_> = choices.iter().map(|c| c.title.as_str()).collect();
+                    format!("`{}` should be one of {}", field.title, names.join(", "))
+                })?;
+            Value::Text(choice.id.clone())
+        }
+        FieldKind::Text { .. } | FieldKind::Color { .. } => Value::Text(text.to_owned()),
+    };
+    Ok((g.id.clone(), field.id.clone(), value))
+}
+
+/// `value` as `field` shows it: a choice by its title.
+fn shown(field: &Field, value: &Value) -> String {
+    match (&field.kind, value) {
+        (FieldKind::Choice { choices }, Value::Text(id)) => choices
+            .iter()
+            .find(|c| c.id == *id)
+            .map_or_else(|| value.to_string(), |c| c.title.clone()),
+        _ => value.to_string(),
+    }
 }
 
 fn print_options(name: &str, view: &ModOptionsView) {
@@ -2171,7 +2249,31 @@ fn print_options(name: &str, view: &ModOptionsView) {
         println!();
         println!("{}", page.title);
         for group in &page.groups {
-            let (rule, single) = match group.pick {
+            let Some(pick) = group.pick() else {
+                println!("  {}:", group.title);
+                for field in group.fields() {
+                    let what = match &field.kind {
+                        FieldKind::Choice { choices } => {
+                            let names: Vec<_> = choices.iter().map(|c| c.title.as_str()).collect();
+                            format!("one of {}", names.join(", "))
+                        }
+                        kind => kind.describe(),
+                    };
+                    let default = field
+                        .default
+                        .as_ref()
+                        .map(|d| format!("; default {}", shown(field, d)))
+                        .unwrap_or_default();
+                    println!(
+                        "    {} = {} ({what}{default})",
+                        field.title,
+                        shown(field, &field.value)
+                    );
+                    print_description(field.description.as_deref());
+                }
+                continue;
+            };
+            let (rule, single) = match pick {
                 Pick::ExactlyOne => ("pick one", true),
                 Pick::AtMostOne => ("pick one or none", true),
                 Pick::AtLeastOne => ("pick at least one", false),
@@ -2179,7 +2281,7 @@ fn print_options(name: &str, view: &ModOptionsView) {
                 Pick::Any => ("pick any", false),
             };
             println!("  {} ({rule}):", group.title);
-            for item in &group.items {
+            for item in group.items() {
                 let mark = match (single, item.picked) {
                     (true, true) => "(*)",
                     (true, false) => "( )",
@@ -2194,15 +2296,7 @@ fn print_options(name: &str, view: &ModOptionsView) {
                     ItemState::Optional => "",
                 };
                 println!("    {mark} {}{state}", item.title);
-                if let Some(line) = item
-                    .description
-                    .iter()
-                    .flat_map(|d| d.lines())
-                    .map(str::trim)
-                    .find(|l| !l.is_empty())
-                {
-                    println!("        {}", truncate(line, 100));
-                }
+                print_description(item.description.as_deref());
             }
         }
     }
@@ -2212,11 +2306,23 @@ fn print_options(name: &str, view: &ModOptionsView) {
     }
     if !view.saved {
         println!(
-            "These are the defaults, which are used until you pick some with --pick GROUP=OPTION, or keep these with --save."
+            "These are the defaults, which are used until you pick some with --pick GROUP=OPTION or --set SETTING=VALUE, or keep these with --save."
         );
     }
     for warning in &form.warnings {
         eprintln!("warning: {warning}");
+    }
+}
+
+/// The first line of an item's or setting's description, if it has one.
+fn print_description(description: Option<&str>) {
+    if let Some(line) = description
+        .iter()
+        .flat_map(|d| d.lines())
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+    {
+        println!("        {}", truncate(line, 100));
     }
 }
 

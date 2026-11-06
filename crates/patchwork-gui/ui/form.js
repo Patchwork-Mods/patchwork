@@ -3,7 +3,8 @@
 // made for. Each change is worked out again by main.rs (the extension in
 // core), since picks can show or hide later pages and change what can be
 // picked. Nothing's saved until the last page's Save. Nothing here knows
-// what the choices are for; it draws the form core hands it.
+// what the choices are for; it draws the form core hands it: groups of items
+// to pick, or of fields to set.
 
 import { $, h } from "./dom.js";
 import { run, state, status } from "./state.js";
@@ -99,13 +100,23 @@ function render() {
       ? `Step ${at + 1} of ${pages.length}: ${page.title}`
       : page.title
     : "";
+  // Each change draws the form again, so the field that had focus gets it
+  // back, as tabbing out of one changes it.
+  const focused = document.activeElement?.dataset?.field;
   $("#options-groups").replaceChildren(
     ...(page
-      ? page.groups.map((g, i) => groupView(g, i))
+      ? page.groups.map((g, i) => (g.kind === "fields" ? fieldsView(g) : groupView(g, i)))
       : [h("p", { class: "muted" }, "There aren't any options to pick.")]),
   );
-  const first = page?.groups.flatMap((g) => g.items).find((i) => i.picked);
-  preview(first ?? page?.groups[0]?.items[0] ?? null);
+  if (focused) {
+    const again = [...$("#options-groups").querySelectorAll("[data-field]")].find(
+      (el) => el.dataset.field === focused,
+    );
+    again?.focus();
+  }
+  const items = page?.groups.flatMap((g) => g.items ?? []) ?? [];
+  const fields = page?.groups.flatMap((g) => g.fields ?? []) ?? [];
+  preview(items.find((i) => i.picked) ?? items[0] ?? fields[0] ?? null);
 
   $("#options-warnings").replaceChildren(
     ...form.warnings.map((w) => h("li", { class: "warning" }, w)),
@@ -177,21 +188,145 @@ function pick(group, input) {
   const items = [...document.querySelectorAll(`input[name="${input}"]:checked`)]
     .map((i) => i.value)
     .filter(Boolean);
-  const answers = open.answers.filter((a) => a.group !== group.id);
+  answer(group, (a) => ({ ...a, items }));
+}
+
+/** Replaces `group`'s answer with what `change` makes of it (an empty one,
+ * if it hasn't got one), and works them out again. */
+function answer(group, change) {
   const at = open.answers.findIndex((a) => a.group === group.id);
-  answers.splice(at < 0 ? answers.length : at, 0, { group: group.id, items });
+  const answers = [...open.answers];
+  const changed = change(at < 0 ? { group: group.id, items: [] } : answers[at]);
+  if (at < 0) answers.push(changed);
+  else answers[at] = changed;
   open.answers = answers;
   load(answers);
 }
 
-/** Shows an item's picture and description beside the groups. */
+/** A group's fields, each with something to set it with that suits it. */
+function fieldsView(group) {
+  return h(
+    "fieldset",
+    { class: "options-group options-fields" },
+    h("legend", {}, group.title),
+    ...group.fields.map((field) => {
+      const set = (value) =>
+        answer(group, (a) => ({ ...a, values: { ...a.values, [field.id]: value } }));
+      const key = JSON.stringify([group.id, field.id]);
+      const control = fieldControl(field, set, key);
+      const toggle = field.type === "toggle";
+      return h(
+        "label",
+        {
+          class: toggle ? "options-field options-item" : "options-field",
+          onmouseenter: () => preview(field),
+          onfocusin: () => preview(field),
+        },
+        toggle && control,
+        h("span", {}, field.title),
+        !toggle && control,
+      );
+    }),
+  );
+}
+
+/** What sets `field`: `set` gets the value it's changed to. `key` finds it
+ * again once the form's drawn again. */
+function fieldControl(field, set, key) {
+  const value = field.value;
+  switch (field.type) {
+    case "toggle":
+      return h("input", {
+        type: "checkbox",
+        checked: value === true,
+        "data-field": key,
+        onchange: (e) => set(e.target.checked),
+      });
+    case "int":
+    case "float": {
+      const whole = field.type === "int";
+      return h("input", {
+        type: "number",
+        class: "options-number",
+        value: String(value),
+        min: field.min,
+        max: field.max,
+        step: field.step ?? (whole ? 1 : "any"),
+        "data-field": key,
+        onchange: (e) => {
+          const n = whole ? Number.parseInt(e.target.value, 10) : Number(e.target.value);
+          // Left as it was, if it isn't a number at all; core says what's
+          // wrong with ones that are, but are out of range.
+          if (e.target.value.trim() === "" || !Number.isFinite(n)) e.target.value = String(value);
+          else set(n);
+        },
+      });
+    }
+    case "text":
+      return h(field.multiline ? "textarea" : "input", {
+        type: field.multiline ? null : "text",
+        class: "options-text",
+        value: field.multiline ? null : value,
+        rows: field.multiline ? 4 : null,
+        "data-field": key,
+        onchange: (e) => set(e.target.value),
+        // A textarea's text is its contents rather than an attribute.
+      }, field.multiline ? String(value) : null);
+    case "choice":
+      return h(
+        "select",
+        { "data-field": key, onchange: (e) => set(e.target.value) },
+        ...field.choices.map((c) =>
+          h("option", { value: c.id, selected: c.id === value }, c.title),
+        ),
+      );
+    case "color": {
+      const rgb = String(value).slice(0, 7);
+      const alpha = String(value).slice(7) || "ff";
+      const picker = h("input", {
+        type: "color",
+        value: rgb,
+        "data-field": key,
+        onchange: (e) => set(field.alpha ? e.target.value + alpha : e.target.value),
+      });
+      if (!field.alpha) return picker;
+      const opacity = h("input", {
+        type: "range",
+        class: "options-alpha",
+        min: 0,
+        max: 255,
+        value: Number.parseInt(alpha, 16),
+        title: "Opacity",
+        "data-field": `${key}alpha`,
+        onchange: (e) => set(rgb + Number(e.target.value).toString(16).padStart(2, "0")),
+      });
+      return h("span", { class: "options-color" }, picker, opacity);
+    }
+    default:
+      return h("span", { class: "muted" }, String(value));
+  }
+}
+
+/** Shows an item's or field's picture and description beside the groups,
+ * with a field's default. */
 function preview(item) {
   const picture = $("#options-picture");
   const src = item?.image && open?.pictures.get(item.image);
   picture.hidden = !src;
   if (src) picture.src = src;
   else picture.removeAttribute("src");
-  $("#options-description").textContent = item ? item.description || "No description." : "";
+  let text = item ? item.description || "No description." : "";
+  if (item && "default" in item && item.default != null) {
+    text += `\n\nDefault: ${shown(item, item.default)}`;
+  }
+  $("#options-description").textContent = text;
+}
+
+/** `value` as `field` shows it: a choice by its title. */
+function shown(field, value) {
+  if (field.type === "choice") return field.choices.find((c) => c.id === value)?.title ?? value;
+  if (field.type === "toggle") return value ? "On" : "Off";
+  return String(value);
 }
 
 $("#options-back").addEventListener("click", () => {

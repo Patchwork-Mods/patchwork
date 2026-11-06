@@ -7,7 +7,8 @@ use std::fs;
 
 use patchwork_core::deploy::InstalledMod;
 use patchwork_core::options::{
-    Answer, Form, Group, Item, ModContext, ModOptions, ModPeek, ModTransform, Page, Transformed,
+    Answer, Form, Group, GroupKind, Item, ModContext, ModOptions, ModPeek, ModTransform, Page,
+    Transformed,
 };
 use patchwork_core::relpath::RelPath;
 use patchwork_core::{Error, Result};
@@ -133,20 +134,22 @@ impl ModOptions for FomodInstaller {
                         .map(|g| Group {
                             id: group_id(&step.name, &g.name),
                             title: g.name,
-                            pick: g.kind,
-                            items: g
-                                .options
-                                .into_iter()
-                                .map(|o| Item {
-                                    id: o.name.clone(),
-                                    title: o.name,
-                                    description: Some(o.description)
-                                        .filter(|d| !d.trim().is_empty()),
-                                    image: o.image,
-                                    state: o.kind,
-                                    picked: o.picked,
-                                })
-                                .collect(),
+                            kind: GroupKind::Pick {
+                                pick: g.kind,
+                                items: g
+                                    .options
+                                    .into_iter()
+                                    .map(|o| Item {
+                                        id: o.name.clone(),
+                                        title: o.name,
+                                        description: Some(o.description)
+                                            .filter(|d| !d.trim().is_empty()),
+                                        image: o.image,
+                                        state: o.kind,
+                                        picked: o.picked,
+                                    })
+                                    .collect(),
+                            },
                             defaulted: g.defaulted,
                         })
                         .collect(),
@@ -161,10 +164,7 @@ impl ModOptions for FomodInstaller {
             answers: resolved
                 .selections
                 .into_iter()
-                .map(|s| Answer {
-                    group: group_id(&s.step, &s.group),
-                    items: s.options,
-                })
+                .map(|s| Answer::picks(group_id(&s.step, &s.group), s.options))
                 .collect(),
         })
     }
@@ -329,10 +329,7 @@ mod tests {
     #[test]
     fn group_ids_give_back_their_step_and_group() {
         for (step, group) in [("Main", "Look"), ("A/B", "C\\D"), ("", "/"), ("x\\", "")] {
-            let answer = Answer {
-                group: group_id(step, group),
-                items: vec!["one".to_owned()],
-            };
+            let answer = Answer::picks(group_id(step, group), vec!["one".to_owned()]);
             let back = selection(&answer);
             assert_eq!((back.step.as_str(), back.group.as_str()), (step, group));
             assert_eq!(back.options, ["one"]);

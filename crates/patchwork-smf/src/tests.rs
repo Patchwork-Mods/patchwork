@@ -487,8 +487,11 @@ fn options_form_and_save() {
         .map(|g| {
             (
                 g.id.as_str(),
-                g.pick,
-                g.items.iter().map(|i| (i.id.as_str(), i.picked)).collect(),
+                g.pick().unwrap(),
+                g.items()
+                    .iter()
+                    .map(|i| (i.id.as_str(), i.picked))
+                    .collect(),
             )
         })
         .collect();
@@ -510,35 +513,29 @@ fn options_form_and_save() {
     );
     assert!(groups[0].defaulted);
     assert_eq!(
-        groups[0].items[1].description.as_deref(),
+        groups[0].items()[1].description.as_deref(),
         Some("Not by default")
     );
-    assert_eq!(groups[2].items[1].state, ItemState::Required);
-    assert_eq!(groups[2].items[0].state, ItemState::NotUsable);
+    assert_eq!(groups[2].items()[1].state, ItemState::Required);
+    assert_eq!(groups[2].items()[0].state, ItemState::NotUsable);
     assert_eq!(form.warnings.len(), 1, "{:?}", form.warnings);
 
     // Answering one group keeps the defaults in the others.
-    let answers = [Answer {
-        group: "Pick".to_owned(),
-        items: vec!["B".to_owned()],
-    }];
+    let answers = [Answer::picks("Pick".to_owned(), vec!["B".to_owned()])];
     let saved = hook.save(&ctx, &m, &answers).unwrap();
     assert_eq!(saved.to_string(), "options = [\"On\", \"Pick:B\"]\n");
 
     // And then what's saved is what's picked.
     let ctx = ModContext::new(&def, &config, "smf", &saved, &mods, None);
-    let answers = [Answer {
-        group: "Options".to_owned(),
-        items: vec![],
-    }];
+    let answers = [Answer::picks("Options".to_owned(), vec![])];
     let saved = hook.save(&ctx, &m, &answers).unwrap();
     assert_eq!(saved.to_string(), "options = [\"Pick:B\"]\n");
 
     let wrong = |group: &str, items: &[&str]| {
-        let answers = [Answer {
-            group: group.to_owned(),
-            items: items.iter().map(|s| (*s).to_owned()).collect(),
-        }];
+        let answers = [Answer::picks(
+            group.to_owned(),
+            items.iter().map(|s| (*s).to_owned()).collect(),
+        )];
         hook.save(&ctx, &m, &answers).unwrap_err().to_string()
     };
     assert!(wrong("Pick", &["A", "B"]).contains("pick one of"));

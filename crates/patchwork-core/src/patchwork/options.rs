@@ -12,7 +12,7 @@ use crate::deploy::{GameFiles, InstalledMod, ModFile};
 use crate::ext::{self, Hook};
 use crate::game::GameDef;
 use crate::lock::LockedMod;
-use crate::options::{Answer, Form, ModContext, ModOptions, ModPeek, ModTransform};
+use crate::options::{Answer, Form, ModContext, ModOptions, ModPeek, ModTransform, checked};
 use crate::profile::{Profile, ProfileRef, no_such_mod};
 use crate::relpath::RelPath;
 use crate::{Error, Result};
@@ -181,6 +181,78 @@ impl Patchwork {
         id: Option<&str>,
         answers: Option<&[Answer]>,
     ) -> Result<ModOptionsView> {
+        self.with_options(profile, name, id, |id, hook, ctx, m| {
+            let mut form = hook.hook.form(ctx, m, answers)?;
+            // They're only checked when saved, so the user sees what's
+            // wrong as they go.
+            if let Some(Err(e)) = answers.map(|answers| checked(&form, answers)) {
+                form.warnings.push(e.to_string());
+            }
+            let images = form
+                .pages
+                .iter()
+                .flat_map(|p| &p.groups)
+                .flat_map(|g| g.items())
+                .filter_map(|i| i.image.as_ref())
+                .filter_map(|rel| {
+                    let file = m.files.iter().find(|f| f.rel == *rel)?;
+                    Some((rel.to_string(), file.src.clone()))
+                })
+                .collect();
+            Ok(ModOptionsView {
+                id: id.to_owned(),
+                title: hook.hook.title().to_owned(),
+                saved: ctx.saved(),
+                form,
+                images,
+            })
+        })
+    }
+
+    /// Saves `answers` as what's picked in `name`'s choices `id` (or its
+    /// only ones), or with `None` forgets what was, so it gets the
+    /// defaults. Forgetting clears everything the choices' extension keeps
+    /// for the mod. Values are checked against the fields they're for
+    /// first, so the extension only gets ones they can have.
+    pub fn set_mod_options(
+        &self,
+        profile: &ProfileRef,
+        name: &str,
+        id: Option<&str>,
+        answers: Option<&[Answer]>,
+    ) -> Result<()> {
+        let (ext, table) = self.with_options(profile, name, id, |_, hook, ctx, m| {
+            let table = match answers {
+                None => toml::Table::new(),
+                Some(answers) if answers.iter().all(|a| a.values.is_empty()) => {
+                    hook.hook.save(ctx, m, answers)?
+                }
+                Some(answers) => {
+                    let form = hook.hook.form(ctx, m, Some(answers))?;
+                    hook.hook.save(ctx, m, &checked(&form, answers)?)?
+                }
+            };
+            Ok((hook.ext, table))
+        })?;
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let tables = &mut loaded
+            .find_mut(name)
+            .ok_or_else(|| no_such_mod(&label, name))?
+            .ext;
+        ext::write_state(self.extension(ext), tables, &table, &[])?;
+        self.save_profile(profile, &loaded)
+    }
+
+    /// Calls `f` with `name`'s choices `id` in `profile` (or its only
+    /// ones): their id and hook, the context to call it with, and the mod.
+    fn with_options<T>(
+        &self,
+        profile: &ProfileRef,
+        name: &str,
+        id: Option<&str>,
+        f: impl FnOnce(&str, &Hook<dyn ModOptions>, &ModContext<'_>, &InstalledMod) -> Result<T>,
+    ) -> Result<T> {
         let loaded = self.load_profile(profile)?;
         let registry = self.registry();
         let game = &registry.game(&loaded.game)?.value;
@@ -211,62 +283,7 @@ impl Patchwork {
             (&mods, &load),
             files.as_ref(),
         );
-        let form = hook.hook.form(&ctx, &m, answers)?;
-        let images = form
-            .pages
-            .iter()
-            .flat_map(|p| &p.groups)
-            .flat_map(|g| &g.items)
-            .filter_map(|i| i.image.as_ref())
-            .filter_map(|rel| {
-                let file = m.files.iter().find(|f| f.rel == *rel)?;
-                Some((rel.to_string(), file.src.clone()))
-            })
-            .collect();
-        Ok(ModOptionsView {
-            id: id.to_owned(),
-            title: hook.hook.title().to_owned(),
-            saved: ctx.saved(),
-            form,
-            images,
-        })
-    }
-
-    /// Saves `answers` as what's picked in `name`'s choices `id` (or its
-    /// only ones), or with `None` forgets what was, so it gets the
-    /// defaults. Forgetting clears everything the choices' extension keeps
-    /// for the mod.
-    pub fn set_mod_options(
-        &self,
-        profile: &ProfileRef,
-        name: &str,
-        id: Option<&str>,
-        answers: Option<&[Answer]>,
-    ) -> Result<()> {
-        let mut loaded = self.load_profile(profile)?;
-        let registry = self.registry();
-        let game = &registry.game(&loaded.game)?.value;
-        let lock = self.load_lock(profile)?;
-        let m = self.locked_mod(&loaded, lock.as_ref(), name)?;
-        let (_, hook) = self.options_for(game, &m, id)?;
-        let extension = self.extension(hook.ext);
-        let table = match answers {
-            None => toml::Table::new(),
-            Some(answers) => {
-                let state = self.mod_state(&loaded, hook.ext, name)?;
-                let empty = toml::Table::new();
-                let config = game.hook_config(hook.ext, hook.name).unwrap_or(&empty);
-                let ctx = ModContext::new(game, config, hook.ext, &state, &[], None);
-                hook.hook.save(&ctx, &m, answers)?
-            }
-        };
-        let label = loaded.label();
-        let tables = &mut loaded
-            .find_mut(name)
-            .ok_or_else(|| no_such_mod(&label, name))?
-            .ext;
-        ext::write_state(extension, tables, &table, &[])?;
-        self.save_profile(profile, &loaded)
+        f(id, hook, &ctx, &m)
     }
 
     /// The options that are on for `def`, in id order.

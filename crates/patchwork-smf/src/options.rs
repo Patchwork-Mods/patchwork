@@ -12,7 +12,7 @@ use std::fs;
 
 use patchwork_core::deploy::{InstalledMod, ModFile};
 use patchwork_core::options::{
-    Answer, Form, Group, Item, ItemState, ModContext, ModOptions, ModPeek, Page, Pick,
+    Answer, Form, Group, GroupKind, Item, ItemState, ModContext, ModOptions, ModPeek, Page, Pick,
 };
 use patchwork_core::relpath::RelPath;
 use patchwork_core::{Error, Result};
@@ -150,8 +150,10 @@ impl ModOptions for SmfOptions {
             groups.push(Group {
                 id: layout.checkboxes.clone(),
                 title: layout.checkboxes.clone(),
-                pick: Pick::Any,
-                items: checkboxes.into_iter().map(chosen).collect(),
+                kind: GroupKind::Pick {
+                    pick: Pick::Any,
+                    items: checkboxes.into_iter().map(chosen).collect(),
+                },
                 defaulted: defaulted(&layout.checkboxes),
             });
         }
@@ -159,13 +161,15 @@ impl ModOptions for SmfOptions {
             groups.push(Group {
                 id: name.clone(),
                 title: name.clone(),
-                pick: Pick::ExactlyOne,
-                items: manifest
-                    .options
-                    .iter()
-                    .filter(|o| o.kind == OptionKind::Select && group_of(o) == name)
-                    .map(chosen)
-                    .collect(),
+                kind: GroupKind::Pick {
+                    pick: Pick::ExactlyOne,
+                    items: manifest
+                        .options
+                        .iter()
+                        .filter(|o| o.kind == OptionKind::Select && group_of(o) == name)
+                        .map(chosen)
+                        .collect(),
+                },
                 defaulted: defaulted(name),
             });
         }
@@ -202,22 +206,19 @@ impl ModOptions for SmfOptions {
             groups.push(Group {
                 id: layout.automatic.clone(),
                 title: format!("{} (decided by the other mods enabled)", layout.automatic),
-                pick: Pick::Any,
-                items: automatic,
+                kind: GroupKind::Pick {
+                    pick: Pick::Any,
+                    items: automatic,
+                },
                 defaulted: false,
             });
         }
 
         let answers = groups
             .iter()
-            .map(|g| Answer {
-                group: g.id.clone(),
-                items: g
-                    .items
-                    .iter()
-                    .filter(|i| i.picked)
-                    .map(|i| i.id.clone())
-                    .collect(),
+            .map(|g| {
+                let picked = g.items().iter().filter(|i| i.picked);
+                Answer::picks(g.id.clone(), picked.map(|i| i.id.clone()).collect())
             })
             .collect();
         Ok(Form {

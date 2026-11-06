@@ -368,6 +368,26 @@ shares its state between them. Other installer formats, such as BAIN
 wizards or a Minecraft modpack's optional mods, then come almost for free
 in the GUI and CLI.
 
+#### Mod settings
+
+Picks cover install-time choices, but most settings are values a mod reads
+from a config file at runtime. Formats with enough schema to build a form:
+BepInEx `.cfg`, MCM Helper (`MCM/Config/<mod>/config.json`), BG3's
+`MCM_blueprint.json`, Forge TOML and MelonLoader `.cfg`; plain
+JSON/INI/TOML/YAML only by guessing types. In-game-only menus (SkyUI's MCM)
+are left alone.
+
+1. **Value fields.** A `Group` holds items to pick or fields to set
+   (toggle, integer, number, text, choice, colour), and `Answer` gains
+   `values`. Core checks values before `save`.
+2. **Config files.** Reader extensions turn a mod's config into a form;
+   game or ruleset data says which files are config. The host writes the
+   changed keys into `out`, reading in-game changes back before redeploys.
+3. **Readers**, by reach: BepInEx, generic JSON/INI/TOML, MCM Helper, BG3
+   MCM, Forge. Keybinds become a field kind when a reader needs one.
+4. **Overlays** for mods without a schema: a `patchwork.options.toml` in
+   the mod or registry data describing fields or pick groups.
+
 ### `OrderedList`: something the user puts in order
 
 This replaces `Deployer::plugins`, `plugins.rs`'s Bethesda-only fields, the
@@ -830,7 +850,16 @@ Each step leaves `main` working and shippable.
      `patchwork-builtin` itself.
    - The `opt-level = 2` dev profile override moved from
      `patchwork-deployers` to `patchwork-smf`, since it was for SMF.
-8. Remove the version-2 compatibility code once enough releases have
+8. **Mod settings**; see "Mod settings" under `ModOptions`.
+   - Step 1 (value fields) built (2026-11-06). `Group::kind` is
+     `GroupKind::Pick` or `GroupKind::Fields`, flattened in JSON (pick
+     groups gain `"kind": "pick"`). Values the extension's `form` can't use
+     become form warnings.
+   - CLI: `patchwork options <mod> --set [[PAGE/]GROUP/]SETTING=VALUE`.
+   - GUI classes: `options-fields`, `options-field`, `options-number`,
+     `options-text`, `options-color`, `options-alpha`.
+   - No real extension offers fields yet; only core's test one does.
+9. Remove the version-2 compatibility code once enough releases have
    passed.
 
 ## Using another extension's work

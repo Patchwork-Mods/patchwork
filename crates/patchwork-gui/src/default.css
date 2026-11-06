@@ -1684,6 +1684,34 @@ dialog::backdrop {
   color: var(--pw-muted);
 }
 
+.options-field:not(.options-item) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.options-field textarea {
+  grid-column: 1 / -1;
+  resize: vertical;
+}
+
+.options-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.options-color .options-alpha {
+  flex: 1;
+  min-width: 0;
+}
+
+#options-description {
+  white-space: pre-line;
+}
+
 .options-preview {
   display: flex;
   flex-direction: column;

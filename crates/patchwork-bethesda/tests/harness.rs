@@ -128,10 +128,10 @@ fn fomod_picks_say_what_is_deployed() {
 
     t.answer_options(
         "Looks",
-        &[Answer {
-            group: "Main/Look".to_owned(),
-            items: vec!["Dark".to_owned()],
-        }],
+        &[Answer::picks(
+            "Main/Look".to_owned(),
+            vec!["Dark".to_owned()],
+        )],
     )
     .unwrap();
     assert!(t.options("Looks").unwrap().saved);

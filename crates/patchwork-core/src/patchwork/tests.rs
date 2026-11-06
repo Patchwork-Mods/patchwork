@@ -1878,12 +1878,13 @@ impl Deployer for AsPacked {
 }
 
 /// Mods with a `looks/` folder install just one of the folders in it: the
-/// look picked, or `plain`.
+/// look picked, or `plain`. They also have a shine to set, from 0 to 10.
 struct Looks;
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct Look {
     look: Option<String>,
+    shine: Option<i64>,
 }
 
 impl Looks {
@@ -1898,6 +1899,21 @@ impl Looks {
                 .unwrap()
                 .look
                 .unwrap_or("plain".to_owned()),
+        }
+    }
+
+    fn shine(
+        ctx: &crate::options::ModContext<'_>,
+        answers: Option<&[crate::options::Answer]>,
+    ) -> i64 {
+        let set = answers
+            .into_iter()
+            .flatten()
+            .filter(|a| a.group == "extras")
+            .find_map(|a| a.values.get("shine"));
+        match set {
+            Some(crate::options::Value::Int(shine)) if (0..=10).contains(shine) => *shine,
+            _ => ctx.state::<Look>().unwrap().shine.unwrap_or(3),
         }
     }
 }
@@ -1948,36 +1964,64 @@ impl crate::options::ModOptions for Looks {
         m: &InstalledMod,
         answers: Option<&[crate::options::Answer]>,
     ) -> Result<crate::options::Form> {
-        use crate::options::{Answer, Form, Group, Item, ItemState, Page, Pick};
+        use crate::options::{
+            Answer, Field, FieldKind, Form, Group, GroupKind, Item, ItemState, Page, Pick, Value,
+        };
         let picked = Self::picked(ctx, answers);
         let image = m.files.iter().find(|f| f.rel.file_name() == "fancy.png");
         Ok(Form {
             title: "Pretty Things".to_owned(),
             pages: vec![Page {
                 title: "Main".to_owned(),
-                groups: vec![Group {
-                    id: "look".to_owned(),
-                    title: "Look".to_owned(),
-                    pick: Pick::ExactlyOne,
-                    items: ["plain", "fancy"]
-                        .map(|look| Item {
-                            id: look.to_owned(),
-                            title: look.to_owned(),
-                            description: None,
-                            image: (look == "fancy").then(|| image.unwrap().rel.clone()),
-                            state: ItemState::Optional,
-                            picked: picked == look,
-                        })
-                        .into(),
-                    defaulted: !ctx.saved(),
-                }],
+                groups: vec![
+                    Group {
+                        id: "look".to_owned(),
+                        title: "Look".to_owned(),
+                        kind: GroupKind::Pick {
+                            pick: Pick::ExactlyOne,
+                            items: ["plain", "fancy"]
+                                .map(|look| Item {
+                                    id: look.to_owned(),
+                                    title: look.to_owned(),
+                                    description: None,
+                                    image: (look == "fancy").then(|| image.unwrap().rel.clone()),
+                                    state: ItemState::Optional,
+                                    picked: picked == look,
+                                })
+                                .into(),
+                        },
+                        defaulted: !ctx.saved(),
+                    },
+                    Group {
+                        id: "extras".to_owned(),
+                        title: "Extras".to_owned(),
+                        kind: GroupKind::Fields {
+                            fields: vec![Field {
+                                id: "shine".to_owned(),
+                                title: "Shine".to_owned(),
+                                description: None,
+                                kind: FieldKind::Int {
+                                    min: Some(0),
+                                    max: Some(10),
+                                    step: None,
+                                },
+                                value: Value::Int(Self::shine(ctx, answers)),
+                                default: Some(Value::Int(3)),
+                            }],
+                        },
+                        defaulted: !ctx.saved(),
+                    },
+                ],
             }],
             summary: None,
             warnings: Vec::new(),
-            answers: vec![Answer {
-                group: "look".to_owned(),
-                items: vec![picked],
-            }],
+            answers: vec![
+                Answer::picks("look", vec![picked]),
+                Answer::values(
+                    "extras",
+                    [("shine".to_owned(), Value::Int(Self::shine(ctx, answers)))].into(),
+                ),
+            ],
         })
     }
 
@@ -1989,6 +2033,7 @@ impl crate::options::ModOptions for Looks {
     ) -> Result<toml::Table> {
         let look = Look {
             look: Some(Self::picked(ctx, Some(answers))),
+            shine: Some(Self::shine(ctx, Some(answers))),
         };
         Ok(toml::Table::try_from(&look).unwrap())
     }
@@ -2008,7 +2053,7 @@ impl Extension for LooksExtension {
 
 #[tokio::test]
 async fn mod_options_change_what_mods_install() {
-    use crate::options::Answer;
+    use crate::options::{Answer, Value};
 
     let tmp = tempfile::tempdir().unwrap();
     let packed = tmp.path().join("mods/Pretty");
@@ -2073,19 +2118,16 @@ async fn mod_options_change_what_mods_install() {
     assert_eq!(view.form.title, "Pretty Things");
     assert!(!view.saved);
     assert!(view.form.pages[0].groups[0].defaulted);
-    assert!(view.form.pages[0].groups[0].items[0].picked);
+    assert!(view.form.pages[0].groups[0].items()[0].picked);
     assert_eq!(view.images.len(), 1);
     assert!(view.images["Pretty/fancy.png"].ends_with("fancy.png"));
 
     // trying answers out doesn't save them
-    let fancy = [Answer {
-        group: "look".to_owned(),
-        items: vec!["fancy".to_owned()],
-    }];
+    let fancy = [Answer::picks("look", vec!["fancy".to_owned()])];
     let view = pw
         .mod_options(&profile, "Pretty", Some("looks.pick"), Some(&fancy))
         .unwrap();
-    assert!(view.form.pages[0].groups[0].items[1].picked);
+    assert!(view.form.pages[0].groups[0].items()[1].picked);
     assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
 
     pw.set_mod_options(&profile, "Pretty", None, Some(&view.form.answers))
@@ -2094,6 +2136,53 @@ async fn mod_options_change_what_mods_install() {
     assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Stale);
     pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
     assert_eq!(fs::read_to_string(&look).unwrap(), "fancy");
+
+    // values are checked against their fields before the extension sees
+    // them, with whole numbers taken for numbers and so on
+    let mut answers = view.form.answers.clone();
+    answers[1].values.insert("shine".to_owned(), Value::Int(11));
+    let err = pw
+        .set_mod_options(&profile, "Pretty", None, Some(&answers))
+        .unwrap_err();
+    assert!(err.to_string().contains("11 is more than 10"), "{err}");
+    // and shown as warnings while trying them out
+    let tried = pw
+        .mod_options(&profile, "Pretty", None, Some(&answers))
+        .unwrap();
+    assert!(
+        tried
+            .form
+            .warnings
+            .iter()
+            .any(|w| w.contains("11 is more than 10")),
+        "{:?}",
+        tried.form.warnings
+    );
+    answers[1]
+        .values
+        .insert("shine".to_owned(), Value::Text("lots".to_owned()));
+    let err = pw
+        .set_mod_options(&profile, "Pretty", None, Some(&answers))
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("a whole number from 0 to 10"),
+        "{err}"
+    );
+    answers[1].values.insert("nope".to_owned(), Value::Int(1));
+    answers[1].values.insert("shine".to_owned(), Value::Int(7));
+    let err = pw
+        .set_mod_options(&profile, "Pretty", None, Some(&answers))
+        .unwrap_err();
+    assert!(err.to_string().contains("no setting `nope`"), "{err}");
+    answers[1].values.remove("nope");
+    pw.set_mod_options(&profile, "Pretty", None, Some(&answers))
+        .unwrap();
+    let view = pw.mod_options(&profile, "Pretty", None, None).unwrap();
+    assert_eq!(
+        view.form.pages[0].groups[1].fields()[0].value,
+        Value::Int(7)
+    );
+    assert!(view.form.pages[0].groups[0].items()[1].picked);
 
     // forgetting them goes back to the defaults
     pw.set_mod_options(&profile, "Pretty", None, None).unwrap();
