@@ -579,8 +579,16 @@ fn melonloader_ruleset(
         }
         out += "\n";
     }
+    out += MELONLOADER_CONFIG;
     Ok(out.trim_end().to_owned() + "\n")
 }
+
+/// Every version of MelonLoader keeps all of its mods' settings in one
+/// TOML file, which patchwork shows on the Config tab.
+const MELONLOADER_CONFIG: &str = "# Every mod's settings, which MelonLoader keeps in one TOML file.\n\
+[[config]]\n\
+files = \"UserData/MelonPreferences.cfg\"\n\
+format = \"generic.toml\"\n";
 
 /// `rulesets/bepinex-loader.toml`, from the schema's list of loader packages.
 /// r2modman's BepInExInstaller copies the contents of a pack's root folder

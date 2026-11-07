@@ -308,12 +308,22 @@ fn melonloader_rulesets_list_their_packs() {
     #[derive(Deserialize)]
     struct Ruleset {
         rules: Vec<toml::Table>,
+        config: Vec<toml::Table>,
     }
     let rulesets: BTreeMap<_, _> = generate_loader_rulesets(&schema())
         .unwrap()
         .into_iter()
         .collect();
-    let rules = |id: &str| toml::from_str::<Ruleset>(&rulesets[id]).unwrap().rules;
+    let ruleset = |id: &str| toml::from_str::<Ruleset>(&rulesets[id]).unwrap();
+    let rules = |id: &str| ruleset(id).rules;
+    for id in ["melonloader-loader", "recursive-melonloader-loader"] {
+        let config = &ruleset(id).config;
+        assert_eq!(
+            config[0]["files"].as_str(),
+            Some("UserData/MelonPreferences.cfg")
+        );
+        assert_eq!(config[0]["format"].as_str(), Some("generic.toml"));
+    }
 
     let old = rules("melonloader-loader");
     assert_eq!(old[0]["mods"].as_str(), Some("LavaGang-MelonLoader"));

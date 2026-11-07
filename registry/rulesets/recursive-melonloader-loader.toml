@@ -22,3 +22,8 @@ mods = [
 ]
 files = "**"
 skip = true
+
+# Every mod's settings, which MelonLoader keeps in one TOML file.
+[[config]]
+files = "UserData/MelonPreferences.cfg"
+format = "generic.toml"

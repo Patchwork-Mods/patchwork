@@ -4,7 +4,7 @@ Status (2026-11-06): steps 1 (the skeleton), 2 (`OrderedList`),
 3 (`ModTransform` + `ModOptions`), 4 (`Check`), 6 (`Action`, with `uses`)
 and 7 (crates per game) of "Order of work" are built, and so is step 5's
 `Runner`. Step 8 (mod settings) has value fields and config files, with
-BepInEx's as the first reader. `AccountKind` and `Provisioner` wait for Minecraft's launcher,
+readers for BepInEx and plain INI, JSON and TOML. `AccountKind` and `Provisioner` wait for Minecraft's launcher,
 which was taken out of `main` (2026-11-05) and kept on the
 `minecraft-launcher` branch. The sections below are the original proposal
 (2026-10-29). Where what was built differs from it, the notes under each
@@ -908,6 +908,30 @@ Each step leaves `main` working and shippable.
        keys a game adds after the first deploy when a file's settings are
        rewritten (BepInEx adds missing keys back on its next start), and
        recording settings changes in history.
+   - Step 3 (readers): plain INI, JSON and TOML built (2026-11-06) as
+     `generic.ini`, `generic.json` and `generic.toml`, in the `generic`
+     extension (`patchwork-builtin`, `plain.rs`), with these differences:
+     - Types are guessed from values (`true`/`false`, whole numbers,
+       numbers, text). INI also goes by Bethesda-style key names (`bX` as
+       `1`/`0`, `iX`, `fX`, `sX`), and keeps how a toggle was written.
+     - Comments just above a setting are its description. `Range: a ~ b`
+       (or `> a`), `Allowed Values: …` and `Default: …` lines in them
+       become limits, choices and defaults, so Forge and NeoForge's TOML
+       needs no reader of its own. Hints the value doesn't fit are dropped.
+     - Groups are INI sections, JSON objects and TOML tables, by their
+       path joined with `.` (empty, titled "General", for the top). Lists,
+       `null`s, inline tables and dates are skipped, with one warning.
+     - Writing changes only the values (JSON with its own span-keeping
+       parser, which takes comments and trailing commas; TOML with
+       `toml_edit`), and adds settings, sections or objects that aren't
+       there.
+     - Data: both MelonLoader loader rulesets (from `registry-gen`) say
+       `UserData/MelonPreferences.cfg` is `generic.toml`; the Bethesda
+       games say `Data/<SKSE|F4SE|SFSE>/Plugins/*.ini` and `*.toml` are
+       `generic.ini` and `generic.toml`; Minecraft says `config/**/*.toml`
+       and `*.json` are `generic.toml` and `generic.json`.
+     - Left: MCM Helper, BG3's MCM, JSON5 (unquoted keys), and overlays
+       (step 4).
 9. Remove the version-2 compatibility code once enough releases have
    passed.
 

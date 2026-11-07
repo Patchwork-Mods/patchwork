@@ -88,3 +88,14 @@ exe = ["Fallout4.exe"]
 kind = "exe"
 file = "Fallout4.exe"
 parts = 3
+
+# Script extender plugins' own settings files, which patchwork shows on the
+# Config tab. Their types are guessed, from values and from names like
+# `bEnabled` and `fScale`.
+[[config]]
+files = "Data/F4SE/Plugins/*.ini"
+format = "generic.ini"
+
+[[config]]
+files = "Data/F4SE/Plugins/*.toml"
+format = "generic.toml"

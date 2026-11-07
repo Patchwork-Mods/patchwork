@@ -42,3 +42,14 @@ to = "resourcepacks/{file}"
 [[deployer.rules]]
 files = "*.jar"
 to = "mods/{file}"
+
+# Mods' settings files, made the first time the game starts with them,
+# which patchwork shows on the Config tab. Forge's and NeoForge's TOML files
+# say each setting's range and choices in comments.
+[[config]]
+files = "config/**/*.toml"
+format = "generic.toml"
+
+[[config]]
+files = "config/**/*.json"
+format = "generic.json"

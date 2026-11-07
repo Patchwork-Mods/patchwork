@@ -90,3 +90,14 @@ exe = ["Enderal Launcher.exe"]
 kind = "exe"
 file = "SkyrimSE.exe"
 parts = 3
+
+# Script extender plugins' own settings files, which patchwork shows on the
+# Config tab. Their types are guessed, from values and from names like
+# `bEnabled` and `fScale`.
+[[config]]
+files = "Data/SKSE/Plugins/*.ini"
+format = "generic.ini"
+
+[[config]]
+files = "Data/SKSE/Plugins/*.toml"
+format = "generic.toml"

@@ -138,7 +138,7 @@ function opRow(op) {
     case "backup":
       return h("li", {}, `~ ${op.dst} (backing up original)`);
     case "place":
-      return h("li", {}, `+ ${op.dst}  [${op.modName}]`);
+      return h("li", {}, op.modName ? `+ ${op.dst}  [${op.modName}]` : `+ ${op.dst}`);
   }
 }
 

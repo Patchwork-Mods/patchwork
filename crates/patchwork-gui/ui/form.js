@@ -161,6 +161,8 @@ function render() {
   $("#options-summary").textContent =
     view.saved || open.path ? summary : `${summary}Until you save, deploys use the defaults.`;
   $("#options-back").disabled = at === 0;
+  // A form of one page, like a config file's, has nowhere to go back to.
+  $("#options-back").hidden = pages.length <= 1;
   const last = at >= pages.length - 1;
   $("#options-next").textContent = last ? "Save" : "Next";
   $("#options-next").disabled = false;

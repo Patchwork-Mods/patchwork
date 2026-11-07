@@ -10,6 +10,7 @@
 //! them.
 
 mod bepinex;
+mod plain;
 
 pub use bepinex::BepInExConfig;
 use patchwork_core::Builder;
@@ -17,6 +18,7 @@ use patchwork_core::ext::{Extension, Registrar};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{LocalSource, Modrinth, Nexus, Thunderstore, UrlSource};
+pub use plain::{IniConfig, JsonConfig, TomlConfig};
 
 #[cfg(feature = "bethesda")]
 pub use patchwork_bethesda::{Bethesda, Fomod, Loot};
@@ -43,7 +45,9 @@ pub fn register(builder: Builder) -> Builder {
 }
 
 /// What isn't about any game in particular: local files and URLs, the
-/// data-driven `rules` deployer, and patchwork's own sharing formats.
+/// data-driven `rules` deployer, patchwork's own sharing formats, and
+/// plain INI, JSON and TOML config files (`generic.ini`, `generic.json`
+/// and `generic.toml`).
 pub struct Generic;
 
 impl Extension for Generic {
@@ -56,7 +60,10 @@ impl Extension for Generic {
             .source(UrlSource)
             .deployer(RulesDeployer)
             .format(Archive)
-            .format(UrlList);
+            .format(UrlList)
+            .config_format("ini", IniConfig)
+            .config_format("json", JsonConfig)
+            .config_format("toml", TomlConfig);
     }
 }
 
