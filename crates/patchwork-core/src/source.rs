@@ -163,6 +163,20 @@ pub struct Handoff {
     pub url: String,
 }
 
+/// One of the files a mod could be added as; see [`Source::choices`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChoice {
+    /// The id to add the mod with if this is picked.
+    pub id: String,
+    /// The file's name, like `ModName-0.1.2.zip`.
+    pub name: String,
+    /// Its size in bytes, if known.
+    pub size: Option<u64>,
+    /// What else to know about it, like which files later versions will
+    /// pick.
+    pub description: Option<String>,
+}
+
 /// A request for a mod from a particular source.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModSpec {
@@ -418,6 +432,14 @@ pub trait Source: Send + Sync {
     /// `nxm://` links. `Ok(None)` means it isn't one, or is for another game.
     async fn accept_link(&self, _ctx: &SourceContext<'_>, _link: &str) -> Result<Option<Handoff>> {
         Ok(None)
+    }
+
+    /// The files `id` could be added as, when it doesn't say which one,
+    /// like a GitHub repo whose releases have a file for each platform. The
+    /// user picks one, and its [`FileChoice::id`] is what's added. Empty
+    /// means `id` needs no choosing, which is all most sources ever say.
+    async fn choices(&self, _ctx: &SourceContext<'_>, _id: &str) -> Result<Vec<FileChoice>> {
+        Ok(Vec::new())
     }
 
     /// Orders two of this source's versions, which is how dependency

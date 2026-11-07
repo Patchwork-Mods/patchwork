@@ -1,11 +1,13 @@
 //! Built-in mod sources.
 
+mod github;
 mod local;
 mod modrinth;
 mod nexus;
 mod thunderstore;
 mod url;
 
+pub use github::GitHub;
 pub use local::LocalSource;
 pub use modrinth::Modrinth;
 pub use nexus::Nexus;

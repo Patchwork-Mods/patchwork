@@ -842,8 +842,8 @@ Each step leaves `main` working and shippable.
    - Sources, formats and the `rules` deployer stay in `patchwork-sources`,
      `patchwork-formats` and `patchwork-deployers`: they aren't about one
      game, share their dependencies, and splitting them would only add
-     crates. `generic`, `thunderstore`, `nexus` and `modrinth` stay in
-     `patchwork-builtin`.
+     crates. `generic`, `thunderstore`, `nexus`, `modrinth` and `github`
+     stay in `patchwork-builtin`.
    - `patchwork-builtin` has a feature per game crate (`bethesda`,
      `helldivers`, `smf`, all on by default) and `register(builder)`, which adds every extension the
      build has. The frontends call that instead of naming each extension,

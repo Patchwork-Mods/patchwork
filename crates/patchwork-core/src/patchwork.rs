@@ -41,7 +41,7 @@ use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::{Origin, SettingSpec, SettingState, Settings};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{
-    ArtifactFormat, ArtifactLocation, Download, ModSpec, Need, PendingDownload, Source,
+    ArtifactFormat, ArtifactLocation, Download, FileChoice, ModSpec, Need, PendingDownload, Source,
     SourceContext, SourceFile,
 };
 use crate::store::Store;
@@ -800,6 +800,62 @@ impl Patchwork {
                 "`{spec}` isn't a path or a `source:id`"
             ))),
         }
+    }
+
+    /// Turns a link to a mod's page (or a download) into a mod spec for
+    /// `game`, asking each source whether it's one of theirs and falling
+    /// back to the `url` source for any other http(s) link.
+    pub fn parse_link(&self, game: &str, link: &str) -> Result<ModSpec> {
+        const FALLBACK: &str = "url";
+        let link = link.trim();
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
+        let settings = self.settings();
+        for (id, source) in self.sources.iter().filter(|(id, _)| *id != FALLBACK) {
+            let ctx = SourceContext {
+                game: def,
+                config: def.sources.get(id),
+                settings: settings.source(id),
+                env: None,
+            };
+            if let Some(spec) = source.parse_url(&ctx, link)? {
+                return Ok(spec);
+            }
+        }
+        let is_http = link.starts_with("https://") || link.starts_with("http://");
+        if is_http && self.sources.contains_key(FALLBACK) {
+            return Ok(ModSpec {
+                source: FALLBACK.to_owned(),
+                id: link.to_owned(),
+                version: None,
+            });
+        }
+        Err(Error::invalid(format!(
+            "`{link}` isn't a link patchwork recognizes"
+        )))
+    }
+
+    /// The files a mod could be added to `profile` as, when its spec doesn't
+    /// say which; see [`Source::choices`]. Empty means it can be added as
+    /// it is.
+    pub async fn file_choices(
+        &self,
+        profile: &ProfileRef,
+        spec: &ModSpec,
+    ) -> Result<Vec<FileChoice>> {
+        let loaded = self.load_profile(profile)?;
+        let source = self.source(&spec.source)?;
+        let env = self.env_of(&loaded)?;
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
+        let settings = self.settings();
+        let ctx = SourceContext {
+            game,
+            config: game.sources.get(&spec.source),
+            settings: settings.source(&spec.source),
+            env: env.as_ref(),
+        };
+        source.choices(&ctx, &spec.id).await
     }
 
     /// Adds a mod to a profile. It's resolved straight away so mistakes show

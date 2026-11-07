@@ -2014,6 +2014,21 @@ textarea {
   flex: 1;
 }
 
+/* The files to pick from in "Add from link"; see addlink.js. */
+#link-file-list {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+#link-file-list label {
+  align-items: flex-start;
+}
+
+#link-file-list input {
+  flex: none;
+  margin-top: 4px;
+}
+
 .field small,
 .hint {
   font-size: 12px;

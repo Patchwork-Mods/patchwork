@@ -32,7 +32,7 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
-use patchwork_core::source::{ModSpec, SourceFile};
+use patchwork_core::source::{FileChoice, ModSpec, SourceFile};
 use patchwork_core::{
     ConfigFileInfo, ConfigView, DeployStatus, GameInstall, HistoryEntry, ImportOptions, ListInfo,
     ModOptionsInfo, ModOptionsView, Patchwork,
@@ -1352,12 +1352,13 @@ async fn add_mod(
     id: String,
     source: String,
     mod_id: String,
+    version: Option<String>,
 ) -> CmdResult<Added> {
     let _work = app.work.start()?;
     let spec = ModSpec {
         source,
         id: mod_id,
-        version: None,
+        version,
     };
     let added = app
         .pw
@@ -1367,6 +1368,31 @@ async fn add_mod(
     Ok(Added {
         name: added.name,
         profile: profile_detail(&app.pw, id)?,
+    })
+}
+
+/// A link the user pasted, as the mod it's for, with the files it could
+/// be added as if there's a choice to make.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Linked {
+    source: String,
+    id: String,
+    version: Option<String>,
+    choices: Vec<FileChoice>,
+}
+
+#[tauri::command]
+async fn parse_link(app: State<'_, App>, id: String, link: String) -> CmdResult<Linked> {
+    let profile = profile_ref(&id)?;
+    let loaded = app.pw.load_profile(&profile).map_err(msg)?;
+    let spec = app.pw.parse_link(&loaded.game, &link).map_err(msg)?;
+    let choices = app.pw.file_choices(&profile, &spec).await.map_err(msg)?;
+    Ok(Linked {
+        source: spec.source,
+        id: spec.id,
+        version: spec.version,
+        choices,
     })
 }
 
@@ -1814,6 +1840,7 @@ fn main() {
             changelog::mod_changelog,
             update_mods,
             add_mod,
+            parse_link,
             search,
             search_categories,
             plan_deploy,

@@ -158,6 +158,8 @@
 				<ul id="mod-problems" class="warnings"></ul>
 				<div id="mods-toolbar" class="row">
 					<div class="row">
+						<!-- See addlink.js. -->
+						<button type="button" id="add-link" title="Add a mod from a link to its page, like a GitHub repo, or a download link">Add from link…</button>
 						<!-- Sorting rearranges the mods once; it doesn't keep them sorted.
                  Each item's data-keys go to sort_mods in main.rs. -->
 						<details id="sort-menu" class="menu">
@@ -565,6 +567,30 @@
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Cancel</button>
 					<button type="submit" id="capture-submit" class="primary">Capture and deploy</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- Adds a mod from a pasted link, asking which file if the mod has
+         several, like a GitHub release; see addlink.js. -->
+		<dialog id="link-dialog">
+			<form id="link-form" method="dialog" class="stack">
+				<h2>Add from link</h2>
+				<div class="field">
+					<label for="link-url">Link</label>
+					<input id="link-url" name="link" type="url" required placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false">
+					<small class="muted">A mod's page on GitHub, Nexus Mods, Thunderstore or Modrinth, or a link straight to a
+						download.</small>
+				</div>
+				<div id="link-files" class="field" hidden>
+					<span>Which file? <small class="muted">Later releases' files are picked by the same name, with the
+							version left out.</small></span>
+					<div id="link-file-list" class="stack"></div>
+				</div>
+				<p id="link-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" id="link-submit" class="primary">Add</button>
 				</div>
 			</form>
 		</dialog>

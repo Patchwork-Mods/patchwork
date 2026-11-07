@@ -25,6 +25,7 @@ import "./settings.js";
 import "./sync.js";
 import "./setup.js";
 import "./capture.js";
+import "./addlink.js";
 
 setModsView(modsView);
 refresh()

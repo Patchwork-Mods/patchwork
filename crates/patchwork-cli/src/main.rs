@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -21,7 +21,7 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
-use patchwork_core::source::Need;
+use patchwork_core::source::{FileChoice, ModSpec, Need};
 use patchwork_core::update;
 use patchwork_core::{
     ConfigFileInfo, ConfigView, DeployStatus, GameInstall, ImportOptions, ModOptionsView, Patchwork,
@@ -51,7 +51,9 @@ enum Command {
     /// Settings for sources, such as API keys.
     #[command(subcommand)]
     Config(ConfigCommand),
-    /// Add a mod to the profile, as `source:id` or a path to a local mod.
+    /// Add a mod to the profile, as `source:id`, a link to its page (or a
+    /// download) or a path to a local mod. If the mod has several files
+    /// to pick from, like a GitHub release's, asks which.
     Add {
         spec: String,
         /// What to call the mod in this profile.
@@ -717,7 +719,16 @@ async fn run(cli: Cli) -> Result<()> {
             disabled,
         } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
-            let spec = pw.parse_spec(&spec, version)?;
+            let mut spec = match spec.starts_with("https://") || spec.starts_with("http://") {
+                true => ModSpec {
+                    version,
+                    ..pw.parse_link(&loaded.game, &spec)?
+                },
+                false => pw.parse_spec(&spec, version)?,
+            };
+            if let Some(id) = choose_file(&spec.source, &pw.file_choices(&profile, &spec).await?)? {
+                spec.id = id;
+            }
             let added = pw.add_mod(&profile, spec, name, !disabled).await?;
             println!("added {} to {}", added.name, loaded.label());
         }
@@ -1082,7 +1093,7 @@ async fn run(cli: Cli) -> Result<()> {
             if let Some(name) = &name
                 && loaded.find(name).is_none()
             {
-                anyhow::bail!("{} has no mod named `{name}`", loaded.label());
+                bail!("{} has no mod named `{name}`", loaded.label());
             }
             let mut any = false;
             for m in loaded
@@ -3184,4 +3195,49 @@ fn selected(pw: &Patchwork, explicit: &Option<String>) -> Result<(ProfileRef, Pr
     };
     let loaded = pw.load_profile(&profile)?;
     Ok((profile, loaded))
+}
+
+/// Asks which of a mod's files to add, if there's more than one; see
+/// `Patchwork::file_choices`. `None` means the mod's id is fine as it is.
+fn choose_file(source: &str, choices: &[FileChoice]) -> Result<Option<String>> {
+    match choices {
+        [] => return Ok(None),
+        [only] => return Ok(Some(only.id.clone())),
+        _ => {}
+    }
+    if !std::io::stdin().is_terminal() {
+        let ids: Vec<String> = choices
+            .iter()
+            .map(|c| format!("{source}:{}", c.id))
+            .collect();
+        bail!(
+            "it has more than one file; add one of these instead: {}",
+            ids.join(", ")
+        );
+    }
+    eprintln!("which file?");
+    for (i, choice) in choices.iter().enumerate() {
+        let size = choice
+            .size
+            .map(|s| format!(" ({:.1} MB)", s as f64 / 1_000_000.0))
+            .unwrap_or_default();
+        eprintln!("  {}. {}{size}", i + 1, choice.name);
+        if let Some(description) = &choice.description {
+            eprintln!("     {description}");
+        }
+    }
+    loop {
+        eprint!("pick 1-{}: ", choices.len());
+        std::io::stderr().flush()?;
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line)? == 0 {
+            bail!("no file picked");
+        }
+        match line.trim().parse::<usize>() {
+            Ok(n) if (1..=choices.len()).contains(&n) => {
+                return Ok(Some(choices[n - 1].id.clone()));
+            }
+            _ => eprintln!("that isn't one of them"),
+        }
+    }
 }

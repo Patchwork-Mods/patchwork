@@ -63,7 +63,11 @@ Windows, SmartScreen warns about the installer: choose **More info** →
 In the app, pick a game from the list. patchwork finds games installed
 through Steam on its own; you can also point it at a game folder yourself.
 Then make a profile, add mods from the tab for a source (Thunderstore,
-Nexus Mods, ...), and press **Deploy**.
+Nexus Mods, ...) or with **Add from link…**, and press **Deploy**.
+
+Mods released on GitHub are added from a link to their repo: pick the file
+you want from the newest release (`ModName-0.1.2.zip`, say), and updates
+find the same file in later releases (`ModName-*.zip`).
 
 The CLI does the same:
 
@@ -73,6 +77,7 @@ patchwork profile new lethal-company/main   # a profile is <game>/<name>
 patchwork search more company               # or just `patchwork search` for the most popular
 patchwork add thunderstore:notnotnotswipez-MoreCompany
 patchwork add ~/Downloads/SomeMod.zip       # a local file works too
+patchwork add https://github.com/owner/repo # asks which of its releases' files
 patchwork deploy --dry-run                  # see what would change
 patchwork deploy
 patchwork launch
