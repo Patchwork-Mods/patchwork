@@ -173,6 +173,7 @@ fn thunderstore_to_resolved_mod(mod_: PackageVersion) -> Option<ResolvedMod> {
         artifact,
         format: ArtifactFormat::Archive,
         dependencies,
+        soft_dependencies: Vec::new(),
         game_versions: None,
         env: Default::default(),
         kind: None,

@@ -3,6 +3,7 @@
 use jiff::Timestamp;
 use patchwork_core::Result;
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
+use patchwork_core::source::{Need, SoftDependency};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -32,6 +33,20 @@ query ModsById($ids: [CompositeDomainWithIdInput!]!) {
       modId name summary author version downloads endorsements updatedAt thumbnailUrl
       modCategory { name }
       uploader { name }
+    }
+  }
+}";
+
+/// What a mod's page lists as its requirements.
+const REQUIREMENTS_QUERY: &str = "
+query Requirements($ids: [CompositeDomainWithIdInput!]!) {
+  legacyModsByDomain(ids: $ids) {
+    nodes {
+      modId gameId
+      modRequirements {
+        nexusRequirements { nodes { modId modName notes url externalRequirement gameId } }
+        dlcRequirements { gameExpansion { name } notes }
+      }
     }
   }
 }";
@@ -115,6 +130,58 @@ struct Facets {
 struct FacetsData {
     /// Category name to how many mods are in it.
     category_name: serde_json::Map<String, Value>,
+}
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RequirementsData {
+    legacy_mods_by_domain: Nodes<RequirementsNode>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct Nodes<T> {
+    pub nodes: Vec<T>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RequirementsNode {
+    pub mod_id: u64,
+    pub game_id: u64,
+    pub mod_requirements: ModRequirements,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ModRequirements {
+    pub nexus_requirements: Nodes<NexusRequirement>,
+    #[serde(default)]
+    pub dlc_requirements: Vec<DlcRequirement>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct NexusRequirement {
+    /// A string, though it's a number; none or empty for ones on other
+    /// sites.
+    pub mod_id: Option<String>,
+    pub mod_name: Option<String>,
+    pub notes: Option<String>,
+    pub url: Option<String>,
+    #[serde(default)]
+    pub external_requirement: bool,
+    pub game_id: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DlcRequirement {
+    pub game_expansion: Option<GameExpansion>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GameExpansion {
+    pub name: String,
 }
 // --- End API Responses ---
 
@@ -282,6 +349,24 @@ impl Nexus {
             .map(|node| node_to_summary(game_domain, node)))
     }
 
+    /// What mod `mod_id`'s page lists as its requirements. Nexus doesn't
+    /// say which are optional, so they're all [`Need::Unknown`].
+    pub(super) async fn requirements(
+        &self,
+        game_domain: &str,
+        mod_id: u64,
+    ) -> Result<Vec<SoftDependency>> {
+        let variables = json!({ "ids": [{ "gameDomain": game_domain, "modId": mod_id }] });
+        let data: RequirementsData = self.graphql(REQUIREMENTS_QUERY, variables).await?;
+        Ok(data
+            .legacy_mods_by_domain
+            .nodes
+            .into_iter()
+            .find(|node| node.mod_id == mod_id)
+            .map(requirements_to_soft)
+            .unwrap_or_default())
+    }
+
     async fn graphql<T: DeserializeOwned>(&self, query: &str, variables: Value) -> Result<T> {
         let reqwest_error = |result| patchwork_core::Error::Reqwest {
             url: GRAPHQL.to_owned(),
@@ -306,4 +391,91 @@ impl Nexus {
             .data
             .ok_or_else(|| error("search returned nothing"))
     }
+}
+
+/// A mod's requirements as soft dependencies. Ones on the same game are
+/// `nexus:<id>`; ones on another game or site, and DLC, can't be added, so
+/// they only have a name and maybe a page.
+pub(super) fn requirements_to_soft(node: RequirementsNode) -> Vec<SoftDependency> {
+    let text = |s: Option<String>| s.map(|s| unescape(s.trim())).filter(|s| !s.is_empty());
+    let mut soft = Vec::new();
+    for req in node.mod_requirements.nexus_requirements.nodes {
+        let mod_id = req.mod_id.filter(|id| !id.is_empty() && id != "0");
+        let game_id = req
+            .game_id
+            .as_ref()
+            .and_then(|g| g.as_u64().or_else(|| g.as_str()?.parse().ok()));
+        let same_game = game_id.is_none_or(|g| g == node.game_id);
+        let (key, url) = match (&mod_id, req.external_requirement) {
+            (Some(id), false) if same_game => (Some(format!("nexus:{id}")), None),
+            (Some(id), false) => (
+                None,
+                game_id.map(|g| format!("https://www.nexusmods.com/mods/{id}?game_id={g}")),
+            ),
+            _ => (None, text(req.url)),
+        };
+        if key.is_none() && url.is_none() && req.mod_name.is_none() {
+            continue;
+        }
+        soft.push(SoftDependency {
+            key,
+            name: text(req.mod_name),
+            need: Need::Unknown,
+            notes: text(req.notes),
+            url,
+        });
+    }
+    for dlc in node.mod_requirements.dlc_requirements {
+        let Some(expansion) = dlc.game_expansion else {
+            continue;
+        };
+        soft.push(SoftDependency {
+            key: None,
+            name: Some(format!("{} (DLC)", unescape(&expansion.name))),
+            need: Need::Unknown,
+            notes: text(dlc.notes),
+            url: None,
+        });
+    }
+    soft
+}
+
+/// Undoes the HTML escaping Nexus does to names and notes.
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let decoded = rest.find(';').filter(|end| *end <= 10).and_then(|end| {
+            let c = match &rest[1..end] {
+                "amp" => '&',
+                "lt" => '<',
+                "gt" => '>',
+                "quot" => '"',
+                "apos" => '\'',
+                entity => {
+                    let number = entity.strip_prefix('#')?;
+                    let code = match number.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                        None => number.parse().ok()?,
+                    };
+                    char::from_u32(code)?
+                }
+            };
+            Some((c, end))
+        });
+        match decoded {
+            Some((c, end)) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }

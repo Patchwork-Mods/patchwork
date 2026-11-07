@@ -13,6 +13,8 @@ fn profile_mod(id: &str) -> ProfileMod {
         priority: 0,
         game_versions: None,
         ext: Default::default(),
+        replaces: Vec::new(),
+        ignores: Vec::new(),
     }
 }
 
@@ -29,10 +31,12 @@ fn locked(id: &str, version: &str, deps: &[&str]) -> LockedMod {
             url: format!("https://example.com/{id}-{version}.zip"),
         },
         dependencies: deps.iter().map(|d| mod_key("thunderstore", d)).collect(),
+        soft_dependencies: Vec::new(),
         requires: BTreeMap::new(),
         game_versions: None,
         env: Default::default(),
         kind: None,
+        replaced: Default::default(),
     }
 }
 

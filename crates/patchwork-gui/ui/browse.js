@@ -62,7 +62,7 @@ export function renderSourceTabs(sources) {
   $("#tabs").replaceChildren(
     tab("mods", "Mods"),
     ...lists.map((l) => tab(listTab(l.id), l.title)),
-    config && tab(CONFIG_TAB, "Config"),
+    ...(config ? [tab(CONFIG_TAB, "Config")] : []),
     ...sources.map((s) => tab(s, sourceName(s))),
   );
   const open = listOf(state.tab);

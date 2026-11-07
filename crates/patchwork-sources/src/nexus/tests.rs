@@ -1,6 +1,7 @@
-use super::search::{ModsPage, effective_sort, mods_filter, node_to_summary};
+use super::search::{self, ModsPage, effective_sort, mods_filter, node_to_summary};
 use super::*;
 use patchwork_core::game::GameDef;
+use patchwork_core::source::Need;
 use serde_json::json;
 
 fn settings_with_key() -> toml::Table {
@@ -511,4 +512,79 @@ fn free_text_changelog_versions_keep_nexus_order_reversed() {
 fn no_changelogs_is_an_empty_list() {
     let changelogs: NexusChangelogs = serde_json::from_str("[]").unwrap();
     assert!(changelog_entries(changelogs).is_empty());
+}
+
+#[test]
+fn requirements_are_unsure_soft_dependencies() {
+    let node: search::RequirementsNode = serde_json::from_str(
+        r#"{
+          "modId": 12604,
+          "gameId": 1704,
+          "modRequirements": {
+            "nexusRequirements": { "nodes": [
+              { "modId": "30379", "modName": "Skyrim Script Extender (SKSE64)", "notes": "",
+                "url": "", "externalRequirement": false, "gameId": "1704" },
+              { "modId": "17", "modName": "Old &amp; Classic", "notes": " only for the classic menus ",
+                "url": "", "externalRequirement": false, "gameId": "110" },
+              { "modId": null, "modName": "Some Tool", "notes": null,
+                "url": "https://example.com/tool", "externalRequirement": true, "gameId": null }
+            ] },
+            "dlcRequirements": [
+              { "gameExpansion": { "name": "Saints &amp; Seducers" }, "notes": "" }
+            ]
+          }
+        }"#,
+    )
+    .unwrap();
+    let soft = search::requirements_to_soft(node);
+    let seen: Vec<_> = soft
+        .iter()
+        .map(|d| {
+            assert_eq!(d.need, Need::Unknown);
+            (
+                d.key.as_deref(),
+                d.name.as_deref(),
+                d.url.as_deref(),
+                d.notes.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (
+                Some("nexus:30379"),
+                Some("Skyrim Script Extender (SKSE64)"),
+                None,
+                None
+            ),
+            (
+                None,
+                Some("Old & Classic"),
+                Some("https://www.nexusmods.com/mods/17?game_id=110"),
+                Some("only for the classic menus")
+            ),
+            (
+                None,
+                Some("Some Tool"),
+                Some("https://example.com/tool"),
+                None
+            ),
+            (None, Some("Saints & Seducers (DLC)"), None, None),
+        ]
+    );
+}
+
+// Requirements come from the GraphQL API, which doesn't need a key.
+#[tokio::test]
+#[ignore = "needs network"]
+async fn fetches_requirements() {
+    let soft = Nexus::default()
+        .requirements("skyrimspecialedition", 12604)
+        .await
+        .unwrap();
+    assert!(
+        soft.iter().any(|d| d.key.as_deref() == Some("nexus:30379")),
+        "{soft:?}"
+    );
 }

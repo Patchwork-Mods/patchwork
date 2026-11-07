@@ -54,6 +54,7 @@ impl Source for UrlSource {
             artifact,
             format,
             dependencies: Vec::new(),
+            soft_dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
             kind: None,

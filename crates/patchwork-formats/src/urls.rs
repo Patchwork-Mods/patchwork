@@ -106,6 +106,8 @@ impl ProfileFormat for UrlList {
                 priority: 0,
                 game_versions: None,
                 ext: Default::default(),
+                replaces: Vec::new(),
+                ignores: Vec::new(),
             });
         }
         if mods.is_empty() {

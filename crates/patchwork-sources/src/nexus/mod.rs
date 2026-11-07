@@ -328,8 +328,10 @@ fn nexus_to_resolved_mod(game: &GameDef, mod_: &NexusMod, file: &NexusFile) -> R
             name: file.file_name.clone(),
         },
         format: ArtifactFormat::Archive,
-        // nexus doesn't expose requirements in a machine-readable way
+        // Nexus doesn't say which requirements are optional, so none are
+        // installed by themselves; see `Nexus::requirements`.
         dependencies: Vec::new(),
+        soft_dependencies: Vec::new(),
         game_versions: game_versions(game, file),
         env: Default::default(),
         kind: None,
@@ -395,7 +397,15 @@ impl Source for Nexus {
                 file.file_name
             )));
         }
-        Ok(nexus_to_resolved_mod(ctx.game, &mod_, file))
+        let mut resolved = nexus_to_resolved_mod(ctx.game, &mod_, file);
+        // They're only shown, so the mod can do without them if the
+        // GraphQL API is having a bad day.
+        let domain = config(ctx)?.game_domain;
+        resolved.soft_dependencies = self
+            .requirements(&domain, mod_.mod_id)
+            .await
+            .unwrap_or_default();
+        Ok(resolved)
     }
 
     async fn download(&self, ctx: &SourceContext<'_>, id: &str, file: &str) -> Result<Download> {

@@ -121,6 +121,7 @@ export function renderProfile({ keepMods = false } = {}) {
     $("#profile-meta").textContent = "Create one in the sidebar to start adding mods.";
     $("#mods").replaceChildren();
     $("#hidden-mods").hidden = true;
+    $("#dependencies").hidden = true;
     $("#mod-problems").replaceChildren();
     $("#mods-empty").hidden = true;
     $("#mods-toolbar").hidden = true;

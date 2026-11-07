@@ -32,6 +32,8 @@ fn profile_mod(source: &str, id: &str, enabled: bool) -> ProfileMod {
         priority: 0,
         game_versions: None,
         ext: Default::default(),
+        replaces: Vec::new(),
+        ignores: Vec::new(),
     }
 }
 
@@ -48,10 +50,12 @@ fn locked(source: &str, id: &str, version: &str, dependencies: &[&str]) -> Locke
             url: format!("https://example.com/{id}.zip"),
         },
         dependencies: dependencies.iter().map(|d| d.to_string()).collect(),
+        soft_dependencies: Vec::new(),
         requires: Default::default(),
         game_versions: None,
         env: Default::default(),
         kind: None,
+        replaced: Default::default(),
     }
 }
 

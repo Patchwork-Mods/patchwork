@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
 use crate::relpath::RelPath;
+use crate::source::SoftDependency;
 
 fn known_summary(latest: &str, fetched: &str) -> KnownSummary {
     KnownSummary {
@@ -170,6 +171,7 @@ impl Source for FixedUrl {
             },
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
+            soft_dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
             kind: None,
@@ -230,6 +232,7 @@ impl Source for OwnFiles {
             },
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
+            soft_dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
             kind: None,
@@ -412,6 +415,7 @@ impl Source for Versioned {
             artifact: ArtifactLocation::Path { path },
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
+            soft_dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
             kind: None,
@@ -909,6 +913,7 @@ impl Source for LocalFiles {
             format: ArtifactFormat::of_path(&path),
             artifact: ArtifactLocation::Path { path },
             dependencies: Vec::new(),
+            soft_dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
             kind: None,
@@ -954,6 +959,8 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         priority: 0,
         game_versions: None,
         ext: Default::default(),
+        replaces: Vec::new(),
+        ignores: Vec::new(),
     });
     loaded.hidden_tags = vec!["library".to_owned()];
     pw.save_profile(&profile, &loaded).unwrap();
@@ -1002,6 +1009,8 @@ fn priorities_change_the_load_order_but_not_the_list() {
             priority: 0,
             game_versions: None,
             ext: Default::default(),
+            replaces: Vec::new(),
+            ignores: Vec::new(),
         });
     }
     pw.save_profile(&profile, &loaded).unwrap();
@@ -1159,6 +1168,8 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         priority: 0,
         game_versions: None,
         ext: Default::default(),
+        replaces: Vec::new(),
+        ignores: Vec::new(),
     };
     let locked = |path: &Path, hash| LockedMod {
         name: path.file_stem().unwrap().to_string_lossy().into_owned(),
@@ -1172,10 +1183,12 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
             path: path.to_owned(),
         },
         dependencies: Vec::new(),
+        soft_dependencies: Vec::new(),
         requires: BTreeMap::new(),
         game_versions: None,
         env: Default::default(),
         kind: None,
+        replaced: Default::default(),
     };
     let mut loaded = pw.load_profile(&profile).unwrap();
     loaded.mods = vec![local_mod(&file), local_mod(&imported), local_mod(&unlocked)];
@@ -1328,6 +1341,7 @@ impl Source for ForOldGame {
             },
             format: ArtifactFormat::Dir,
             dependencies: Vec::new(),
+            soft_dependencies: Vec::new(),
             game_versions: Some("1.5.97".parse().unwrap()),
             env: Default::default(),
             kind: None,
@@ -2409,6 +2423,7 @@ impl Source for ByLoader {
             },
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
+            soft_dependencies: Vec::new(),
             game_versions: None,
             env: compat::EnvSupport::default().with("loader", ["fabric"]),
             kind: None,
@@ -3377,4 +3392,233 @@ format = "test.kv""#,
     assert!(!game.join("config/fast.cfg").exists());
     let saved = pw.load_profile(&profile).unwrap().config;
     assert_eq!(saved[&fast]["speed"]["level"], Value::Int(2));
+}
+
+/// Like [`Versioned`], but `app` needs `lib` (2.0 or newer), which needs
+/// `base`.
+struct WithDependencies(std::sync::Arc<Versioned>);
+
+#[async_trait::async_trait]
+impl Source for WithDependencies {
+    fn id(&self) -> &str {
+        "deps"
+    }
+
+    async fn resolve(
+        &self,
+        ctx: &SourceContext<'_>,
+        id: &str,
+        requested: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        let mut resolved = self.0.resolve(ctx, id, requested).await?;
+        let dependency = |id: &str, req| crate::source::Dependency {
+            source: "deps".to_owned(),
+            id: id.to_owned(),
+            req,
+        };
+        resolved.dependencies = match id {
+            "app" => vec![dependency(
+                "lib",
+                crate::source::VersionReq::AtLeast("2.0".to_owned()),
+            )],
+            "lib" => vec![dependency("base", crate::source::VersionReq::Any)],
+            _ => Vec::new(),
+        };
+        Ok(resolved)
+    }
+}
+
+#[tokio::test]
+async fn replaced_dependencies_give_way_to_the_mod_replacing_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("mods");
+    fs::create_dir_all(&dir).unwrap();
+    let source = std::sync::Arc::new(Versioned {
+        dir,
+        version: std::sync::Mutex::new("1.0".to_owned()),
+    });
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(WithDependencies(source.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    for id in ["app", "fork"] {
+        let spec = ModSpec {
+            source: "deps".to_owned(),
+            id: id.to_owned(),
+            version: None,
+        };
+        pw.add_mod(&profile, spec, None, true).await.unwrap();
+    }
+    let keys = |lock: &Lockfile| {
+        let mut keys: Vec<String> = lock.mods.iter().map(LockedMod::key).collect();
+        keys.sort();
+        keys
+    };
+    let app = |lock: &Lockfile| lock.mods.iter().find(|m| m.id == "app").unwrap().clone();
+
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(
+        keys(&lock),
+        ["deps:app", "deps:base", "deps:fork", "deps:lib"]
+    );
+    assert_eq!(pw.unmet_requirements(&lock).len(), 1, "lib 1.0 is too old");
+
+    // a profile mod, itself, or a name nothing's locked as can't be replaced
+    for bad in ["app", "fork", "nothing"] {
+        let err = pw
+            .set_replaces(&profile, "fork", &[bad.to_owned()])
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{bad}: {err}");
+    }
+
+    // by the name it's locked as; a newer app is out by now, but only the
+    // replacement changed, so it stays where it was
+    *source.version.lock().unwrap() = "2.0".to_owned();
+    pw.set_replaces(&profile, "fork", &["lib".to_owned()])
+        .unwrap();
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(keys(&lock), ["deps:app", "deps:fork"]);
+    let locked = app(&lock);
+    assert_eq!(locked.version.as_deref(), Some("1.0"));
+    assert_eq!(locked.dependencies, ["deps:fork"]);
+    assert_eq!(
+        locked.replaced,
+        BTreeMap::from([("deps:lib".to_owned(), "deps:fork".to_owned())])
+    );
+    assert!(pw.unmet_requirements(&lock).is_empty());
+    let order: Vec<String> = deploy_order(&pw.load_profile(&profile).unwrap(), &lock)
+        .iter()
+        .map(|m| m.key())
+        .collect();
+    assert_eq!(order, ["deps:fork", "deps:app"]);
+    let info = lock.dependency_info(&pw.load_profile(&profile).unwrap());
+    let about = |key: &str| info.iter().find(|i| i.key == key).unwrap();
+    assert!(about("deps:fork").in_profile);
+    assert_eq!(about("deps:fork").needed_by, ["app"]);
+    assert_eq!(about("deps:lib").replaced_by.as_deref(), Some("fork"));
+    assert_eq!(about("deps:lib").needed_by, ["app"]);
+    assert!(!about("deps:lib").in_profile);
+    assert!(about("deps:app").needed_by.is_empty());
+
+    pw.set_replaces(&profile, "fork", &[]).unwrap();
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(
+        keys(&lock),
+        ["deps:app", "deps:base", "deps:fork", "deps:lib"]
+    );
+    assert_eq!(app(&lock).dependencies, ["deps:lib"]);
+    assert!(app(&lock).replaced.is_empty());
+}
+
+/// Resolves every mod to the same download, listing an unsure soft
+/// dependency, an optional one and one on another site.
+struct WithSoft(String);
+
+#[async_trait::async_trait]
+impl Source for WithSoft {
+    fn id(&self) -> &str {
+        "soft"
+    }
+
+    async fn resolve(
+        &self,
+        _: &SourceContext<'_>,
+        id: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        let soft = |key: Option<&str>, name: &str, need, url: Option<&str>| SoftDependency {
+            key: key.map(str::to_owned),
+            name: Some(name.to_owned()),
+            need,
+            notes: None,
+            url: url.map(str::to_owned),
+        };
+        Ok(crate::source::ResolvedMod {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            version: Some("1.0".to_owned()),
+            artifact: ArtifactLocation::Url {
+                url: self.0.clone(),
+            },
+            format: ArtifactFormat::File,
+            dependencies: Vec::new(),
+            soft_dependencies: vec![
+                soft(Some("soft:lib"), "Lib", Need::Unknown, None),
+                soft(Some("soft:extra"), "Extra", Need::Optional, None),
+                soft(
+                    None,
+                    "Elsewhere",
+                    Need::Unknown,
+                    Some("https://example.com"),
+                ),
+            ],
+            game_versions: None,
+            env: Default::default(),
+            kind: None,
+        })
+    }
+}
+
+/// Keeps the notices it's given.
+#[derive(Clone, Default)]
+struct Notices(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl crate::event::Reporter for Notices {
+    fn report(&self, event: Event) {
+        if let Event::Notice(notice) = event {
+            self.0.lock().unwrap().push(notice);
+        }
+    }
+}
+
+#[tokio::test]
+async fn soft_dependencies_are_shown_not_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let notices = Notices::default();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(WithSoft(serve_once("200 OK", b"mod bytes")))
+        .deployer(NoDeployer)
+        .reporter(notices.clone())
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let spec = ModSpec {
+        source: "soft".to_owned(),
+        id: "app".to_owned(),
+        version: None,
+    };
+    pw.add_mod(&profile, spec, None, true).await.unwrap();
+
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lock.mods.len(), 1, "soft dependencies aren't locked");
+    let said = notices.0.lock().unwrap().clone();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("`Lib`, `Elsewhere`"), "{}", said[0]);
+    assert!(!said[0].contains("Extra"), "optional ones aren't mentioned");
+
+    // only the first time it's locked
+    pw.lock(&profile, false).await.unwrap();
+    assert_eq!(notices.0.lock().unwrap().len(), 1);
+
+    pw.set_ignored(&profile, "app", "soft:lib", true).unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    assert_eq!(loaded.mods[0].ignores, ["soft:lib"]);
+    let soft = lock.soft_dependencies(&loaded, "soft:app");
+    let missing: Vec<&str> = soft
+        .iter()
+        .filter(|d| d.missing())
+        .map(|d| d.ident.as_str())
+        .collect();
+    assert_eq!(missing, ["soft:extra", "https://example.com"]);
+
+    pw.set_ignored(&profile, "app", "soft:lib", false).unwrap();
+    assert!(
+        pw.load_profile(&profile).unwrap().mods[0]
+            .ignores
+            .is_empty()
+    );
 }

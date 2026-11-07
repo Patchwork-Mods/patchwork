@@ -21,6 +21,7 @@ use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
+use patchwork_core::source::Need;
 use patchwork_core::update;
 use patchwork_core::{
     ConfigFileInfo, ConfigView, DeployStatus, GameInstall, ImportOptions, ModOptionsView, Patchwork,
@@ -218,6 +219,47 @@ enum Command {
         /// The new priority; can be negative.
         #[arg(allow_negative_numbers = true)]
         priority: Option<i32>,
+    },
+    /// List the dependencies the profile's mods brought in, and which mods
+    /// need each. Only locked mods count.
+    #[command(alias = "dependencies")]
+    Deps {
+        /// List the profile's own mods too, with what needs them.
+        #[arg(long)]
+        all: bool,
+    },
+    /// List what a mod lists that patchwork didn't install with it, because
+    /// its source says it's optional or doesn't say whether it's needed
+    /// (Nexus Mods' requirements, say), and whether the profile has each.
+    #[command(name = "soft-deps")]
+    SoftDeps {
+        /// The mod; without one, every mod that lists any.
+        name: Option<String>,
+        /// Only the ones the profile doesn't have and that aren't ignored.
+        #[arg(long)]
+        missing: bool,
+    },
+    /// Stop pointing out one of a mod's soft dependencies (see `patchwork
+    /// soft-deps`), given by name or `source:id`, because you've got it
+    /// some other way or don't want it.
+    Ignore {
+        name: String,
+        dependency: String,
+        /// Point it out again.
+        #[arg(long)]
+        undo: bool,
+    },
+    /// Have a mod stand in for a dependency other mods need, like a fork of
+    /// it, so mods that need it get this one and it isn't downloaded. The
+    /// dependency is given by its name in `patchwork deps` or as
+    /// `source:id`. Without any, shows what the mod stands in for.
+    Replace {
+        name: String,
+        dependencies: Vec<String>,
+        /// Stop it standing in for the dependencies given, or for all of
+        /// them if none are.
+        #[arg(long)]
+        undo: bool,
     },
     /// Put things in the profile's mods in an order of their own, apart from
     /// the mods' order, for games that have them: Skyrim's plugins (.esp,
@@ -614,6 +656,7 @@ impl Reporter for Printer {
             Event::Building { step } => eprintln!("   building {step}"),
             Event::Applying(op) => print_op(&op),
             Event::Warning(warning) => eprintln!("warning: {warning}"),
+            Event::Notice(notice) => eprintln!("note: {notice}"),
         }
     }
 }
@@ -1001,6 +1044,181 @@ async fn run(cli: Cli) -> Result<()> {
             let (profile, loaded) = selected(&pw, &cli.profile)?;
             let index = pw.move_mod(&profile, &name, &to.position())?;
             println!("moved {name} to {} of {}", index + 1, loaded.mods.len());
+        }
+        Command::Deps { all } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let Some(lock) = pw.load_lock(&profile)? else {
+                println!("{} isn't locked yet; run `patchwork lock`", loaded.label());
+                return Ok(());
+            };
+            let info: Vec<_> = lock
+                .dependency_info(&loaded)
+                .into_iter()
+                .filter(|i| all || !i.in_profile)
+                .collect();
+            if info.is_empty() {
+                println!("{} has no dependencies", loaded.label());
+            }
+            for i in info {
+                let what = match (&i.replaced_by, &i.version) {
+                    (Some(with), _) => format!("replaced by {with}"),
+                    (None, Some(version)) => version.clone(),
+                    (None, None) => String::new(),
+                };
+                let needed = if i.needed_by.is_empty() {
+                    String::new()
+                } else {
+                    format!("  needed by {}", i.needed_by.join(", "))
+                };
+                println!("{}  {what}  ({}){needed}", i.name, i.key);
+            }
+        }
+        Command::SoftDeps { name, missing } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let Some(lock) = pw.load_lock(&profile)? else {
+                println!("{} isn't locked yet; run `patchwork lock`", loaded.label());
+                return Ok(());
+            };
+            if let Some(name) = &name
+                && loaded.find(name).is_none()
+            {
+                anyhow::bail!("{} has no mod named `{name}`", loaded.label());
+            }
+            let mut any = false;
+            for m in loaded
+                .mods
+                .iter()
+                .filter(|m| name.as_ref().is_none_or(|n| *n == m.name))
+            {
+                let soft: Vec<_> = lock
+                    .soft_dependencies(&loaded, &mod_key(&m.source, &m.id))
+                    .into_iter()
+                    .filter(|d| !missing || d.missing())
+                    .collect();
+                if soft.is_empty() {
+                    continue;
+                }
+                any = true;
+                println!("{}:", m.name);
+                for d in soft {
+                    let need = match d.dependency.need {
+                        Need::Optional => "optional",
+                        Need::Unknown => "maybe needed",
+                    };
+                    let status = match (&d.installed, d.ignored) {
+                        (Some(by), _) => format!("have ({by})"),
+                        (None, true) => "ignored".to_owned(),
+                        (None, false) => "missing".to_owned(),
+                    };
+                    let label = d.dependency.label();
+                    let place = d
+                        .dependency
+                        .key
+                        .as_deref()
+                        .or(d.dependency.url.as_deref())
+                        .filter(|p| *p != label)
+                        .map(|p| format!("  ({p})"))
+                        .unwrap_or_default();
+                    println!("  {label}{place}  {need}, {status}");
+                    if let Some(notes) = &d.dependency.notes {
+                        println!("    {notes}");
+                    }
+                }
+            }
+            if !any {
+                println!("nothing to show");
+            }
+        }
+        Command::Ignore {
+            name,
+            dependency,
+            undo,
+        } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let m = loaded
+                .find(&name)
+                .with_context(|| format!("{} has no mod named `{name}`", loaded.label()))?;
+            let soft = pw
+                .load_lock(&profile)?
+                .map(|l| l.soft_dependencies(&loaded, &mod_key(&m.source, &m.id)))
+                .unwrap_or_default();
+            let ident = soft
+                .iter()
+                .find(|d| d.ident == dependency || d.dependency.label() == dependency)
+                .map(|d| d.ident.clone())
+                .with_context(|| {
+                    format!("{name} lists nothing called `{dependency}`; see `patchwork soft-deps {name}`")
+                })?;
+            pw.set_ignored(&profile, &name, &ident, !undo)?;
+            match undo {
+                true => println!("{name}: pointing out {dependency} again"),
+                false => println!("{name}: ignoring {dependency}"),
+            }
+        }
+        Command::Replace {
+            name,
+            dependencies,
+            undo,
+        } => {
+            let (profile, loaded) = selected(&pw, &cli.profile)?;
+            let m = loaded
+                .mods
+                .iter()
+                .find(|m| m.name == name)
+                .with_context(|| format!("{} has no mod named `{name}`", loaded.label()))?;
+            let lock = pw.load_lock(&profile)?;
+            let key_of = |given: &String| {
+                lock.iter()
+                    .flat_map(|l| &l.mods)
+                    .find(|m| m.name == *given)
+                    .map_or_else(|| given.clone(), |m| m.key())
+            };
+            if dependencies.is_empty() && !undo {
+                if m.replaces.is_empty() {
+                    println!("{name} doesn't replace anything");
+                }
+                for key in &m.replaces {
+                    println!("{key}");
+                }
+                return Ok(());
+            }
+            let replaces: Vec<String> = if undo {
+                let undone: Vec<String> = dependencies.iter().map(key_of).collect();
+                m.replaces
+                    .iter()
+                    .filter(|k| !dependencies.is_empty() && !undone.contains(k))
+                    .cloned()
+                    .collect()
+            } else {
+                m.replaces.iter().cloned().chain(dependencies).collect()
+            };
+            pw.set_replaces(&profile, &name, &replaces)?;
+            let lock = pw.lock(&profile, false).await?;
+            let loaded = pw.load_profile(&profile)?;
+            let info = lock.dependency_info(&loaded);
+            let replaces = loaded
+                .mods
+                .iter()
+                .find(|m| m.name == name)
+                .map(|m| m.replaces.clone())
+                .unwrap_or_default();
+            if replaces.is_empty() {
+                println!(
+                    "{name} doesn't replace anything ({} mods locked)",
+                    lock.mods.len()
+                );
+            } else {
+                println!(
+                    "{name} replaces {} ({} mods locked)",
+                    replaces.join(", "),
+                    lock.mods.len()
+                );
+            }
+            for key in replaces {
+                if !info.iter().any(|i| i.key == key && !i.needed_by.is_empty()) {
+                    println!("  nothing needs {key}");
+                }
+            }
         }
         Command::Priority { name, priority } => {
             let (profile, loaded) = selected(&pw, &cli.profile)?;

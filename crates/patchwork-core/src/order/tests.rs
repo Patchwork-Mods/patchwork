@@ -13,6 +13,8 @@ fn profile_mod(name: &str) -> ProfileMod {
         priority: 0,
         game_versions: None,
         ext: Default::default(),
+        replaces: Vec::new(),
+        ignores: Vec::new(),
     }
 }
 
@@ -173,10 +175,12 @@ fn lock(entries: &[(&str, &[&str])]) -> Lockfile {
                 url: format!("https://example.com/{id}.zip"),
             },
             dependencies: deps.iter().map(|d| format!("ts:{d}")).collect(),
+            soft_dependencies: Vec::new(),
             requires: Default::default(),
             game_versions: None,
             env: Default::default(),
             kind: None,
+            replaced: Default::default(),
         })
         .collect();
     Lockfile {

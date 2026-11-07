@@ -176,6 +176,11 @@ pub fn refresh(handle: &AppHandle, profile: &ProfileRef) -> CmdResult<()> {
     let generation = app.details.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let mut versions = VecDeque::new();
     let mut summaries = VecDeque::new();
+    let loaded_keys: HashSet<String> = loaded
+        .mods
+        .iter()
+        .map(|m| mod_key(&m.source, &m.id))
+        .collect();
     {
         let outdated = app.details.outdated.lock().unwrap();
         for m in loaded.mods {
@@ -199,6 +204,30 @@ pub fn refresh(handle: &AppHandle, profile: &ProfileRef) -> CmdResult<()> {
                 versions.push_back(job.clone());
             }
             if summary_stale {
+                summaries.push_back(job);
+            }
+        }
+        // the dependencies' pictures and descriptions, for the Mods tab's
+        // Dependencies section; they're only in the lockfile
+        let lock = pw.load_lock(profile).ok().flatten();
+        for dep in lock.iter().flat_map(|l| &l.mods) {
+            let key = dep.key();
+            if loaded_keys.contains(&key) {
+                continue;
+            }
+            let job = Job {
+                game: loaded.game.clone(),
+                lookup: lookup.clone(),
+                source: dep.source.clone(),
+                id: dep.id.clone(),
+                name: dep.name.clone(),
+                key,
+            };
+            let stale = outdated.contains(&job.mod_id())
+                || pw
+                    .known_summary(&job.game, &job.source, &job.id)
+                    .is_none_or(|s| s.is_stale(None));
+            if stale {
                 summaries.push_back(job);
             }
         }

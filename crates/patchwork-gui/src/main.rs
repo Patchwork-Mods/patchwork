@@ -24,7 +24,7 @@ use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
 use patchwork_core::launch::{self, LaunchOption, Via};
 use patchwork_core::list::{List, ListEntry};
-use patchwork_core::lock::{Lockfile, mod_key};
+use patchwork_core::lock::{DependencyInfo, Lockfile, SoftDependencyInfo, mod_key};
 use patchwork_core::matching::{self, ModText};
 use patchwork_core::options::Answer;
 use patchwork_core::order::{self, SortKey};
@@ -88,6 +88,7 @@ impl Reporter for Emit {
             Event::Building { step } => UiEvent::Building { step },
             Event::Applying(op) => UiEvent::Applying(op.into()),
             Event::Warning(message) => UiEvent::Warning { message },
+            Event::Notice(message) => UiEvent::Notice { message },
         };
         // Nothing useful to do if the window's gone.
         let _ = self.0.emit("patchwork://event", event);
@@ -102,6 +103,7 @@ enum UiEvent {
     Building { step: String },
     Applying(UiOp),
     Warning { message: String },
+    Notice { message: String },
 }
 
 #[derive(Clone, Serialize)]
@@ -174,6 +176,9 @@ struct ProfileDetail {
     game: String,
     name: String,
     mods: Vec<UiMod>,
+    /// Every locked mod and replaced dependency, with what needs it, for
+    /// the Mods tab's Dependencies section. Empty until it's locked.
+    dependencies: Vec<UiDependency>,
     /// Mods with any of these tags go in the Mods tab's hidden section.
     hidden_tags: Vec<String>,
     /// The game's ordered lists (see [`patchwork_core::list`]), each on a
@@ -237,6 +242,30 @@ struct UiMod {
     /// Its place in the load order, which differs from its place in the
     /// profile once mods have priorities; see [`order::load_order`].
     load_index: usize,
+    /// What it lists that it may not need, and whether the profile has
+    /// each; empty until it's locked.
+    soft_dependencies: Vec<UiSoftDependency>,
+}
+
+/// A soft dependency of a profile's mod; see [`Lockfile::soft_dependencies`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiSoftDependency {
+    #[serde(flatten)]
+    info: SoftDependencyInfo,
+    /// What a search would show for it, as last fetched, for ones the
+    /// source doesn't name.
+    summary: Option<ModSummary>,
+}
+
+/// A locked mod or a replaced dependency; see [`Lockfile::dependency_info`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiDependency {
+    #[serde(flatten)]
+    info: DependencyInfo,
+    /// What a search would show for it, as last fetched.
+    summary: Option<ModSummary>,
 }
 
 #[derive(Serialize)]
@@ -360,6 +389,16 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .map(str::to_owned)
         .collect();
     let lock = pw.load_lock(&r).map_err(msg)?;
+    let dependencies = lock
+        .iter()
+        .flat_map(|l| l.dependency_info(&loaded))
+        .map(|info| UiDependency {
+            summary: pw
+                .known_summary(&loaded.game, &info.source, &info.id)
+                .and_then(|k| k.summary),
+            info,
+        })
+        .collect();
     let issues = pw.issues(&r).map_err(msg)?;
     let following = patchwork_sync::synced_profiles(&pw.paths().sync())
         .unwrap_or_default()
@@ -388,6 +427,15 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .enumerate()
         .map(|(i, m)| (m.name.clone(), i))
         .collect();
+    let mut soft_dependencies: HashMap<String, Vec<SoftDependencyInfo>> = loaded
+        .mods
+        .iter()
+        .filter_map(|m| {
+            let key = mod_key(&m.source, &m.id);
+            let soft = lock.as_ref()?.soft_dependencies(&loaded, &key);
+            Some((key, soft))
+        })
+        .collect();
     let mods = loaded
         .mods
         .into_iter()
@@ -408,6 +456,21 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                     .flat_map(|l| &l.mods)
                     .find(|l| l.key() == key)
                     .and_then(|l| l.version.clone()),
+                soft_dependencies: soft_dependencies
+                    .remove(&key)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|info| UiSoftDependency {
+                        summary: info
+                            .dependency
+                            .key
+                            .as_deref()
+                            .and_then(|k| k.split_once(':'))
+                            .and_then(|(source, id)| pw.known_summary(&loaded.game, source, id))
+                            .and_then(|k| k.summary),
+                        info,
+                    })
+                    .collect(),
                 key,
                 options: options.remove(&m.name).unwrap_or_default(),
                 load_index: load_index[&m.name],
@@ -420,6 +483,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         name,
         game: loaded.game,
         mods,
+        dependencies,
         hidden_tags,
         lists,
         has_config,
@@ -1182,6 +1246,40 @@ async fn set_version(
     profile_detail(&app.pw, id)
 }
 
+/// Sets which dependencies (as `source:id`) mod `name` stands in for, and
+/// locks the profile so they're swapped straight away.
+#[tauri::command]
+async fn set_replaces(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    replaces: Vec<String>,
+) -> CmdResult<ProfileDetail> {
+    let _work = app.work.start()?;
+    let r = profile_ref(&id)?;
+    app.pw.set_replaces(&r, &name, &replaces).map_err(msg)?;
+    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
+    profile_detail(&app.pw, id)
+}
+
+/// Sets whether mod `name` ignores its soft dependency `ident`, so it isn't
+/// pointed out as missing.
+#[tauri::command]
+fn set_ignored(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    ident: String,
+    ignored: bool,
+) -> CmdResult<ProfileDetail> {
+    let r = profile_ref(&id)?;
+    app.pw
+        .set_ignored(&r, &name, &ident, ignored)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
 /// A mod whose locked version changed when the lock was updated.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1710,6 +1808,8 @@ fn main() {
             find_games,
             find_mods,
             set_version,
+            set_replaces,
+            set_ignored,
             changelog::preview_updates,
             changelog::mod_changelog,
             update_mods,

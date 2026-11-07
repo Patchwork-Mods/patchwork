@@ -40,7 +40,15 @@ function showVersions(key, versions) {
  */
 function showSummary(key, summary) {
   const m = state.profile?.mods.find((m) => m.key === key);
-  if (!m) return;
+  if (!m) {
+    // a dependency's, for its row in the Dependencies section
+    const d = state.profile?.dependencies.find((d) => d.key === key && !d.inProfile);
+    if (d) {
+      d.summary = summary;
+      summaryViews.get(key)?.();
+    }
+    return;
+  }
   const wasHidden = isHidden(m);
   m.summary = summary;
   // its author and description may change where a search puts it

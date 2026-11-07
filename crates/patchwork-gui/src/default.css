@@ -738,25 +738,50 @@ dialog button.danger-text {
   color: var(--pw-danger);
 }
 
-/* Mods the filter hides, collapsed under the rest. */
-#hidden-mods {
+/* Mods the filter hides, and the dependencies, collapsed under the rest. */
+#hidden-mods,
+#dependencies {
   border-top: 1px solid var(--pw-border);
   padding-top: var(--pw-gap);
 }
 
-#hidden-mods > summary {
+#hidden-mods > summary,
+#dependencies > summary {
   cursor: pointer;
   color: var(--pw-muted);
   user-select: none;
 }
 
-#hidden-mods > summary:hover {
+#hidden-mods > summary:hover,
+#dependencies > summary:hover {
   color: var(--pw-text);
 }
 
-#hidden-mods > p {
+#hidden-mods > p,
+#dependencies > p {
   margin: 4px 0 var(--pw-gap);
   font-size: 12px;
+}
+
+#dependencies {
+  margin-top: var(--pw-gap);
+}
+
+/* A dependency's row: like a mod's, but with who needs it under its name,
+   and buttons to add or replace it in place of the switch. */
+.dependency-row .needed-by {
+  font-size: 12px;
+  color: var(--pw-muted);
+}
+
+.dependency-row.replaced .row-head {
+  opacity: 0.6;
+}
+
+.dependency-row .menu-items {
+  left: auto;
+  right: 0;
+  min-width: 200px;
 }
 
 .menu[aria-busy="true"] summary {
@@ -1025,6 +1050,124 @@ dialog button.danger-text {
 .result > .mod-conflict {
   align-self: flex-start;
   margin: 0 10px 8px;
+}
+
+/* Says a mod lists mods it may need that the profile doesn't have; opens
+   #requirements-dialog. A nudge, not a problem, so it isn't red. */
+.mod-requirements {
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: none;
+  color: var(--pw-accent);
+  cursor: pointer;
+}
+
+.result > .mod-requirements {
+  align-self: flex-start;
+  margin: 0 10px 8px;
+}
+
+/* A mod's soft dependencies, in its expanded row and #requirements-dialog. */
+.requirements-title {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.requirements {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.requirement-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.requirement-name {
+  font-weight: 500;
+}
+
+.requirement-need {
+  padding: 0 6px;
+  font-size: 11px;
+  border: 1px solid var(--pw-border);
+  border-radius: 999px;
+  color: var(--pw-muted);
+}
+
+.requirement-have {
+  color: var(--pw-muted);
+}
+
+.requirement-missing {
+  color: var(--pw-accent);
+}
+
+.requirement-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.requirement-actions button {
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+.requirements li.ignored .requirement-name {
+  color: var(--pw-muted);
+}
+
+.requirements p {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+#requirements-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+/* Things worth knowing that aren't problems, like what a new mod may need;
+   each stays until dismissed. */
+#mod-notices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#mod-notices li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-left: 3px solid var(--pw-accent);
+  background: var(--pw-surface);
+  border-radius: var(--pw-radius);
+}
+
+#mod-notices li > span {
+  flex: 1;
+}
+
+#mod-notices .dismiss {
+  padding: 0 6px;
+  background: none;
+  border: none;
+  color: var(--pw-muted);
+  cursor: pointer;
 }
 
 #conflicts-body {

@@ -329,6 +329,8 @@ fn from_r2z(format_id: &str, ctx: &FormatContext<'_>, input: &[u8]) -> Result<Sh
                 priority: 0,
                 game_versions: None,
                 ext: Default::default(),
+                replaces: Vec::new(),
+                ignores: Vec::new(),
             }
         })
         .collect();

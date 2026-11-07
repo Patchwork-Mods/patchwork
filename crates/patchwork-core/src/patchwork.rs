@@ -28,7 +28,9 @@ use crate::issue::Issue;
 use crate::launch::{self, Launch, LaunchOption};
 use crate::list::{List, OrderedList};
 use crate::locate::{self, Found, Locator};
-use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key};
+use crate::lock::{
+    LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, UnmetRequirement, mod_key, replace_dependencies,
+};
 use crate::matching::{self, ModText};
 use crate::options::{ModOptions, ModTransform};
 use crate::order::{self, ModFacts, Position, SortKey};
@@ -39,8 +41,8 @@ use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::{Origin, SettingSpec, SettingState, Settings};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{
-    ArtifactFormat, ArtifactLocation, Download, ModSpec, PendingDownload, Source, SourceContext,
-    SourceFile,
+    ArtifactFormat, ArtifactLocation, Download, ModSpec, Need, PendingDownload, Source,
+    SourceContext, SourceFile,
 };
 use crate::store::Store;
 use crate::sync::dedupe_names;
@@ -842,6 +844,8 @@ impl Patchwork {
             priority: 0,
             game_versions: None,
             ext: Default::default(),
+            replaces: Vec::new(),
+            ignores: Vec::new(),
         };
         loaded.mods.push(added.clone());
         self.save_profile(profile, &loaded)?;
@@ -865,6 +869,91 @@ impl Patchwork {
             .find_mut(name)
             .ok_or_else(|| no_such_mod(&label, name))?
             .enabled = enabled;
+        self.save_profile(profile, &loaded)
+    }
+
+    /// Sets whether mod `name` ignores its soft dependency `ident` (see
+    /// [`ProfileMod::ignores`]), so it isn't pointed out as missing.
+    pub fn set_ignored(
+        &self,
+        profile: &ProfileRef,
+        name: &str,
+        ident: &str,
+        ignored: bool,
+    ) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let m = loaded
+            .find_mut(name)
+            .ok_or_else(|| no_such_mod(&label, name))?;
+        m.ignores.retain(|i| i != ident);
+        if ignored {
+            m.ignores.push(ident.to_owned());
+        }
+        self.save_profile(profile, &loaded)
+    }
+
+    /// Sets which dependencies mod `name` stands in for (see
+    /// [`ProfileMod::replaces`]), each as `source:id` or the name of a
+    /// locked dependency. Lock afterwards for it to take effect.
+    pub fn set_replaces(
+        &self,
+        profile: &ProfileRef,
+        name: &str,
+        replaces: &[String],
+    ) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let lock = self.load_lock(profile)?;
+        let index = loaded
+            .mods
+            .iter()
+            .position(|m| m.name == name)
+            .ok_or_else(|| no_such_mod(&label, name))?;
+        let own = mod_key(&loaded.mods[index].source, &loaded.mods[index].id);
+        let mut keys: Vec<String> = Vec::new();
+        for wanted in replaces {
+            let locked = lock
+                .iter()
+                .flat_map(|l| &l.mods)
+                .find(|m| m.name == *wanted || m.key() == *wanted);
+            let key = match locked {
+                Some(m) => m.key(),
+                None if wanted.contains(':') => wanted.clone(),
+                None => {
+                    return Err(Error::invalid(format!(
+                        "no dependency named `{wanted}` is locked; give it as `source:id`"
+                    )));
+                }
+            };
+            if key == own {
+                return Err(Error::invalid(format!("`{name}` can't replace itself")));
+            }
+            if let Some(m) = loaded
+                .mods
+                .iter()
+                .find(|m| mod_key(&m.source, &m.id) == key)
+            {
+                return Err(Error::invalid(format!(
+                    "`{}` is in {label} itself; remove it first to replace it",
+                    m.name
+                )));
+            }
+            if let Some(m) = loaded
+                .mods
+                .iter()
+                .find(|m| m.name != name && m.replaces.contains(&key))
+            {
+                return Err(Error::invalid(format!(
+                    "`{}` already replaces `{key}`",
+                    m.name
+                )));
+            }
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        loaded.mods[index].replaces = keys;
         self.save_profile(profile, &loaded)
     }
 
@@ -1502,6 +1591,19 @@ impl Patchwork {
         for u in unmet {
             self.reporter.report(Event::Warning(u.to_string()));
         }
+        // Mods locked for the first time say what they might need, once.
+        for m in lock.mods.iter().filter(|m| !known.contains_key(&m.key())) {
+            let unsure: Vec<String> = lock
+                .soft_dependencies(&loaded, &m.key())
+                .into_iter()
+                .filter(|d| d.missing() && d.dependency.need == Need::Unknown)
+                .map(|d| d.dependency.label().to_owned())
+                .collect();
+            if !unsure.is_empty() {
+                self.reporter
+                    .report(Event::Notice(unsure_dependencies_notice(&m.name, &unsure)));
+            }
+        }
         self.save_lock(profile, &lock)?;
         Ok(lock)
     }
@@ -1625,6 +1727,7 @@ impl Patchwork {
                 (spec, Some(m.name.clone()))
             })
             .collect();
+        let replacements = loaded.replacements();
         let mut seen = HashSet::new();
         let mut resolved_keys = HashSet::new();
         let mut mods = Vec::new();
@@ -1636,7 +1739,9 @@ impl Patchwork {
                 .filter(|(spec, _)| seen.insert(mod_key(&spec.source, &spec.id)))
                 .collect();
             let locked: Vec<Locking> = stream::iter(todo)
-                .map(|(spec, name)| self.lock_mod(loaded, spec, name, previous, known))
+                .map(|(spec, name)| {
+                    self.lock_mod(loaded, spec, name, previous, known, &replacements)
+                })
                 .buffered(LOCK_CONCURRENCY)
                 .try_collect()
                 .await?;
@@ -1683,10 +1788,14 @@ impl Patchwork {
         name: Option<String>,
         previous: &HashMap<String, LockedMod>,
         known: &HashMap<String, LockedMod>,
+        replacements: &BTreeMap<String, String>,
     ) -> Result<Locking> {
         let key = mod_key(&spec.source, &spec.id);
-        let keep = match previous.get(&key) {
-            Some(old) if old.requested == spec.version => Some(old),
+        let unchanged = previous
+            .get(&key)
+            .filter(|old| old.requested == spec.version);
+        let keep = match unchanged {
+            Some(old) if old.fits_replacements(replacements) => Some(old),
             // There's nothing to resolve it from here, so it stays as it
             // was locked.
             _ if self.local_elsewhere(&spec.source, &spec.id)? => {
@@ -1735,13 +1844,28 @@ impl Patchwork {
 
         let label = name.clone().unwrap_or_else(|| key.clone());
         self.reporter.report(Event::Resolving { name: label });
-        let resolved = self.resolve(loaded, &spec).await?;
+        // Only what replaces its dependencies changed, so it stays at the
+        // version it's locked to.
+        let resolved = match unchanged.and_then(|old| old.version.clone()) {
+            Some(version) => {
+                let spec = ModSpec {
+                    version: Some(version),
+                    ..spec.clone()
+                };
+                self.resolve(loaded, &spec).await?
+            }
+            None => self.resolve(loaded, &spec).await?,
+        };
         let name = name.unwrap_or_else(|| resolved.name.clone());
-        let dependencies: Vec<String> = resolved
-            .dependencies
-            .iter()
-            .map(|d| mod_key(&d.source, &d.id))
-            .collect();
+        let (dependencies, replaced) = replace_dependencies(
+            &mod_key(&spec.source, &resolved.id),
+            resolved
+                .dependencies
+                .iter()
+                .map(|d| mod_key(&d.source, &d.id))
+                .collect(),
+            replacements,
+        );
         // a URL is taken to always serve the same file, which
         // holds for versioned download links, and so is a source's
         // own file id; paths can change under us, and are cheap to
@@ -1805,6 +1929,8 @@ impl Patchwork {
             format: resolved.format,
             artifact,
             dependencies,
+            replaced,
+            soft_dependencies: resolved.soft_dependencies,
             requires: resolved
                 .dependencies
                 .into_iter()
@@ -2917,6 +3043,27 @@ fn deploy_inputs(
         }
     }
     hasher.finalize().into()
+}
+
+/// Tells the user that mod `name` lists `unsure` (by name) but its source
+/// doesn't say whether it needs them.
+fn unsure_dependencies_notice(name: &str, unsure: &[String]) -> String {
+    let (what, them) = match unsure {
+        [one] => (format!("`{one}`"), "it"),
+        _ => (
+            unsure
+                .iter()
+                .map(|n| format!("`{n}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            "them",
+        ),
+    };
+    format!(
+        "{name} lists {what} as a requirement, but its source doesn't say whether \
+         that's required or optional, so patchwork didn't install {them}; \
+         add or ignore {them} from {name}'s details"
+    )
 }
 
 /// Depth-first, so dependencies come before the mods that need them.

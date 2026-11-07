@@ -520,6 +520,7 @@ impl Source for TestSource {
             format: ArtifactFormat::of_path(&path),
             artifact: ArtifactLocation::Path { path },
             dependencies: Vec::new(),
+            soft_dependencies: Vec::new(),
             game_versions: None,
             env: Default::default(),
             kind: None,

@@ -154,6 +154,7 @@
 					<button type="submit">Set</button>
 					<small id="game-path-found" class="muted hint"></small>
 				</form>
+				<ul id="mod-notices"></ul>
 				<ul id="mod-problems" class="warnings"></ul>
 				<div id="mods-toolbar" class="row">
 					<div class="row">
@@ -215,6 +216,13 @@
 					<summary></summary>
 					<p class="muted">These are only out of the way here; they're still deployed while they're enabled.</p>
 					<ul id="hidden-mods-list" class="result-grid"></ul>
+				</details>
+				<!-- What the mods above need, from the lockfile, so they're only here
+				     once it's locked; see renderDependencies() in mods.js. -->
+				<details id="dependencies" hidden>
+					<summary></summary>
+					<p class="muted">Downloaded because the mods above need them. Add one to the list to pick its version, or have a mod in the list stand in for it, like a fork of it.</p>
+					<ul id="dependencies-list" class="mod-list"></ul>
 				</details>
 				<p id="mods-empty" class="empty" hidden>No mods yet. Find some in the tabs above.</p>
 			</section>
@@ -827,6 +835,18 @@
 			<form method="dialog" class="stack">
 				<h2 id="conflicts-title">Conflicts</h2>
 				<div id="conflicts-body" class="stack"></div>
+				<div class="row end">
+					<button value="close" autofocus>Close</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- What a mod lists that wasn't installed with it, because it's
+		     optional or may not be needed; see requirements.js. -->
+		<dialog id="requirements-dialog">
+			<form method="dialog" class="stack">
+				<h2 id="requirements-title">Requirements</h2>
+				<div id="requirements-body" class="stack"></div>
 				<div class="row end">
 					<button value="close" autofocus>Close</button>
 				</div>

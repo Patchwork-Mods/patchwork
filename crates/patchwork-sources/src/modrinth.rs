@@ -40,8 +40,8 @@ use patchwork_core::compat::{EnvSupport, GameVersions};
 use patchwork_core::game::{EnvDefs, GameDef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, Dependency, ModSpec, ResolvedMod, Source, SourceContext,
-    VersionReq, compare_dotted, url_parts,
+    ArtifactFormat, ArtifactLocation, Dependency, ModSpec, Need, ResolvedMod, SoftDependency,
+    Source, SourceContext, VersionReq, compare_dotted, url_parts,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -345,6 +345,27 @@ fn to_resolved(
             },
         });
     }
+    // Optional ones are only shown; Modrinth names them by project, which
+    // is all a soft dependency needs.
+    let soft_dependencies = version
+        .dependencies
+        .iter()
+        .filter(|d| d.dependency_type == "optional")
+        .filter_map(|dep| {
+            let pinned = dep.version_id.as_ref().and_then(|v| numbers.get(v));
+            let project_id = dep
+                .project_id
+                .clone()
+                .or_else(|| pinned.map(|(project, _)| project.clone()))?;
+            Some(SoftDependency {
+                key: Some(format!("{ID}:{project_id}")),
+                name: None,
+                need: Need::Optional,
+                notes: None,
+                url: None,
+            })
+        })
+        .collect();
     let loaders = supported_picks(game, config, &version.loaders);
     let env = match loaders.is_empty() {
         true => EnvSupport::default(),
@@ -364,10 +385,39 @@ fn to_resolved(
         },
         format: ArtifactFormat::File,
         dependencies,
+        soft_dependencies,
         game_versions,
         env,
         kind: Some(kind),
     })
+}
+
+/// Gives `resolved`'s soft dependencies, which Modrinth only names by
+/// project id, their projects' titles and pages. They're only shown, so
+/// they go without if Modrinth can't be asked.
+async fn name_soft_dependencies(resolved: &mut ResolvedMod) {
+    let prefix = format!("{ID}:");
+    let ids: Vec<String> = resolved
+        .soft_dependencies
+        .iter()
+        .filter_map(|d| d.key.as_deref()?.strip_prefix(&prefix).map(str::to_owned))
+        .collect();
+    if ids.is_empty() {
+        return;
+    }
+    let Ok(url) = with_params(&format!("{API}/projects"), &[("ids", json_list(&ids))]) else {
+        return;
+    };
+    let Ok(projects) = get_json::<Vec<Project>>(&url).await else {
+        return;
+    };
+    for dep in &mut resolved.soft_dependencies {
+        let id = dep.key.as_deref().and_then(|k| k.strip_prefix(&prefix));
+        if let Some(project) = projects.iter().find(|p| Some(p.id.as_str()) == id) {
+            dep.name = Some(project.title.clone());
+            dep.url = Some(format!("https://modrinth.com/project/{}", project.slug));
+        }
+    }
 }
 
 /// What `version` of `project` is: its project type, except that
@@ -573,7 +623,9 @@ impl Source for Modrinth {
                 .map(|v| (v.id, (v.project_id, v.version_number)))
                 .collect()
         };
-        to_resolved(ctx.game, &config, &project, chosen, &numbers)
+        let mut resolved = to_resolved(ctx.game, &config, &project, chosen, &numbers)?;
+        name_soft_dependencies(&mut resolved).await;
+        Ok(resolved)
     }
 
     /// Version numbers are free-form, and only ones that are numbers can

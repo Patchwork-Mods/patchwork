@@ -90,6 +90,36 @@ patchwork list --load-order               # the order they deploy in
 patchwork conflicts                       # which mod wins each shared file
 ```
 
+## Dependencies
+
+The mod list only has the mods you added; what they need is downloaded
+for them when the profile is locked (deploying locks it). The app lists
+these under **Dependencies** below the mods. To use your own copy of
+one instead, like a fork, add that to the list and have it replace the
+dependency:
+
+```sh
+patchwork deps                                         # what got pulled in, and why
+patchwork add thunderstore:SomeoneElse-R2API_Core
+patchwork replace SomeoneElse-R2API_Core RiskofThunder-R2API_Core
+patchwork replace SomeoneElse-R2API_Core --undo        # back to the original
+```
+
+Adding a dependency to the list yourself (to pin its version, say) works
+too; mods that need it then use that one.
+
+Only dependencies a source marks as required are installed. Optional ones
+(Modrinth) and ones whose source doesn't say (all of Nexus Mods'
+requirements) are listed in the mod's details instead. A mod missing any
+of the second kind gets a "maybe needed" mark, and locking it the first
+time tells you about them. Add the ones you want and ignore the rest:
+
+```sh
+patchwork soft-deps --missing                          # what mods list that you don't have
+patchwork ignore SkyUI "Skyrim Script Extender (SKSE64)"
+patchwork ignore SkyUI nexus:30379 --undo
+```
+
 ## Sharing profiles
 
 - **Export and import**: `patchwork profile export` and `import` read and

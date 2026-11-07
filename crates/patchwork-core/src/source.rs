@@ -259,6 +259,60 @@ pub struct Dependency {
     pub req: VersionReq,
 }
 
+/// How sure a source is that a mod needs a [`SoftDependency`]. Ones it's
+/// sure of are [`Dependency`]s, which are installed along with the mod.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Need {
+    /// The source says the mod works without it.
+    Optional,
+    /// The source lists it but doesn't say whether it's needed, like
+    /// Nexus Mods' requirements, which authors use for both.
+    Unknown,
+}
+
+/// Something a mod lists that patchwork doesn't install by itself, since
+/// it may not be needed; frontends show these so the user can add them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoftDependency {
+    /// `source:id`, or none for something patchwork can't get, like a
+    /// download on another site (see `url`) or a game's DLC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// What the source calls it, if it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub need: Need,
+    /// What the mod's author says about it, like what it's for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// A page about it; the only way to get ones without a `key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl SoftDependency {
+    /// What [`crate::profile::ProfileMod::ignores`] names it by: its key,
+    /// or failing that its page or name.
+    pub fn ident(&self) -> &str {
+        self.key
+            .as_deref()
+            .or(self.url.as_deref())
+            .or(self.name.as_deref())
+            .unwrap_or_default()
+    }
+
+    /// What to call it: its name, key or page.
+    pub fn label(&self) -> &str {
+        self.name
+            .as_deref()
+            .or(self.key.as_deref())
+            .or(self.url.as_deref())
+            .unwrap_or_default()
+    }
+}
+
 /// Orders dotted numeric versions like `5.4.2100`, treating missing parts as
 /// zero so `1.2` and `1.2.0` are equal. `None` if either has a part that
 /// isn't a number.
@@ -287,7 +341,10 @@ pub struct ResolvedMod {
     pub version: Option<String>,
     pub artifact: ArtifactLocation,
     pub format: ArtifactFormat,
+    /// What it needs, which is installed with it.
     pub dependencies: Vec<Dependency>,
+    /// What it lists that it may not need; see [`SoftDependency`].
+    pub soft_dependencies: Vec<SoftDependency>,
     /// Which versions of the game this is for, if the source can tell.
     /// [`crate::compat::guess`] helps sources that only have free text to
     /// go on.

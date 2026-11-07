@@ -9,6 +9,7 @@ import { showChangelog } from "./changelog.js";
 import { showOptions } from "./form.js";
 import { dragHandle, dragging } from "./reorder.js";
 import { conflictMark } from "./conflicts.js";
+import { requirementsList, requirementsMark } from "./requirements.js";
 
 // The Mods tab shows mods either as cards, like a source's search results,
 // or as a denser list of rows that each expand to show the rest.
@@ -185,6 +186,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
           conflictMark(m),
           unsharedMark(m),
           optionsMark(m),
+          requirementsMark(m),
         ),
         item.author && h("span", { class: "author" }, item.author),
       ),
@@ -254,6 +256,7 @@ function rowDetails(m, item, onRemove) {
     count(item.downloads, "downloads"),
     count(item.rating, "likes"),
     h("span", {}, `${m.source}:${m.shownId}`),
+    ...tiesOf(m),
   ].filter(Boolean);
   const urlButton = (url, text) =>
     url && h("button", { type: "button", title: url, onclick: () => openExternal(url) }, text);
@@ -261,6 +264,8 @@ function rowDetails(m, item, onRemove) {
     summary && h("p", {}, summary),
     h("div", { class: "facts muted" }, facts.flatMap((f, i) => (i ? [" · ", f] : [f]))),
     tags.length > 0 && h("div", { class: "tags" }, tags.map((t) => h("span", { class: "tag" }, t))),
+    m.softDependencies?.length > 0 && h("h4", { class: "requirements-title" }, "It also lists"),
+    requirementsList(m),
     h(
       "div",
       { class: "row-actions" },
@@ -270,6 +275,20 @@ function rowDetails(m, item, onRemove) {
       ...optionsButtons(m),
       h("button", { type: "button", class: "danger", onclick: onRemove }, "Remove"),
     ),
+  ];
+}
+
+/** What a profile's mod needs, what needs it and what it stands in for, from the lockfile. */
+function tiesOf(m) {
+  const deps = state.profile?.dependencies ?? [];
+  const names = (list) => list.join(", ");
+  const needs = deps.filter((d) => d.neededBy.includes(m.name) && !d.replacedBy).map((d) => d.name);
+  const neededBy = deps.find((d) => d.key === m.key)?.neededBy ?? [];
+  const replaces = deps.filter((d) => d.replacedBy === m.name).map((d) => d.name);
+  return [
+    needs.length > 0 && h("span", {}, `Needs ${names(needs)}`),
+    neededBy.length > 0 && h("span", {}, `Needed by ${names(neededBy)}`),
+    replaces.length > 0 && h("span", {}, `Stands in for ${names(replaces)}`),
   ];
 }
 
@@ -335,6 +354,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
     issueMark(m),
     conflictMark(m),
     unsharedMark(m),
+    requirementsMark(m),
     movable && dragHandle(m),
     h(
       "button",
@@ -572,6 +592,167 @@ export async function renderMods(mods) {
   $("#filter-menu > summary").textContent = state.profile.hiddenTags.length
     ? `Filter (${state.profile.hiddenTags.length})`
     : "Filter";
+  renderDependencies(query);
+}
+
+// The Dependencies section: mods the profile's mods brought in, which are
+// only in the lockfile, and the ones replaced by a mod in the list.
+
+try {
+  $("#dependencies").open = localStorage.getItem("dependenciesOpen") === "true";
+} catch {}
+$("#dependencies").addEventListener("toggle", () => {
+  try {
+    localStorage.setItem("dependenciesOpen", String($("#dependencies").open));
+  } catch {}
+});
+
+// a row's Replace menu closes when you click elsewhere
+document.addEventListener("click", (e) => {
+  for (const menu of document.querySelectorAll("#dependencies-list details.menu[open]")) {
+    if (!menu.contains(e.target)) menu.open = false;
+  }
+});
+
+/** Lists the dependencies, the ones whose names match `query` if there is one. */
+function renderDependencies(query) {
+  const all = (state.profile.dependencies ?? []).filter((d) => !d.inProfile);
+  const words = (query ?? "").toLowerCase();
+  const shown = words ? all.filter((d) => d.name.toLowerCase().includes(words)) : all;
+  const replaced = all.filter((d) => d.replacedBy).length;
+  $("#dependencies").hidden = !shown.length;
+  $("#dependencies > summary").textContent =
+    `Dependencies (${all.length - replaced})` + (replaced ? ` · ${replaced} replaced` : "");
+  $("#dependencies-list").replaceChildren(...shown.map(dependencyRow));
+}
+
+function dependencyRow(d) {
+  const head = h("div", { class: "row-head" });
+  const fill = () => {
+    const item = d.summary ?? { name: d.name };
+    head.replaceChildren(
+      modIcon(item),
+      h(
+        "div",
+        { class: "row-title" },
+        h("span", { class: "mod-name", title: d.key }, item.name),
+        h(
+          "span",
+          { class: "needed-by" },
+          d.neededBy.length ? `Needed by ${d.neededBy.join(", ")}` : "Nothing needs it any more",
+        ),
+      ),
+    );
+  };
+  fill();
+  summaryViews.set(d.key, fill);
+  const actions = d.replacedBy
+    ? [
+        h("span", { class: "muted" }, `Replaced by ${d.replacedBy}`),
+        h(
+          "button",
+          {
+            type: "button",
+            title: `Have the mods that need it use ${d.name} again`,
+            onclick: (e) => stopReplacing(d, e.target),
+          },
+          "Stop replacing",
+        ),
+      ]
+    : [
+        h("span", { class: "mod-version muted" }, d.version ?? ""),
+        h(
+          "button",
+          {
+            type: "button",
+            title: "Add it to the list, so you can pick its version or turn it off",
+            onclick: (e) => addDependency(d, e.target),
+          },
+          "Add to list",
+        ),
+        replaceMenu(d),
+      ];
+  return h(
+    "li",
+    { class: d.replacedBy ? "mod-row dependency-row replaced" : "mod-row dependency-row", "data-key": d.key },
+    head,
+    ...actions,
+  );
+}
+
+/** A menu of the profile's mods, to pick one to stand in for `d`. */
+function replaceMenu(d) {
+  const menu = h(
+    "details",
+    { class: "menu" },
+    h("summary", { title: "Use a mod from the list in its place, like a fork of it" }, "Replace with"),
+  );
+  const items = h("div", { class: "menu-items" });
+  for (const m of state.profile.mods) {
+    items.append(
+      h(
+        "button",
+        {
+          type: "button",
+          onclick: () => {
+            menu.open = false;
+            replaceWith(d, m).catch(() => {});
+          },
+        },
+        m.name,
+      ),
+    );
+  }
+  menu.append(items);
+  return menu;
+}
+
+/** Sets what mod `m` stands in for, and shows the profile it's locked with. */
+async function setReplaces(m, replaces, doing, done) {
+  const { id } = state.profile;
+  status(doing);
+  const profile = await run("set_replaces", { id, name: m.name, replaces });
+  status(done);
+  if (state.profile?.id === id) showProfile(profile);
+}
+
+function replaceWith(d, m) {
+  return setReplaces(
+    m,
+    [...(m.replaces ?? []), d.key],
+    `Replacing ${d.name} with ${m.name}…`,
+    `${m.name} stands in for ${d.name}`,
+  );
+}
+
+async function stopReplacing(d, button) {
+  const m = state.profile.mods.find((m) => m.name === d.replacedBy);
+  if (!m) return;
+  button.disabled = true;
+  try {
+    await setReplaces(
+      m,
+      (m.replaces ?? []).filter((k) => k !== d.key),
+      `Bringing back ${d.name}…`,
+      `Mods that need ${d.name} use it again`,
+    );
+  } catch {
+    button.disabled = false;
+  }
+}
+
+/** Adds a dependency to the profile's own mods. */
+async function addDependency(d, button) {
+  button.disabled = true;
+  const { id } = state.profile;
+  status(`Adding ${d.name}…`);
+  try {
+    const added = await run("add_mod", { id, source: d.source, modId: d.id });
+    status(`Added ${added.name} to the list`);
+    if (state.profile?.id === id) showProfile(added.profile);
+  } catch {
+    button.disabled = false;
+  }
 }
 
 /**

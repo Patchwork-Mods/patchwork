@@ -87,8 +87,28 @@ impl Profile {
         format!("{}/{}", self.game, self.name)
     }
 
+    pub fn find(&self, name: &str) -> Option<&ProfileMod> {
+        self.mods.iter().find(|m| m.name == name)
+    }
+
     pub fn find_mut(&mut self, name: &str) -> Option<&mut ProfileMod> {
         self.mods.iter_mut().find(|m| m.name == name)
+    }
+
+    /// What each replaced dependency (see [`ProfileMod::replaces`]) is
+    /// replaced with, both as `source:id`. If two mods replace the same
+    /// one, the first in the profile wins.
+    pub fn replacements(&self) -> BTreeMap<String, String> {
+        let mut map = BTreeMap::new();
+        for m in &self.mods {
+            let key = crate::lock::mod_key(&m.source, &m.id);
+            for replaced in &m.replaces {
+                if *replaced != key {
+                    map.entry(replaced.clone()).or_insert_with(|| key.clone());
+                }
+            }
+        }
+        map
     }
 }
 
@@ -173,6 +193,16 @@ pub struct ProfileMod {
     /// What extensions keep for the mod, like [`Profile::ext`].
     #[serde(default, skip_serializing_if = "ExtTables::is_empty")]
     pub ext: ExtTables,
+    /// Dependencies (as `source:id`) this mod stands in for, like a fork of
+    /// one: mods that need them get this mod instead, and they aren't
+    /// downloaded. See [`Profile::replacements`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<String>,
+    /// Soft dependencies (see [`crate::source::SoftDependency::ident`])
+    /// the user doesn't want to hear about for this mod, because they've
+    /// got them some other way or don't want them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignores: Vec<String>,
 }
 
 fn is_zero(n: &i32) -> bool {
@@ -195,6 +225,10 @@ struct ProfileModFile {
     game_versions: Option<GameVersions>,
     #[serde(default)]
     ext: ExtTables,
+    #[serde(default)]
+    replaces: Vec<String>,
+    #[serde(default)]
+    ignores: Vec<String>,
     /// Schema 2's FOMOD picks.
     #[serde(default)]
     fomod: Option<toml::Value>,
@@ -222,6 +256,8 @@ impl From<ProfileModFile> for ProfileMod {
             priority: file.priority,
             game_versions: file.game_versions,
             ext,
+            replaces: file.replaces,
+            ignores: file.ignores,
         }
     }
 }
