@@ -494,16 +494,18 @@ async fn a_friend_offline_during_a_removal_is_told_later() {
     let new = doc_of(&a_node, &profile);
 
     let b_node = node(&b).await;
-    let b_moves = until_within(Duration::from_secs(60), || doc_of(&b_node, &profile) == new);
+    // b takes the new document before it answers, so a hearing back is
+    // waited for too, rather than checked once b has moved
+    let b_moves = until_within(Duration::from_secs(60), || {
+        doc_of(&b_node, &profile) == new
+            && a_node
+                .synced_profile(&profile)
+                .unwrap()
+                .unwrap()
+                .to_tell
+                .is_empty()
+    });
     both_running((&a_node, &a), (&b_node, &b), b_moves).await;
-    assert!(
-        a_node
-            .synced_profile(&profile)
-            .unwrap()
-            .unwrap()
-            .to_tell
-            .is_empty()
-    );
 
     a_node.shutdown().await.unwrap();
     b_node.shutdown().await.unwrap();
