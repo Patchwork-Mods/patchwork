@@ -1584,6 +1584,20 @@ fn open(paths: Paths, reporter: impl Reporter + 'static) -> patchwork_core::Resu
         .open()
 }
 
+/// With `$PATCHWORK_HOME` set, the app is one instance per home rather than
+/// one in all, so separate homes can run side by side (say, to try syncing
+/// between them). Only Linux can be told this; elsewhere it stays one in all.
+#[cfg(target_os = "linux")]
+fn instance_id(identifier: &str) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    let home = std::env::var_os("PATCHWORK_HOME")?;
+    let home = std::path::absolute(&home).unwrap_or(home.into());
+    // the same binary hashes alike, which is all that's needed
+    let mut hasher = std::hash::DefaultHasher::new();
+    home.hash(&mut hasher);
+    Some(format!("{identifier}.home{:016x}", hasher.finish()))
+}
+
 fn main() {
     if std::env::args().any(|a| a == daemon::FLAG) {
         if let Err(e) = daemon::run(|paths| open(paths, Silent)) {
@@ -1592,15 +1606,22 @@ fn main() {
         }
         return;
     }
+    let context = tauri::generate_context!();
+    let single_instance = tauri_plugin_single_instance::Builder::new().callback(|app, _, _| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    });
+    #[cfg(target_os = "linux")]
+    let single_instance = match instance_id(&context.config().identifier) {
+        Some(id) => single_instance.dbus_id(id),
+        None => single_instance,
+    };
     tauri::Builder::default()
         // first, so a second launch (say, for an `nxm://` link) hands its
         // link to this one and exits before doing anything else
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
-        }))
+        .plugin(single_instance.build())
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let paths = Paths::from_env()?;
@@ -1725,6 +1746,6 @@ fn main() {
             sync::sync_peers,
             sync::sync_name_peer,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running patchwork");
 }
