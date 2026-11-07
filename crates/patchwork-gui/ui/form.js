@@ -1,6 +1,7 @@
 // A mod's choices, from the button on its card or row for them (Installer,
 // for a FOMOD installer): a page at a time, like the installers mods were
-// made for. Each change is worked out again by main.rs (the extension in
+// made for. Also a config file's settings, from the Config tab (config.js),
+// which are one page of fields. Each change is worked out again by main.rs (the extension in
 // core), since picks can show or hide later pages and change what can be
 // picked. Nothing's saved until the last page's Save. Nothing here knows
 // what the choices are for; it draws the form core hands it: groups of items
@@ -12,9 +13,9 @@ import { showProfile } from "./profile.js";
 import { refreshList } from "./list.js";
 
 /**
- * The form being shown: the mod and choices it's for, what's picked so far,
- * the page that's showing, and the pictures already fetched, by path in the
- * mod.
+ * The form being shown: the mod and choices it's for (or the config file's
+ * `path`), what's picked so far, the page that's showing, and the pictures
+ * already fetched, by path in the mod.
  */
 let open = null;
 /** The latest load, so an older one finishing late is ignored. */
@@ -60,19 +61,47 @@ export async function showOptions(m, options) {
   await load(null);
 }
 
+/** Opens #options-dialog on a config file's settings (one of those from
+ * config_files in main.rs), starting from what's saved. */
+export async function showConfig(file) {
+  const name = file.title ?? file.path.split("/").pop();
+  open = {
+    id: state.profile.id,
+    name,
+    path: file.path,
+    title: "Settings",
+    answers: null,
+    view: null,
+    page: 0,
+    pictures: new Map(),
+  };
+  $("#options-title").textContent = `${name} settings`;
+  $("#options-page").textContent = file.path;
+  $("#options-groups").replaceChildren(h("p", { class: "muted" }, "Loading…"));
+  preview(null);
+  $("#options-warnings").replaceChildren();
+  $("#options-summary").textContent = "";
+  $("#options-next").disabled = true;
+  $("#options-back").disabled = true;
+  $("#options-dialog").showModal();
+  await load(null);
+}
+
 /** Works out the form for `answers` (what's saved, if null) and shows it. */
 async function load(answers) {
   const cur = open;
   const seq = ++loads;
   let view;
   try {
-    view = await run("mod_options", {
-      id: cur.id,
-      name: cur.name,
-      options: cur.options,
-      answers,
-      have: [...cur.pictures.keys()],
-    });
+    view = cur.path
+      ? { ...(await run("config_form", { id: cur.id, path: cur.path, answers })), pictures: {} }
+      : await run("mod_options", {
+          id: cur.id,
+          name: cur.name,
+          options: cur.options,
+          answers,
+          have: [...cur.pictures.keys()],
+        });
   } catch (e) {
     if (cur === open) $("#options-groups").replaceChildren(h("p", { class: "error" }, String(e)));
     return;
@@ -91,10 +120,17 @@ function render() {
   const pages = form.pages;
   const page = pages[at];
   // Along with the name the choices give the mod, like an installer's, if
-  // it's something else.
-  const title = `${name} ${view.title.toLowerCase()}`;
-  $("#options-title").textContent =
-    form.title && form.title !== name ? `${title}: ${form.title}` : title;
+  // it's something else. A config file's is its own name, and the mod it's
+  // from.
+  if (open.path) {
+    $("#options-title").textContent = view.mod
+      ? `${form.title} settings (from ${view.mod})`
+      : `${form.title} settings`;
+  } else {
+    const title = `${name} ${view.title.toLowerCase()}`;
+    $("#options-title").textContent =
+      form.title && form.title !== name ? `${title}: ${form.title}` : title;
+  }
   $("#options-page").textContent = page
     ? pages.length > 1
       ? `Step ${at + 1} of ${pages.length}: ${page.title}`
@@ -122,14 +158,17 @@ function render() {
     ...form.warnings.map((w) => h("li", { class: "warning" }, w)),
   );
   const summary = form.summary ? `${form.summary} ` : "";
-  $("#options-summary").textContent = view.saved
-    ? summary
-    : `${summary}Until you save, deploys use the defaults.`;
+  $("#options-summary").textContent =
+    view.saved || open.path ? summary : `${summary}Until you save, deploys use the defaults.`;
   $("#options-back").disabled = at === 0;
   const last = at >= pages.length - 1;
   $("#options-next").textContent = last ? "Save" : "Next";
   $("#options-next").disabled = false;
   $("#options-reset").hidden = !view.saved;
+  $("#options-reset").textContent = open.path ? "Undo all changes" : "Use defaults";
+  $("#options-reset").title = open.path
+    ? "Forget the settings changed in this file, and deploy it as it is"
+    : "Forget the options picked, and deploy with the defaults";
 }
 
 /** A group's items, as radio buttons or checkboxes. */
@@ -342,23 +381,36 @@ $("#options-next").addEventListener("click", async () => {
     render();
     return;
   }
-  await save(open.answers, `Saved ${open.name}'s ${open.title.toLowerCase()} options`);
+  await save(
+    open.answers,
+    open.path
+      ? `Saved ${open.name}'s settings; deploy to apply them`
+      : `Saved ${open.name}'s ${open.title.toLowerCase()} options`,
+  );
 });
 
 $("#options-reset").addEventListener("click", () =>
-  save(null, `${open.name} is back to the default ${open.title.toLowerCase()} options`),
+  save(
+    null,
+    open.path
+      ? `${open.name} is back to its own settings`
+      : `${open.name} is back to the default ${open.title.toLowerCase()} options`,
+  ),
 );
 
 /** Saves `answers` (or forgets them, if null) and closes the dialog. */
 async function save(answers, message) {
-  const { id, name, options } = open;
+  const { id, name, options, path } = open;
   $("#options-next").disabled = true;
   try {
-    const profile = await run("set_mod_options", { id, name, options, answers });
+    const profile = path
+      ? await run("set_config", { id, path, answers })
+      : await run("set_mod_options", { id, name, options, answers });
     $("#options-dialog").close();
     if (state.profile?.id === id) {
+      // Showing the profile loads the open list or Config tab again.
       showProfile(profile);
-      refreshList();
+      if (!path) refreshList();
     }
     status(message);
   } catch {

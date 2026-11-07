@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::compat::GameVersions;
+use crate::config::ConfigDef;
 use crate::deploy::RootId;
 use crate::relpath::RelPath;
 
@@ -58,6 +59,11 @@ pub struct GameDef {
     /// profile is deployed to the game's folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instances: Option<InstancesDef>,
+    /// Which files are config the user can change from patchwork, and
+    /// what reads them; see [`crate::config`]. The game's deployer can say
+    /// more (a ruleset's `[[config]]`, say).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config: Vec<ConfigDef>,
     /// The extensions the game turns on, each with its config, by
     /// extension id; see [`crate::ext`]. A table for an extension this
     /// build doesn't have is reported as an issue, not an error.

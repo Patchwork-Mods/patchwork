@@ -246,6 +246,7 @@ fn hitman_def() -> GameDef {
         launch: Default::default(),
         capture: None,
         instances: None,
+        config: Vec::new(),
         ext: Default::default(),
     }
 }

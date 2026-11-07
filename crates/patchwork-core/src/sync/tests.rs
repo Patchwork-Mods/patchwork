@@ -213,6 +213,36 @@ fn different_extensions_changed_at_once_both_survive() {
 }
 
 #[test]
+fn settings_changed_in_different_config_files_at_once_both_survive() {
+    use crate::options::Value;
+
+    let (mut a, mut b, mut clock) = pair(&["One"]);
+    let edits = |n: i64| {
+        BTreeMap::from([(
+            "General".to_owned(),
+            BTreeMap::from([("Speed".to_owned(), Value::Int(n))]),
+        )])
+    };
+    let one: crate::deploy::Dest = "BepInEx/config/one.cfg".parse().unwrap();
+    let two: crate::deploy::Dest = "appdata:two.cfg".parse().unwrap();
+    a.profile.config.insert(one.clone(), edits(1));
+    b.profile.config.insert(two.clone(), edits(2));
+    sync(&mut a, &mut b, &mut clock);
+    for m in [&a, &b] {
+        assert_eq!(m.profile.config.len(), 2);
+        assert_eq!(m.profile.config[&one], edits(1));
+        assert_eq!(m.profile.config[&two], edits(2));
+    }
+
+    // and forgetting a file's settings forgets them everywhere
+    a.profile.config.remove(&one);
+    sync(&mut a, &mut b, &mut clock);
+    for m in [&a, &b] {
+        assert_eq!(m.profile.config.keys().collect::<Vec<_>>(), [&two]);
+    }
+}
+
+#[test]
 fn format_1s_plugins_become_the_bethesda_extensions_state() {
     let (mut a, _, mut clock) = pair(&["One"]);
     a.replica.insert(

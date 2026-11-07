@@ -6,7 +6,9 @@ export const $ = (sel) => document.querySelector(sel);
 export const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 export const ms = (t) => `${Math.round(t)}ms`;
 
-/** Makes an element. `attrs` keys starting with "on" are event listeners. */
+/** Makes an element. `attrs` keys starting with "on" are event listeners.
+ * Children that are null, undefined or false are left out, so
+ * `cond && h(...)` adds one only if `cond`. */
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -15,7 +17,7 @@ export function h(tag, attrs = {}, ...children) {
     else if (key === "class") el.className = value;
     else el.setAttribute(key, value === true ? "" : value);
   }
-  el.append(...children.flat().filter((c) => c != null));
+  el.append(...children.flat().filter((c) => c != null && c !== false));
   return el;
 }
 

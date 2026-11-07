@@ -119,6 +119,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         launch: Default::default(),
         capture: None,
         instances: None,
+        config: Vec::new(),
         ext: Default::default(),
     }
 }
@@ -3104,4 +3105,276 @@ async fn checks_can_be_turned_off_by_name() {
     let profile = pw.create_profile("my-game", "default").unwrap();
     assert!(pw.plan_deploy(&profile).await.unwrap().warnings.is_empty());
     assert!(pw.issues(&profile).unwrap().is_empty());
+}
+
+/// Config files of `[section]`s and `key = value` lines, where values are
+/// whole numbers or text.
+struct KeyValues;
+
+impl crate::config::ConfigFormat for KeyValues {
+    fn read(
+        &self,
+        _: &crate::config::ConfigContext<'_>,
+        file: &[u8],
+    ) -> Result<crate::config::Contents> {
+        use crate::options::{Field, FieldKind, Group, GroupKind, Value};
+        let mut groups: Vec<Group> = Vec::new();
+        for line in std::str::from_utf8(file).unwrap().lines() {
+            if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                groups.push(Group {
+                    id: name.to_owned(),
+                    title: name.to_owned(),
+                    kind: GroupKind::Fields { fields: Vec::new() },
+                    defaulted: true,
+                });
+            } else if let Some((key, value)) = line.split_once(" = ")
+                && let Some(Group {
+                    kind: GroupKind::Fields { fields },
+                    ..
+                }) = groups.last_mut()
+            {
+                let (kind, value) = match value.parse() {
+                    Ok(n) => (
+                        FieldKind::Int {
+                            min: Some(0),
+                            max: Some(10),
+                            step: None,
+                        },
+                        Value::Int(n),
+                    ),
+                    Err(_) => (
+                        FieldKind::Text { multiline: false },
+                        Value::Text(value.to_owned()),
+                    ),
+                };
+                fields.push(Field {
+                    id: key.to_owned(),
+                    title: key.to_owned(),
+                    description: None,
+                    kind,
+                    value,
+                    default: None,
+                });
+            }
+        }
+        Ok(crate::config::Contents {
+            title: None,
+            groups,
+            warnings: Vec::new(),
+        })
+    }
+
+    fn write(
+        &self,
+        _: &crate::config::ConfigContext<'_>,
+        file: &[u8],
+        values: &[crate::options::Answer],
+    ) -> Result<Vec<u8>> {
+        let mut section = String::new();
+        let mut out = String::new();
+        for line in std::str::from_utf8(file).unwrap().lines() {
+            let mut line = line.to_owned();
+            if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                section = name.to_owned();
+            } else if let Some((key, _)) = line.split_once(" = ")
+                && let Some(value) = values
+                    .iter()
+                    .filter(|a| a.group == section)
+                    .find_map(|a| a.values.get(key))
+            {
+                line = match value {
+                    crate::options::Value::Text(text) => format!("{key} = {text}"),
+                    other => format!("{key} = {other}"),
+                };
+            }
+            out.push_str(&line);
+            out.push('\n');
+        }
+        Ok(out.into_bytes())
+    }
+}
+
+struct KeyValuesExtension;
+
+impl Extension for KeyValuesExtension {
+    fn id(&self) -> &'static str {
+        "test"
+    }
+
+    fn register(&self, ext: &mut crate::ext::Registrar<'_>) {
+        ext.config_format("kv", KeyValues);
+    }
+}
+
+#[tokio::test]
+async fn config_files_change_settings_and_keep_what_the_game_changes() {
+    use crate::deploy::Dest;
+    use crate::options::{Answer, Value};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let packed = tmp.path().join("mods/Fast");
+    fs::create_dir_all(packed.join("config")).unwrap();
+    fs::write(
+        packed.join("config/fast.cfg"),
+        "[speed]\nlevel = 1\nname = quick\n",
+    )
+    .unwrap();
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
+        .source(LocalFiles)
+        .deployer(AsPacked)
+        .extension(KeyValuesExtension)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "as-packed");
+    def.config = vec![
+        toml::from_str(
+            r#"files = "config/**/*.cfg"
+format = "test.kv""#,
+        )
+        .unwrap(),
+    ];
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(game.join("config")).unwrap();
+    // one the game made itself
+    fs::write(game.join("config/game.cfg"), "[video]\nfov = 5\n").unwrap();
+    fs::write(game.join("config/notes.txt"), "not config").unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let game = game.canonicalize().unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    pw.add_mod(&profile, local_spec(&packed), None, true)
+        .await
+        .unwrap();
+    let fast: Dest = "config/fast.cfg".parse().unwrap();
+    let own: Dest = "config/game.cfg".parse().unwrap();
+
+    // only locked mods' files are known
+    assert_eq!(pw.config_files(&profile).unwrap().len(), 1);
+    pw.lock(&profile, false).await.unwrap();
+    let files = pw.config_files(&profile).unwrap();
+    let listed: Vec<_> = files
+        .iter()
+        .map(|f| (f.path.to_string(), f.from.clone(), f.edited))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("config/fast.cfg".to_owned(), Some("Fast".to_owned()), false),
+            ("config/game.cfg".to_owned(), None, false),
+        ]
+    );
+
+    let view = pw.config_form(&profile, &fast, None).unwrap();
+    assert!(!view.saved);
+    let fields = view.form.pages[0].groups[0].fields();
+    assert_eq!(fields[0].value, Value::Int(1));
+
+    // only what's different from the file is kept, and values are checked
+    let set = |level: i64| {
+        vec![Answer::values(
+            "speed",
+            BTreeMap::from([
+                ("level".to_owned(), Value::Int(level)),
+                ("name".to_owned(), Value::Text("quick".to_owned())),
+            ]),
+        )]
+    };
+    assert!(pw.set_config(&profile, &fast, Some(&set(11))).is_err());
+    pw.set_config(&profile, &fast, Some(&set(5))).unwrap();
+    let saved = &pw.load_profile(&profile).unwrap().config;
+    assert_eq!(saved.len(), 1);
+    assert_eq!(
+        saved[&fast]["speed"],
+        BTreeMap::from([("level".to_owned(), Value::Int(5))])
+    );
+    let view = pw.config_form(&profile, &fast, None).unwrap();
+    assert!(view.saved);
+    assert_eq!(
+        view.form.pages[0].groups[0].fields()[0].value,
+        Value::Int(5)
+    );
+    // answers being changed are shown, with what's wrong with them
+    let view = pw.config_form(&profile, &fast, Some(&set(12))).unwrap();
+    assert_eq!(
+        view.form.pages[0].groups[0].fields()[0].value,
+        Value::Int(1)
+    );
+    assert!(!view.form.warnings.is_empty());
+
+    let fov = |n: i64| {
+        vec![Answer::values(
+            "video",
+            BTreeMap::from([("fov".to_owned(), Value::Int(n))]),
+        )]
+    };
+    pw.set_config(&profile, &own, Some(&fov(9))).unwrap();
+    // spelled another way, it's the same file
+    let shouting: Dest = "CONFIG/GAME.CFG".parse().unwrap();
+    pw.set_config(&profile, &shouting, Some(&fov(8))).unwrap();
+    assert_eq!(pw.load_profile(&profile).unwrap().config.len(), 2);
+
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    pw.apply(&plan).unwrap();
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+    assert_eq!(
+        fs::read_to_string(game.join("config/fast.cfg")).unwrap(),
+        "[speed]\nlevel = 5\nname = quick\n"
+    );
+    assert_eq!(
+        fs::read_to_string(game.join("config/game.cfg")).unwrap(),
+        "[video]\nfov = 8\n"
+    );
+
+    // the game changes them, which isn't a stale deploy; deploying again
+    // keeps what it changed, and doesn't write into the store's copy
+    fs::write(
+        game.join("config/fast.cfg"),
+        "[speed]\nlevel = 7\nname = quick\n",
+    )
+    .unwrap();
+    fs::write(game.join("config/game.cfg"), "[video]\nfov = 8\nnew = 3\n").unwrap();
+    assert_eq!(
+        fs::read_to_string(packed.join("config/fast.cfg")).unwrap(),
+        "[speed]\nlevel = 1\nname = quick\n"
+    );
+    assert_eq!(pw.deploy_status(&profile).unwrap(), DeployStatus::Deployed);
+    let view = pw.config_form(&profile, &fast, None).unwrap();
+    assert_eq!(
+        view.form.pages[0].groups[0].fields()[0].value,
+        Value::Int(7)
+    );
+    let saved = pw.load_profile(&profile).unwrap().config;
+    assert_eq!(saved[&own]["video"]["new"], Value::Int(3));
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(
+        fs::read_to_string(game.join("config/fast.cfg")).unwrap(),
+        "[speed]\nlevel = 7\nname = quick\n"
+    );
+
+    // forgetting a file's settings puts the file back as it was, and
+    // what the game had changed in it isn't read back again
+    fs::write(game.join("config/game.cfg"), "[video]\nfov = 2\n").unwrap();
+    pw.set_config(&profile, &own, None).unwrap();
+    assert_eq!(pw.load_profile(&profile).unwrap().config.len(), 1);
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert_eq!(
+        fs::read_to_string(game.join("config/game.cfg")).unwrap(),
+        "[video]\nfov = 5\n"
+    );
+    assert_eq!(pw.load_profile(&profile).unwrap().config.len(), 1);
+
+    // undeploying keeps what the game changed, and removes the mod's copy
+    fs::write(
+        game.join("config/fast.cfg"),
+        "[speed]\nlevel = 2\nname = quick\n",
+    )
+    .unwrap();
+    let target = pw
+        .deploy_target(&pw.load_profile(&profile).unwrap())
+        .unwrap();
+    pw.apply(&pw.plan_undeploy(&target).unwrap()).unwrap();
+    assert!(!game.join("config/fast.cfg").exists());
+    let saved = pw.load_profile(&profile).unwrap().config;
+    assert_eq!(saved[&fast]["speed"]["level"], Value::Int(2));
 }

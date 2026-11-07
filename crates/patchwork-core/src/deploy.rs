@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::capture::Baseline;
+use crate::config::ConfigDef;
 use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter};
@@ -234,6 +235,13 @@ pub trait Deployer: Send + Sync {
         _game: &GameFiles<'_>,
     ) -> Result<Option<ContentHash>> {
         Ok(None)
+    }
+
+    /// Which files are config, besides what the game definition's own
+    /// `[[config]]` says, like those of the rulesets it uses. See
+    /// [`crate::config`].
+    fn config_files(&self, _ctx: &DeployContext<'_>) -> Result<Vec<ConfigDef>> {
+        Ok(Vec::new())
     }
 }
 
@@ -745,8 +753,9 @@ pub fn apply(
                     fs::remove_file(&target).at(&target)?;
                 }
                 // Other roots are the user's own folders, where a link
-                // would let the game write through it into the store.
-                let method = if dst.root.is_game() {
+                // would let the game write through it into the store, and
+                // the same goes for files the game rewrites.
+                let method = if dst.root.is_game() && !rewritten {
                     plan.link
                 } else {
                     LinkMethod::Copy
@@ -848,7 +857,7 @@ pub fn check_files(state: &DeployState, check: Check) -> Result<Vec<(Dest, Drift
 }
 
 /// Whether the file at `path` is there but isn't what was deployed to it.
-fn changed_since_deployed(path: &Path, entry: &DeployedFile) -> bool {
+pub(crate) fn changed_since_deployed(path: &Path, entry: &DeployedFile) -> bool {
     path.is_file() && ContentHash::of_file(path).ok() != Some(entry.hash)
 }
 

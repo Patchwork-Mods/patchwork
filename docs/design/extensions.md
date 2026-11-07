@@ -1,9 +1,10 @@
 # Extensions: game-specific behaviour without game-specific core
 
-Status (2026-11-05): steps 1 (the skeleton), 2 (`OrderedList`),
+Status (2026-11-06): steps 1 (the skeleton), 2 (`OrderedList`),
 3 (`ModTransform` + `ModOptions`), 4 (`Check`), 6 (`Action`, with `uses`)
 and 7 (crates per game) of "Order of work" are built, and so is step 5's
-`Runner`. `AccountKind` and `Provisioner` wait for Minecraft's launcher,
+`Runner`. Step 8 (mod settings) has value fields and config files, with
+BepInEx's as the first reader. `AccountKind` and `Provisioner` wait for Minecraft's launcher,
 which was taken out of `main` (2026-11-05) and kept on the
 `minecraft-launcher` branch. The sections below are the original proposal
 (2026-10-29). Where what was built differs from it, the notes under each
@@ -72,6 +73,7 @@ The docs for rung 3 are mostly a "you need X → use hook Y" table:
 | a new way to start a game | `Runner` | Steam, Proton, Wine, umu |
 | the user to sign in as someone | `AccountKind` (not built; see step 5) | Minecraft offline/Microsoft |
 | a button or command that runs once | `Action` | "Sort with LOOT" |
+| settings in a kind of config file shown as a form | `ConfigFormat` | BepInEx `.cfg` |
 | problems reported before deploying | `Check` | plugin limit, missing masters |
 | a new profile share format | `ProfileFormat` | r2modman codes |
 
@@ -859,6 +861,53 @@ Each step leaves `main` working and shippable.
    - GUI classes: `options-fields`, `options-field`, `options-number`,
      `options-text`, `options-color`, `options-alpha`.
    - No real extension offers fields yet; only core's test one does.
+   - Step 2 (config files) built (2026-11-06), with BepInEx's `.cfg` as
+     the first reader (pulled forward from step 3), with these
+     differences:
+     - Readers are `ConfigFormat` hooks (`crate::config`), registered
+       with `Registrar::config_format` as `<extension>.<name>`. They're pure:
+       `read(bytes)` gives `Contents` (a title and groups of fields set to
+       what the file has) and `write(bytes, answers)` gives the new bytes.
+       Unlike other hooks they're used wherever data names one, whether or
+       not their extension is on for the game.
+     - Data: `[[config]] files = "…" format = "<ext>.<name>"` (with an
+       optional `root`) in a game definition, and in rulesets, which the
+       `rules` deployer hands over through `Deployer::config_files`
+       (following `ruleset` includes). `bepinex.toml` says
+       `BepInEx/config/**/*.cfg` is `bepinex.cfg`, from a new `bepinex`
+       extension in `patchwork-builtin`.
+     - Config files can be ones mods ship or ones in the game's own
+       folders (usually made by the game or a mod as it runs). Settings
+       are kept per profile, not per mod: `Profile::config`, by where the
+       file is deployed, holds only the settings that differ from the
+       file. They sync as `config/<path>` entries and go into archive
+       exports. Paths are matched ignoring case.
+     - Deploying applies them over the winning mod's copy, or the game's
+       own (its backup, if patchwork replaced it), writes the result under
+       `generated/<target>/config/<inputs>/`, and places it after the
+       deployer's (and build's) placements. Every placement of a config
+       file is `rewritten` and copied rather than linked, so games can't
+       write into the store. Edits are in the deploy inputs.
+     - Read-back: before planning a deploy or undeploy, and before showing
+       or saving the deployed profile's settings, a deployed config file
+       that's changed is diffed against what was deployed, and the
+       settings that changed are saved into the deployed profile. The
+       changed file is then kept as what's deployed
+       (`config/read-back-<hash>/`), so the same changes aren't read
+       twice and forgetting a file's settings sticks.
+     - Edits for a file that isn't there (a game that hasn't been started
+       yet) are kept, and listed as missing, with a deploy warning.
+     - Core: `Patchwork::config_files`, `config_form`, `set_config` and
+       `has_config_files`. CLI: `patchwork settings [FILE] [--set
+       [GROUP/]SETTING=VALUE]… [--reset] [--mod NAME]` (`patchwork config`
+       was already taken). GUI: a Config tab (`#tab-config`,
+       `#config-filter`, `#config-files`, `.config-file`, `.config-open`,
+       `.config-edited`) after the lists, opening `#options-dialog`.
+     - Not done: attributing generated files to the mod that made them
+       (BepInEx names them by plugin GUID), a per-mod entry point, keeping
+       keys a game adds after the first deploy when a file's settings are
+       rewritten (BepInEx adds missing keys back on its next start), and
+       recording settings changes in history.
 9. Remove the version-2 compatibility code once enough releases have
    passed.
 

@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
+use patchwork_core::config::ConfigDef;
 use patchwork_core::deploy::{
     DeployContext, Deployer, DesiredState, Dest, InstalledMod, Placement,
 };
@@ -45,6 +46,10 @@ use serde::Deserialize;
 /// markers = ["Data", "meshes", "*.esp"]  # folder or file names
 /// unless = ["fomod/ModuleConfig.xml"]    # mods with these are left as they are
 /// ```
+///
+/// A ruleset can also say which files are config, with `[[config]]` as in a
+/// game definition (see [`patchwork_core::config::ConfigDef`]); games that
+/// use it get those too.
 pub struct RulesDeployer;
 
 const UNMATCHED: SettingSpec = SettingSpec::new(
@@ -91,7 +96,11 @@ struct RootConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Ruleset {
+    #[serde(default)]
     rules: Vec<Rule>,
+    /// Which files are config; see [`patchwork_core::config`].
+    #[serde(default)]
+    config: Vec<ConfigDef>,
 }
 
 #[derive(Deserialize, Default, PartialEq)]
@@ -210,6 +219,48 @@ impl RulesDeployer {
                     self.include(lookup, id, out, depth + 1)?;
                 }
                 None => out.push(self.compile(rule)?),
+            }
+        }
+        Ok(())
+    }
+
+    /// The `[[config]]` of every ruleset `config` uses, directly or through
+    /// another, in the order their rules are tried.
+    fn config_defs<'a>(
+        &self,
+        lookup: &impl Fn(&str) -> Option<&'a toml::Table>,
+        config: &Config,
+    ) -> Result<Vec<ConfigDef>> {
+        let mut defs = Vec::new();
+        let included = config.rules.iter().filter_map(|r| r.ruleset.as_deref());
+        for id in included.chain(config.rulesets.iter().map(String::as_str)) {
+            self.ruleset_config(lookup, id, &mut defs, 0)?;
+        }
+        Ok(defs)
+    }
+
+    fn ruleset_config<'a>(
+        &self,
+        lookup: &impl Fn(&str) -> Option<&'a toml::Table>,
+        id: &str,
+        out: &mut Vec<ConfigDef>,
+        depth: usize,
+    ) -> Result<()> {
+        if depth > 8 {
+            return Err(self.error(format!("rulesets nest too deeply at `{id}`")));
+        }
+        let table = lookup(id).ok_or_else(|| self.error(format!("no ruleset named `{id}`")))?;
+        let ruleset: Ruleset = toml::Value::Table(table.clone())
+            .try_into()
+            .map_err(|e| self.error(format!("bad ruleset `{id}`: {e}")))?;
+        for rule in &ruleset.rules {
+            if let Some(id) = &rule.ruleset {
+                self.ruleset_config(lookup, id, out, depth + 1)?;
+            }
+        }
+        for def in ruleset.config {
+            if !out.contains(&def) {
+                out.push(def);
             }
         }
         Ok(())
@@ -451,6 +502,14 @@ impl Deployer for RulesDeployer {
 
     fn settings(&self) -> &[SettingSpec] {
         &[UNMATCHED]
+    }
+
+    fn config_files(&self, ctx: &DeployContext<'_>) -> Result<Vec<ConfigDef>> {
+        let config: Config = toml::Value::Table(ctx.config.clone())
+            .try_into()
+            .map_err(|e| self.error(format!("bad config for {}: {e}", ctx.game.id)))?;
+        let lookup = |id: &str| ctx.registry.data("rulesets", id).map(|e| &e.value);
+        self.config_defs(&lookup, &config)
     }
 
     fn plan(&self, ctx: &DeployContext<'_>, mods: &[InstalledMod]) -> Result<DesiredState> {

@@ -323,6 +323,7 @@ impl Builder {
             options: registered.options,
             checks: registered.checks,
             actions: registered.actions,
+            config_formats: registered.config_formats,
             uses: registered.uses,
             reporter: self.reporter,
             categories: Mutex::default(),
@@ -361,6 +362,8 @@ pub struct Patchwork {
     checks: BTreeMap<String, Hook<dyn crate::check::Check>>,
     /// By hook id; see [`crate::action`].
     actions: BTreeMap<String, Hook<dyn crate::action::Action>>,
+    /// By hook id; see [`crate::config`].
+    config_formats: BTreeMap<String, Hook<dyn crate::config::ConfigFormat>>,
     /// The other extensions' hooks each extension uses, by extension.
     uses: BTreeMap<&'static str, Vec<&'static str>>,
     reporter: Arc<dyn Reporter>,
@@ -2009,6 +2012,7 @@ impl Patchwork {
             mods: loaded.mods,
             hidden_tags: Some(loaded.hidden_tags),
             ext: Some(loaded.ext),
+            config: Some(loaded.config),
             ..Default::default()
         };
         if format.needs_lock() {
@@ -2203,6 +2207,9 @@ impl Patchwork {
         if let Some(tags) = shared.hidden_tags {
             profile.hidden_tags = tags;
         }
+        if let Some(config) = shared.config {
+            profile.config = config;
+        }
         if let Some(ext) = shared.ext {
             profile.ext = ext;
         }
@@ -2310,6 +2317,9 @@ impl Patchwork {
         check: Check,
     ) -> Result<DeployPlan> {
         let lock = self.lock(profile, false).await?;
+        // Whatever's deployed now is about to be replaced, so the settings
+        // the game changed in its config files are kept first.
+        self.read_back_config(&self.deploy_target(&self.load_profile(profile)?)?)?;
         let loaded = self.load_profile(profile)?;
         let registry = self.registry();
         let entry = registry.game(&loaded.game)?;
@@ -2382,6 +2392,16 @@ impl Patchwork {
             placements.extend(built);
             warnings.extend(built_warnings);
         }
+        self.place_config(
+            &loaded,
+            &ctx,
+            &target,
+            inputs,
+            &prev,
+            &resolved,
+            &mut placements,
+            &mut warnings,
+        )?;
         let mut plan = deploy::plan(
             target,
             &prev,
@@ -2522,6 +2542,7 @@ impl Patchwork {
 
     /// Works out how to remove everything patchwork deployed to `target`.
     pub fn plan_undeploy(&self, target: &DeployTarget) -> Result<DeployPlan> {
+        self.read_back_config(target)?;
         let registry = self.registry();
         let (_, link, _) = self.deploy_config(&registry.game(target.game())?.value)?;
         let prev = self.deploy_state(target)?;
@@ -2674,6 +2695,17 @@ impl Patchwork {
             } else {
                 fs::remove_file(&path)
             };
+        }
+        // Config files (see `config.rs`), a folder for each deploy's and
+        // each copy read back from the game.
+        let config = dir.join("config");
+        for entry in fs::read_dir(&config).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let used = keep.as_deref() == path.file_name().and_then(|n| n.to_str())
+                || state.files.values().any(|f| f.src.starts_with(&path));
+            if !used {
+                let _ = fs::remove_dir_all(&path);
+            }
         }
     }
 }
@@ -2851,6 +2883,17 @@ fn deploy_inputs(
         field(format!("{:?}", m.format).as_bytes());
         field(m.artifact.file_name().as_bytes());
     }
+    // Only when there are any, so deploys from before they existed don't
+    // all look stale.
+    if !loaded.config.is_empty() {
+        field(b"config");
+        field(
+            toml::Value::try_from(&loaded.config)
+                .map(|v| v.to_string())
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+    }
     // Only extensions that are on for the game, so state kept by one it
     // doesn't use any more can't make deploys stale, and only what they've
     // kept, like the picks.
@@ -2898,6 +2941,7 @@ fn visit<'a>(
 mod actions;
 mod capture;
 mod checks;
+mod config;
 mod extensions;
 mod history;
 mod instances;
@@ -2908,6 +2952,7 @@ mod profiles;
 mod sync;
 
 pub use capture::{Captured, ToolRan};
+pub use config::{ConfigFileInfo, ConfigView};
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use lists::ListInfo;
 pub use options::{ModOptionsInfo, ModOptionsView};

@@ -8,21 +8,23 @@ use patchwork_core::action::ActionReport;
 use patchwork_core::capture::ToolOutput;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
-use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootId, RootOrigin};
+use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, Dest, RootId, RootOrigin};
 use patchwork_core::event::{Event, Reporter, Silent};
 use patchwork_core::issue::Severity;
 use patchwork_core::launch::{self, LaunchOption};
 use patchwork_core::list::List;
 use patchwork_core::locate::Locator;
 use patchwork_core::lock::mod_key;
-use patchwork_core::options::{Answer, Field, FieldKind, ItemState, Pick, Value};
+use patchwork_core::options::{Answer, Field, FieldKind, Form, ItemState, Pick, Value};
 use patchwork_core::order::{self, Position, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Profile, ProfileMod, ProfileRef};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::update;
-use patchwork_core::{DeployStatus, GameInstall, ImportOptions, ModOptionsView, Patchwork};
+use patchwork_core::{
+    ConfigFileInfo, ConfigView, DeployStatus, GameInstall, ImportOptions, ModOptionsView, Patchwork,
+};
 use patchwork_sync::daemon::{self, service};
 use patchwork_sync::{Addresses, Joined, Node};
 
@@ -159,6 +161,25 @@ enum Command {
         save: bool,
         /// Forget the options picked, going back to the defaults.
         #[arg(long, conflicts_with_all = ["picks", "sets", "save"])]
+        reset: bool,
+    },
+    /// Show or change settings in config files, like the ones BepInEx
+    /// makes for each mod. Without a file, lists the config files there
+    /// are. The profile keeps only the settings you change, and deploying
+    /// applies them; settings changed in game are kept too.
+    Settings {
+        /// A config file, by its path as listed, or the end of it (like its
+        /// name) if that's enough to tell which.
+        file: Option<String>,
+        /// Only list the config files this mod deploys.
+        #[arg(long = "mod", value_name = "NAME", conflicts_with = "file")]
+        of: Option<String>,
+        /// Set a setting, as `SETTING=VALUE`, or `GROUP/SETTING=VALUE` if
+        /// more than one group has it. Repeat for more; they're saved.
+        #[arg(long = "set", value_name = "SETTING=VALUE", requires = "file")]
+        sets: Vec<String>,
+        /// Forget the settings changed in the file, so it's deployed as it is.
+        #[arg(long, requires = "file", conflicts_with = "sets")]
         reset: bool,
     },
     /// Show a mod's changelog, newest first.
@@ -846,7 +867,7 @@ async fn run(cli: Cli) -> Result<()> {
                 }
                 for set in &sets {
                     let now = pw.mod_options(&profile, &name, of, Some(&answers))?;
-                    let (group, field, value) = find_set(&now, set)?;
+                    let (group, field, value) = find_set(&now.form, set)?;
                     match answers.iter_mut().find(|a| a.group == group) {
                         Some(a) => {
                             a.values.insert(field, value);
@@ -858,6 +879,46 @@ async fn run(cli: Cli) -> Result<()> {
                 view = pw.mod_options(&profile, &name, of, None)?;
             }
             print_options(&name, &view);
+        }
+        Command::Settings {
+            file,
+            of,
+            sets,
+            reset,
+        } => {
+            let (profile, _) = selected(&pw, &cli.profile)?;
+            let files = pw.config_files(&profile)?;
+            let Some(file) = file else {
+                let shown: Vec<_> = files
+                    .iter()
+                    .filter(|f| of.as_ref().is_none_or(|m| f.from.as_ref() == Some(m)))
+                    .collect();
+                if shown.is_empty() {
+                    println!("No config files.");
+                }
+                for f in shown {
+                    print_config_file(f);
+                }
+                return Ok(());
+            };
+            let path = find_config_file(&files, &file)?;
+            if reset {
+                pw.set_config(&profile, &path, None)?;
+            } else if !sets.is_empty() {
+                let mut answers = pw.config_form(&profile, &path, None)?.form.answers;
+                for set in &sets {
+                    let now = pw.config_form(&profile, &path, Some(&answers))?;
+                    let (group, field, value) = find_set(&now.form, set)?;
+                    match answers.iter_mut().find(|a| a.group == group) {
+                        Some(a) => {
+                            a.values.insert(field, value);
+                        }
+                        None => answers.push(Answer::values(group, [(field, value)].into())),
+                    }
+                }
+                pw.set_config(&profile, &path, Some(&answers))?;
+            }
+            print_config(&pw.config_form(&profile, &path, None)?);
         }
         Command::Versions { name } => {
             let (_, loaded) = selected(&pw, &cli.profile)?;
@@ -2065,6 +2126,8 @@ fn print_op(op: &DeployOp) {
     match op {
         DeployOp::Remove { dst } => println!("  - {dst}"),
         DeployOp::Backup { dst } => println!("  ~ {dst} (backing up original)"),
+        // Files no mod has, like config files from the game's own folder.
+        DeployOp::Place { dst, mod_name, .. } if mod_name.is_empty() => println!("  + {dst}"),
         DeployOp::Place { dst, mod_name, .. } => println!("  + {dst}  [{mod_name}]"),
     }
 }
@@ -2174,7 +2237,7 @@ fn find_pick(view: &ModOptionsView, pick: &str) -> Result<Answer> {
 
 /// The group and field a `--set` is for, with the value it sets, by the
 /// names the form shows.
-fn find_set(view: &ModOptionsView, set: &str) -> Result<(String, String, Value)> {
+fn find_set(form: &Form, set: &str) -> Result<(String, String, Value)> {
     let (at, text) = set
         .split_once('=')
         .with_context(|| format!("`{set}` should be SETTING=VALUE"))?;
@@ -2186,8 +2249,7 @@ fn find_set(view: &ModOptionsView, set: &str) -> Result<(String, String, Value)>
         [page, group] => (Some(*page), Some(*group)),
         _ => bail!("`{at}` should be SETTING, GROUP/SETTING or PAGE/GROUP/SETTING"),
     };
-    let found: Vec<_> = view
-        .form
+    let found: Vec<_> = form
         .pages
         .iter()
         .filter(|p| page.is_none_or(|page| p.title.eq_ignore_ascii_case(page)))
@@ -2245,6 +2307,90 @@ fn print_options(name: &str, view: &ModOptionsView) {
     } else {
         println!("{title} for {name} ({})", form.title);
     }
+    print_pages(form);
+    println!();
+    if let Some(summary) = &form.summary {
+        println!("{summary}");
+    }
+    if !view.saved {
+        println!(
+            "These are the defaults, which are used until you pick some with --pick GROUP=OPTION or --set SETTING=VALUE, or keep these with --save."
+        );
+    }
+    for warning in &form.warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
+/// The config file in `files` that `name` names: its path, or the end of
+/// one, ignoring case.
+fn find_config_file(files: &[ConfigFileInfo], name: &str) -> Result<Dest> {
+    let name = name.trim_matches('/').to_lowercase();
+    let path = |f: &ConfigFileInfo| f.path.to_string().to_lowercase();
+    if let Some(f) = files.iter().find(|f| path(f) == name) {
+        return Ok(f.path.clone());
+    }
+    let found: Vec<_> = files
+        .iter()
+        .filter(|f| path(f).ends_with(&format!("/{name}")))
+        .collect();
+    match found.as_slice() {
+        [f] => Ok(f.path.clone()),
+        [] => bail!("there's no config file called `{name}`; `patchwork settings` lists them"),
+        _ => {
+            let paths: Vec<_> = found.iter().map(|f| f.path.to_string()).collect();
+            bail!(
+                "more than one config file is called `{name}`: {}",
+                paths.join(", ")
+            )
+        }
+    }
+}
+
+fn print_config_file(f: &ConfigFileInfo) {
+    let mut about = Vec::new();
+    if let Some(title) = &f.title {
+        about.push(title.clone());
+    }
+    if let Some(m) = &f.from {
+        about.push(format!("from {m}"));
+    }
+    if f.missing {
+        about.push("not there, so its changes aren't applied".to_owned());
+    } else if f.edited {
+        about.push("changed".to_owned());
+    }
+    if about.is_empty() {
+        println!("{}", f.path);
+    } else {
+        println!("{}  ({})", f.path, about.join("; "));
+    }
+}
+
+fn print_config(view: &ConfigView) {
+    let form = &view.form;
+    // Its one page is titled with the file's path.
+    match &view.from {
+        Some(m) => println!("{} (from {m})", form.title),
+        None => println!("{}", form.title),
+    }
+    print_pages(form);
+    println!();
+    if let Some(summary) = &form.summary {
+        println!("{summary}");
+    }
+    if view.saved {
+        println!("Deploying applies the changes; `--reset` forgets them.");
+    } else {
+        println!("Change settings with --set SETTING=VALUE; deploying applies them.");
+    }
+    for warning in &form.warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
+/// `form`'s pages, with their groups' items and settings.
+fn print_pages(form: &Form) {
     for page in &form.pages {
         println!();
         println!("{}", page.title);
@@ -2299,18 +2445,6 @@ fn print_options(name: &str, view: &ModOptionsView) {
                 print_description(item.description.as_deref());
             }
         }
-    }
-    println!();
-    if let Some(summary) = &form.summary {
-        println!("{summary}");
-    }
-    if !view.saved {
-        println!(
-            "These are the defaults, which are used until you pick some with --pick GROUP=OPTION or --set SETTING=VALUE, or keep these with --save."
-        );
-    }
-    for warning in &form.warnings {
-        eprintln!("warning: {warning}");
     }
 }
 

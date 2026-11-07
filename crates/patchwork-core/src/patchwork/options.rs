@@ -63,6 +63,12 @@ impl Patchwork {
                 .map(|h| h.name),
         );
         names.extend(self.check_names(ext));
+        names.extend(
+            self.config_formats
+                .values()
+                .filter(|h| h.ext == ext)
+                .map(|h| h.name),
+        );
         names.extend(self.action_names(ext));
         names
     }

@@ -17,6 +17,9 @@
 //! - `ext/<id>`: what extension `<id>` keeps for the profile (see
 //!   [`Profile::ext`]), so two extensions' changes made at once both
 //!   survive. What extensions keep for a mod is part of the mod's entry.
+//! - `config/<path>`: the settings changed in the config file deployed to
+//!   `<path>` (see [`Profile::config`]), so changes to different files
+//!   made at once all survive
 //! - `lock/<source>:<id>`: a [`LockedMod`], for mods and their dependencies.
 //!   Whoever changes the profile relocks it and publishes what changed, so
 //!   other machines take the lockfile as it is rather than resolving again.
@@ -31,7 +34,7 @@
 //! that way, keeps track of who's syncing, and marks a document everyone's
 //! moved on from; they're ignored here.
 //!
-//! A mod, locked mod or extension's state that's been removed has `null` for its value; nothing
+//! A mod, locked mod, extension's state or config file's settings that's been removed has `null` for its value; nothing
 //! is ever deleted outright, so a removal replaces older values like any
 //! other change.
 //!
@@ -52,6 +55,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::deploy::Dest;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile};
 use crate::profile::{LEGACY_PLUGINS, PROFILE_SCHEMA, Profile, ProfileMod, upgrade_plugins};
 use crate::{Error, Result};
@@ -73,6 +77,7 @@ pub const MOD: &str = "mod/";
 pub const LOCK: &str = "lock/";
 pub const LOCK_ENV: &str = "lock-env";
 pub const EXT: &str = "ext/";
+pub const CONFIG: &str = "config/";
 /// Keys the sync layer keeps for itself.
 pub const FILE: &str = "file/";
 pub const PEER: &str = "peer/";
@@ -129,6 +134,9 @@ pub fn to_entries(profile: &Profile, lock: Option<&Lockfile>) -> Entries {
     for m in &profile.mods {
         entries.insert(format!("{MOD}{}", key_of(m)), json(m));
     }
+    for (path, edits) in &profile.config {
+        entries.insert(format!("{CONFIG}{path}"), json(edits));
+    }
     if let Some(lock) = lock {
         entries.insert(LOCK_ENV.to_owned(), json(&lock.game.env));
     }
@@ -147,8 +155,14 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
     let mut mods: BTreeMap<String, ProfileMod> = BTreeMap::new();
     let mut locked: HashMap<String, LockedMod> = HashMap::new();
     let mut ext = BTreeMap::new();
+    let mut config = BTreeMap::new();
     for key in entries.keys() {
-        if let Some(id) = key.strip_prefix(EXT) {
+        if let Some(path) = key.strip_prefix(CONFIG) {
+            // A path this build can't read is someone else's business.
+            if let (Ok(path), Some(edits)) = (path.parse::<Dest>(), decode(entries, key)?) {
+                config.insert(path, edits);
+            }
+        } else if let Some(id) = key.strip_prefix(EXT) {
             if let Some(state) = decode(entries, key)? {
                 ext.insert(id.to_owned(), state);
             }
@@ -186,6 +200,7 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
         env: meta.env,
         mods: dedupe_names(ordered),
         ext,
+        config,
     };
     let env = decode(entries, LOCK_ENV)?.unwrap_or_default();
     let lock = (!locked.is_empty()).then(|| Lockfile {
@@ -208,7 +223,11 @@ pub fn changes(base: &Entries, now: &Entries) -> Vec<(String, Vec<u8>)> {
     changed.extend(
         base.iter()
             .filter(|(k, v)| {
-                (k.starts_with(MOD) || k.starts_with(LOCK) || k.starts_with(EXT) || *k == PLUGINS)
+                (k.starts_with(MOD)
+                    || k.starts_with(LOCK)
+                    || k.starts_with(EXT)
+                    || k.starts_with(CONFIG)
+                    || *k == PLUGINS)
                     && v.as_slice() != REMOVED
                     && !now.contains_key(*k)
             })

@@ -54,3 +54,10 @@ to = "BepInEx/monomod/{mod}/{file}"
 [[rules]]
 files = "**"
 to = "BepInEx/plugins/{mod}/{file}"
+
+# BepInEx writes each plugin's settings to a file of its own in
+# BepInEx/config, with each setting's type and default in comments above
+# it, so they can be changed from patchwork.
+[[config]]
+files = "BepInEx/config/**/*.cfg"
+format = "bepinex.cfg"

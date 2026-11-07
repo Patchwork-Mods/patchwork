@@ -13,6 +13,7 @@ import { showMissed } from "./daemon.js";
 import "./games.js";
 import "./browse.js";
 import "./list.js";
+import "./config.js";
 import "./toolbar.js";
 import "./deploy.js";
 import "./history.js";

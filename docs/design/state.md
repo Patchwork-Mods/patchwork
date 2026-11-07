@@ -37,6 +37,10 @@ and `<data>` are the platform's usual config and data directories, such as
 
 - `<data>/deployments/<game>.json`: every file patchwork put in a game folder
 - `<data>/backups/<game>/`: game files that mods replaced
+- `<data>/generated/<game>/`: files deployers built (`<inputs>/`), and
+  config files with the profile's settings applied (`config/<inputs>/`)
+  or as the game rewrote them (`config/read-back-<hash>/`); kept while
+  anything deployed comes from them
 
 ## Sync
 

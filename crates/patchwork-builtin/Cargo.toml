@@ -19,3 +19,6 @@ patchwork-formats.workspace = true
 patchwork-bethesda = { workspace = true, optional = true }
 patchwork-helldivers = { workspace = true, optional = true }
 patchwork-smf = { workspace = true, optional = true }
+
+[dev-dependencies]
+toml.workspace = true

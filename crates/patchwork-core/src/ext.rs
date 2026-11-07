@@ -11,7 +11,8 @@
 //!
 //! Sources, deployers and profile formats keep the ids they
 //! have always had (profiles and game definitions name them). Other hooks,
-//! like [`OrderedList`]s, [`ModTransform`]s, [`Check`]s and [`Action`]s, are `<extension>.<name>`; each is configured by the
+//! like [`OrderedList`]s, [`ModTransform`]s, [`Check`]s, [`Action`]s and
+//! [`ConfigFormat`]s, are `<extension>.<name>`; each is configured by the
 //! game's `[ext.<extension>.<name>]` table, and can be turned off with
 //! `off = ["<name>"]` in `[ext.<extension>]`.
 
@@ -23,6 +24,7 @@ use serde::de::DeserializeOwned;
 
 use crate::action::Action;
 use crate::check::Check;
+use crate::config::ConfigFormat;
 use crate::deploy::Deployer;
 use crate::launch::Runner;
 use crate::list::OrderedList;
@@ -160,6 +162,20 @@ impl Registrar<'_> {
         self
     }
 
+    /// Adds a way of reading and writing config files, as
+    /// `<extension>.<name>`, which game definitions' and rulesets'
+    /// `[[config]]` name it by, configured by `[ext.<extension>.<name>]`.
+    /// Unlike other hooks it's used wherever data names it, whether or not
+    /// the extension is on for the game.
+    pub fn config_format(
+        &mut self,
+        name: &'static str,
+        format: impl ConfigFormat + 'static,
+    ) -> &mut Self {
+        self.registered.config_format(self.ext, name, format);
+        self
+    }
+
     /// Says the extension uses another's hook `id` (`<extension>.<name>`),
     /// such as a list its actions read and rearrange. The build can't open
     /// without it, the extension's hooks are only on for games that have it
@@ -206,6 +222,8 @@ pub(crate) struct Registered {
     pub checks: BTreeMap<String, Hook<dyn Check>>,
     /// By hook id.
     pub actions: BTreeMap<String, Hook<dyn Action>>,
+    /// By hook id.
+    pub config_formats: BTreeMap<String, Hook<dyn ConfigFormat>>,
     /// The other extensions' hooks each extension uses, by extension.
     pub uses: BTreeMap<&'static str, Vec<&'static str>>,
     /// Which extension registered each thing, by `(kind, id)`, so a clash
@@ -328,6 +346,22 @@ impl Registered {
                 hook: Arc::new(action) as Arc<dyn Action>,
             };
             self.actions.insert(id, hook);
+        }
+    }
+
+    pub fn config_format(
+        &mut self,
+        ext: &'static str,
+        name: &'static str,
+        format: impl ConfigFormat + 'static,
+    ) {
+        if let Some(id) = self.hook("config format", ext, name) {
+            let hook = Hook {
+                ext,
+                name,
+                hook: Arc::new(format) as Arc<dyn ConfigFormat>,
+            };
+            self.config_formats.insert(id, hook);
         }
     }
 

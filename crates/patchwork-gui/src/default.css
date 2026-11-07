@@ -1530,6 +1530,65 @@ dialog::backdrop {
   font-size: 12px;
 }
 
+/* Config tab; see config.js. A row per config file, opening its
+   settings in the options dialog. */
+#tab-config > p {
+  margin: 0;
+}
+
+#config-filter {
+  max-width: 360px;
+}
+
+.config-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.config-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--pw-border);
+}
+
+.config-file:first-child {
+  border-top: none;
+}
+
+.config-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 4px 6px;
+}
+
+.config-open:hover:not(:disabled) {
+  background: var(--pw-surface);
+}
+
+.config-path {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.config-file.missing .config-title {
+  color: var(--pw-muted);
+}
+
+.config-edited {
+  border-color: var(--pw-accent);
+  color: var(--pw-accent);
+}
+
 /* Update and changelog dialogs. Changelogs are markdown, so they get
    headings, lists and code blocks sized to sit in a dialog. */
 

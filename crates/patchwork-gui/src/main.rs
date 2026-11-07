@@ -17,7 +17,7 @@ use std::sync::Mutex;
 use base64::prelude::*;
 use patchwork_core::action::{ActionInfo, ActionReport};
 use patchwork_core::conflicts::ModConflicts;
-use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, RootOrigin};
+use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, Dest, RootOrigin};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter, Silent};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -34,8 +34,8 @@ use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, Sort
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{ModSpec, SourceFile};
 use patchwork_core::{
-    DeployStatus, GameInstall, HistoryEntry, ImportOptions, ListInfo, ModOptionsInfo,
-    ModOptionsView, Patchwork,
+    ConfigFileInfo, ConfigView, DeployStatus, GameInstall, HistoryEntry, ImportOptions, ListInfo,
+    ModOptionsInfo, ModOptionsView, Patchwork,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -179,6 +179,8 @@ struct ProfileDetail {
     /// The game's ordered lists (see [`patchwork_core::list`]), each on a
     /// tab of its own.
     lists: Vec<ListInfo>,
+    /// Whether the game has config files, for the Config tab.
+    has_config: bool,
     /// What extensions offer to run for the game (see
     /// [`patchwork_core::action`]); those about a list are on its tab.
     actions: Vec<ActionInfo>,
@@ -369,6 +371,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         Vec::new()
     };
     let lists = pw.lists(&r).map_err(msg)?;
+    let has_config = pw.has_config_files(&r).map_err(msg)?;
     let actions = pw.actions(&r).map_err(msg)?;
     let mut options = pw.mods_with_options(&r).map_err(msg)?;
     let launch_options = pw
@@ -419,6 +422,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         mods,
         hidden_tags,
         lists,
+        has_config,
         actions,
         issues,
         unshared,
@@ -491,6 +495,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         launch: Default::default(),
         capture: None,
         instances: None,
+        config: Vec::new(),
         ext: Default::default(),
     };
     app.pw.add_game(def.clone()).map_err(msg)?;
@@ -1051,6 +1056,44 @@ fn set_mod_options(
             Some(&options),
             answers.as_deref(),
         )
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// The config files the profile can change settings in, for the Config
+/// tab. Async since finding them means working out what mods deploy.
+#[tauri::command]
+async fn config_files(app: State<'_, App>, id: String) -> CmdResult<Vec<ConfigFileInfo>> {
+    app.pw.config_files(&profile_ref(&id)?).map_err(msg)
+}
+
+/// The settings in the config file deployed to `path`, with `answers`
+/// changing them, or with what the profile has saved.
+#[tauri::command]
+async fn config_form(
+    app: State<'_, App>,
+    id: String,
+    path: String,
+    answers: Option<Vec<Answer>>,
+) -> CmdResult<ConfigView> {
+    let path: Dest = path.parse().map_err(msg)?;
+    app.pw
+        .config_form(&profile_ref(&id)?, &path, answers.as_deref())
+        .map_err(msg)
+}
+
+/// Saves `answers` as the settings changed in the config file deployed to
+/// `path`, or with `None` forgets them.
+#[tauri::command]
+fn set_config(
+    app: State<'_, App>,
+    id: String,
+    path: String,
+    answers: Option<Vec<Answer>>,
+) -> CmdResult<ProfileDetail> {
+    let path: Dest = path.parse().map_err(msg)?;
+    app.pw
+        .set_config(&profile_ref(&id)?, &path, answers.as_deref())
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
@@ -1638,6 +1681,9 @@ fn main() {
             run_action,
             mod_options,
             set_mod_options,
+            config_files,
+            config_form,
+            set_config,
             conflicts,
             refresh_details,
             find_games,

@@ -500,3 +500,25 @@ fn bad_root_configs() {
         toml::from_str("[root]\nmarkers = [\"Data\"]\nother = 1\n");
     assert!(unknown.is_err());
 }
+
+#[test]
+fn rulesets_say_which_files_are_config_through_includes() {
+    let tables: Vec<(&str, toml::Table)> = vec![
+        ("bepinex", registry_ruleset("bepinex").unwrap()),
+        ("bepinex-loader", registry_ruleset("bepinex-loader").unwrap()),
+        (
+            "outer",
+            toml::from_str(
+                "[[rules]]\nruleset = \"bepinex\"\n\n[[config]]\nfiles = \"x/*.ini\"\nformat = \"a.ini\"\n",
+            )
+            .unwrap(),
+        ),
+    ];
+    let lookup = |id: &str| tables.iter().find(|(t, _)| *t == id).map(|(_, t)| t);
+    let config: Config = toml::from_str("rulesets = [\"outer\", \"bepinex\"]").unwrap();
+    let defs = RulesDeployer.config_defs(&lookup, &config).unwrap();
+    let formats: Vec<&str> = defs.iter().map(|d| d.format.as_str()).collect();
+    // included ones first, as their rules are, and each only once
+    assert_eq!(formats, ["bepinex.cfg", "a.ini"]);
+    assert_eq!(defs[0].files[0].as_str(), "BepInEx/config/**/*.cfg");
+}

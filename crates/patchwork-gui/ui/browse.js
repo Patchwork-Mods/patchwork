@@ -7,6 +7,7 @@ import { cardMain } from "./mods.js";
 import { refreshDetails } from "./details.js";
 import { go } from "./nav.js";
 import { listOf, listTab, openList } from "./list.js";
+import { CONFIG_TAB, openConfig } from "./config.js";
 
 const SOURCE_NAMES = { thunderstore: "Thunderstore", nexus: "Nexus Mods" };
 const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
@@ -15,21 +16,25 @@ const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice
 let typing;
 
 /**
- * Opens the Mods tab ("mods"), a list's tab (see listTab) or a source's
- * tab; list tabs all share #tab-list, and source tabs #tab-browse.
+ * Opens the Mods tab ("mods"), a list's tab (see listTab), the Config tab
+ * or a source's tab; list tabs all share #tab-list, and source tabs
+ * #tab-browse.
  */
 export function selectTab(key) {
   const list = listOf(key);
+  const config = key === CONFIG_TAB;
   state.tab = key;
-  state.source = key === "mods" || list ? null : key;
+  state.source = key === "mods" || list || config ? null : key;
   for (const tab of document.querySelectorAll("#tabs [role=tab]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
   }
   $("#tab-mods").hidden = key !== "mods";
   $("#tab-list").hidden = !list;
+  $("#tab-config").hidden = !config;
   $("#tab-browse").hidden = !state.source;
   clearTimeout(typing);
   if (list) openList(list);
+  if (config) openConfig();
   if (state.source) {
     // the search form is shared, so put back what this tab last searched for
     const last = state.searches[key];
@@ -46,19 +51,26 @@ export function selectTab(key) {
 
 /**
  * Replaces the tabs after Mods, staying on the open one if it's still there:
- * one for each of the game's ordered lists, then one for each source.
+ * one for each of the game's ordered lists, Config if the game has config
+ * files, then one for each source.
  */
 export function renderSourceTabs(sources) {
   const lists = state.profile?.lists ?? [];
+  const config = !!state.profile?.hasConfig;
   const tab = (key, label) =>
     h("button", { role: "tab", "data-tab": key, onclick: () => go(() => selectTab(key)) }, label);
   $("#tabs").replaceChildren(
     tab("mods", "Mods"),
     ...lists.map((l) => tab(listTab(l.id), l.title)),
+    config && tab(CONFIG_TAB, "Config"),
     ...sources.map((s) => tab(s, sourceName(s))),
   );
   const open = listOf(state.tab);
-  const still = open ? lists.some((l) => l.id === open) : sources.includes(state.tab);
+  const still = open
+    ? lists.some((l) => l.id === open)
+    : state.tab === CONFIG_TAB
+      ? config
+      : sources.includes(state.tab);
   selectTab(still ? state.tab : "mods");
 }
 

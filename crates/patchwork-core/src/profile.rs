@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::Error;
 use crate::compat::GameVersions;
+use crate::config::Edits;
+use crate::deploy::Dest;
 use crate::ext::ExtTables;
 use crate::list::ListEntry;
 
@@ -54,6 +56,11 @@ pub struct Profile {
     /// have.
     #[serde(default, skip_serializing_if = "ExtTables::is_empty")]
     pub ext: ExtTables,
+    /// The settings changed in config files, by where the file is
+    /// deployed; see [`crate::config`]. Only what was changed is kept, so
+    /// everything else stays as the file has it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub config: BTreeMap<Dest, Edits>,
 }
 
 impl Profile {
@@ -67,6 +74,7 @@ impl Profile {
             env: BTreeMap::new(),
             mods: Vec::new(),
             ext: ExtTables::new(),
+            config: BTreeMap::new(),
         }
     }
 
@@ -100,6 +108,8 @@ struct ProfileFile {
     mods: Vec<ProfileMod>,
     #[serde(default)]
     ext: ExtTables,
+    #[serde(default)]
+    config: BTreeMap<Dest, Edits>,
     /// Schema 2's plugin load order.
     #[serde(default, rename = "plugin")]
     plugins: Vec<ListEntry>,
@@ -118,6 +128,7 @@ impl From<ProfileFile> for Profile {
             env: file.env,
             mods: file.mods,
             ext,
+            config: file.config,
         }
     }
 }

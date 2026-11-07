@@ -11,6 +11,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use crate::config::Edits;
+use crate::deploy::Dest;
 use crate::event::{Event, Reporter};
 use crate::ext::ExtTables;
 use crate::game::GameDef;
@@ -38,6 +40,9 @@ pub struct SharedProfile {
     /// `None` like `hidden_tags`. What extensions keep for each mod is in
     /// `mods` whatever the format.
     pub ext: Option<ExtTables>,
+    /// The profile's [`Profile::config`](crate::profile::Profile::config),
+    /// or `None` like `hidden_tags`.
+    pub config: Option<BTreeMap<Dest, Edits>>,
     /// Only present on export when the format asks for it with
     /// [`ProfileFormat::needs_lock`].
     pub lock: Option<Lockfile>,

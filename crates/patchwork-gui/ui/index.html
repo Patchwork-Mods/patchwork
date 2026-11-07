@@ -238,6 +238,20 @@
 				<p id="list-empty" class="empty" hidden></p>
 			</section>
 
+			<!-- The config files the profile can change settings in; see
+			     config.js. Each opens #options-dialog. -->
+			<section id="tab-config" class="tab" hidden>
+				<p class="muted">
+					Settings changed here are kept in the profile and applied when you deploy. Settings
+					changed in game are kept too.
+				</p>
+				<input id="config-filter" type="search" placeholder="Filter config files" autocomplete="off" />
+				<ul id="config-files" class="config-files"></ul>
+				<p id="config-empty" class="empty" hidden>
+					No config files yet. Mods often make theirs the first time the game starts with them.
+				</p>
+			</section>
+
 			<section id="tab-browse" class="tab" hidden>
 				<form id="search" class="row">
 					<input name="text" type="search" placeholder="Search mods">
@@ -819,8 +833,8 @@
 			</form>
 		</dialog>
 
-		<!-- A mod's choices, like its FOMOD installer's, a page at a time;
-		     see form.js. -->
+		<!-- A mod's choices, like its FOMOD installer's, a page at a time,
+		     or a config file's settings; see form.js. -->
 		<dialog id="options-dialog">
 			<form method="dialog" class="stack">
 				<h2 id="options-title">Options</h2>

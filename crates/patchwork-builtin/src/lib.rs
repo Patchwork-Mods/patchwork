@@ -9,6 +9,9 @@
 //! can't change once released, since game definitions and profiles name
 //! them.
 
+mod bepinex;
+
+pub use bepinex::BepInExConfig;
 use patchwork_core::Builder;
 use patchwork_core::ext::{Extension, Registrar};
 use patchwork_deployers::RulesDeployer;
@@ -28,7 +31,8 @@ pub fn register(builder: Builder) -> Builder {
         .extension(Generic)
         .extension(ThunderstoreExtension)
         .extension(NexusExtension)
-        .extension(ModrinthExtension);
+        .extension(ModrinthExtension)
+        .extension(BepInEx);
     #[cfg(feature = "bethesda")]
     let builder = builder.extension(Bethesda).extension(Fomod).extension(Loot);
     #[cfg(feature = "helldivers")]
@@ -92,5 +96,20 @@ impl Extension for ModrinthExtension {
 
     fn register(&self, ext: &mut Registrar<'_>) {
         ext.source(Modrinth);
+    }
+}
+
+/// BepInEx, the mod loader most Thunderstore games use: reading and
+/// writing its config files (`bepinex.cfg`), which its ruleset says are
+/// config.
+pub struct BepInEx;
+
+impl Extension for BepInEx {
+    fn id(&self) -> &'static str {
+        "bepinex"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.config_format("cfg", BepInExConfig);
     }
 }

@@ -19,6 +19,7 @@ pub mod capture;
 pub mod changelog;
 pub mod check;
 pub mod compat;
+pub mod config;
 pub mod conflicts;
 pub mod deploy;
 pub mod environment;
@@ -57,9 +58,9 @@ use std::time::Duration;
 
 pub use error::{Error, Result};
 pub use patchwork::{
-    Builder, Captured, Change, DeployStatus, GameInstall, HISTORY_LIMIT, HistoryEntry,
-    ImportOptions, Imported, KnownSummary, KnownVersions, ListInfo, Lookup, ModOptionsInfo,
-    ModOptionsView, Patchwork, ProfileChange, SyncApplied, ToolRan,
+    Builder, Captured, Change, ConfigFileInfo, ConfigView, DeployStatus, GameInstall,
+    HISTORY_LIMIT, HistoryEntry, ImportOptions, Imported, KnownSummary, KnownVersions, ListInfo,
+    Lookup, ModOptionsInfo, ModOptionsView, Patchwork, ProfileChange, SyncApplied, ToolRan,
 };
 
 /// The HTTP client every request shares, so connections to a host are kept

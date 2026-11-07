@@ -81,6 +81,7 @@ impl Env {
             launch: Default::default(),
             capture: None,
             instances: None,
+            config: Vec::new(),
             ext: [(
                 EXTENSION.to_owned(),
                 toml::Table::from_iter([(
