@@ -26,3 +26,8 @@ dispatch-releases = true
 # release.yml has been edited by hand (see the top of it), so dist mustn't
 # fail on it not matching what `dist generate` would write.
 allow-dirty = ["ci"]
+
+# dist 0.33 picks macos-14 for aarch64-apple-darwin, and GitHub has retired
+# that image ("The configuration 'macos-14-arm64-us-default' is not supported").
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"

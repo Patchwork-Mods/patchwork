@@ -5,9 +5,8 @@ members = ["crates/*"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "0.2.0"
 edition = "2024"
-# glacier-bin1 needs 1.95
 rust-version = "1.95"
 license = "MIT"
 
