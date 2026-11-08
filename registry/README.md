@@ -63,7 +63,7 @@ The tables a definition can have:
 
 | Table | What it's for |
 |---|---|
-| `[sources.<id>]` | where mods come from, and each source's settings (Thunderstore community, Nexus `game_domain`, Modrinth project types) |
+| `[sources.<id>]` | where mods come from, and each source's settings (Thunderstore community, Nexus `game_domain`, Modrinth project types, mod.io `game` and `id`) |
 | `[deployer]` | how mods' files are placed: `kind` (`rules`, `bethesda`, `smf`), plus `rulesets` and `rules` for the `rules` deployer |
 | `link` | `copy` (the default), `hardlink` or `symlink`. Hardlinks fall back to copying across drives |
 | `[detect]` | how to find the game: Steam app ids, its folder name, and exes that should be there |

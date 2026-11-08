@@ -71,6 +71,12 @@ Mods released on GitHub are added from a link to their repo: pick the file
 you want from the newest release (`ModName-0.1.2.zip`, say), and updates
 find the same file in later releases (`ModName-*.zip`).
 
+mod.io works for games that also load its mods from a folder of their own
+(Core Keeper, Ready or Not, Blade & Sorcery). It needs a read-only API key
+from [mod.io/me/access](https://mod.io/me/access), set in Settings or with
+`patchwork config set modio.api_key <key>`. Don't also subscribe to those
+mods in the game's own mod browser, or they load twice.
+
 The CLI does the same:
 
 ```sh

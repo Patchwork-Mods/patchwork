@@ -40,6 +40,10 @@ use serde::Deserialize;
 /// to = "shaderpacks/{file}"
 ///
 /// [[deployer.rules]]
+/// sources = "modio"          # mods from these sources
+/// to = "Mods/{mod}/{path}"
+///
+/// [[deployer.rules]]
 /// ruleset = "bepinex"        # a ruleset's rules, at this point in the list
 ///
 /// [deployer.root]
@@ -123,6 +127,9 @@ struct Rule {
     /// Globs for the kind of mod its source says it is. Mods whose source
     /// doesn't say never match.
     kinds: Option<Patterns>,
+    /// Globs for the id of the source the mod came from, like `modio`, for
+    /// games whose sources package mods differently.
+    sources: Option<Patterns>,
     #[serde(default)]
     strip: usize,
     to: Option<String>,
@@ -143,6 +150,7 @@ struct CompiledRule {
     folder: Option<String>,
     mods: Option<GlobSet>,
     kinds: Option<GlobSet>,
+    sources: Option<GlobSet>,
     strip: usize,
     to: String,
     skip: bool,
@@ -208,6 +216,7 @@ impl RulesDeployer {
                         && rule.folder.is_none()
                         && rule.mods.is_none()
                         && rule.kinds.is_none()
+                        && rule.sources.is_none()
                         && rule.strip == 0
                         && rule.to.is_none()
                         && !rule.skip;
@@ -321,6 +330,7 @@ impl RulesDeployer {
     fn compile(&self, rule: Rule) -> Result<CompiledRule> {
         let mods = self.patterns(rule.mods)?;
         let kinds = self.patterns(rule.kinds)?;
+        let sources = self.patterns(rule.sources)?;
         if let Some(folder) = &rule.folder
             && (folder.is_empty() || folder.contains(['/', '\\']))
         {
@@ -333,6 +343,7 @@ impl RulesDeployer {
             folder: rule.folder,
             mods,
             kinds,
+            sources,
             strip: rule.strip,
             to: rule.to.unwrap_or_else(|| "{path}".to_owned()),
             skip: rule.skip,
@@ -359,7 +370,7 @@ impl RulesDeployer {
                 }
                 RelPath::new(&parts[top.len()..].join("/")).map_err(|e| self.error(e))?
             };
-            let outcome = place(&setup.rules, &m.name, m.kind.as_deref(), &rel)
+            let outcome = place(&setup.rules, &Who::of(m), &rel)
                 .map_err(|e| self.error(format!("`{}`: {e}", m.name)))?;
             match outcome {
                 Outcome::Place(dst) => desired.placements.push(Placement {
@@ -445,13 +456,28 @@ impl CompiledRoot {
     }
 }
 
-/// Where the file at `rel` in mod `mod_name`, of kind `kind`, goes.
-fn place(
-    rules: &[CompiledRule],
-    mod_name: &str,
-    kind: Option<&str>,
-    rel: &RelPath,
-) -> Result<Outcome, String> {
+/// What rules can match a mod by, besides its files.
+struct Who<'a> {
+    name: &'a str,
+    /// What its source says it is, if it says.
+    kind: Option<&'a str>,
+    /// Its source's id.
+    source: &'a str,
+}
+
+impl<'a> Who<'a> {
+    fn of(m: &'a InstalledMod) -> Self {
+        Who {
+            name: &m.name,
+            kind: m.kind.as_deref(),
+            source: &m.source,
+        }
+    }
+}
+
+/// Where the file at `rel` in the mod `who` goes.
+fn place(rules: &[CompiledRule], who: &Who<'_>, rel: &RelPath) -> Result<Outcome, String> {
+    let mod_name = who.name;
     let parts: Vec<_> = rel.components().collect();
     // Like r2modman, the outermost folder that any rule names claims the
     // file, so `config/plugins/x.cfg` is config even if plugins comes first.
@@ -468,7 +494,11 @@ fn place(
             || rule
                 .kinds
                 .as_ref()
-                .is_some_and(|k| !kind.is_some_and(|kind| k.is_match(kind)))
+                .is_some_and(|k| !who.kind.is_some_and(|kind| k.is_match(kind)))
+            || rule
+                .sources
+                .as_ref()
+                .is_some_and(|s| !s.is_match(who.source))
         {
             continue;
         }

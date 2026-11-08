@@ -7,6 +7,8 @@
 #           {path} is then what comes after it. If a file is under several
 #           named folders, the outermost one decides.
 #   mods    glob, or list of globs, matched against the mod's name
+#   kinds   glob(s) matched against what the mod's source says it is
+#   sources glob(s) matched against the id of the mod's source, e.g. modio
 #   ruleset includes another ruleset's rules at this point
 #   strip   leading path components to drop (the rule doesn't apply if there
 #           aren't enough)

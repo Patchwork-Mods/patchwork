@@ -50,7 +50,12 @@ fn kind_dst(
     kind: Option<&str>,
     path: &str,
 ) -> Option<String> {
-    match place(rules, mod_name, kind, &RelPath::new(path).unwrap()).unwrap() {
+    let who = Who {
+        name: mod_name,
+        kind,
+        source: "local",
+    };
+    match place(rules, &who, &RelPath::new(path).unwrap()).unwrap() {
         Outcome::Place(p) => Some(p.to_string()),
         _ => None,
     }
@@ -228,6 +233,7 @@ fn mod_filters_and_escapes() {
                 folder: None,
                 mods: mods.map(|m| Patterns::One(m.to_owned())),
                 kinds: None,
+                sources: None,
                 strip: 0,
                 to: Some(to.to_owned()),
                 skip: false,
@@ -242,7 +248,12 @@ fn mod_filters_and_escapes() {
     assert_eq!(dst(&rules, "Small", "a.pak"), None);
 
     let evil = [rule("**", None, "../{path}")];
-    assert!(place(&evil, "m", None, &RelPath::new("x").unwrap()).is_err());
+    let who = Who {
+        name: "m",
+        kind: None,
+        source: "local",
+    };
+    assert!(place(&evil, &who, &RelPath::new("x").unwrap()).is_err());
 }
 
 #[test]
@@ -251,6 +262,43 @@ fn mod_lists() {
     assert_eq!(dst(&rules, "a-thing", "f").as_deref(), Some("x/f"));
     assert_eq!(dst(&rules, "b-EXACT", "f").as_deref(), Some("x/f"));
     assert_eq!(dst(&rules, "c", "f"), None);
+}
+
+#[test]
+fn sources() {
+    let rules = parse(
+        r#"
+[[rules]]
+sources = "modio"
+to = "Mods/{mod}/{path}"
+
+[[rules]]
+sources = ["thunder*", "nexus"]
+to = "BepInEx/plugins/{mod}/{file}"
+"#,
+    )
+    .unwrap();
+    let dst = |source: &str, path: &str| {
+        let who = Who {
+            name: "m",
+            kind: None,
+            source,
+        };
+        match place(&rules, &who, &RelPath::new(path).unwrap()).unwrap() {
+            Outcome::Place(p) => Some(p.to_string()),
+            _ => None,
+        }
+    };
+    assert_eq!(dst("modio", "a/b.json").as_deref(), Some("Mods/m/a/b.json"));
+    assert_eq!(
+        dst("thunderstore", "a/b.dll").as_deref(),
+        Some("BepInEx/plugins/m/b.dll")
+    );
+    assert_eq!(
+        dst("nexus", "b.dll").as_deref(),
+        Some("BepInEx/plugins/m/b.dll")
+    );
+    assert_eq!(dst("local", "b.dll"), None);
 }
 
 #[test]

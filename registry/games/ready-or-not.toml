@@ -1,0 +1,30 @@
+schema = 1
+id = "ready-or-not"
+name = "Ready or Not"
+description = "Takes .pak mods, from mod.io or Nexus Mods. They go in Content/Paks/~mods, apart from the mod.io folder that the in-game mod browser fills, so don't subscribe in game to mods added here too."
+
+[sources.nexus]
+game_domain = "readyornot"
+
+[sources.modio]
+game = "readyornot"
+id = 3791
+
+[deployer]
+kind = "rules"
+
+# Unreal loads every .pak under Content/Paks, in subfolders too, along with
+# the .utoc and .ucas that go with newer ones. Folders in the mod don't
+# matter.
+[[deployer.rules]]
+files = "**/*.{pak,utoc,ucas,sig}"
+to = "ReadyOrNot/Content/Paks/~mods/{file}"
+
+[[deployer.rules]]
+files = "**/*.{txt,md,url,png,jpg,jpeg,webp}"
+skip = true
+
+[detect]
+steam = [1144200]
+folder = "Ready Or Not"
+exe = ["ReadyOrNot.exe"]

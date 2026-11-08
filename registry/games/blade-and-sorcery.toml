@@ -1,0 +1,29 @@
+schema = 1
+id = "blade-and-sorcery"
+name = "Blade & Sorcery"
+description = "Takes mod folders with a manifest.json, from mod.io or Nexus Mods, in StreamingAssets/Mods. Mods subscribed to in the in-game browser as well would load twice."
+
+[sources.nexus]
+game_domain = "bladeandsorcery"
+
+# No numeric id here, so it's looked up from the name.
+[sources.modio]
+game = "bladeandsorcery"
+
+[deployer]
+kind = "rules"
+
+# Mods come as their folder (the one with manifest.json in it), which goes
+# straight into StreamingAssets/Mods; the game ignores mods nested any
+# deeper. Some are packed from further up, inside a Mods folder.
+[[deployer.rules]]
+folder = "Mods"
+to = "BladeAndSorcery_Data/StreamingAssets/Mods/{path}"
+
+[[deployer.rules]]
+to = "BladeAndSorcery_Data/StreamingAssets/Mods/{path}"
+
+[detect]
+steam = [629730]
+folder = "Blade & Sorcery"
+exe = ["BladeAndSorcery.exe"]
