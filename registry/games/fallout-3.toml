@@ -1,0 +1,97 @@
+schema = 1
+id = "fallout-3"
+name = "Fallout 3"
+description = "Fallout 3 and its Game of the Year Edition. Mods' plugins (.esp, .esm) are loaded in the order you set on the profile's Plugins tab. For loose files to win over the game's archives, set `bInvalidateOlderFiles=1` and `SInvalidationFile=` under `[Archive]` in FALLOUT.INI, in Documents/My Games/Fallout3."
+# A load order is often tens of gigabytes of meshes and textures.
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "fallout3"
+
+[deployer]
+kind = "bethesda"
+
+# Mods are packed every which way: from the game folder (`Data/...`), from
+# inside Data (`meshes/...`, `Plugin.esp`), or with a wrapper folder around
+# either. Each mod's top is found from what Data usually holds.
+[deployer.root]
+markers = [
+    "Data",
+    "*.esp", "*.esm", "*.bsa",
+    "meshes", "textures", "sound", "music", "menus", "fonts", "shaders",
+    "trees", "lodsettings", "video", "FOSE",
+]
+
+# Mods with a FOMOD installer are installed from the options picked in it,
+# which put files in Data.
+[ext.fomod.installer]
+folder = "Data"
+
+# Tools like xEdit and BodySlide write their output into Data.
+# `patchwork capture` keeps whatever's new there since the profile was
+# deployed as a mod of its own.
+[capture]
+folders = ["Data"]
+ignore = ["**/*.log"]
+
+[[deployer.rules]]
+folder = "Data"
+to = "Data/{path}"
+
+# Script extenders, their loaders and engine fixes go next to Fallout3.exe.
+# Only files at the top match, so `FOSE/Plugins/*.dll` still goes in Data.
+[[deployer.rules]]
+files = "*.exe"
+to = "{path}"
+
+[[deployer.rules]]
+files = "*.dll"
+to = "{path}"
+
+[[deployer.rules]]
+to = "Data/{path}"
+
+# The game loads plugins in the order of their files' dates, masters
+# first, and only the ones Plugins.txt lists. Mods' plugins are deployed as
+# copies dated in the load order's order. The DLCs only load when they're
+# listed, like mods' plugins. There are no light plugins.
+[ext.bethesda.plugins]
+folder = "Data"
+file = "appdata:Plugins.txt"
+order = "timestamps"
+implicit = ["Fallout3.esm"]
+shipped = ["Anchorage.esm", "ThePitt.esm", "BrokenSteel.esm", "PointLookout.esm", "Zeta.esm"]
+light_flag = 0
+limit = 255
+
+[ext.loot.sort]
+masterlist = "https://raw.githubusercontent.com/loot/fallout3/v0.29/masterlist.yaml"
+
+[roots.appdata]
+path = "{localappdata}/Fallout3"
+allow = ["Plugins.txt", "plugins.txt", "loadorder.txt"]
+rewritten = ["Plugins.txt"]
+
+# Once FOSE is deployed, the game starts through its loader.
+[launch.fose]
+name = "Fallout 3 with FOSE"
+exe = "fose_loader.exe"
+default = true
+
+# Fallout 3, and its Game of the Year Edition.
+[detect]
+steam = [22300, 22370]
+folder = "Fallout 3"
+exe = ["Fallout3.exe"]
+
+[[detect.version]]
+kind = "exe"
+file = "Fallout3.exe"
+parts = 4
+
+# Script extender plugins' own settings files, which patchwork shows on the
+# Config tab. Their types are guessed, from values and from names like
+# `bEnabled` and `fScale`.
+[[config]]
+files = "Data/FOSE/Plugins/*.ini"
+format = "generic.ini"

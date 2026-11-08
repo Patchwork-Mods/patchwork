@@ -1,0 +1,103 @@
+schema = 1
+id = "oblivion"
+name = "The Elder Scrolls IV: Oblivion"
+description = "The original Oblivion (not Oblivion Remastered), with or without the Game of the Year content. Mods' plugins (.esp, .esm) are loaded in the order you set on the profile's Plugins tab. For loose textures and meshes to win over the game's archives, use an archive invalidation mod or set it up in the game's launcher. If `bUseMyGamesDirectory=0` is set in Oblivion.ini, the game won't see the load order patchwork writes."
+# A load order is often tens of gigabytes of meshes and textures.
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "oblivion"
+
+[deployer]
+kind = "bethesda"
+
+# Mods are packed every which way: from the game folder (`Data/...`), from
+# inside Data (`meshes/...`, `Plugin.esp`), or with a wrapper folder around
+# either. Each mod's top is found from what Data usually holds.
+[deployer.root]
+markers = [
+    "Data",
+    "*.esp", "*.esm", "*.bsa",
+    "meshes", "textures", "sound", "music", "menus", "fonts", "shaders",
+    "trees", "distantlod", "video", "OBSE",
+]
+
+# Mods with a FOMOD installer are installed from the options picked in it,
+# which put files in Data.
+[ext.fomod.installer]
+folder = "Data"
+
+# Tools like xEdit, TES4LODGen and Wrye Bash's Bashed Patch write their
+# output into Data. `patchwork capture` keeps whatever's new there since the
+# profile was deployed as a mod of its own.
+[capture]
+folders = ["Data"]
+ignore = ["**/*.log"]
+
+[[deployer.rules]]
+folder = "Data"
+to = "Data/{path}"
+
+# Script extenders, their loaders and engine fixes go next to Oblivion.exe.
+# Only files at the top match, so `OBSE/Plugins/*.dll` still goes in Data.
+[[deployer.rules]]
+files = "*.exe"
+to = "{path}"
+
+[[deployer.rules]]
+files = "*.dll"
+to = "{path}"
+
+[[deployer.rules]]
+to = "Data/{path}"
+
+# The game loads plugins in the order of their files' dates, masters
+# first, and only the ones Plugins.txt lists. Mods' plugins are deployed as
+# copies dated in the load order's order. Shivering Isles, Knights of the
+# Nine and the smaller DLCs only load when they're listed, like mods'
+# plugins. Oblivion's records have shorter headers than later games', and
+# there are no light plugins.
+[ext.bethesda.plugins]
+folder = "Data"
+file = "appdata:Plugins.txt"
+order = "timestamps"
+header_size = 20
+implicit = ["Oblivion.esm"]
+shipped = [
+    "DLCShiveringIsles.esp", "Knights.esp", "DLCBattlehornCastle.esp",
+    "DLCFrostcrag.esp", "DLCHorseArmor.esp", "DLCMehrunesRazor.esp",
+    "DLCOrrery.esp", "DLCSpellTomes.esp", "DLCThievesDen.esp", "DLCVileLair.esp",
+]
+light_flag = 0
+limit = 255
+
+[ext.loot.sort]
+masterlist = "https://raw.githubusercontent.com/loot/oblivion/v0.29/masterlist.yaml"
+
+[roots.appdata]
+path = "{localappdata}/Oblivion"
+allow = ["Plugins.txt", "plugins.txt", "loadorder.txt"]
+rewritten = ["Plugins.txt"]
+
+# Once OBSE (or xOBSE) is deployed, the game starts through its loader.
+[launch.obse]
+name = "Oblivion with OBSE"
+exe = "obse_loader.exe"
+default = true
+
+[detect]
+steam = [22330]
+folder = "Oblivion"
+exe = ["Oblivion.exe"]
+
+[[detect.version]]
+kind = "exe"
+file = "Oblivion.exe"
+parts = 4
+
+# Script extender plugins' own settings files, which patchwork shows on the
+# Config tab. Their types are guessed, from values and from names like
+# `bEnabled` and `fScale`.
+[[config]]
+files = "Data/OBSE/Plugins/*.ini"
+format = "generic.ini"

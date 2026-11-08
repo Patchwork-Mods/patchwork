@@ -29,6 +29,12 @@ limit = 254
 /// A plugin's bytes: a TES4 record with `flags` and `masters`, then some
 /// other record that shouldn't be read.
 fn plugin_bytes(flags: u32, masters: &[&str]) -> Vec<u8> {
+    plugin_bytes_sized(HEADER_SIZE, flags, masters)
+}
+
+/// [`plugin_bytes`] for a game whose record headers are `header_size`
+/// bytes long.
+fn plugin_bytes_sized(header_size: usize, flags: u32, masters: &[&str]) -> Vec<u8> {
     let mut data = Vec::new();
     let mut sub = |kind: &[u8], field: &[u8]| {
         data.extend_from_slice(kind);
@@ -44,7 +50,7 @@ fn plugin_bytes(flags: u32, masters: &[&str]) -> Vec<u8> {
     let mut bytes = b"TES4".to_vec();
     bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&flags.to_le_bytes());
-    bytes.extend_from_slice(&[0; 12]);
+    bytes.extend_from_slice(&vec![0; header_size - 12]);
     bytes.extend_from_slice(&data);
     bytes.extend_from_slice(b"GRUP\xff\xff\xff\xff");
     bytes
@@ -160,6 +166,10 @@ impl Env {
     }
 
     fn build(&self, order: &List) -> (DesiredState, String) {
+        self.build_with(order, &[])
+    }
+
+    fn build_with(&self, order: &List, mods: &[InstalledMod]) -> (DesiredState, String) {
         let registry = Registry::default();
         let ctx = DeployContext {
             game: &self.def,
@@ -176,7 +186,7 @@ impl Env {
             reporter: &Silent,
             lists: std::slice::from_ref(order),
         };
-        let built = BethesdaDeployer.build(&ctx, &build, &[]).unwrap();
+        let built = BethesdaDeployer.build(&ctx, &build, mods).unwrap();
         (built, fs::read_to_string(out.join(OUT)).unwrap())
     }
 }
@@ -191,14 +201,14 @@ fn headers_say_what_a_plugin_is_and_needs() {
     )
     .unwrap();
     assert_eq!(
-        read_header(&path).unwrap(),
+        read_header(&path, HEADER_SIZE).unwrap(),
         Header {
             flags: MASTER_FLAG | LIGHT_FLAG,
             masters: vec!["Skyrim.esm".to_owned(), "Base.esm".to_owned()],
         }
     );
     fs::write(&path, plugin_bytes(0, &[])).unwrap();
-    assert_eq!(read_header(&path).unwrap(), Header::default());
+    assert_eq!(read_header(&path, HEADER_SIZE).unwrap(), Header::default());
 
     for (bytes, why) in [
         (b"TES4".to_vec(), "too short"),
@@ -209,7 +219,7 @@ fn headers_say_what_a_plugin_is_and_needs() {
         (plugin_bytes(0, &["A.esm"])[..40].to_vec(), "cut short"),
     ] {
         fs::write(&path, bytes).unwrap();
-        let err = read_header(&path).unwrap_err();
+        let err = read_header(&path, HEADER_SIZE).unwrap_err();
         assert!(err.contains(why), "{err}");
     }
 }
@@ -563,4 +573,210 @@ fn plugins_the_game_ships_but_doesnt_load_are_in_the_load_order() {
         text.contains("*enderal - forgotten stories.esm\r\n*A.esp"),
         "{text}"
     );
+}
+
+/// Sets `key` in the game's `[ext.bethesda.plugins]`.
+fn set(env: &mut Env, key: &str, value: toml::Value) {
+    env.def.ext.get_mut(EXTENSION).unwrap()[LIST]
+        .as_table_mut()
+        .unwrap()
+        .insert(key.to_owned(), value);
+}
+
+fn set_time(path: &std::path::Path, secs: u64) {
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(UNIX_EPOCH + Duration::from_secs(secs))
+        .unwrap();
+}
+
+fn time_of(path: &std::path::Path) -> SystemTime {
+    fs::metadata(path).unwrap().modified().unwrap()
+}
+
+#[test]
+fn oblivions_shorter_headers_are_read() {
+    let mut env = Env::new();
+    set(&mut env, "header_size", toml::Value::Integer(20));
+    let mods = [env.installed(
+        "M",
+        &[(
+            "Mod.esp",
+            plugin_bytes_sized(20, 0, &["Oblivion.esm", "Base.esm"]),
+        )],
+    )];
+    let found = env.items(&mods);
+    assert!(found.warnings.is_empty(), "{:?}", found.warnings);
+    assert_eq!(found.items[0].after, ["Oblivion.esm", "Base.esm"]);
+
+    set(&mut env, "header_size", toml::Value::Integer(16));
+    let registry = Registry::default();
+    let ctx = DeployContext {
+        game: &env.def,
+        config: &env.def.deployer.config,
+        registry: &registry,
+    };
+    let state = DeployState::empty("skyrim-se", &Roots::game(&env.game));
+    let files = GameFiles::new(&env.game, &state);
+    let config = env.def.hook_config(EXTENSION, LIST).unwrap();
+    let lctx = ListContext::new(&ctx, &files, config);
+    assert!(BethesdaLoadOrder.items(&lctx, &mods).is_err());
+}
+
+#[test]
+fn games_that_go_by_dates_get_dated_copies_of_mods_plugins() {
+    let mut env = Env::new();
+    set(
+        &mut env,
+        "order",
+        toml::Value::String("timestamps".to_owned()),
+    );
+    set(
+        &mut env,
+        "implicit",
+        toml::Value::Array(vec![toml::Value::String("FalloutNV.esm".to_owned())]),
+    );
+    set(
+        &mut env,
+        "shipped",
+        toml::Value::Array(vec![toml::Value::String("DeadMoney.esm".to_owned())]),
+    );
+    let data = env.game.join("Data");
+    for (name, secs) in [
+        ("FalloutNV.esm", 1_300_000_000),
+        ("DeadMoney.esm", 1_310_000_000),
+    ] {
+        fs::write(data.join(name), plugin_bytes(MASTER_FLAG, &[])).unwrap();
+        set_time(&data.join(name), secs);
+    }
+    let mods = [
+        env.installed(
+            "M",
+            &[
+                ("Data/Base.esm", plugin_bytes(MASTER_FLAG, &[])),
+                ("A.esp", plugin_bytes(0, &[])),
+                ("B.esp", plugin_bytes(0, &[])),
+            ],
+        ),
+        env.installed("Off", &[("Off.esp", plugin_bytes(0, &[]))]),
+    ];
+    let saved = [
+        ListEntry {
+            name: "DeadMoney.esm".to_owned(),
+            enabled: true,
+        },
+        ListEntry {
+            name: "Base.esm".to_owned(),
+            enabled: true,
+        },
+        ListEntry {
+            name: "B.esp".to_owned(),
+            enabled: true,
+        },
+        ListEntry {
+            name: "A.esp".to_owned(),
+            enabled: true,
+        },
+        ListEntry {
+            name: "Off.esp".to_owned(),
+            enabled: false,
+        },
+    ];
+    let (_, order) = env.list(&saved, &mods);
+    let (built, text) = env.build_with(&order, &mods);
+
+    // only the enabled ones, the game's master too, without `*`s
+    let lines: Vec<_> = text.lines().filter(|l| !l.starts_with('#')).collect();
+    assert_eq!(
+        lines,
+        [
+            "FalloutNV.esm",
+            "DeadMoney.esm",
+            "Base.esm",
+            "B.esp",
+            "A.esp"
+        ]
+    );
+    assert!(built.warnings.is_empty(), "{:?}", built.warnings);
+
+    // the enabled mods' plugins, dated in order after the game's own
+    let out = env.tmp.path().join("out");
+    let dated: Vec<_> = built.placements[1..]
+        .iter()
+        .map(|p| {
+            let Src::Built(rel) = &p.src else {
+                panic!("{p:?}")
+            };
+            (
+                p.dst.to_string(),
+                p.mod_name.as_str(),
+                time_of(&rel.under(&out)),
+            )
+        })
+        .collect();
+    let names: Vec<_> = dated.iter().map(|(d, m, _)| (d.as_str(), *m)).collect();
+    assert_eq!(
+        names,
+        [
+            ("Data/Base.esm", "M"),
+            ("Data/B.esp", "M"),
+            ("Data/A.esp", "M")
+        ]
+    );
+    let game_latest = time_of(&data.join("DeadMoney.esm"));
+    assert!(dated[0].2 > game_latest);
+    assert!(dated[0].2 < dated[1].2 && dated[1].2 < dated[2].2);
+    // and the store's own files keep theirs
+    assert_ne!(time_of(&mods[0].files[2].src), dated[1].2);
+
+    // a game plugin after a mod's can't be moved there
+    let late = [
+        ListEntry {
+            name: "Base.esm".to_owned(),
+            enabled: true,
+        },
+        ListEntry {
+            name: "DeadMoney.esm".to_owned(),
+            enabled: true,
+        },
+    ];
+    let (_, order) = env.list(&late, &mods);
+    let (built, _) = env.build_with(&order, &mods);
+    assert_eq!(built.warnings.len(), 1, "{:?}", built.warnings);
+    assert!(built.warnings[0].starts_with("DeadMoney.esm is the game's own"));
+}
+
+#[test]
+fn the_dates_of_the_games_plugins_are_fingerprinted() {
+    let mut env = Env::new();
+    env.def.ext.get_mut(EXTENSION).unwrap()[LIST]
+        .as_table_mut()
+        .unwrap()
+        .remove("ccc");
+    let fingerprint = |env: &Env| {
+        let registry = Registry::default();
+        let ctx = DeployContext {
+            game: &env.def,
+            config: &env.def.deployer.config,
+            registry: &registry,
+        };
+        let state = DeployState::empty("skyrim-se", &Roots::game(&env.game));
+        let game = GameFiles::new(&env.game, &state);
+        BethesdaDeployer.fingerprint(&ctx, &game).unwrap()
+    };
+    let master = env.game.join("Data/FalloutNV.esm");
+    fs::write(&master, plugin_bytes(MASTER_FLAG, &[])).unwrap();
+    // nothing to cover without a ccc file, for games that don't go by dates
+    assert!(fingerprint(&env).is_none());
+    set(
+        &mut env,
+        "order",
+        toml::Value::String("timestamps".to_owned()),
+    );
+    set_time(&master, 1_300_000_000);
+    let before = fingerprint(&env).unwrap();
+    set_time(&master, 1_400_000_000);
+    assert_ne!(fingerprint(&env).unwrap(), before);
 }

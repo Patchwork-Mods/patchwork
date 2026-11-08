@@ -894,3 +894,22 @@ fn links_are_checked_by_where_they_point() {
     let drifted = check_files(&state, Check::Quick).unwrap();
     assert_eq!(drifted[0].1, Drift::Changed);
 }
+
+#[test]
+fn copies_keep_their_modification_time() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src.esp");
+    fs::write(&src, "plugin").unwrap();
+    let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_300_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&src)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+    for method in [LinkMethod::Copy, LinkMethod::Hardlink] {
+        let dst = tmp.path().join(format!("{method:?}.esp"));
+        link(&src, &dst, method).unwrap();
+        assert_eq!(fs::metadata(&dst).unwrap().modified().unwrap(), when);
+    }
+}

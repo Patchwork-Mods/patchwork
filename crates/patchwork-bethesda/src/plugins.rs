@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::time::UNIX_EPOCH;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use patchwork_core::check::{Check, CheckContext, Problem};
 use patchwork_core::deploy::{
@@ -42,6 +44,12 @@ use patchwork_deployers::RulesDeployer;
 /// light_flag = 0x100              # 0x200 if left out
 /// medium_flag = 0x400             # no medium plugins if left out
 /// medium_limit = 256
+/// # Oblivion, Fallout 3 and New Vegas: the game loads plugins in the
+/// # order of their files' modification times, and the file lists only the
+/// # enabled ones, without `*`s. Mods' plugins are deployed as copies with
+/// # times in the load order's order, after the game's own plugins'.
+/// order = "timestamps"            # "asterisks" if left out
+/// header_size = 20                # Oblivion's record headers; 24 if left out
 /// ```
 pub struct BethesdaDeployer;
 
@@ -68,6 +76,16 @@ pub const LIMIT: &str = "limit";
 const BUILT_BY: &str = "Load order";
 /// What the load order is called in the build's output.
 const OUT: &str = "plugins.txt";
+/// Where the dated copies of mods' plugins go in the build's output, for
+/// games that load them by date.
+const DATED: &str = "dated";
+/// How far apart the dated copies are, and how long after the game's own
+/// plugins the first one is.
+const STEP: Duration = Duration::from_secs(60);
+const AFTER_GAME: Duration = Duration::from_secs(60 * 60);
+/// The earliest a dated copy can be, if the game has no plugins of its
+/// own to go after (2002-05-01, Morrowind's release).
+const EARLIEST: Duration = Duration::from_secs(1_020_211_200);
 /// No plugin's header comes close to this; it stops a broken one from
 /// asking for gigabytes.
 const MAX_HEADER: u32 = 1 << 20;
@@ -87,7 +105,27 @@ struct PluginsConfig {
     light_flag: Option<u32>,
     medium_flag: Option<u32>,
     medium_limit: Option<usize>,
+    #[serde(default)]
+    order: Method,
+    header_size: Option<usize>,
 }
+
+/// How the game knows the order to load plugins in.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Method {
+    /// From the file: every plugin in order, the enabled ones with a `*`
+    /// before them (Skyrim SE and later).
+    #[default]
+    Asterisks,
+    /// From the plugins' modification times; the file only lists the
+    /// enabled ones (Oblivion, Fallout 3 and New Vegas).
+    Timestamps,
+}
+
+/// The size of a record's header in Skyrim and later games. Oblivion's
+/// are 20 bytes, without the version field.
+const HEADER_SIZE: usize = 24;
 
 impl PluginsConfig {
     fn parse(game: &GameDef, table: &toml::Table) -> Result<Self> {
@@ -149,6 +187,16 @@ impl PluginsConfig {
             && is_plugin(dst.path.file_name())
     }
 
+    fn header_size(&self) -> Result<usize> {
+        match self.header_size {
+            None => Ok(HEADER_SIZE),
+            Some(size @ (20 | 24)) => Ok(size),
+            Some(size) => Err(error(format!(
+                "bad `header_size` {size}: it's 24, or 20 for Oblivion"
+            ))),
+        }
+    }
+
     fn folder(&self) -> Result<RelPath> {
         RelPath::new(&self.folder).map_err(|e| error(format!("bad `folder`: {e}")))
     }
@@ -185,8 +233,9 @@ impl PluginsConfig {
         game: &GameFiles<'_>,
         implicit: &[String],
         present: &[String],
-    ) -> Vec<Scale> {
-        implicit
+    ) -> Result<Vec<Scale>> {
+        let header_size = self.header_size()?;
+        Ok(implicit
             .iter()
             .map(|name| {
                 let flags = present
@@ -194,11 +243,11 @@ impl PluginsConfig {
                     .find(|p| p.eq_ignore_ascii_case(name))
                     .and_then(|p| RelPath::new(&format!("{}/{p}", self.folder)).ok())
                     .and_then(|rel| game.original(&rel))
-                    .and_then(|path| read_header(&path).ok())
+                    .and_then(|path| read_header(&path, header_size).ok())
                     .map_or(0, |h| h.flags);
                 self.scale(flags, name)
             })
-            .collect()
+            .collect())
     }
 
     /// How much of the load order a plugin with these header flags takes
@@ -245,14 +294,14 @@ const MASTER_FLAG: u32 = 0x1;
 /// The light flag in every game but Starfield.
 const LIGHT_FLAG: u32 = 0x200;
 
-/// Reads the header record (`TES4`) at the start of a plugin. Skyrim's
-/// and later games' records start with 24 bytes: the type, the size of the
-/// record's data, its flags and three fields that don't matter here. The
-/// data is subrecords, each a type, a 16-bit size and that much data;
+/// Reads the header record (`TES4`) at the start of a plugin. Records
+/// start with `header_size` bytes: the type, the size of the record's data,
+/// its flags and two fields (three since Fallout 3) that don't matter here.
+/// The data is subrecords, each a type, a 16-bit size and that much data;
 /// `MAST` ones name the plugin's masters.
-fn read_header(path: &Path) -> std::result::Result<Header, String> {
+fn read_header(path: &Path, header_size: usize) -> std::result::Result<Header, String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
-    let mut head = [0u8; 24];
+    let mut head = vec![0u8; header_size];
     file.read_exact(&mut head)
         .map_err(|_| "it's too short to be a plugin".to_owned())?;
     if &head[..4] != b"TES4" {
@@ -297,19 +346,144 @@ fn read_header(path: &Path) -> std::result::Result<Header, String> {
     Ok(Header { flags, masters })
 }
 
-/// The load order as the game reads it: a `*` before each enabled plugin.
-fn plugins_txt(order: &List) -> String {
+/// The load order as the game reads it: a `*` before each enabled plugin,
+/// or for games that go by timestamps, the enabled plugins alone, with the
+/// game's own masters too.
+fn plugins_txt(order: &List, method: Method) -> String {
     let mut text = String::from(
         "# This file is used by the game to keep track of your downloaded content.\r\n# Patchwork wrote it; change the order in Patchwork instead, or it'll be put back.\r\n",
     );
+    if method == Method::Timestamps {
+        for p in &order.fixed {
+            text.push_str(&p.name);
+            text.push_str("\r\n");
+        }
+    }
     for p in &order.items {
-        if p.enabled {
-            text.push('*');
+        match (method, p.enabled) {
+            (Method::Asterisks, true) => text.push('*'),
+            (Method::Asterisks, false) => {}
+            (Method::Timestamps, true) => {}
+            (Method::Timestamps, false) => continue,
         }
         text.push_str(&p.item.name);
         text.push_str("\r\n");
     }
     text
+}
+
+/// A mod's plugin, as the rules deploy it.
+struct ModPlugin {
+    dst: Dest,
+    src: PathBuf,
+    mod_name: String,
+}
+
+/// Mods' plugins by lowercase name, where the rules put them; when two
+/// have the same name, the later mod's.
+fn mod_plugins(
+    ctx: &DeployContext<'_>,
+    plugins: &PluginsConfig,
+    mods: &[InstalledMod],
+) -> Result<HashMap<String, ModPlugin>> {
+    let files: HashMap<_, _> = mods
+        .iter()
+        .flat_map(|m| m.files.iter().map(move |f| ((m.hash, &f.rel), &f.src)))
+        .collect();
+    let mut found = HashMap::new();
+    for placement in RulesDeployer.plan(ctx, mods)?.placements {
+        if !plugins.holds(&placement.dst) {
+            continue;
+        }
+        let Src::Mod { hash, rel } = &placement.src else {
+            continue;
+        };
+        let Some(src) = files.get(&(*hash, rel)) else {
+            continue;
+        };
+        found.insert(
+            placement.dst.path.file_name().to_lowercase(),
+            ModPlugin {
+                src: src.to_path_buf(),
+                dst: placement.dst,
+                mod_name: placement.mod_name,
+            },
+        );
+    }
+    Ok(found)
+}
+
+/// The game's own plugins, with their modification times.
+fn game_plugins(
+    plugins: &PluginsConfig,
+    game: &GameFiles<'_>,
+) -> Result<Vec<(RelPath, Option<SystemTime>)>> {
+    Ok(game
+        .list(Some(&plugins.folder()?))?
+        .into_iter()
+        .filter(|rel| is_plugin(rel.file_name()))
+        .map(|rel| {
+            let modified = game
+                .original(&rel)
+                .and_then(|path| std::fs::metadata(path).ok())
+                .and_then(|meta| meta.modified().ok());
+            (rel, modified)
+        })
+        .collect())
+}
+
+/// For games that load plugins by date: copies of the enabled mods'
+/// plugins in `out`, dated in the load order's order and after all of the
+/// game's own, placed where the rules put the mods' files (which they win
+/// over). A copy is made so the dates don't change the store's files,
+/// which other profiles share.
+fn dated(
+    ctx: &DeployContext<'_>,
+    build: &BuildContext<'_>,
+    plugins: &PluginsConfig,
+    order: &List,
+    mods: &[InstalledMod],
+) -> Result<DesiredState> {
+    let from_mods = mod_plugins(ctx, plugins, mods)?;
+    let latest = game_plugins(plugins, &build.game)?
+        .into_iter()
+        .filter_map(|(_, modified)| modified)
+        .max();
+    let earliest = UNIX_EPOCH + EARLIEST;
+    let mut next = latest.map_or(earliest, |t| t.max(earliest)) + AFTER_GAME;
+    let dir = build.out.join(DATED);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| error(format!("couldn't create {}: {e}", dir.display())))?;
+    let mut state = DesiredState::default();
+    let mut dated_one: Option<&str> = None;
+    for p in order.items.iter().filter(|p| p.enabled) {
+        let name = &p.item.name;
+        let Some(plugin) = from_mods.get(&name.to_lowercase()) else {
+            // The game's own: it keeps its date, so it loads before every
+            // mod's plugin wherever it is in the order.
+            if let Some(before) = dated_one {
+                state.warnings.push(format!(
+                    "{name} is the game's own, so it loads before every mod's plugin, {before} included, whatever the load order says; move it up to see the order the game uses"
+                ));
+            }
+            continue;
+        };
+        let rel = RelPath::new(&format!("{DATED}/{}", plugin.dst.path.file_name()))
+            .map_err(|e| error(format!("bad plugin name {name}: {e}")))?;
+        let to = rel.under(build.out);
+        std::fs::copy(&plugin.src, &to)
+            .and_then(|_| std::fs::File::options().write(true).open(&to))
+            .and_then(|file| file.set_modified(next))
+            .map_err(|e| error(format!("couldn't copy {name} to {}: {e}", to.display())))?;
+        next += STEP;
+        dated_one.get_or_insert(name);
+        state.placements.push(Placement {
+            dst: plugin.dst.clone(),
+            src: Src::Built(rel),
+            mod_name: plugin.mod_name.clone(),
+        });
+    }
+    Ok(state)
 }
 
 impl Deployer for BethesdaDeployer {
@@ -333,51 +507,65 @@ impl Deployer for BethesdaDeployer {
         &self,
         ctx: &DeployContext<'_>,
         build: &BuildContext<'_>,
-        _mods: &[InstalledMod],
+        mods: &[InstalledMod],
     ) -> Result<DesiredState> {
         let id = format!("{EXTENSION}.{LIST}");
         let (Some(plugins), Some(order)) = (PluginsConfig::of(ctx.game)?, build.list(&id)) else {
             return Ok(DesiredState::default());
         };
         let out = build.out.join(OUT);
-        std::fs::write(&out, plugins_txt(order))
+        std::fs::write(&out, plugins_txt(order, plugins.order))
             .map_err(|e| error(format!("couldn't write {}: {e}", out.display())))?;
-        Ok(DesiredState {
-            placements: vec![Placement {
+        let mut state = match plugins.order {
+            Method::Asterisks => DesiredState::default(),
+            Method::Timestamps => dated(ctx, build, &plugins, order, mods)?,
+        };
+        state.placements.insert(
+            0,
+            Placement {
                 dst: plugins.file()?,
                 src: Src::Built(RelPath::new(OUT).expect("valid path")),
                 mod_name: BUILT_BY.to_owned(),
-            }],
-            warnings: Vec::new(),
-        })
+            },
+        );
+        Ok(state)
     }
 
     /// Covers the ccc file, since its plugins are left out of the load
-    /// order.
+    /// order, and for games that load plugins by date, the dates of the
+    /// game's own, which mods' go after.
     fn fingerprint(
         &self,
         ctx: &DeployContext<'_>,
         game: &GameFiles<'_>,
     ) -> Result<Option<ContentHash>> {
-        let Some(ccc) = PluginsConfig::of(ctx.game)?
-            .map(|p| p.ccc())
-            .transpose()?
-            .flatten()
-        else {
+        let Some(plugins) = PluginsConfig::of(ctx.game)? else {
             return Ok(None);
         };
-        let seen = match game.original(&ccc).and_then(|p| std::fs::metadata(p).ok()) {
-            Some(meta) => {
-                let modified = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map_or(0, |d| d.as_nanos());
-                format!("{ccc}={}:{modified}", meta.len())
-            }
-            None => format!("{ccc}=none"),
+        let nanos = |t: Option<SystemTime>| {
+            t.and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos())
         };
-        Ok(Some(ContentHash::of(seen.as_bytes())))
+        let mut seen = Vec::new();
+        if let Some(ccc) = plugins.ccc()? {
+            seen.push(
+                match game.original(&ccc).and_then(|p| std::fs::metadata(p).ok()) {
+                    Some(meta) => {
+                        format!("{ccc}={}:{}", meta.len(), nanos(meta.modified().ok()))
+                    }
+                    None => format!("{ccc}=none"),
+                },
+            );
+        }
+        if plugins.order == Method::Timestamps {
+            for (rel, modified) in game_plugins(&plugins, game)? {
+                seen.push(format!("{rel}@{}", nanos(modified)));
+            }
+        }
+        if seen.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(ContentHash::of(seen.join("\n").as_bytes())))
     }
 }
 
@@ -403,6 +591,7 @@ impl OrderedList for BethesdaLoadOrder {
 
     fn items(&self, ctx: &ListContext<'_>, mods: &[InstalledMod]) -> Result<ListItems> {
         let plugins = PluginsConfig::parse(ctx.game(), ctx.config())?;
+        let header_size = plugins.header_size()?;
         let game = ctx.files();
         let mut warnings = Vec::new();
         let mut found: Vec<ListItem> = Vec::new();
@@ -422,7 +611,7 @@ impl OrderedList for BethesdaLoadOrder {
                 continue;
             };
             let name = placement.dst.path.file_name().to_owned();
-            let header = read_header(&src.src).unwrap_or_else(|why| {
+            let header = read_header(&src.src, header_size).unwrap_or_else(|why| {
                 warnings.push(format!(
                     "couldn't read {name} from `{}`: {why}",
                     placement.mod_name
@@ -447,7 +636,7 @@ impl OrderedList for BethesdaLoadOrder {
             .filter(|name| is_plugin(name))
             .collect();
         let implicit = plugins.implicit(game, &present)?;
-        let scales = plugins.implicit_scales(game, &implicit, &present);
+        let scales = plugins.implicit_scales(game, &implicit, &present)?;
         // The game's own plugins that aren't loaded unless they're listed
         // go first, as they would in a fresh plugins.txt.
         let mut shipped = Vec::new();
@@ -462,7 +651,7 @@ impl OrderedList for BethesdaLoadOrder {
             let header = RelPath::new(&format!("{}/{on_disk}", plugins.folder))
                 .ok()
                 .and_then(|rel| game.original(&rel))
-                .and_then(|path| read_header(&path).ok())
+                .and_then(|path| read_header(&path, header_size).ok())
                 .unwrap_or_default();
             shipped.push(plugin_item(
                 on_disk.clone(),

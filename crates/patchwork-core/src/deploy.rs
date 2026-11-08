@@ -937,12 +937,22 @@ fn move_file(from: &Path, to: &Path) -> Result<()> {
 
 fn link(src: &Path, dst: &Path, method: LinkMethod) -> Result<()> {
     match method {
-        LinkMethod::Copy => fs::copy(src, dst).map(drop).at(dst),
-        LinkMethod::Hardlink => fs::hard_link(src, dst)
-            .or_else(|_| fs::copy(src, dst).map(drop))
-            .at(dst),
+        LinkMethod::Copy => copy(src, dst).at(dst),
+        LinkMethod::Hardlink => fs::hard_link(src, dst).or_else(|_| copy(src, dst)).at(dst),
         LinkMethod::Symlink => symlink(src, dst).at(dst),
     }
+}
+
+/// Copies `src` to `dst` with its modification time, as links would have
+/// it, since some games load files in the order of their times (see the
+/// Bethesda extension's dated plugins).
+fn copy(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::copy(src, dst)?;
+    let modified = fs::metadata(src)?.modified()?;
+    fs::File::options()
+        .write(true)
+        .open(dst)?
+        .set_modified(modified)
 }
 
 #[cfg(unix)]

@@ -17,8 +17,10 @@ A mod manager built to be flexible and convenient, with support for hundreds of 
   - Almost all thunderstore games
   - Hitman 3,
   - Helldivers 2,
-  - Skyrim (Special Edition and VR), Enderal, Fallout 4 (and VR) and Starfield,
-    with a load order for their plugins and LOOT sorting,
+- And some games which are supported but currently untested:
+  - Skyrim (Special Edition and VR), Enderal, Fallout 4 (and VR), Starfield,
+    Oblivion, Fallout 3 and Fallout: New Vegas, with a load order for their
+    plugins and LOOT sorting,
 - You can easily add support for additional games, or customize how mods are managed
 for existing games.
 - Patchwork can get mods from thunderstore, nexus, and just local files.

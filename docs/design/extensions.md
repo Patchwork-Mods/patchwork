@@ -828,7 +828,18 @@ Each step leaves `main` working and shippable.
      2026-11-06). For those, `[ext.bethesda.plugins]` grew `shipped` (the
      game's own plugins that only load from plugins.txt, like Enderal's)
      and `light_flag`, `medium_flag` and `medium_limit` (Starfield's
-     header flags and medium plugins).
+     header flags and medium plugins). Oblivion, Fallout 3 and New Vegas
+     (added 2026-11-07) load plugins by their files' dates, so they set
+     `order = "timestamps"`: plugins.txt lists only the enabled plugins,
+     without `*`s, and the build deploys copies of mods' plugins dated in
+     the load order's order (copies, so the store's files, which other
+     profiles share, keep theirs). Core's copies now keep the source's
+     modification time for this. The game's own plugins keep their dates,
+     so one put after a mod's is warned about. Oblivion also sets
+     `header_size = 20`. Not done: Oblivion Remastered (plugins.txt in its
+     Data folder, plus UE pak mods), New Vegas's `.nam` files, the Epic
+     New Vegas's `FalloutNV_Epic` folder, and Oblivion's
+     `bUseMyGamesDirectory=0`.
 7. **Reorganize crates** into per-game extensions (step 1 of the original
    plan). By this point it is mostly moving files.
 
