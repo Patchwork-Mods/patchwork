@@ -775,6 +775,26 @@
 			</form>
 		</dialog>
 
+		<!-- Which versions of the game a mod works with; see gameversions.js. -->
+		<dialog id="game-versions-dialog">
+			<form id="game-versions-form" class="stack">
+				<h2 id="game-versions-title"></h2>
+				<p id="game-versions-source" class="muted"></p>
+				<label class="field">
+					<span>Works with <small class="muted">versions or ranges like <code>1.5.97</code>,
+							<code>1.6.*</code> or <code>&gt;=1.6.640 &lt;1.7</code>; separate several with
+							commas</small></span>
+					<input name="versions" autocomplete="off" spellcheck="false">
+				</label>
+				<p id="game-versions-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" id="game-versions-reset">Use what its source says</button>
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" class="primary">Save</button>
+				</div>
+			</form>
+		</dialog>
+
 		<dialog id="revert-dialog">
 			<form method="dialog" class="stack">
 				<h2>Revert changes</h2>

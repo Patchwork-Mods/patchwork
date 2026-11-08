@@ -51,7 +51,15 @@ async function renderPeers(prefix, profile) {
   $(`#${prefix}-me`).textContent = `This computer is ${shortId(found.me)}`;
   $(`#${prefix}-me`).title = found.me;
   list.replaceChildren(
-    ...found.peers.map((peer) => h("li", { class: "peer" }, peerName(peer), peerId(peer.id))),
+    ...found.peers.map((peer) =>
+      h(
+        "li",
+        { class: "peer" },
+        peerName(peer),
+        peerId(peer.id),
+        prefix === "share" && sharingStatus?.writable && removeButton(profile, peer),
+      ),
+    ),
   );
   if (!found.peers.length) {
     list.append(h("li", { class: "muted" }, "No one else yet; they appear here once they've joined."));
@@ -101,6 +109,51 @@ function peerName(peer) {
     status(name ? `Named ${shortId(peer.id)} ${name}` : `Forgot the name of ${shortId(peer.id)}`);
   });
   return input;
+}
+
+const REMOVE_TITLE =
+  "Stop this computer syncing the profile with anyone. Everyone else moves to a new copy " +
+  "of it; whoever follows it needs a new ticket.";
+
+/** A button that removes `peer` from profile `profile`, once clicked twice. */
+function removeButton(profile, peer) {
+  const who = peer.name || shortId(peer.id);
+  let armed = false;
+  const attrs = { type: "button", class: "peer-remove", title: REMOVE_TITLE };
+  const button = h("button", attrs, "Remove");
+  const disarm = () => {
+    armed = false;
+    button.textContent = "Remove";
+    button.classList.remove("danger");
+  };
+  button.addEventListener("blur", disarm);
+  button.addEventListener("click", async () => {
+    if (!armed) {
+      armed = true;
+      button.textContent = `Remove ${who}?`;
+      button.classList.add("danger");
+      return;
+    }
+    button.disabled = true;
+    status(`Removing ${who}; moving everyone else to a new copy…`);
+    let removed;
+    try {
+      removed = await invoke("sync_remove_peers", { id: profile, peers: [peer.id] });
+    } catch (err) {
+      $("#share-error").textContent = String(err);
+      $("#share-error").hidden = false;
+      status(`Couldn't remove ${who}`, true);
+      button.disabled = false;
+      disarm();
+      return;
+    }
+    const waiting = removed.toTell
+      ? `; ${removed.toTell} more are told when they're next online with a computer syncing it`
+      : "";
+    status(`Removed ${who}; told ${removed.told} of the others${waiting}`);
+    renderPeers("share", profile).catch(() => {});
+  });
+  return button;
 }
 
 // Sharing, from the profile's menu in the sidebar.

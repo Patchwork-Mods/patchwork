@@ -12,6 +12,7 @@ import { markUpdates } from "./deploy.js";
 import { renderPlay } from "./play.js";
 import { go } from "./nav.js";
 import { hasSetup, setupSummary } from "./setup.js";
+import { showGameVersions } from "./gameversions.js";
 
 /** Reloads everything, staying on whichever screen and profile is open. */
 export async function refresh() {
@@ -142,9 +143,21 @@ export function renderProfile({ keepMods = false } = {}) {
   if (!keepMods) renderMods(p.mods);
   $("#mods-toolbar").hidden = !p.mods.length;
   $("#mod-problems").replaceChildren(
-    ...p.issues.map((i) => h("li", { class: i.severity, "data-kind": i.kind.type }, i.message)),
+    ...p.issues.map((i) =>
+      h("li", { class: i.severity, "data-kind": i.kind.type }, i.message, issueAction(p, i)),
+    ),
   );
   renderSourceTabs(p.searchSources);
+}
+
+/** A button to deal with issue `i`, for the issues that have one. */
+function issueAction(p, i) {
+  if (i.kind.type !== "incompatibleGame") return null;
+  const m = p.mods.find((m) => m.name === i.mods[0]);
+  if (!m) return null;
+  const onclick = () => showGameVersions(m);
+  const title = `Say which versions of the game ${m.name} works with`;
+  return h("button", { type: "button", class: "issue-action", title, onclick }, "It works");
 }
 
 $("#new-profile").addEventListener("submit", async (e) => {

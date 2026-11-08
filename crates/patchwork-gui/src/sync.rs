@@ -241,6 +241,44 @@ pub async fn sync_peers(handle: AppHandle, id: Option<String>) -> CmdResult<Peer
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Removed {
+    /// How many of those staying were told where the profile went.
+    told: usize,
+    /// How many couldn't be reached yet; they're told once they and a
+    /// computer syncing the profile are online at once.
+    to_tell: usize,
+}
+
+/// Stops the computers `peers` (ids, as `sync_peers` gives them) syncing
+/// profile `id` with anyone else. Everyone else moves to a new document;
+/// whoever follows the profile needs a new ticket.
+#[tauri::command]
+pub async fn sync_remove_peers(
+    handle: AppHandle,
+    app: State<'_, App>,
+    id: String,
+    peers: Vec<String>,
+) -> CmdResult<Removed> {
+    let peers = peers
+        .iter()
+        .map(|p| {
+            p.parse()
+                .map_err(|_| format!("`{p}` isn't a computer's id"))
+        })
+        .collect::<CmdResult<Vec<_>>>()?;
+    let node = node(&handle).await?;
+    let removed = node
+        .remove_peers(&app.pw, &profile_ref(&id)?, &peers)
+        .await
+        .map_err(msg)?;
+    Ok(Removed {
+        told: removed.told,
+        to_tell: removed.to_tell,
+    })
+}
+
 /// Calls the computer `peer` `name` here, or forgets its name if `name`'s
 /// blank. Names aren't synced.
 #[tauri::command]

@@ -16,6 +16,7 @@ use std::sync::Mutex;
 
 use base64::prelude::*;
 use patchwork_core::action::{ActionInfo, ActionReport};
+use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, Dest, RootOrigin};
 use patchwork_core::environment::GameEnv;
@@ -228,6 +229,9 @@ struct UiMod {
     shown_id: String,
     /// The version in the lockfile, if it's been locked.
     locked: Option<String>,
+    /// Which versions of the game its source says the locked version works
+    /// with, if it says; the profile's `game_versions` overrides it.
+    source_game_versions: Option<GameVersions>,
     /// Whether the mod's source has versions to pick from.
     versioned: bool,
     /// Its versions as last fetched, newest first, if they ever have been.
@@ -446,16 +450,14 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 .then(|| pw.known_versions(&lookup, &m.source, &m.id))
                 .flatten();
             let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
+            let locked = lock.iter().flat_map(|l| &l.mods).find(|l| l.key() == key);
             UiMod {
                 shown_id: pw.display_id(lock.as_ref(), &m),
                 versions: known.map(|k| k.versions),
                 summary: summary.and_then(|k| k.summary),
                 versioned,
-                locked: lock
-                    .iter()
-                    .flat_map(|l| &l.mods)
-                    .find(|l| l.key() == key)
-                    .and_then(|l| l.version.clone()),
+                locked: locked.and_then(|l| l.version.clone()),
+                source_game_versions: locked.and_then(|l| l.game_versions.clone()),
                 soft_dependencies: soft_dependencies
                     .remove(&key)
                     .unwrap_or_default()
@@ -1246,6 +1248,26 @@ async fn set_version(
     profile_detail(&app.pw, id)
 }
 
+/// Says which versions of the game mod `name` works with, as ranges any of
+/// which will do (`1.5.97`, `1.6.*`, `>=1.6.640 <1.7`), in place of what its
+/// source says; with `None`, goes back to what the source says.
+#[tauri::command]
+fn set_game_versions(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    versions: Option<Vec<String>>,
+) -> CmdResult<ProfileDetail> {
+    let versions = versions
+        .map(GameVersions::try_from)
+        .transpose()
+        .map_err(msg)?;
+    app.pw
+        .set_game_versions(&profile_ref(&id)?, &name, versions)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
 /// Sets which dependencies (as `source:id`) mod `name` stands in for, and
 /// locks the profile so they're swapped straight away.
 #[tauri::command]
@@ -1835,6 +1857,7 @@ fn main() {
             find_mods,
             set_version,
             set_replaces,
+            set_game_versions,
             set_ignored,
             changelog::preview_updates,
             changelog::mod_changelog,
@@ -1872,6 +1895,7 @@ fn main() {
             sync::sync_unlink,
             sync::sync_peers,
             sync::sync_name_peer,
+            sync::sync_remove_peers,
         ])
         .run(context)
         .expect("error while running patchwork");

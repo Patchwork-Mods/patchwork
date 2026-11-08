@@ -2133,3 +2133,8 @@ legend {
   color: var(--pw-danger);
   margin: 0;
 }
+/* A button on an issue that deals with it, like saying a mod works with
+   the installed version of the game. */
+#mod-problems .issue-action {
+  margin-left: 8px;
+}

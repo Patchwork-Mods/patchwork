@@ -9,6 +9,7 @@ import { showChangelog } from "./changelog.js";
 import { showOptions } from "./form.js";
 import { dragHandle, dragging } from "./reorder.js";
 import { conflictMark } from "./conflicts.js";
+import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
 import { requirementsList, requirementsMark } from "./requirements.js";
 
 // The Mods tab shows mods either as cards, like a source's search results,
@@ -191,7 +192,8 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
         item.author && h("span", { class: "author" }, item.author),
       ),
     );
-    details.replaceChildren(...rowDetails(m, item, onRemove));
+    // unlike h(), replaceChildren() would show false and undefined as text
+    details.replaceChildren(...rowDetails(m, item, onRemove).filter(Boolean));
   };
   fill();
   summaryViews.set(key, fill);
@@ -256,6 +258,7 @@ function rowDetails(m, item, onRemove) {
     count(item.downloads, "downloads"),
     count(item.rating, "likes"),
     h("span", {}, `${m.source}:${m.shownId}`),
+    worksWith(m),
     ...tiesOf(m),
   ].filter(Boolean);
   const urlButton = (url, text) =>
@@ -273,9 +276,26 @@ function rowDetails(m, item, onRemove) {
       urlButton(item.author_url, "Author's mods"),
       m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
       ...optionsButtons(m),
+      h(
+        "button",
+        {
+          type: "button",
+          title: "Say which versions of the game it works with",
+          onclick: () => showGameVersions(m),
+        },
+        "Game versions",
+      ),
       h("button", { type: "button", class: "danger", onclick: onRemove }, "Remove"),
     ),
   ];
+}
+
+/** Which versions of the game a mod works with, if anything says. */
+function worksWith(m) {
+  const known = gameVersionsOf(m);
+  if (!known) return null;
+  const title = known.set ? "Set in the profile" : "Going by its source";
+  return h("span", { title }, `Works with ${describeVersions(known.versions)}`);
 }
 
 /** What a profile's mod needs, what needs it and what it stands in for, from the lockfile. */
