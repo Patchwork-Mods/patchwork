@@ -115,7 +115,7 @@
 								id="verify-deploy"
 								title="Read every deployed file to check nothing changed it, and put back any that changed"
 							>
-								Check files and deploy…
+								Check files and deploy
 							</button>
 							<!-- Only for games that say where tools write; see capture.js. -->
 							<button
@@ -290,18 +290,31 @@
 			<span id="status" class="muted">Ready</span>
 			<!-- Shown after a sort; see sortMods() in toolbar.js. -->
 			<button id="undo" hidden>Undo</button>
+			<!-- Shown after a deploy that had warnings; opens #warnings-dialog. -->
+			<button id="status-warnings" hidden>Show warnings</button>
 		</footer>
 
 		<dialog id="plan-dialog">
-			<!-- Also confirms undeploying, worded for it; see deploy.js. -->
+			<!-- Confirms undeploying; see deploy.js. Deploying doesn't ask. -->
 			<form method="dialog" class="stack">
-				<h2 id="plan-title">Deploy</h2>
+				<h2 id="plan-title">Undeploy</h2>
 				<p id="plan-summary"></p>
 				<ul id="plan-warnings" class="warnings"></ul>
 				<ul id="plan-ops" class="plan-ops"></ul>
 				<div class="row end">
 					<button value="cancel">Cancel</button>
-					<button value="apply" class="primary">Apply</button>
+					<button value="apply" class="danger">Undeploy</button>
+				</div>
+			</form>
+		</dialog>
+
+		<dialog id="warnings-dialog">
+			<!-- What the last deploy warned about; see deploy.js. -->
+			<form method="dialog" class="stack">
+				<h2>Deploy warnings</h2>
+				<ul id="warnings-list" class="warnings"></ul>
+				<div class="row end">
+					<button value="close" class="primary">Close</button>
 				</div>
 			</form>
 		</dialog>

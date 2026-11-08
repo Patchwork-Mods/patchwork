@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::cancel::Cancel;
 use crate::capture::Baseline;
 use crate::config::ConfigDef;
 use crate::environment::GameEnv;
@@ -675,6 +676,7 @@ pub fn apply(
     state: &mut DeployState,
     backups: &Path,
     reporter: &dyn Reporter,
+    cancel: &Cancel,
 ) -> Result<()> {
     if state.moved_root(&plan.roots).is_some() {
         return Err(Error::invalid(
@@ -690,6 +692,7 @@ pub fn apply(
     state.env = None;
 
     for op in &plan.ops {
+        cancel.check()?;
         reporter.report(Event::Applying(op.clone()));
         match op {
             DeployOp::Remove { dst } => {

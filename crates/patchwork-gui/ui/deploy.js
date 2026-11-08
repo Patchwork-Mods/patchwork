@@ -5,95 +5,101 @@ import { $, h, link } from "./dom.js";
 import { openProfile, renderDeploy, showProfile } from "./profile.js";
 import { renderEntries } from "./changelog.js";
 
-/** Whether #plan-dialog is confirming a deploy or an undeploy. */
-let planKind = "deploy";
+// Deploying doesn't ask first: undeploying, or reverting to an earlier
+// deploy in History, takes it back. While one runs, the button that started
+// it (Deploy, or Play deploying first) turns into Cancel, which stops it
+// before the next file.
 
 /**
- * While play.js is waiting on a deploy being confirmed, settles it with
- * whether it was applied.
+ * Deploys profile `id`, with `button` (a selector) showing Cancel until it's
+ * done. With `verify`, every deployed file is read to check nothing's
+ * changed it since, rather than just that it's there and the right size.
+ * Resolves to whether it deployed; it says how it went in the status bar
+ * either way.
  */
-let afterDeploy = null;
-
-/**
- * Deploys profile `id` before playing: straight away if nothing would
- * change, otherwise once the user has confirmed the plan. Resolves to
- * whether it was deployed.
- */
-export async function deployFirst(id) {
-  status("Working out what to deploy first…");
-  const plan = await run("plan_deploy", { id });
-  const changes = plan.ops.length;
-  if (!changes) {
-    await run("apply_plan");
-    await openProfile(id);
-    return true;
-  }
-  showPlan(
-    "deploy",
-    plan,
-    `${changes} change${changes === 1 ? "" : "s"} to deploy before playing, ` +
-      `${plan.unchanged} files already in place.`,
-  );
-  $("#plan-dialog [value=apply]").textContent = "Deploy and play";
-  return new Promise((resolve) => (afterDeploy = resolve));
-}
-
-/** Fills in #plan-dialog for `plan`, worded for `kind`, and opens it. */
-function showPlan(kind, plan, summary) {
-  planKind = kind;
-  const apply = $("#plan-dialog [value=apply]");
-  $("#plan-title").textContent = kind === "undeploy" ? "Undeploy" : "Deploy";
-  apply.textContent = kind === "undeploy" ? "Undeploy" : "Apply";
-  apply.className = kind === "undeploy" ? "danger" : "primary";
-  apply.disabled = !plan.ops.length;
-  $("#plan-summary").textContent = summary;
-  $("#plan-warnings").replaceChildren(...plan.warnings.map((w) => h("li", {}, w)));
-  $("#plan-ops").replaceChildren(...plan.ops.map(opRow));
-  status("Ready");
-  $("#plan-dialog").showModal();
-}
-
-/**
- * Deploys the open profile once the plan's confirmed. With `verify`, every
- * deployed file is read to check nothing's changed it since, rather than
- * just that it's there and the right size.
- */
-export async function deploy(verify) {
-  const id = state.profile.id;
-  $("#deploy").disabled = true;
-  status(verify ? "Checking deployed files…" : "Working out what to deploy…");
-  try {
-    const plan = await run("plan_deploy", { id, verify });
-    const changes = plan.ops.length;
-    showPlan(
-      "deploy",
-      plan,
-      changes
-        ? `${changes} change${changes === 1 ? "" : "s"}, ${plan.unchanged} files already in place.`
-        : `Nothing to do; ${plan.unchanged} files already in place.`,
+export async function deployProfile(id, { verify = false, button = "#deploy", message } = {}) {
+  status(message ?? (verify ? "Checking deployed files…" : "Working out what to deploy…"));
+  const outcome = await job(button, () => run("deploy", { id, verify }), id);
+  if (outcome.outcome === "cancelled") {
+    status(
+      outcome.partway
+        ? "Deploy stopped partway; deploy again to finish it, or undeploy to take it back out"
+        : "Deploy cancelled; nothing in the game was changed",
     );
-    if (!changes) {
-      // Nothing to place, but applying records that this profile is
-      // deployed as it is now, which tones the button down again.
-      await run("apply_plan");
-      await openProfile(id);
-    }
+    return false;
+  }
+  const { changes, files, unchanged, warnings } = outcome;
+  const done = changes
+    ? `Deployed ${changes} change${changes === 1 ? "" : "s"}, ${files} file${files === 1 ? "" : "s"} in place`
+    : `Nothing to deploy; ${unchanged} file${unchanged === 1 ? "" : "s"} already in place`;
+  showWarnings(done, warnings);
+  return true;
+}
+
+/** Deploys profile `id` before playing, with Play showing Cancel meanwhile. */
+export const deployFirst = (id) =>
+  deployProfile(id, { button: "#play", message: "Deploying before playing…" });
+
+/**
+ * Runs `work` as the job `button` cancels, and shows profile `id` again once
+ * it's done (or failed), since what's deployed has changed either way.
+ */
+async function job(button, work, id) {
+  state.job = { button, cancelled: false };
+  $("#deploy-menu").open = false;
+  $("#play-menu").open = false;
+  renderDeploy(state.profile);
+  try {
+    return await work();
   } finally {
-    renderDeploy(state.profile);
+    state.job = null;
+    if (id && state.profile?.id === id) {
+      await openProfile(id).catch(() => {});
+    } else {
+      renderDeploy(state.profile);
+    }
   }
 }
 
-$("#deploy").addEventListener("click", () => deploy(false));
+/** Calls off the running deploy or undeploy, if there is one. */
+export function cancelJob() {
+  if (!state.job || state.job.cancelled) return;
+  state.job.cancelled = true;
+  renderDeploy(state.profile);
+  status("Cancelling…");
+  run("cancel_job").catch(() => {});
+}
+
+/** Says `message` in the status bar, with a button to read `warnings` if there are any. */
+function showWarnings(message, warnings) {
+  if (!warnings.length) return status(message);
+  const count = warnings.length;
+  status(`${message}, with ${count} warning${count === 1 ? "" : "s"}`);
+  $("#warnings-list").replaceChildren(...warnings.map((w) => h("li", {}, w)));
+  $("#status-warnings").hidden = false;
+}
+
+$("#status-warnings").addEventListener("click", () => $("#warnings-dialog").showModal());
+
+$("#deploy").addEventListener("click", () => {
+  if (state.job) return cancelJob();
+  deployProfile(state.profile.id).catch(() => {});
+});
 
 $("#verify-deploy").addEventListener("click", () => {
   $("#deploy-menu").open = false;
-  deploy(true);
+  deployProfile(state.profile.id, { verify: true }).catch(() => {});
+});
+
+// Escape cancels too, unless it's closing a dialog.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.job && !document.querySelector("dialog[open]")) cancelJob();
 });
 
 // Undeploy. Takes every file patchwork put in the game folder (or the open
 // profile's instance) back out and puts back the game's own files that mods
 // replaced, whichever profile was deployed. The profiles themselves aren't
-// touched.
+// touched. Unlike deploying, it asks first.
 
 $("#undeploy").addEventListener("click", async () => {
   $("#deploy-menu").open = false;
@@ -101,33 +107,26 @@ $("#undeploy").addEventListener("click", async () => {
   status("Working out what to undeploy…");
   const plan = await run("plan_undeploy", { game: game.id, id: state.profile?.id });
   const files = plan.ops.length;
-  showPlan(
-    "undeploy",
-    plan,
+  $("#plan-dialog [value=apply]").disabled = !files;
+  $("#plan-summary").textContent =
     `Remove ${files} file${files === 1 ? "" : "s"} patchwork put in ${game.name}'s folder ` +
-      `and put back any of the game's own files they replaced? Your profiles stay as they are.`,
-  );
+    `and put back any of the game's own files they replaced? Your profiles stay as they are.`;
+  $("#plan-warnings").replaceChildren(...plan.warnings.map((w) => h("li", {}, w)));
+  $("#plan-ops").replaceChildren(...plan.ops.map(opRow));
+  status("Ready");
+  $("#plan-dialog").returnValue = "";
+  $("#plan-dialog").showModal();
 });
 
 $("#plan-dialog").addEventListener("close", async () => {
-  const settle = afterDeploy ?? (() => {});
-  afterDeploy = null;
-  if ($("#plan-dialog").returnValue !== "apply") return settle(false);
-  let applied = false;
-  try {
-    if (planKind === "undeploy") {
-      status("Undeploying…");
-      await run("apply_plan");
-      status(`Undeployed everything from ${gameInfo(state.game).name}`);
-    } else {
-      status("Deploying…");
-      const files = await run("apply_plan");
-      status(`Deployed ${files} files`);
-    }
-    applied = true;
-    await openProfile(state.profile.id);
-  } finally {
-    settle(applied);
+  if ($("#plan-dialog").returnValue !== "apply") return;
+  const name = gameInfo(state.game).name;
+  status("Undeploying…");
+  const outcome = await job("#deploy", () => run("apply_plan"), state.profile?.id);
+  if (outcome.outcome === "cancelled") {
+    status("Undeploy stopped partway; undeploy again to finish it");
+  } else {
+    showWarnings(`Undeployed everything from ${name}`, outcome.warnings);
   }
 });
 
@@ -315,6 +314,8 @@ export function markUpdates() {
 // Progress from long-running commands (adding, locking, deploying).
 
 listen("patchwork://event", ({ payload: e }) => {
+  // "Cancelling…" stays up until the deploy stops
+  if (state.job?.cancelled && e.kind !== "warning") return;
   switch (e.kind) {
     case "resolving":
       return status(`Resolving ${e.name}…`);
@@ -323,7 +324,7 @@ listen("patchwork://event", ({ payload: e }) => {
     case "building":
       return status(`Building ${e.step}…`);
     case "applying":
-      return status(`Deploying ${e.dst}`);
+      return status(`${e.op === "remove" ? "Removing" : "Deploying"} ${e.dst}`);
     case "warning":
       return status(e.message, true);
   }

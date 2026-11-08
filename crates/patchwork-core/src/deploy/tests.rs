@@ -56,7 +56,7 @@ fn deploy_checked(
         check,
     )
     .unwrap();
-    apply(&plan, state, &env.backups, &Silent).unwrap();
+    apply(&plan, state, &env.backups, &Silent, &Cancel::never()).unwrap();
     plan
 }
 
@@ -87,6 +87,52 @@ fn deploy_and_undeploy_round_trip() {
     deploy(&env, &mut state, Vec::new());
     assert!(state.files.is_empty() && state.created_dirs.is_empty());
     assert!(!env.game.join("Mods").exists());
+    assert_eq!(
+        fs::read_to_string(env.game.join("Data/vanilla.txt")).unwrap(),
+        "vanilla"
+    );
+}
+
+/// Cancels the deploy as soon as the first file's been placed.
+struct CancelAfterOne(Cancel);
+
+impl Reporter for CancelAfterOne {
+    fn report(&self, event: Event) {
+        if matches!(event, Event::Applying(_)) {
+            self.0.cancel();
+        }
+    }
+}
+
+#[test]
+fn a_cancelled_deploy_stops_and_can_be_taken_back_out() {
+    let env = env();
+    let mut state = DeployState::empty("g", &Roots::game(&env.game));
+    let plan = plan(
+        DeployTarget::Game("g".into()),
+        &state,
+        vec![
+            placement(&env, "a.txt", "a", "a"),
+            placement(&env, "b.txt", "b", "b"),
+            placement(&env, "Data/vanilla.txt", "modded", "c"),
+        ],
+        Vec::new(),
+        None,
+        LinkMethod::Copy,
+        Check::Quick,
+    )
+    .unwrap();
+    let cancel = Cancel::default();
+    let reporter = CancelAfterOne(cancel.clone());
+    let err = apply(&plan, &mut state, &env.backups, &reporter, &cancel).unwrap_err();
+    assert!(matches!(err, Error::Cancelled), "{err}");
+    // the one it was placing when it was cancelled is finished and recorded
+    assert_eq!(state.files.len(), 1);
+    assert!(state.inputs.is_none());
+
+    deploy(&env, &mut state, Vec::new());
+    assert!(state.files.is_empty());
+    assert!(!env.game.join("a.txt").exists() && !env.game.join("b.txt").exists());
     assert_eq!(
         fs::read_to_string(env.game.join("Data/vanilla.txt")).unwrap(),
         "vanilla"
@@ -421,7 +467,7 @@ fn roots_with_files_deployed_cant_move() {
     )
     .unwrap();
     plan.roots = elsewhere;
-    assert!(apply(&plan, &mut state, &env.backups, &Silent).is_err());
+    assert!(apply(&plan, &mut state, &env.backups, &Silent, &Cancel::never()).is_err());
 }
 
 #[test]
@@ -750,7 +796,7 @@ fn other_roots_are_always_copied_to() {
         Check::Quick,
     )
     .unwrap();
-    apply(&plan, &mut state, &env.backups, &Silent).unwrap();
+    apply(&plan, &mut state, &env.backups, &Silent, &Cancel::never()).unwrap();
     let is_link = |p: PathBuf| p.symlink_metadata().unwrap().file_type().is_symlink();
     assert!(is_link(env.game.join("Mods/a.dll")));
     assert!(!is_link(appdata.join("plugins.txt")));
@@ -885,7 +931,7 @@ fn links_are_checked_by_where_they_point() {
         Check::Quick,
     )
     .unwrap();
-    apply(&plan, &mut state, &env.backups, &Silent).unwrap();
+    apply(&plan, &mut state, &env.backups, &Silent, &Cancel::never()).unwrap();
     assert!(check_files(&state, Check::Quick).unwrap().is_empty());
 
     let dll = env.game.join("Mods/a.dll");

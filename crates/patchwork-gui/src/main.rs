@@ -16,6 +16,7 @@ use std::sync::Mutex;
 
 use base64::prelude::*;
 use patchwork_core::action::{ActionInfo, ActionReport};
+use patchwork_core::cancel::Cancel;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, Dest, RootOrigin};
@@ -67,9 +68,12 @@ fn lock_msg(handle: &AppHandle) -> impl Fn(patchwork_core::Error) -> String + '_
 
 struct App {
     pw: Patchwork,
-    /// The plan from the last `plan_deploy`, waiting for the user to confirm
-    /// it with `apply_plan`.
+    /// The plan from the last `plan_undeploy`, waiting for the user to
+    /// confirm it with `apply_plan`.
     plan: Mutex<Option<DeployPlan>>,
+    /// Calls off the deploy or undeploy that's running, if there is one;
+    /// see `cancel_job`.
+    job: Mutex<Option<Cancel>>,
     details: details::Details,
     /// What an update has to wait for. Commands that write to games or
     /// download hold a guard from it while they run.
@@ -1464,16 +1468,17 @@ async fn search_categories(
     app.pw.search_categories(&game, &source).await.map_err(msg)
 }
 
-/// With `verify`, every deployed file is read to check it hasn't changed,
-/// like `patchwork deploy --verify`.
+/// Locks and deploys profile `id` in one go, without asking first. With
+/// `verify`, every deployed file is read to check it hasn't changed, like `patchwork deploy --verify`. `cancel_job` stops it.
 #[tauri::command]
-async fn plan_deploy(
+async fn deploy(
     handle: AppHandle,
     app: State<'_, App>,
     id: String,
     verify: Option<bool>,
-) -> CmdResult<PlanSummary> {
+) -> CmdResult<Deployed> {
     let _work = app.work.start()?;
+    let job = Job::start(&app);
     let check = if verify == Some(true) {
         Check::Full
     } else {
@@ -1481,11 +1486,98 @@ async fn plan_deploy(
     };
     let plan = app
         .pw
-        .plan_deploy_checked(&profile_ref(&id)?, check)
-        .await
-        .map_err(lock_msg(&handle));
+        .plan_deploy_checked(&profile_ref(&id)?, check, &job.0)
+        .await;
     release_memory();
-    Ok(hold_plan(&app, plan?))
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(patchwork_core::Error::Cancelled) => return Ok(Deployed::Cancelled { partway: false }),
+        Err(e) => return Err(lock_msg(&handle)(e)),
+    };
+    apply_cancellable(handle, plan, job.0.clone()).await
+}
+
+/// How a deploy or undeploy went.
+#[derive(Serialize)]
+#[serde(
+    tag = "outcome",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum Deployed {
+    Done {
+        /// How many files were placed or removed.
+        changes: usize,
+        /// How many files are deployed now.
+        files: usize,
+        /// The ones that were already in place.
+        unchanged: usize,
+        warnings: Vec<String>,
+    },
+    /// Called off by `cancel_job`, `partway` through changing files in the
+    /// game, or before anything changed.
+    Cancelled { partway: bool },
+}
+
+/// The deploy or undeploy that's running, while it's kept.
+struct Job<'a>(Cancel, &'a App);
+
+impl<'a> Job<'a> {
+    fn start(app: &'a App) -> Self {
+        let cancel = Cancel::default();
+        *app.job.lock().unwrap() = Some(cancel.clone());
+        Job(cancel, app)
+    }
+}
+
+impl Drop for Job<'_> {
+    fn drop(&mut self) {
+        let mut job = self.1.job.lock().unwrap();
+        if job.as_ref().is_some_and(|c| c.same(&self.0)) {
+            *job = None;
+        }
+    }
+}
+
+/// Stops the deploy or undeploy that's running, if there is one, before
+/// the next file. One that's still working out what to deploy hasn't
+/// changed anything yet.
+#[tauri::command]
+fn cancel_job(app: State<'_, App>) {
+    if let Some(cancel) = &*app.job.lock().unwrap() {
+        cancel.cancel();
+    }
+}
+
+/// Applies `plan` off the async runtime's threads, stopping before the
+/// next file once `cancel` is cancelled.
+async fn apply_cancellable(
+    handle: AppHandle,
+    plan: DeployPlan,
+    cancel: Cancel,
+) -> CmdResult<Deployed> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let app = handle.state::<App>();
+        let (changes, unchanged) = (plan.ops.len(), plan.unchanged);
+        let warnings = plan.warnings.clone();
+        let result = app.pw.apply_cancellable(&plan, &cancel);
+        drop(plan);
+        release_memory();
+        match result {
+            Ok(state) => Ok(Deployed::Done {
+                changes,
+                files: state.files.len(),
+                unchanged,
+                warnings,
+            }),
+            Err(patchwork_core::Error::Cancelled) => Ok(Deployed::Cancelled { partway: true }),
+            Err(e) => Err(format!(
+                "deploy failed partway; what was done is recorded and can be undeployed: {e}"
+            )),
+        }
+    })
+    .await
+    .map_err(msg)?
 }
 
 /// Hands memory freed since the last call back to the OS. Building a deploy
@@ -1528,21 +1620,18 @@ fn hold_plan(app: &App, plan: DeployPlan) -> PlanSummary {
     summary
 }
 
+/// Applies the plan from `plan_undeploy`. `cancel_job` stops it.
 #[tauri::command]
-fn apply_plan(app: State<'_, App>) -> CmdResult<usize> {
+async fn apply_plan(handle: AppHandle, app: State<'_, App>) -> CmdResult<Deployed> {
     let _work = app.work.start()?;
+    let job = Job::start(&app);
     let plan = app
         .plan
         .lock()
         .unwrap()
         .take()
-        .ok_or("there's no deploy waiting to be applied")?;
-    let state = app.pw.apply(&plan).map_err(|e| {
-        format!("deploy failed partway; what was done is recorded and can be undeployed: {e}")
-    });
-    drop(plan);
-    release_memory();
-    Ok(state?.files.len())
+        .ok_or("there's no undeploy waiting to be applied")?;
+    apply_cancellable(handle, plan, job.0.clone()).await
 }
 
 /// Starts the game of the profile `id` the way `option` says (by id), or
@@ -1778,6 +1867,7 @@ fn main() {
             app.manage(App {
                 pw,
                 plan: Mutex::new(None),
+                job: Mutex::new(None),
                 work: Default::default(),
                 details: details::Details::default(),
                 sync: Default::default(),
@@ -1866,7 +1956,8 @@ fn main() {
             parse_link,
             search,
             search_categories,
-            plan_deploy,
+            deploy,
+            cancel_job,
             plan_undeploy,
             apply_plan,
             launch_game,

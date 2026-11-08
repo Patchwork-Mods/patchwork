@@ -24,14 +24,21 @@ export const state = {
    * One that hasn't been set yet starts out hiding what the Mods tab hides.
    */
   filters: {},
+  /**
+   * The deploy or undeploy that's running, as `{ button, cancelled }`:
+   * the selector of the button showing Cancel for it ("#deploy" or "#play"),
+   * and whether that's been clicked. Null when there isn't one.
+   */
+  job: null,
 };
 
 export function status(text, isError = false) {
   const el = $("#status");
   el.textContent = text;
   el.classList.toggle("error", isError);
-  // An undo only makes sense next to the message about what it undoes.
+  // An undo, or warnings, only make sense next to the message they're about.
   $("#undo").hidden = true;
+  $("#status-warnings").hidden = true;
 }
 
 /** Runs a command, showing its error in the status bar if it fails. */

@@ -15,6 +15,7 @@
 //! profiles that core saves, syncs and versions for them.
 
 pub mod action;
+pub mod cancel;
 pub mod capture;
 pub mod changelog;
 pub mod check;

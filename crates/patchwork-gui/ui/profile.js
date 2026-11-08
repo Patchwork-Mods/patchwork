@@ -92,12 +92,18 @@ export function showProfile(profile, { keepMods = false } = {}) {
 /**
  * Enables the deploy button if there's somewhere to deploy to, and makes it
  * stand out when deploying would change anything. Undeploy, in its menu, is
- * only enabled while something's deployed.
+ * only enabled while something's deployed. While a deploy or undeploy runs
+ * (`state.job`), the button that started it is Cancel and the rest wait.
  */
 export function renderDeploy(p) {
-  $("#deploy").disabled = !p?.install;
-  $("#deploy").classList.toggle("primary", !!p?.install && p.deployStatus !== "deployed");
+  const deploy = $("#deploy");
+  const busy = state.job?.button === "#deploy";
+  deploy.textContent = busy ? (state.job.cancelled ? "Cancelling…" : "Cancel") : "Deploy";
+  deploy.title = busy ? "Stop before the next file (Esc)" : "";
+  deploy.disabled = busy ? state.job.cancelled : !p?.install || !!state.job;
+  deploy.classList.toggle("primary", !state.job && !!p?.install && p.deployStatus !== "deployed");
   $("#deploy-menu").hidden = !p;
+  $("#deploy-menu").inert = !!state.job;
   const files = p?.gameFiles ?? 0;
   $("#capture").hidden = !p?.setup.capture;
   $("#undeploy").disabled = !files;

@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use patchwork_core::action::ActionReport;
+use patchwork_core::cancel::Cancel;
 use patchwork_core::capture::ToolOutput;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::Conflicts;
@@ -1346,7 +1347,9 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Deploy { dry_run, verify } => {
             let (profile, _) = selected(&pw, &cli.profile)?;
             let check = if verify { Check::Full } else { Check::Quick };
-            let plan = pw.plan_deploy_checked(&profile, check).await?;
+            let plan = pw
+                .plan_deploy_checked(&profile, check, &Cancel::never())
+                .await?;
             finish(&pw, &plan, dry_run)?;
         }
         Command::Capture { name } => {

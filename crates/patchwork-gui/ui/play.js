@@ -1,11 +1,14 @@
 // Playing. Play starts the game the way last picked from its menu or the game
 // settings, or the game's default way; picking one from the menu starts it
-// that way and remembers it for the game. A profile that isn't deployed as it is now is
-// deployed first, once the user has seen what that changes.
+// that way and remembers it for the game. A profile that isn't deployed as it
+// is now is deployed first, with Play showing Cancel meanwhile.
 
 import { run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
-import { deployFirst } from "./deploy.js";
+import { cancelJob, deployFirst } from "./deploy.js";
+
+/** Whether the game's being started, which takes a few seconds. */
+let starting = false;
 
 /** The option Play uses for profile `p`: the game's default, if it can be used. */
 function picked(p) {
@@ -26,8 +29,17 @@ export function renderPlay(p) {
   $("#play-split").hidden = !options.length;
   if (!options.length) return;
   const pick = picked(p);
-  $("#play").disabled = !pick;
-  $("#play").title = pick ? `Play ${pick.name}` : "None of the game's launch options can be used";
+  const play = $("#play");
+  // Play deploying first shows Cancel for it, like Deploy does
+  const busy = state.job?.button === "#play";
+  play.textContent = busy ? (state.job.cancelled ? "Cancelling…" : "Cancel") : "Play";
+  play.disabled = busy ? state.job.cancelled : !pick || !!state.job || starting;
+  play.title = busy
+    ? "Stop deploying before the next file; the game won't start (Esc)"
+    : pick
+      ? `Play ${pick.name}`
+      : "None of the game's launch options can be used";
+  $("#play-menu").inert = !!state.job;
   $("#play-options").replaceChildren(
     ...options.map((o) =>
       h(
@@ -67,23 +79,28 @@ export function renderPlay(p) {
   );
 }
 
-/** Starts the profile's game the way `option` (an id) says. */
+/**
+ * Starts the profile's game the way `option` (an id) says, deploying it
+ * first if it isn't deployed as it is now. Cancelling that deploy doesn't
+ * start the game.
+ */
 async function play(option) {
   $("#play-menu").open = false;
   const p = state.profile;
-  $("#play").disabled = true;
+  if (p.deployStatus !== "deployed" && !(await deployFirst(p.id))) return;
+  starting = true;
+  renderPlay(state.profile);
   try {
-    if (p.deployStatus !== "deployed") {
-      if (!(await deployFirst(p.id))) return status("Ready");
-    }
     status("Starting the game…");
     status(await run("launch_game", { id: p.id, option }));
   } finally {
+    starting = false;
     renderPlay(state.profile);
   }
 }
 
 $("#play").addEventListener("click", () => {
+  if (state.job) return cancelJob();
   const pick = picked(state.profile);
   if (pick) play(pick.id).catch(() => {});
 });

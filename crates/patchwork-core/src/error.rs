@@ -56,6 +56,9 @@ pub enum Error {
     NeedsDownload(Vec<PendingDownload>),
     #[error("updating patchwork: {0}")]
     SelfUpdate(String),
+    /// Called off through a [`crate::cancel::Cancel`].
+    #[error("cancelled")]
+    Cancelled,
     #[error("{0}")]
     Invalid(String),
 }

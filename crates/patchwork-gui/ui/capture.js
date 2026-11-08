@@ -6,7 +6,7 @@
 import { run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { openProfile } from "./profile.js";
-import { deploy } from "./deploy.js";
+import { deployProfile } from "./deploy.js";
 
 const dialog = $("#capture-dialog");
 const form = $("#capture-form");
@@ -89,8 +89,9 @@ form.addEventListener("submit", async (e) => {
   state.overview = await run("overview");
   await openProfile(p.id);
   // They were taken out of the game's folder, so they go back in from the
-  // mod, once the user's seen the plan.
-  await deploy(false);
+  // mod.
+  const deployed = await deployProfile(p.id);
   const where = captured.added ? `the new mod ${captured.name}` : captured.name;
-  status(`Captured ${files(captured.output.files.length)} into ${where}; deploy to put them back`);
+  const what = `Captured ${files(captured.output.files.length)} into ${where}`;
+  status(deployed ? `${what} and deployed it` : `${what}; deploy to put them back`);
 });

@@ -9,6 +9,7 @@ use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+use crate::cancel::Cancel;
 use crate::changelog::{self, ChangelogEntry};
 use crate::compat::{self, GameVersions};
 use crate::conflicts::{self, Conflicts};
@@ -2487,18 +2488,23 @@ impl Patchwork {
     /// Locks the profile if needed and works out what deploying it would
     /// change, without changing anything.
     pub async fn plan_deploy(&self, profile: &ProfileRef) -> Result<DeployPlan> {
-        self.plan_deploy_checked(profile, Check::Quick).await
+        self.plan_deploy_checked(profile, Check::Quick, &Cancel::never())
+            .await
     }
 
     /// Like [`Patchwork::plan_deploy`], checking that files already
     /// deployed are still as they were as closely as `check` says, so any
-    /// that aren't are put back.
+    /// that aren't are put back. Stops with [`Error::Cancelled`] between
+    /// steps, or while downloading, once `cancel` is cancelled; nothing in
+    /// the game has changed by then.
     pub async fn plan_deploy_checked(
         &self,
         profile: &ProfileRef,
         check: Check,
+        cancel: &Cancel,
     ) -> Result<DeployPlan> {
-        let lock = self.lock(profile, false).await?;
+        let lock = cancel.guard(self.lock(profile, false)).await?;
+        cancel.check()?;
         // Whatever's deployed now is about to be replaced, so the settings
         // the game changed in its config files are kept first.
         self.read_back_config(&self.deploy_target(&self.load_profile(profile)?)?)?;
@@ -2552,6 +2558,7 @@ impl Patchwork {
         );
         let (mods, installer_warnings) =
             self.installed(&loaded, game, Some(&GameFiles::new(&root, &prev)), &order)?;
+        cancel.check()?;
 
         let env = GameEnv::for_profile(game, Some(&root), &loaded).unwrap_or_default();
         let desired = deployer.plan(&ctx, &mods)?;
@@ -2568,11 +2575,13 @@ impl Patchwork {
             warnings.push(issue.message);
         }
         if deployer.builds(&ctx) {
+            cancel.check()?;
             let (built, built_warnings) = self.build(
                 deployer, &ctx, &target, inputs, &prev, &mods, &resolved, &lists,
             )?;
             placements.extend(built);
             warnings.extend(built_warnings);
+            cancel.check()?;
         }
         self.place_config(
             &loaded,
@@ -2740,6 +2749,14 @@ impl Patchwork {
     }
 
     pub fn apply(&self, plan: &DeployPlan) -> Result<DeployState> {
+        self.apply_cancellable(plan, &Cancel::never())
+    }
+
+    /// Like [`Patchwork::apply`], stopping with [`Error::Cancelled`] before
+    /// the next file once `cancel` is cancelled. What was done by then is
+    /// recorded like any deploy that failed partway, so deploying again
+    /// finishes it and undeploying takes it back out.
+    pub fn apply_cancellable(&self, plan: &DeployPlan, cancel: &Cancel) -> Result<DeployState> {
         let target = &plan.target;
         let mut state = self.deploy_state(target)?;
         // What was in the game's folder before, if it's still the same
@@ -2758,7 +2775,7 @@ impl Patchwork {
             fs::create_dir_all(&dir).at(&dir)?;
         }
         let backups = self.paths.backups().join(target.key());
-        let result = deploy::apply(plan, &mut state, &backups, self.reporter.as_ref());
+        let result = deploy::apply(plan, &mut state, &backups, self.reporter.as_ref(), cancel);
         // What's in it now, so what tools write there later can be told
         // apart from it. What's deployed is left out, so that has to have
         // finished.
