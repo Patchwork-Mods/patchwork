@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [1967630]
+epic = ["b628a8803ed34779aed1791026c08f36"]
 folder = "Survival Fountain of Youth"
 exe = ["Survival Fountain of Youth.exe"]

@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [794260]
+epic = ["Viola"]
 folder = "Outward"
 exe = ["Outward.exe"]

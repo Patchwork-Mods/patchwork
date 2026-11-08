@@ -81,6 +81,8 @@ default = true
 # Fallout 3, and its Game of the Year Edition.
 [detect]
 steam = [22300, 22370]
+# Game of the Year Edition
+epic = ["adeae8bbfc94427db57c7dfecce3f1d4"]
 folder = "Fallout 3"
 exe = ["Fallout3.exe"]
 

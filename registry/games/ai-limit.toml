@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [2407270]
+epic = ["be55cbfd8bfb4605830e6a1308e03e73"]
 folder = "AI Limit"
 exe = ["AI-LIMIT.exe"]

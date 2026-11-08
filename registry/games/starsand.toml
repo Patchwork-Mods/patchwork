@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [1380220]
+epic = ["a774278c0813447c96a76b053cbf73ff"]
 folder = "Starsand"
 exe = ["Starsand.exe"]

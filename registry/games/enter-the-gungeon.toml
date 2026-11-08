@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [311690]
+epic = ["Garlic"]
 folder = "Enter the Gungeon"
 exe = ["EtG.exe"]

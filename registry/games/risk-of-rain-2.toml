@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [632360]
+epic = ["4b3dcc5723454a47a9112d8fe8fd5f5c"]
 folder = "Risk of Rain 2"
 exe = ["Risk of Rain 2.exe"]

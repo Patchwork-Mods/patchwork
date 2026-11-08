@@ -17,5 +17,6 @@ rulesets = ["recursive-melonloader"]
 
 [detect]
 steam = [960090]
+epic = ["7786b355a13b47a6b3915335117cd0b2"]
 folder = "BloonsTD6"
 exe = ["BloonsTD6.exe"]

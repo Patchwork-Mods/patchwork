@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [1758860]
+epic = ["f07a51af8ac845ea96f792fb485e04a3"]
 folder = "Outward/Outward_Defed"
 exe = ["Outward Definitive Edition.exe"]

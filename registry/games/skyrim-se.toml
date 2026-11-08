@@ -81,6 +81,7 @@ default = true
 
 [detect]
 steam = [489830]
+epic = ["ac82db5035584c7f8a2c548d98c86b2c"]
 folder = "Skyrim Special Edition"
 exe = ["SkyrimSE.exe"]
 

@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [508440]
+epic = ["Driftfish"]
 folder = "Totally Accurate Battle Simulator"
 exe = ["TotallyAccurateBattleSimulator.exe"]

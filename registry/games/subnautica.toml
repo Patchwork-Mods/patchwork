@@ -55,5 +55,6 @@ to = "BepInEx/plugins/{file}"
 
 [detect]
 steam = [264710]
+epic = ["Jaguar"]
 folder = "Subnautica"
 exe = ["Subnautica.exe"]

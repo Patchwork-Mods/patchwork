@@ -169,7 +169,7 @@ impl Setup {
         let prefix = match (&install.prefix, os) {
             (Some(prefix), _) => Some(prefix.clone()),
             (None, Os::Windows) => None,
-            (None, _) => locate::proton_prefix(game, &install.path),
+            (None, _) => locate::wine_prefix(game, &install.path),
         };
         // only a prefix Proton made can be run by one, chosen or not
         let compat_data = prefix

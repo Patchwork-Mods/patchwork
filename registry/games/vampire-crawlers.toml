@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [3265700]
+epic = ["6d4f12300a0844369205eb8ae9619ca0"]
 folder = "Vampire Crawlers"
 exe = ["Vampire Crawlers.exe", "Vampire Crawlers.app"]

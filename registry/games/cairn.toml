@@ -17,5 +17,6 @@ rulesets = ["recursive-melonloader"]
 
 [detect]
 steam = [1588550]
+epic = ["b94ba8f135914605ad8bbc9083db427e"]
 folder = "Cairn"
 exe = ["Cairn.exe"]

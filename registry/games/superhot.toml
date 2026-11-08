@@ -16,5 +16,6 @@ kind = "rules"
 rulesets = ["recursive-melonloader"]
 
 [detect]
+epic = ["Dory"]
 folder = "SUPERHOT"
 exe = ["SH.exe"]

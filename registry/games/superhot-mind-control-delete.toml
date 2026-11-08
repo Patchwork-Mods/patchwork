@@ -16,5 +16,6 @@ kind = "rules"
 rulesets = ["recursive-melonloader"]
 
 [detect]
+epic = ["7c9f2b7aa5a549e381b4e6aeff3779a1"]
 folder = "SUPERHOTMCD"
 exe = ["SHMCD.exe"]

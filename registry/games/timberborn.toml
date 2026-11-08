@@ -51,5 +51,6 @@ to = "BepInEx/plugins/{mod}/{file}"
 
 [detect]
 steam = [1062090]
+epic = ["972a4ca2631e43b4ba7bc3b7586ad8c4"]
 folder = "Timberborn"
 exe = ["Timberborn.exe"]

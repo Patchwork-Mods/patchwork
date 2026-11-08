@@ -74,7 +74,7 @@ find the same file in later releases (`ModName-*.zip`).
 The CLI does the same:
 
 ```sh
-patchwork game detect                       # find Steam games
+patchwork game detect                       # find Steam, GOG and Epic games
 patchwork profile new lethal-company/main   # a profile is <game>/<name>
 patchwork search more company               # or just `patchwork search` for the most popular
 patchwork add thunderstore:notnotnotswipez-MoreCompany

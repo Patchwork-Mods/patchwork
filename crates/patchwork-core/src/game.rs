@@ -635,6 +635,13 @@ pub struct Detect {
     /// Steam app ids.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steam: Vec<u32>,
+    /// GOG product ids, as GOG Galaxy and Heroic know them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gog: Vec<u64>,
+    /// Epic Games Store app names (the `AppName` in its manifests, which
+    /// Heroic and Legendary use too).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub epic: Vec<String>,
     /// The install folder's name, e.g. under Steam's `steamapps/common`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,

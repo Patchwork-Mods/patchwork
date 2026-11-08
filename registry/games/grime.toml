@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [1123050]
+epic = ["028263f54a874e35800d142275254d2c"]
 folder = "GRIME"
 exe = ["GRIME.exe", "GRIME.app"]

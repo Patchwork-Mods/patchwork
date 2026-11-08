@@ -1,4 +1,5 @@
 use super::*;
+use crate::game::Detect;
 
 fn game(steam: &str) -> GameDef {
     toml::from_str(&format!(
@@ -205,4 +206,202 @@ fn proton_is_found_from_the_prefix_it_ran() {
     )
     .unwrap();
     assert_eq!(proton_install(&compat), Some(proton));
+}
+
+fn store_game(toml: &str) -> GameDef {
+    toml::from_str(&format!(
+        "schema = 1\nid = \"g\"\nname = \"Fallout 3\"\n[deployer]\nkind = \"rules\"\n[detect]\nfolder = \"Fallout 3\"\nexe = [\"Fallout3.exe\"]\n{toml}"
+    ))
+    .unwrap()
+}
+
+/// A game folder at `dir` under `root`, with `exe` in it if there is one.
+fn game_dir(root: &Path, dir: &str, exe: Option<&str>) -> PathBuf {
+    let path = root.join(dir);
+    std::fs::create_dir_all(&path).unwrap();
+    if let Some(exe) = exe {
+        std::fs::write(path.join(exe), "").unwrap();
+    }
+    path.canonicalize().unwrap()
+}
+
+fn json(path: &Path, value: serde_json::Value) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, value.to_string()).unwrap();
+}
+
+fn with_stores(stores: Vec<StoreInstall>) -> Locator {
+    Locator {
+        stores,
+        ..Locator::default()
+    }
+}
+
+#[test]
+fn finds_games_heroic_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let heroic = tmp.path().join("heroic");
+    let gog = game_dir(tmp.path(), "Games/Fallout 3 GOTY", Some("Fallout3.exe"));
+    let epic = game_dir(tmp.path(), "Games/FalloutNV", None);
+    let dlc = game_dir(tmp.path(), "Games/DLC", None);
+    json(
+        &heroic.join("gog_store/installed.json"),
+        serde_json::json!({ "installed": [
+            { "appName": "1454315831", "install_path": gog, "is_dlc": false },
+            { "appName": "1", "install_path": dlc, "is_dlc": true },
+            { "appName": "2", "install_path": tmp.path().join("gone") },
+        ]}),
+    );
+    json(
+        &heroic.join("legendaryConfig/legendary/installed.json"),
+        serde_json::json!({
+            "5daeb974a22a435988892319b3a4f476": {
+                "app_name": "5daeb974a22a435988892319b3a4f476",
+                "title": "Fallout: New Vegas",
+                "install_path": epic,
+                "is_dlc": false,
+            }
+        }),
+    );
+    let installs = stores::heroic(&heroic);
+    assert_eq!(installs.len(), 2, "{installs:?}");
+    let locator = with_stores(installs);
+
+    // by id
+    let nv = store_game("epic = [\"5daeb974a22a435988892319b3a4f476\"]");
+    let nv = GameDef {
+        name: "Fallout: New Vegas".to_owned(),
+        detect: Detect {
+            folder: None,
+            exe: vec!["FalloutNV.exe".to_owned()],
+            ..nv.detect
+        },
+        ..nv
+    };
+    let found = locator.find(&nv);
+    assert_eq!(paths(found.clone()), std::slice::from_ref(&epic));
+    assert_eq!(
+        found[0].origin,
+        Origin::Epic {
+            app: "5daeb974a22a435988892319b3a4f476".to_owned(),
+            launcher: Launcher::Heroic
+        }
+    );
+    assert_eq!(found[0].origin.to_string(), "Heroic (Epic)");
+    // by its exe and a folder named like it, with no ids listed
+    let found = locator.find(&store_game(""));
+    assert_eq!(paths(found.clone()), [gog]);
+    assert_eq!(found[0].origin.to_string(), "Heroic (GOG)");
+}
+
+#[test]
+fn an_exe_alone_isnt_enough() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Enderal ships a SkyrimSE.exe
+    let enderal = game_dir(tmp.path(), "Enderal", Some("Fallout3.exe"));
+    let locator = with_stores(vec![StoreInstall {
+        store: Store::Gog,
+        id: "1708684988".to_owned(),
+        title: Some("Enderal: Forgotten Stories".to_owned()),
+        path: enderal.clone(),
+        launcher: Launcher::Galaxy,
+    }]);
+    assert!(locator.find(&store_game("")).is_empty());
+    // its name in the store will do instead of its folder
+    let mut renamed = locator.stores.clone();
+    renamed[0].title = Some("Fallout 3: Game of the Year Edition".to_owned());
+    assert_eq!(
+        paths(with_stores(renamed).find(&store_game(""))),
+        std::slice::from_ref(&enderal)
+    );
+    // and its id, without the exe
+    std::fs::remove_file(enderal.join("Fallout3.exe")).unwrap();
+    assert_eq!(
+        paths(locator.find(&store_game("gog = [1708684988]"))),
+        [enderal]
+    );
+}
+
+#[test]
+fn reads_epic_launcher_manifests() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifests = tmp.path().join("Manifests");
+    let game = game_dir(tmp.path(), "Fallout 3", Some("Fallout3.exe"));
+    let item = |name: &str, app: &str, main: &str, incomplete: bool| {
+        json(
+            &manifests.join(name),
+            serde_json::json!({
+                "AppName": app,
+                "MainGameAppName": main,
+                "DisplayName": "Fallout 3",
+                "InstallLocation": game,
+                "bIsIncompleteInstall": incomplete,
+            }),
+        )
+    };
+    item(
+        "A.item",
+        "adeae8bbfc94427db57c7dfecce3f1d4",
+        "adeae8bbfc94427db57c7dfecce3f1d4",
+        false,
+    );
+    item("B.item", "dlc", "adeae8bbfc94427db57c7dfecce3f1d4", false);
+    item("C.item", "half", "half", true);
+    std::fs::write(manifests.join("D.txt"), "not a manifest").unwrap();
+    let installs = stores::epic_manifests(&manifests);
+    assert_eq!(installs.len(), 1, "{installs:?}");
+    let found = with_stores(installs).find(&store_game(""));
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].origin.to_string(), "Epic Games Launcher");
+}
+
+#[test]
+fn installs_known_twice_are_found_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let game = game_dir(tmp.path(), "Fallout 3", Some("Fallout3.exe"));
+    let install = |launcher| StoreInstall {
+        store: Store::Epic,
+        id: "x".to_owned(),
+        title: None,
+        path: game.clone(),
+        launcher,
+    };
+    let locator = with_stores(vec![
+        install(Launcher::Heroic),
+        install(Launcher::Legendary),
+    ]);
+    assert_eq!(locator.find(&store_game("")).len(), 1);
+}
+
+#[test]
+fn heroic_prefixes_come_from_its_game_settings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let heroic = tmp.path().join("heroic");
+    let game = game_dir(tmp.path(), "Game", None);
+    json(
+        &heroic.join("gog_store/installed.json"),
+        serde_json::json!({ "installed": [{ "appName": "7", "install_path": game }] }),
+    );
+    let roots = || [heroic.clone()];
+    assert_eq!(stores::heroic_prefix_in(roots(), &game), None);
+
+    let prefix = tmp.path().join("Prefixes/Game");
+    json(
+        &heroic.join("GamesConfig/7.json"),
+        serde_json::json!({ "7": { "winePrefix": prefix } }),
+    );
+    // only once it's been made
+    assert_eq!(stores::heroic_prefix_in(roots(), &game), None);
+    std::fs::create_dir_all(prefix.join("drive_c")).unwrap();
+    assert_eq!(
+        stores::heroic_prefix_in(roots(), &game),
+        Some(prefix.clone())
+    );
+    // Proton's prefixes are a level down
+    std::fs::create_dir_all(prefix.join("pfx/drive_c")).unwrap();
+    assert_eq!(
+        stores::heroic_prefix_in(roots(), &game),
+        Some(prefix.join("pfx"))
+    );
+    assert_eq!(stores::heroic_prefix_in(roots(), tmp.path()), None);
 }

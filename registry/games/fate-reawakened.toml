@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [3030720]
+epic = ["a7bb4d7ed8c74b319ee7adfb08ae383d"]
 folder = "FATE Reawakened"
 exe = ["FateReawakened.exe", "fate.app"]

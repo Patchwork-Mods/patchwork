@@ -33,6 +33,9 @@ impl Env {
             .args(args)
             .env("PATCHWORK_HOME", self.path("home"))
             .env("PATCHWORK_STEAM_PATH", self.path("Steam"))
+            .env("PATCHWORK_HEROIC_PATH", self.path("heroic"))
+            .env("PATCHWORK_LEGENDARY_PATH", "")
+            .env("PATCHWORK_EPIC_PATH", "")
             .env("PATH", self.search_path())
             .output()
             .unwrap();
@@ -60,6 +63,9 @@ impl Env {
             .args(args)
             .env("PATCHWORK_HOME", self.path("home"))
             .env("PATCHWORK_STEAM_PATH", self.path("Steam"))
+            .env("PATCHWORK_HEROIC_PATH", self.path("heroic"))
+            .env("PATCHWORK_LEGENDARY_PATH", "")
+            .env("PATCHWORK_EPIC_PATH", "")
             .env("PATH", self.search_path())
             .output()
             .unwrap();

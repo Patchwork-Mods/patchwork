@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [1445790]
+epic = ["4ff6e3e8e29a4c94a177af77baba1fde"]
 folder = "Make Way"
 exe = ["Make Way.exe"]

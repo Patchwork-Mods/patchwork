@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [2066020]
+epic = ["a7d7b86a17f74d759e48cd39e1d5efe1"]
 folder = "Soulstone Survivors"
 exe = ["Soulstone Survivors.exe", "Soulstone-Survivors.x86_64", "Soulstone-Survivors.app"]

@@ -87,6 +87,8 @@ default = true
 
 [detect]
 steam = [22330]
+# Game of the Year Edition Deluxe, and without Deluxe
+gog = [1458058109, 2038522517]
 folder = "Oblivion"
 exe = ["Oblivion.exe"]
 

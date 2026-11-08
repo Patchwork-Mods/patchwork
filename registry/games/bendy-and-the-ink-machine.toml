@@ -16,5 +16,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [622650]
+epic = ["39700e23ec114d7581aedea23779ce2d"]
 folder = "Bendy and the Ink Machine"
 exe = ["Bendy and the Ink Machine.exe"]

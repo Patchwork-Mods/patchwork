@@ -352,6 +352,15 @@ fn game_file(
                 .filter(|d| d.platform == "steam")
                 .filter_map(|d| d.identifier.as_deref()?.parse().ok())
                 .collect(),
+            gog: Vec::new(),
+            // what r2modman launches it by, which is its app name
+            epic: r2
+                .distributions
+                .iter()
+                .filter(|d| d.platform == "epic-games-store")
+                .filter_map(|d| d.identifier.clone())
+                .filter(|id| !id.is_empty())
+                .collect(),
             folder: r2.steam_folder_name.clone().filter(|f| !f.is_empty()),
             exe: r2.exe_names.clone(),
             version: Vec::new(),

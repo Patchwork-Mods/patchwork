@@ -480,7 +480,8 @@ enum GameCommand {
     Show { id: String },
     /// Tell patchwork where a game is installed.
     SetPath { id: String, path: PathBuf },
-    /// Look for where games are installed, in every Steam library. Give a
+    /// Look for where games are installed: in every Steam library, and by
+    /// GOG Galaxy, the Epic Games Launcher, Heroic and Legendary. Give a
     /// game to look for only that one.
     Detect {
         id: Option<String>,

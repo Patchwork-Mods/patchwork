@@ -1,9 +1,11 @@
 //! Finding where games are installed, so the user doesn't have to say.
 //!
-//! For now that's Steam: every Steam install's libraries are listed in its
-//! `libraryfolders.vdf`, and each library has a manifest for every app in it
-//! saying which folder it's in. A game is found by the Steam app ids in its
-//! definition's [`Detect`](crate::game::Detect).
+//! Every Steam install's libraries are listed in its `libraryfolders.vdf`,
+//! and each library has a manifest for every app in it saying which folder
+//! it's in. Games from GOG and the Epic Games Store are found from what
+//! their launchers keep (see [`stores`]). A game is found by the store ids in
+//! its definition's [`Detect`](crate::game::Detect), or, for GOG and Epic,
+//! by one of its executables being in a folder named like it.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -12,6 +14,11 @@ use serde::Serialize;
 
 use crate::game::GameDef;
 use crate::vdf;
+
+mod stores;
+
+use stores::StoreInstall;
+pub use stores::{Launcher, Store};
 
 /// Somewhere a game looks to be installed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -30,12 +37,24 @@ pub enum Origin {
         /// prefix (`steamapps/compatdata/<app>`) on Linux.
         library: PathBuf,
     },
+    /// Installed from GOG.
+    Gog { id: String, launcher: Launcher },
+    /// Installed from the Epic Games Store; `app` is its app name.
+    Epic { app: String, launcher: Launcher },
 }
 
 impl fmt::Display for Origin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Origin::Steam { library, .. } => write!(f, "Steam library {}", library.display()),
+            Origin::Gog { launcher, .. } => match launcher {
+                Launcher::Galaxy => f.write_str("GOG Galaxy"),
+                other => write!(f, "{other} (GOG)"),
+            },
+            Origin::Epic { launcher, .. } => match launcher {
+                Launcher::Epic => f.write_str("Epic Games Launcher"),
+                other => write!(f, "{other} (Epic)"),
+            },
         }
     }
 }
@@ -46,6 +65,8 @@ impl fmt::Display for Origin {
 pub struct Locator {
     /// In the order their libraries were found.
     steam: Vec<SteamApp>,
+    /// Games from GOG and Epic, in the order their launchers were looked in.
+    stores: Vec<StoreInstall>,
 }
 
 #[derive(Debug)]
@@ -56,10 +77,16 @@ struct SteamApp {
 }
 
 impl Locator {
-    /// Looks in every Steam install on this machine, or only the ones in
-    /// `$PATCHWORK_STEAM_PATH` (separated like `$PATH`) if it's set.
+    /// Looks in every Steam install and every GOG and Epic launcher on
+    /// this machine. `$PATCHWORK_STEAM_PATH`, `$PATCHWORK_HEROIC_PATH`,
+    /// `$PATCHWORK_LEGENDARY_PATH` and `$PATCHWORK_EPIC_PATH` (each
+    /// separated like `$PATH`, and empty for none) say where to look
+    /// instead.
     pub fn scan() -> Self {
-        Self::steam(steam_search_roots())
+        Self {
+            stores: stores::scan(),
+            ..Self::steam(steam_search_roots())
+        }
     }
 
     /// Looks in the Steam installs in `roots` (the folders with `steamapps`
@@ -82,13 +109,16 @@ impl Locator {
         }
         Self {
             steam: libraries.iter().flat_map(|l| installed_apps(l)).collect(),
+            stores: Vec::new(),
         }
     }
 
     /// Where `game` looks to be installed. Usually there's one place at
-    /// most, but nothing stops a game being in two Steam installs.
+    /// most, but nothing stops a game being in two Steam installs, or
+    /// bought from more than one store.
     pub fn find(&self, game: &GameDef) -> Vec<Found> {
-        self.steam
+        let steam = self
+            .steam
             .iter()
             .filter(|a| game.detect.steam.contains(&a.app))
             .map(|a| Found {
@@ -97,9 +127,82 @@ impl Locator {
                     app: a.app,
                     library: a.library.clone(),
                 },
-            })
-            .collect()
+            });
+        let stores = self
+            .stores
+            .iter()
+            .filter(|s| is_store_install(game, s))
+            .map(|s| Found {
+                path: s.path.clone(),
+                origin: match s.store {
+                    Store::Gog => Origin::Gog {
+                        id: s.id.clone(),
+                        launcher: s.launcher,
+                    },
+                    Store::Epic => Origin::Epic {
+                        app: s.id.clone(),
+                        launcher: s.launcher,
+                    },
+                },
+            });
+        let mut found: Vec<Found> = Vec::new();
+        // Heroic and Legendary can both know about the same install
+        for f in steam.chain(stores) {
+            if !found.iter().any(|seen| seen.path == f.path) {
+                found.push(f);
+            }
+        }
+        found
     }
+}
+
+/// Whether a game a launcher installed is `game`: it has one of the ids
+/// `game` lists for its store, or one of `game`'s executables is in its
+/// folder and its name or folder is the game's. Most definitions don't
+/// list GOG or Epic ids, and checking the name too keeps a game that ships
+/// another's executable (Enderal has a SkyrimSE.exe) from passing as it.
+fn is_store_install(game: &GameDef, install: &StoreInstall) -> bool {
+    let detect = &game.detect;
+    let listed = match install.store {
+        Store::Gog => detect.gog.iter().any(|id| id.to_string() == install.id),
+        Store::Epic => detect.epic.contains(&install.id),
+    };
+    if listed {
+        return true;
+    }
+    if !detect.exe.iter().any(|exe| install.path.join(exe).exists()) {
+        return false;
+    }
+    let name = squash(&game.name);
+    let folder = detect.folder.as_deref().map(squash);
+    let named = |text: &str| {
+        let text = squash(text);
+        // "Fallout 3: Game of the Year Edition" is Fallout 3
+        (!name.is_empty() && text.starts_with(&name))
+            || folder.as_ref().is_some_and(|f| !f.is_empty() && text == *f)
+    };
+    install.title.as_deref().is_some_and(named)
+        || install
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(named)
+}
+
+/// `name` in lower case without anything but letters and digits, so that
+/// names spelled a little differently compare equal.
+fn squash(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The Wine prefix that something other than patchwork made for `game`
+/// installed at `install`: the Proton prefix Steam made (see
+/// [`proton_prefix`]), or the prefix Heroic runs it in.
+pub fn wine_prefix(game: &GameDef, install: &Path) -> Option<PathBuf> {
+    proton_prefix(game, install).or_else(|| stores::heroic_prefix(install))
 }
 
 /// The Proton prefix Steam made for `game`, if it's installed at `install`

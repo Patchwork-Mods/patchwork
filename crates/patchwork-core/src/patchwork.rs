@@ -2970,7 +2970,7 @@ fn resolve_roots(def: &GameDef, install: &GameInstall) -> ResolvedRoots {
     let prefix = match (&install.prefix, os) {
         (Some(prefix), _) => Some(prefix.clone()),
         (None, Os::Windows) => None,
-        (None, _) => locate::proton_prefix(def, &install.path),
+        (None, _) => locate::wine_prefix(def, &install.path),
     };
     ResolvedRoots::new(
         &def.id,

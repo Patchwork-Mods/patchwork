@@ -16,5 +16,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [945360]
+epic = ["among-us"]
 folder = "Among Us"
 exe = ["Among Us.exe"]

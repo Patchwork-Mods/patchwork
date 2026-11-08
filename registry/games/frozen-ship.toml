@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [3423990]
+epic = ["5d360e6d889a4d17b33e04456994f9aa"]
 folder = "Frozen Ship"
 exe = ["FrozenShip.exe"]

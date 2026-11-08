@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [527230]
+epic = ["Discus"]
 folder = "For The King"
 exe = ["FTK.exe"]

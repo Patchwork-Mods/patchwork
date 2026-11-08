@@ -17,5 +17,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [572890]
+epic = ["48619f5656da446abccb727b78cda644"]
 folder = "Pikuniku"
 exe = ["Pikuniku.exe", "Pikuniku.app", "Pikuniku.x86_64", "Pikuniku.x86"]

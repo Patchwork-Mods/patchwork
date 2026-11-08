@@ -16,5 +16,6 @@ rulesets = ["bepinex"]
 
 [detect]
 steam = [2638370]
+epic = ["a0fbc3eb950341e290ae20a7d02cc501"]
 folder = "Five Nights at Freddy's Into the Pit"
 exe = ["Five Nights at Freddy's Into the Pit.exe", "FNaFIntoThePit.exe"]

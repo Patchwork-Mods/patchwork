@@ -82,6 +82,7 @@ default = true
 
 [detect]
 steam = [976620]
+gog = [1708684988]
 folder = "Enderal Special Edition"
 # It has a SkyrimSE.exe too; the launcher is what tells it apart.
 exe = ["Enderal Launcher.exe"]
