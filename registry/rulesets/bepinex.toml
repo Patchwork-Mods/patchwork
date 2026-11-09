@@ -16,7 +16,8 @@
 #           and {file} are filled in. Defaults to "{path}".
 #   skip    don't deploy matching files
 
-# The loader itself, which is the same for every BepInEx game.
+# The loader itself, which is the same for every BepInEx game. It also says
+# which files are BepInEx's config.
 [[rules]]
 ruleset = "bepinex-loader"
 
@@ -56,10 +57,3 @@ to = "BepInEx/monomod/{mod}/{file}"
 [[rules]]
 files = "**"
 to = "BepInEx/plugins/{mod}/{file}"
-
-# BepInEx writes each plugin's settings to a file of its own in
-# BepInEx/config, with each setting's type and default in comments above
-# it, so they can be changed from patchwork.
-[[config]]
-files = "BepInEx/config/**/*.cfg"
-format = "bepinex.cfg"

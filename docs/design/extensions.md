@@ -884,9 +884,10 @@ Each step leaves `main` working and shippable.
      - Data: `[[config]] files = "…" format = "<ext>.<name>"` (with an
        optional `root`) in a game definition, and in rulesets, which the
        `rules` deployer hands over through `Deployer::config_files`
-       (following `ruleset` includes). `bepinex.toml` says
-       `BepInEx/config/**/*.cfg` is `bepinex.cfg`, from a new `bepinex`
-       extension in `patchwork-builtin`.
+       (following `ruleset` includes). `bepinex-loader.toml`, which every
+       BepInEx game includes (even ones like Valheim with their own
+       install rules), says `BepInEx/config/**/*.cfg` is `bepinex.cfg`,
+       from a new `bepinex` extension in `patchwork-builtin`.
      - Config files can be ones mods ship or ones in the game's own
        folders (usually made by the game or a mod as it runs). Settings
        are kept per profile, not per mod: `Profile::config`, by where the

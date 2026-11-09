@@ -650,9 +650,20 @@ fn generate_loader_ruleset(schema: &Schema) -> Result<String> {
     }
     out += "[[rules]]\nfiles = \"**\"\nskip = true\nmods = ";
     out += &toml_list(&ids);
-    out += "\n";
+    out += "\n\n";
+    out += BEPINEX_CONFIG;
     Ok(out)
 }
+
+/// BepInEx's config files. They're here rather than in `bepinex.toml` so
+/// that games with install rules of their own, which include this ruleset
+/// but not that one, get them too.
+const BEPINEX_CONFIG: &str = "# BepInEx writes each plugin's settings to a file of its own in\n\
+# BepInEx/config, with each setting's type and default in comments above\n\
+# it, so they can be changed from patchwork.\n\
+[[config]]\n\
+files = \"BepInEx/config/**/*.cfg\"\n\
+format = \"bepinex.cfg\"\n";
 
 /// A glob matching any of `names`.
 fn alternatives(names: &[String]) -> String {

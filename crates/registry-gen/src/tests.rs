@@ -211,10 +211,16 @@ fn loader_ruleset_covers_every_pack() {
     #[derive(Deserialize)]
     struct Ruleset {
         rules: Vec<toml::Table>,
+        config: Vec<toml::Table>,
     }
     let text = generate_loader_ruleset(&schema()).unwrap();
     assert!(text.starts_with(HEADER));
-    let rules = toml::from_str::<Ruleset>(&text).unwrap().rules;
+    let Ruleset { rules, config } = toml::from_str(&text).unwrap();
+    // every BepInEx game includes this ruleset, even ones with their own
+    // install rules (Valheim), so the config files are listed here
+    assert_eq!(config.len(), 1);
+    assert_eq!(config[0]["files"].as_str(), Some("BepInEx/config/**/*.cfg"));
+    assert_eq!(config[0]["format"].as_str(), Some("bepinex.cfg"));
     assert_eq!(
         rules[0]["files"].as_str(),
         Some("{BepInExPack*,BepInEx_Valheim_Full}/**")
