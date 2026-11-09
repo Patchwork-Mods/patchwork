@@ -131,51 +131,282 @@ function optionsButtons(m) {
 }
 
 const PRIORITY_TITLE =
-  "Priority: mods with a higher one load later, so they win when two change the same file, wherever they are in the list. Mods with the same priority go by their place in it.";
+  "Priority: mods with a higher one load later, so they win when two change the same file, wherever they are in the list. Mods with the same priority go by their place in it. Click to change it, or use the arrow keys.";
+
+/** A priority with its sign, like "+2" or "−1". */
+const signed = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : "0");
+
+/** Reads a typed priority, allowing a "−" for a minus; null if it isn't a whole number. */
+function parsePriority(text) {
+  const t = text.trim().replace("−", "-");
+  return /^[-+]?\d{1,9}$/.test(t) ? Number(t) : null;
+}
+
+/** Fills each priority chip on screen in again, from its mod. */
+const chipFills = new WeakMap();
+function refreshChips() {
+  for (const chip of document.querySelectorAll(".mod-priority")) chipFills.get(chip)?.();
+}
 
 /**
- * A mod's priority, as a small number field. Changing it leaves the mod where
- * it is, unless the load order is showing.
+ * Saves a mod's priority. It stays where it is, unless the load order is
+ * showing, when the mods are drawn again (keeping the focus on its chip).
+ */
+async function savePriority(m, priority) {
+  if ((m.priority ?? 0) === priority) return;
+  const { id } = state.profile;
+  let profile;
+  try {
+    profile = await run("set_priority", { id, name: m.name, priority });
+  } catch {
+    refreshChips();
+    return;
+  }
+  if (state.profile?.id !== id) return;
+  status(priority ? `${m.name} has priority ${signed(priority)}` : `${m.name}'s priority is back to 0`);
+  const mods = state.profile.mods;
+  const same =
+    profile.mods.length === mods.length && profile.mods.every((n, i) => n.key === mods[i].key);
+  if (!same || modsOrder === "load") {
+    const focused = document.activeElement?.classList.contains("mod-priority");
+    showProfile(profile);
+    if (focused) {
+      document
+        .querySelector(`#mods [data-name="${CSS.escape(m.name)}"] .mod-priority`)
+        ?.focus({ preventScroll: true });
+    }
+    return;
+  }
+  // the cards and rows on screen were made from these, so keep them up to date
+  profile.mods = profile.mods.map((n, i) => Object.assign(mods[i], n));
+  showProfile(profile, { keepMods: true });
+  showingLoadOrder(profile.mods);
+  refreshChips();
+}
+
+/** The priority that puts a mod after every other one, or before them. */
+function extremePriority(m, last) {
+  const others = (state.profile?.mods ?? []).filter((o) => o !== m).map((o) => o.priority ?? 0);
+  const own = m.priority ?? 0;
+  if (last) {
+    const top = Math.max(0, ...others);
+    return own > top ? own : top + 1;
+  }
+  const bottom = Math.min(0, ...others);
+  return own < bottom ? own : bottom - 1;
+}
+
+/** The open priority popover, if any, and what closes it. */
+let priorityPopover = null;
+
+function closePriority({ save }) {
+  const open = priorityPopover;
+  if (!open) return;
+  priorityPopover = null;
+  open.el.remove();
+  open.chip.classList.remove("open");
+  open.chip.setAttribute("aria-expanded", "false");
+  if (save) {
+    const n = parsePriority(open.field.value);
+    if (n != null) savePriority(open.m, n);
+  }
+}
+
+/**
+ * Opens the popover for changing a mod's priority under its chip: a field
+ * with − and + either side, and buttons that load it last, first, or
+ * reset it. It's put on the page itself, so a card's edges don't cut it off.
+ * `typed` starts the field off with what was typed on the chip.
+ */
+function openPriority(chip, m, typed) {
+  closePriority({ save: true });
+  const field = h("input", {
+    type: "text",
+    inputmode: "numeric",
+    class: "priority-field",
+    value: typed ?? String(m.priority ?? 0),
+    "aria-label": `Priority of ${m.name}`,
+  });
+  const step = (by) => {
+    field.value = String((parsePriority(field.value) ?? m.priority ?? 0) + by);
+    field.focus();
+  };
+  const choose = (n) => {
+    field.value = String(n);
+    closePriority({ save: true });
+    chip.focus();
+  };
+  const button = (text, attrs, onclick) => h("button", { type: "button", ...attrs, onclick }, text);
+  const el = h(
+    "div",
+    { class: "priority-popover", role: "dialog", "aria-label": `Priority of ${m.name}` },
+    h(
+      "div",
+      { class: "priority-stepper" },
+      button("−", { title: "Load it earlier", "aria-label": "Lower" }, () => step(-1)),
+      field,
+      button("+", { title: "Load it later", "aria-label": "Higher" }, () => step(1)),
+    ),
+    h("p", { class: "muted" }, "Higher loads later, and wins when two mods change the same file."),
+    h(
+      "div",
+      { class: "priority-actions" },
+      button("Load last", { title: "Higher than every other mod" }, () =>
+        choose(extremePriority(m, true)),
+      ),
+      button("Load first", { title: "Lower than every other mod" }, () =>
+        choose(extremePriority(m, false)),
+      ),
+      button("Reset", { title: "Back to 0, going by its place in the list" }, () => choose(0)),
+    ),
+  );
+  field.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      closePriority({ save: true });
+      chip.focus();
+    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      step(e.key === "ArrowUp" ? 1 : -1);
+    }
+  });
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      closePriority({ save: false });
+      chip.focus();
+    }
+  });
+  // a click anywhere else saves it, as does leaving it by tabbing
+  el.addEventListener("focusout", (e) => {
+    if (priorityPopover?.el === el && e.relatedTarget && !el.contains(e.relatedTarget)) {
+      closePriority({ save: true });
+    }
+  });
+  priorityPopover = { el, chip, m, field };
+  chip.classList.add("open");
+  chip.setAttribute("aria-expanded", "true");
+  document.body.append(el);
+  // below the chip, or above it if there isn't room, kept on screen
+  const at = chip.getBoundingClientRect();
+  const { offsetWidth: w, offsetHeight: ht } = el;
+  const left = Math.max(4, Math.min(at.right - w, innerWidth - w - 4));
+  const top = at.bottom + 4 + ht > innerHeight ? Math.max(4, at.top - 4 - ht) : at.bottom + 4;
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+  field.focus();
+  if (typed == null) field.select();
+  else field.setSelectionRange(typed.length, typed.length);
+}
+
+/** The chip whose popover a press on it just closed, so the click that
+ * follows doesn't open it again. */
+let closedByChip = null;
+
+document.addEventListener("mousedown", (e) => {
+  closedByChip = null;
+  if (priorityPopover && !priorityPopover.el.contains(e.target)) {
+    if (priorityPopover.chip.contains(e.target)) closedByChip = priorityPopover.chip;
+    closePriority({ save: true });
+  }
+});
+// it'd be left behind on scrolling
+document.addEventListener(
+  "scroll",
+  (e) => {
+    if (priorityPopover && !priorityPopover.el.contains(e.target)) closePriority({ save: true });
+  },
+  true,
+);
+
+/** Two arrows, one up and one down, for a priority that's still 0. */
+function priorityIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4");
+  svg.append(path);
+  return svg;
+}
+
+/**
+ * A mod's priority, as a small chip: a faint pair of arrows while it's 0
+ * (only showing on hovering its row or card), and a pill saying "+2" or
+ * "−1" once it's set. Clicking it opens a popover to change it; the arrow
+ * keys change it directly (Page Up and Down by 10), Delete resets it, and
+ * typing a number opens the popover with it.
  */
 function priorityInput(m) {
-  const input = h("input", {
-    type: "number",
-    class: m.priority ? "mod-priority set" : "mod-priority",
-    step: 1,
-    value: m.priority ?? 0,
+  const chip = h("span", {
+    class: "mod-priority",
+    role: "spinbutton",
+    tabindex: 0,
     title: PRIORITY_TITLE,
     "aria-label": `Priority of ${m.name}`,
-    onchange: async () => {
-      const priority = Number(input.value);
-      if (!Number.isInteger(priority)) {
-        input.value = m.priority ?? 0;
-        return;
-      }
-      const { id } = state.profile;
-      let profile;
-      try {
-        profile = await run("set_priority", { id, name: m.name, priority });
-      } catch {
-        input.value = m.priority ?? 0;
-        return;
-      }
-      if (state.profile?.id !== id) return;
-      status(`${m.name} has priority ${priority}`);
-      const mods = state.profile.mods;
-      const same =
-        profile.mods.length === mods.length && profile.mods.every((n, i) => n.key === mods[i].key);
-      if (!same || modsOrder === "load") {
-        showProfile(profile);
-        return;
-      }
-      // the cards and rows on screen were made from these, so keep them up to date
-      profile.mods = profile.mods.map((n, i) => Object.assign(mods[i], n));
-      input.classList.toggle("set", priority !== 0);
-      showProfile(profile, { keepMods: true });
-      showingLoadOrder(profile.mods);
-    },
+    "aria-haspopup": "dialog",
+    "aria-expanded": "false",
   });
-  return input;
+  // what the arrow keys have it at, saved once they stop for a moment
+  let pending = null;
+  let timer = null;
+  const show = (n) => {
+    chip.classList.toggle("set", n !== 0);
+    chip.replaceChildren(n ? signed(n) : priorityIcon());
+    chip.setAttribute("aria-valuenow", String(n));
+    chip.setAttribute(
+      "aria-valuetext",
+      n ? `${signed(n)}, loads ${n > 0 ? "later" : "earlier"}` : "0, by its place in the list",
+    );
+  };
+  const fill = () => {
+    if (pending == null) show(m.priority ?? 0);
+  };
+  const flush = () => {
+    clearTimeout(timer);
+    if (pending == null) return;
+    const n = pending;
+    pending = null;
+    savePriority(m, n);
+  };
+  chipFills.set(chip, fill);
+  fill();
+  chip.addEventListener("click", (e) => {
+    // it sits on a list row, which expands when clicked
+    e.stopPropagation();
+    if (closedByChip === chip) {
+      closedByChip = null;
+      return;
+    }
+    flush();
+    openPriority(chip, m);
+  });
+  chip.addEventListener("keydown", (e) => {
+    const steps = { ArrowUp: 1, ArrowDown: -1, PageUp: 10, PageDown: -10 };
+    if (e.key in steps) {
+      e.preventDefault();
+      pending = (pending ?? m.priority ?? 0) + steps[e.key];
+      show(pending);
+      clearTimeout(timer);
+      timer = setTimeout(flush, 600);
+    } else if (e.key === "Delete" || e.key === "Backspace" || e.key === "Home") {
+      e.preventDefault();
+      pending = 0;
+      show(0);
+      flush();
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      flush();
+      openPriority(chip, m);
+    } else if (/^[-−\d]$/.test(e.key)) {
+      e.preventDefault();
+      flush();
+      openPriority(chip, m, e.key);
+    }
+  });
+  chip.addEventListener("blur", flush);
+  return chip;
 }
 
 function modRow(m, { movable, onToggle, onRemove, onVersion }) {
@@ -237,8 +468,10 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
     movable && dragHandle(m),
     head,
     update,
-    settingsButton(m),
+    // the chip is left of the cog, so while it's hidden its space runs into
+    // the name's rather than parting the cog from the switch
     priorityInput(m),
+    settingsButton(m),
     h(
       "label",
       { class: "switch", title: "Disabled mods are left out when deploying" },

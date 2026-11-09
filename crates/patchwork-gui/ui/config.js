@@ -141,7 +141,7 @@ export async function loadModConfigs() {
 }
 
 /** List rows keep a gap where a mod has no settings, once any has, so their
- * priorities line up. */
+ * cogs and switches line up. */
 function markShown() {
   const mods = state.profile?.mods ?? [];
   const any = mods.some((m) => m.options?.length) || filesOwned().size > 0;

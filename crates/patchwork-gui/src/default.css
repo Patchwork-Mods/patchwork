@@ -1380,19 +1380,140 @@ dialog button.danger-text {
   pointer-events: none;
 }
 
-/* A mod's priority: a small number field, faint while it's 0. */
+/* A mod's priority, as a chip (see priorityInput() in mods.js): a faint
+   pair of arrows while it's 0, only showing on hovering its row or card,
+   and a pill saying "+2" or "−1" once it's set. */
 .mod-priority {
   flex: none;
-  width: 52px;
-  padding: 3px 4px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 22px;
+  padding: 0 7px;
   font-size: 12px;
-  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--pw-muted);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  /* no fade: WebKitGTK flickers between rows when opacity animates */
+  opacity: 0;
+}
+
+.mod-priority svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mod-row:hover .mod-priority,
+.mod-row:focus-within .mod-priority,
+.mod-card:hover .mod-priority,
+.mod-card:focus-within .mod-priority,
+.mod-priority.set,
+.mod-priority.open {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .mod-priority {
+    opacity: 1;
+  }
+}
+
+.mod-priority:hover,
+.mod-priority.open {
+  color: var(--pw-text);
+  border-color: var(--pw-border);
 }
 
 .mod-priority.set {
-  color: var(--pw-text);
+  color: var(--pw-accent);
+  border-color: var(--pw-accent);
+}
+
+.mod-priority.set:hover,
+.mod-priority.set.open {
+  color: var(--pw-accent-text);
+  background: var(--pw-accent);
+}
+
+.mod-priority:focus-visible {
+  outline: 2px solid var(--pw-accent);
+  outline-offset: 1px;
+}
+
+.disabled .mod-priority.set {
+  opacity: 0.6;
+}
+
+/* The popover a priority chip opens, put on the page itself. */
+.priority-popover {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 250px;
+  padding: 8px;
+  background: var(--pw-surface);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+
+.priority-popover p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.priority-stepper {
+  display: flex;
+}
+
+.priority-stepper button {
+  width: 32px;
+  padding: 3px 0;
+}
+
+.priority-stepper button:first-child {
+  border-radius: var(--pw-radius) 0 0 var(--pw-radius);
+}
+
+.priority-stepper button:last-child {
+  border-radius: 0 var(--pw-radius) var(--pw-radius) 0;
+}
+
+.priority-field {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  text-align: center;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+
+.priority-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.priority-actions button {
+  flex: 1;
+  padding: 3px 4px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* The on/off switch, drawn from a checkbox. */
@@ -1800,8 +1921,8 @@ body.dragging-mod .mod-card .card-sheet {
   border-color: transparent;
 }
 
-/* Once any mod has settings, rows without keep the space, so the priority
-   fields line up. */
+/* Once any mod has settings, rows without keep the space, so the cogs and
+   switches line up. */
 body.mod-settings-shown .mod-row .mod-settings[hidden] {
   display: inline-flex !important;
   visibility: hidden;
