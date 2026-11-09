@@ -914,8 +914,18 @@ Each step leaves `main` working and shippable.
        was already taken). GUI: a Config tab (`#tab-config`,
        `#config-filter`, `#config-files`, `.config-file`, `.config-open`,
        `.config-edited`) after the lists, opening `#options-dialog`.
-     - Not done: attributing generated files to the mod that made them
-       (BepInEx names them by plugin GUID), a per-mod entry point, keeping
+     - Per-mod entry point (2026-11-08): `ConfigFileInfo::owner` is the
+       mod a file is for: the one whose copy it is, or for one in the
+       game's folders, the only mod named like its title, file name or
+       the last `.` part of it (BepInEx names them by plugin GUID), ignoring
+       case and punctuation. `patchwork settings --mod` goes by it. GUI: a
+       `.mod-settings` cog on list rows (before the priority) and a
+       Settings button on cards, covering the mod's `ModOptions` (SMF
+       options, FOMOD installers) and its config files, which load in the
+       background like conflicts. One thing opens straight away; more open
+       a `.settings-menu`.
+     - Not done: attributing generated files that aren't named like their
+       mod (reading plugin GUIDs out of DLLs, say), keeping
        keys a game adds after the first deploy when a file's settings are
        rewritten (BepInEx adds missing keys back on its next start), and
        recording settings changes in history.

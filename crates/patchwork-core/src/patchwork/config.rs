@@ -39,6 +39,11 @@ pub struct ConfigFileInfo {
     /// folders (usually made by the game, or by a mod as it runs).
     #[serde(rename = "mod")]
     pub from: Option<String>,
+    /// The profile's mod its settings are most likely for, so frontends
+    /// can offer them from the mod: the one whose copy it is, or for one
+    /// in the game's folders, the only mod named like its title or file
+    /// name (BepInEx names them by plugin GUID, like `com.author.name`).
+    pub owner: Option<String>,
     /// Whether the profile changes any of its settings.
     pub edited: bool,
     /// The profile changes its settings, but it isn't there (yet), so
@@ -113,11 +118,16 @@ impl Patchwork {
                 let contents = read(hook, &setup, path, &bytes).ok()?;
                 contents.title
             });
+            let owner = base
+                .from
+                .clone()
+                .or_else(|| owner_by_name(&loaded, path, title.as_deref()));
             found.push(ConfigFileInfo {
                 path: path.clone(),
                 format: def.format.clone(),
                 title,
                 from: base.from.clone(),
+                owner,
                 edited: edits_for(&loaded, path).is_some(),
                 missing: false,
             });
@@ -134,6 +144,7 @@ impl Patchwork {
                         .unwrap_or_default(),
                     title: None,
                     from: None,
+                    owner: owner_by_name(&loaded, path, None),
                     edited: true,
                     missing: true,
                 });
@@ -656,6 +667,40 @@ fn edits_for<'a>(loaded: &'a Profile, path: &Dest) -> Option<&'a Edits> {
         .map(|(_, edits)| edits)
 }
 
+/// The one mod in `profile` named like the config file at `path` or its
+/// `title`, ignoring case and anything but letters and digits: by the
+/// file's name, the last `.`-separated part of it (for a name like
+/// `com.author.name`), or its title. A mod goes by its name or the last
+/// `-`-separated part of its id (for a Thunderstore-style `Author-Name`).
+/// Names under three letters are too likely to match by chance.
+fn owner_by_name(profile: &Profile, path: &Dest, title: Option<&str>) -> Option<String> {
+    fn key(s: &str) -> Option<String> {
+        let key: String = s
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        (key.chars().count() >= 3).then_some(key)
+    }
+    let file = path.path.as_str().rsplit('/').next().unwrap_or_default();
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+    let last = stem.rsplit('.').next().unwrap_or(stem);
+    let names: Vec<String> = [Some(stem), Some(last), title]
+        .into_iter()
+        .flatten()
+        .filter_map(key)
+        .collect();
+    let mut matching = profile.mods.iter().filter(|m| {
+        let id = m.id.rsplit(['-', '/']).next().unwrap_or(&m.id);
+        [m.name.as_str(), id]
+            .into_iter()
+            .filter_map(key)
+            .any(|k| names.contains(&k))
+    });
+    let found = matching.next()?;
+    matching.next().is_none().then(|| found.name.clone())
+}
+
 fn same_dest(a: &Dest, b: &Dest) -> bool {
     a.root == b.root && a.path.as_str().eq_ignore_ascii_case(b.path.as_str())
 }
@@ -672,4 +717,49 @@ fn edits_of(answers: &[Answer]) -> Edits {
         }
     }
     edits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(mods: &[(&str, &str)]) -> Profile {
+        let mut p = Profile::new("game", "default");
+        p.mods = mods
+            .iter()
+            .map(|(name, id)| {
+                toml::from_str(&format!("name = {name:?}\nsource = \"ts\"\nid = {id:?}")).unwrap()
+            })
+            .collect();
+        p
+    }
+
+    #[test]
+    fn config_files_go_to_the_mod_named_like_them() {
+        let p = profile(&[
+            ("R2API", "RiskofThunder-R2API"),
+            ("Better UI", "XoXFaby-BetterUI"),
+            ("UI", "Someone-UI"),
+            ("Fast", "One-Fast"),
+            ("Fast Two", "Two-Fast"),
+        ]);
+        let owner = |path: &str, title| owner_by_name(&p, &path.parse().unwrap(), title);
+        // by the last part of a GUID-like name, by title, and by id
+        assert_eq!(
+            owner("BepInEx/config/com.bepis.r2api.cfg", None).as_deref(),
+            Some("R2API")
+        );
+        assert_eq!(
+            owner("BepInEx/config/x.y.cfg", Some("Better UI")).as_deref(),
+            Some("Better UI")
+        );
+        assert_eq!(
+            owner("BepInEx/config/BetterUI.cfg", None).as_deref(),
+            Some("Better UI")
+        );
+        // too short to tell, matching two mods, or none
+        assert_eq!(owner("BepInEx/config/ui.cfg", None), None);
+        assert_eq!(owner("BepInEx/config/fast.cfg", None), None);
+        assert_eq!(owner("BepInEx/config/BepInEx.cfg", None), None);
+    }
 }

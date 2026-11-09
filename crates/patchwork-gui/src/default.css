@@ -23,6 +23,9 @@
   --pw-danger: #b3261e;
   /* Width over height of the cover image on search results. */
   --pw-cover-ratio: 1;
+  /* How much of an added mod's picture still shows while its card's sheet
+     is raised. */
+  --pw-card-peek: 40px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1316,12 +1319,65 @@ dialog button.danger-text {
   position: relative;
 }
 
+/* The switch, tag icon and priority share a line; the version gets the
+   next one to itself. */
 .card-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px 8px;
   margin: 0 10px 10px;
+}
+
+.card-footer-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-tags {
+  display: contents;
+}
+
+/* A mod's tags, kept behind a small icon that lists them while hovered. */
+.tags-mark {
+  display: inline-flex;
+  align-items: center;
+  color: var(--pw-muted);
+  cursor: default;
+}
+
+.tags-mark:hover,
+.tags-mark:focus-visible {
+  color: var(--pw-text);
+}
+
+.tags-mark svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.row-details .tags-mark {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.tags-popup {
+  position: fixed;
+  z-index: 100;
+  max-width: 260px;
+  padding: 6px;
+  background: var(--pw-surface);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.2);
+  pointer-events: none;
 }
 
 /* A mod's priority: a small number field, faint while it's 0. */
@@ -1393,7 +1449,7 @@ dialog button.danger-text {
 /* It fills the rest of the row rather than sizing to its options, which
    only arrive once it's hovered. */
 .card-footer .mod-version {
-  flex: 1;
+  flex: 1 1 100%;
   width: auto;
   min-width: 0;
   padding: 3px 4px;
@@ -1571,6 +1627,8 @@ body.dragging-mod .drag-handle {
 
 /* A disabled mod fades out, all but its switch so it's easy to turn back on. */
 .result.disabled .card-main>*,
+.result.disabled .card-body,
+.result.disabled .card-cover,
 .result.disabled .mod-version,
 .result.disabled .card-update {
   opacity: 0.5;
@@ -1579,6 +1637,192 @@ body.dragging-mod .drag-handle {
 .result.disabled img,
 .result.disabled .no-icon {
   filter: grayscale(1);
+}
+
+/* An added mod's card (see modCard in mods.js): its picture, with a sheet
+   under it holding the rest. While the card is hovered or focused, the
+   sheet slides up over the picture by --raise (worked out on hover: as much
+   as .card-more needs, leaving --pw-card-peek of the picture), bringing up
+   .card-more, which hangs below it out of sight. */
+.mod-card {
+  overflow: hidden;
+}
+
+.card-cover {
+  flex: none;
+}
+
+.card-sheet {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--pw-surface);
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+
+/* A small grip along the top says it slides. */
+.card-sheet::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 28px;
+  height: 3px;
+  margin-left: -14px;
+  border-radius: 999px;
+  background: var(--pw-border);
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.mod-card:hover .card-sheet,
+.mod-card:has(:focus-visible) .card-sheet {
+  transform: translateY(calc(-1 * var(--raise, 0px)));
+  box-shadow: 0 -6px 16px rgb(0 0 0 / 0.18);
+}
+
+.mod-card:hover .card-sheet::before,
+.mod-card:has(:focus-visible) .card-sheet::before {
+  opacity: 1;
+}
+
+/* Not while dragging one around. */
+body.dragging-mod .mod-card .card-sheet {
+  transform: none;
+  box-shadow: none;
+}
+
+.card-body {
+  flex: 1;
+  display: flex;
+}
+
+.card-marks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0 10px 8px;
+}
+
+.card-marks:empty {
+  display: none;
+}
+
+.card-marks>* {
+  margin-left: 0;
+}
+
+.card-more {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 10px 10px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: var(--pw-surface);
+}
+
+.card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.card-actions button {
+  justify-content: center;
+  min-width: 0;
+  padding: 3px 4px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-more .facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* The remove button and drag handle sit on the strip of picture that still
+   shows, above the sheet. */
+.mod-card .remove,
+.mod-card .drag-handle {
+  z-index: 1;
+}
+
+.mod-card .remove {
+  background: var(--pw-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .card-sheet,
+  .card-sheet::before {
+    transition: none;
+  }
+}
+
+/* A mod's settings: its config files (see config.js). A cog on a list row,
+   and a labelled button on a card. Accented once the profile changes any. */
+.mod-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mod-settings svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mod-row .mod-settings {
+  flex: none;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--pw-muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Once any mod has settings, rows without keep the space, so the priority
+   fields line up. */
+body.mod-settings-shown .mod-row .mod-settings[hidden] {
+  display: inline-flex !important;
+  visibility: hidden;
+}
+
+.mod-row .mod-settings svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mod-row .mod-settings:hover {
+  color: var(--pw-text);
+  border-color: var(--pw-border);
+}
+
+.mod-settings.edited {
+  color: var(--pw-accent);
+}
+
+.mod-row.disabled .mod-settings {
+  opacity: 0.5;
 }
 
 .result.disabled .switch {
@@ -2137,4 +2381,40 @@ legend {
    the installed version of the game. */
 #mod-problems .issue-action {
   margin-left: 8px;
+}
+
+/* What a mod's settings button opens when it has more than one thing to
+   change; see config.js. */
+.settings-menu {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  max-width: 320px;
+  padding: 4px;
+  background: var(--pw-surface);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+
+.settings-menu button {
+  padding: 5px 10px;
+  font-size: 13px;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-menu button:hover,
+.settings-menu button:focus-visible {
+  border-color: var(--pw-border);
+}
+
+.settings-menu button.edited {
+  color: var(--pw-accent);
 }

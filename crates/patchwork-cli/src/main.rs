@@ -175,7 +175,8 @@ enum Command {
         /// A config file, by its path as listed, or the end of it (like its
         /// name) if that's enough to tell which.
         file: Option<String>,
-        /// Only list the config files this mod deploys.
+        /// Only list the config files for this mod: the ones it deploys, and
+        /// ones the game made that are named like it.
         #[arg(long = "mod", value_name = "NAME", conflicts_with = "file")]
         of: Option<String>,
         /// Set a setting, as `SETTING=VALUE`, or `GROUP/SETTING=VALUE` if
@@ -947,7 +948,7 @@ async fn run(cli: Cli) -> Result<()> {
             let Some(file) = file else {
                 let shown: Vec<_> = files
                     .iter()
-                    .filter(|f| of.as_ref().is_none_or(|m| f.from.as_ref() == Some(m)))
+                    .filter(|f| of.as_ref().is_none_or(|m| f.owner.as_ref() == Some(m)))
                     .collect();
                 if shown.is_empty() {
                     println!("No config files.");
@@ -2587,6 +2588,8 @@ fn print_config_file(f: &ConfigFileInfo) {
     }
     if let Some(m) = &f.from {
         about.push(format!("from {m}"));
+    } else if let Some(m) = &f.owner {
+        about.push(format!("for {m}"));
     }
     if f.missing {
         about.push("not there, so its changes aren't applied".to_owned());

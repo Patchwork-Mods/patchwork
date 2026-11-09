@@ -1,7 +1,18 @@
 // The open profile's mods, as cards or list rows.
 
 import { run, state, status } from "./state.js";
-import { $, ago, chevronIcon, compact, h, initials, link, openExternal, trashIcon } from "./dom.js";
+import {
+  $,
+  ago,
+  chevronIcon,
+  compact,
+  h,
+  initials,
+  link,
+  openExternal,
+  tagIcon,
+  trashIcon,
+} from "./dom.js";
 import { openProfile, refresh, showProfile } from "./profile.js";
 import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
@@ -11,6 +22,7 @@ import { dragHandle, dragging } from "./reorder.js";
 import { conflictMark } from "./conflicts.js";
 import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
 import { requirementsList, requirementsMark } from "./requirements.js";
+import { settingsButton } from "./config.js";
 
 // The Mods tab shows mods either as cards, like a source's search results,
 // or as a denser list of rows that each expand to show the rest.
@@ -225,6 +237,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
     movable && dragHandle(m),
     head,
     update,
+    settingsButton(m),
     priorityInput(m),
     h(
       "label",
@@ -249,7 +262,6 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
 /** What an expanded list row shows below its first line. */
 function rowDetails(m, item, onRemove) {
   const summary = m.summary?.summary?.trim();
-  const tags = modTags(m);
   const count = (n, noun) =>
     n != null && h("span", { title: n.toLocaleString() }, `${compact(n)} ${noun}`);
   const facts = [
@@ -265,8 +277,12 @@ function rowDetails(m, item, onRemove) {
     url && h("button", { type: "button", title: url, onclick: () => openExternal(url) }, text);
   return [
     summary && h("p", {}, summary),
-    h("div", { class: "facts muted" }, facts.flatMap((f, i) => (i ? [" · ", f] : [f]))),
-    tags.length > 0 && h("div", { class: "tags" }, tags.map((t) => h("span", { class: "tag" }, t))),
+    h(
+      "div",
+      { class: "facts muted" },
+      tagsMark(m),
+      facts.flatMap((f, i) => (i ? [" · ", f] : [f])),
+    ),
     m.softDependencies?.length > 0 && h("h4", { class: "requirements-title" }, "It also lists"),
     requirementsList(m),
     h(
@@ -288,6 +304,60 @@ function rowDetails(m, item, onRemove) {
       h("button", { type: "button", class: "danger", onclick: onRemove }, "Remove"),
     ),
   ];
+}
+
+/** The tag list popped up by hovering or focusing a mod's tag icon, if one is up. */
+let tagsPopup = null;
+const hideTags = () => {
+  tagsPopup?.remove();
+  tagsPopup = null;
+};
+// it's placed once, so it goes rather than float off when anything scrolls
+document.addEventListener("scroll", hideTags, true);
+// nor does it outlive its icon, say when the mods are drawn again under the pointer
+document.addEventListener("pointerover", (e) => {
+  if (tagsPopup && !e.target.closest?.(".tags-mark")) hideTags();
+});
+
+/**
+ * A small tag icon that shows a mod's tags while hovered or focused, or
+ * nothing when it hasn't any. The list is put on the page itself, since a
+ * card clips what spills out of it.
+ */
+function tagsMark(m) {
+  const tags = modTags(m);
+  if (tags.length === 0) return null;
+  const show = () => {
+    hideTags();
+    tagsPopup = h(
+      "div",
+      { class: "tags-popup", role: "tooltip" },
+      h("div", { class: "tags" }, tags.map((t) => h("span", { class: "tag" }, t))),
+    );
+    document.body.append(tagsPopup);
+    const at = mark.getBoundingClientRect();
+    const pop = tagsPopup.getBoundingClientRect();
+    const centred = at.left + at.width / 2 - pop.width / 2;
+    const left = Math.min(Math.max(8, centred), innerWidth - pop.width - 8);
+    const below = at.bottom + 6;
+    const top = below + pop.height > innerHeight - 8 ? at.top - pop.height - 6 : below;
+    tagsPopup.style.left = `${left}px`;
+    tagsPopup.style.top = `${Math.max(8, top)}px`;
+  };
+  const mark = h(
+    "span",
+    {
+      class: "tags-mark",
+      tabindex: "0",
+      "aria-label": `Tags: ${tags.join(", ")}`,
+      onpointerenter: show,
+      onpointerleave: hideTags,
+      onfocus: show,
+      onblur: hideTags,
+    },
+    tagIcon(),
+  );
+  return mark;
 }
 
 /** Which versions of the game a mod works with, if anything says. */
@@ -319,8 +389,8 @@ function modIcon(item) {
     : h("div", { class: "no-icon", "aria-hidden": "true" }, initials(item.name));
 }
 
-/** A mod's picture and details, from a search result (a ModSummary). */
-export function cardMain(item) {
+/** A mod's name, author, summary and counts, from a search result (a ModSummary). */
+function cardBody(item) {
   // Hovering a count shows it in full.
   const count = (n, noun) =>
     n != null && h("span", { title: `${n.toLocaleString()} ${noun}` }, `${compact(n)} ${noun}`);
@@ -328,63 +398,71 @@ export function cardMain(item) {
   const summary = item.summary?.trim();
   return h(
     "div",
-    { class: "card-main" },
-    modIcon(item),
+    { class: "result-body" },
+    h("h3", {}, link(item.url, item.name)),
+    item.author && h("div", { class: "author" }, link(item.author_url, item.author)),
+    summary && h("p", { class: "muted", title: summary }, summary),
     h(
       "div",
-      { class: "result-body" },
-      h("h3", {}, link(item.url, item.name)),
-      item.author && h("div", { class: "author" }, link(item.author_url, item.author)),
-      summary && h("p", { class: "muted", title: summary }, summary),
-      h(
-        "div",
-        { class: "facts muted" },
-        stats.length > 0 ? h("div", {}, stats.flatMap((s, i) => (i ? [" · ", s] : [s]))) : null,
-        item.updated &&
-          h(
-            "div",
-            { title: new Date(item.updated).toLocaleString() },
-            `Updated ${ago(item.updated)}`,
-          ),
-      ),
+      { class: "facts muted" },
+      stats.length > 0 ? h("div", {}, stats.flatMap((s, i) => (i ? [" · ", s] : [s]))) : null,
+      item.updated &&
+        h("div", { title: new Date(item.updated).toLocaleString() }, `Updated ${ago(item.updated)}`),
     ),
   );
+}
+
+/** A mod's picture and details, from a search result (a ModSummary). */
+export function cardMain(item) {
+  return h("div", { class: "card-main" }, modIcon(item), cardBody(item));
 }
 
 /** What a profile's mod shows on its card: its summary, once that's been fetched. */
 const cardItem = (m) => m.summary ?? { name: m.name, summary: `${m.source}:${m.shownId}` };
 
-// An added mod's card: an on/off switch and its version along the bottom,
-// a note when there's a newer version, and a remove button and a handle to
-// drag it by that only show while the card is hovered or focused.
+/** How much of a card's picture still shows while its sheet is raised, in pixels. */
+function cardPeek(card) {
+  const peek = parseFloat(getComputedStyle(card).getPropertyValue("--pw-card-peek"));
+  return Number.isFinite(peek) ? peek : 40;
+}
+
+// An added mod's card: its picture, with a sheet under it holding its
+// details, the on/off switch, priority and version. Hovering the card (or
+// tabbing into it) slides the sheet up over the picture, leaving a strip of
+// it showing, to bring up what hangs below: buttons for its settings,
+// options, changelog and pages, and what it needs. The remove button and
+// the handle to drag it by sit on the strip that still shows.
 function modCard(m, { movable, onToggle, onRemove, onVersion }) {
-  let main = cardMain(cardItem(m));
+  const cover = h("div", { class: "card-cover" });
+  const body = h("div", { class: "card-body" });
+  const more = h("div", { class: "card-more" });
+  const settings = settingsButton(m, { label: true });
+  // the tags come with the summary, so this fills in along with it
+  const tags = h("span", { class: "card-tags" });
+  const fill = () => {
+    const item = cardItem(m);
+    tags.replaceChildren(...[tagsMark(m)].filter(Boolean));
+    cover.replaceChildren(modIcon(item));
+    body.replaceChildren(cardBody(item));
+    more.replaceChildren(...cardMore(m, item, settings).filter(Boolean));
+  };
+  fill();
+  summaryViews.set(m.key, fill);
   const update = h("div", { class: "card-update" });
-  summaryViews.set(m.key, () => {
-    const fresh = cardMain(cardItem(m));
-    main.replaceWith(fresh);
-    main = fresh;
-  });
   updateNotes.set(m.key, { el: update, onVersion });
   fillUpdate(update, m, onVersion);
-  return h(
-    "li",
-    { class: m.enabled ? "result" : "result disabled", "data-name": m.name },
-    main,
-    issueMark(m),
-    conflictMark(m),
-    unsharedMark(m),
-    requirementsMark(m),
-    movable && dragHandle(m),
+  const sheet = h(
+    "div",
+    { class: "card-sheet" },
+    body,
     h(
-      "button",
-      {
-        class: "remove",
-        title: `Remove ${m.name}`,
-        "aria-label": `Remove ${m.name}`,
-        onclick: onRemove,
-      },
-      trashIcon(),
+      "div",
+      { class: "card-marks" },
+      issueMark(m),
+      conflictMark(m),
+      unsharedMark(m),
+      optionsMark(m),
+      requirementsMark(m),
     ),
     update,
     h(
@@ -402,13 +480,70 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
         }),
         h("span", { "aria-hidden": "true" }, m.enabled ? "On" : "Off"),
       ),
-      priorityInput(m),
-      ...optionsButtons(m),
+      h("div", { class: "card-footer-end" }, tags, priorityInput(m)),
       m.versioned
         ? versionSelect(m, onVersion)
         : h("span", { class: "mod-version muted" }, m.version ?? m.locked ?? "No versions"),
     ),
+    more,
   );
+  const card = h(
+    "li",
+    { class: m.enabled ? "result mod-card" : "result mod-card disabled", "data-name": m.name },
+    cover,
+    sheet,
+    movable && dragHandle(m),
+    h(
+      "button",
+      {
+        class: "remove",
+        title: `Remove ${m.name}`,
+        "aria-label": `Remove ${m.name}`,
+        onclick: onRemove,
+      },
+      trashIcon(),
+    ),
+  );
+  // The sheet rises as far as what hangs below it needs, up to the strip
+  // of picture left showing; CSS raises it while hovered or focused.
+  const measure = () => {
+    const room = Math.max(0, cover.offsetHeight - cardPeek(card));
+    more.style.maxHeight = `${room}px`;
+    card.style.setProperty("--raise", `${Math.min(more.scrollHeight, room)}px`);
+  };
+  card.addEventListener("pointerenter", measure);
+  card.addEventListener("focusin", measure);
+  return card;
+}
+
+/** What hangs below a card's sheet, brought up by raising it. */
+function cardMore(m, item, settings) {
+  const urlButton = (url, text, title) =>
+    url &&
+    h("button", { type: "button", title: `${title}: ${url}`, onclick: () => openExternal(url) }, text);
+  const facts = [h("span", {}, `${m.source}:${m.shownId}`), worksWith(m), ...tiesOf(m)].filter(
+    Boolean,
+  );
+  return [
+    h(
+      "div",
+      { class: "card-actions" },
+      settings,
+      m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
+      h(
+        "button",
+        {
+          type: "button",
+          title: "Say which versions of the game it works with",
+          onclick: () => showGameVersions(m),
+        },
+        "Supports",
+      ),
+      urlButton(item.url, "Website", "Its page"),
+      urlButton(item.author_url, "Author", "The author's mods"),
+    ),
+    h("div", { class: "facts muted" }, facts.map((f) => h("div", {}, f))),
+  ];
 }
 
 /**

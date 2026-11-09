@@ -6,6 +6,7 @@ import { showGames } from "./games.js";
 import { renderMods } from "./mods.js";
 import { refreshDetails } from "./details.js";
 import { loadConflicts } from "./conflicts.js";
+import { loadModConfigs } from "./config.js";
 import { modSearch } from "./toolbar.js";
 import { renderSourceTabs } from "./browse.js";
 import { markUpdates } from "./deploy.js";
@@ -87,6 +88,7 @@ export function showProfile(profile, { keepMods = false } = {}) {
   renderProfile({ keepMods });
   refreshDetails();
   loadConflicts();
+  loadModConfigs();
 }
 
 /**
