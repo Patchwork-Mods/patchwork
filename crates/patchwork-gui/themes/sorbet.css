@@ -58,11 +58,20 @@ body {
   color: var(--pw-accent);
 }
 
-/* Pills. */
+/* Pills. Only plain text buttons get the wider padding: this layer beats
+   the built-in one, so a blanket padding would squash the icon buttons
+   (the mod settings cog, a card's remove button) down to nothing. */
 button,
 select,
 input:not([type="checkbox"]):not([type="radio"]) {
   border-radius: 999px;
+}
+
+button:not([class]),
+button.primary,
+button.danger,
+select,
+input:not([type="checkbox"]):not([type="radio"]) {
   padding-inline: 14px;
 }
 
@@ -107,6 +116,47 @@ button.primary {
 .game-card:hover {
   transform: translateY(-3px);
   box-shadow: var(--pw-shadow-lg);
+}
+
+/* Pictures sit inset from the card's edge, rounded to follow its corners,
+   rather than running into them. */
+.game-card {
+  padding: 8px 8px 10px;
+}
+
+.game-card> :not(.game-art) {
+  margin: 0 4px;
+}
+
+.game-art {
+  border-radius: 14px;
+}
+
+.result img,
+.result .no-icon {
+  width: calc(100% - 16px);
+  margin: 8px 8px 0;
+  border-radius: 14px;
+}
+
+.result .remove,
+.result .drag-handle {
+  top: 12px;
+}
+
+.result .remove {
+  right: 12px;
+}
+
+.result .drag-handle {
+  left: 12px;
+}
+
+/* Theme choices are boxes holding a drawing, not pills; their corners
+   follow the drawing's, padding apart. */
+.theme-choice {
+  padding: 8px;
+  border-radius: 16px;
 }
 
 .mod-list,

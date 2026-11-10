@@ -102,6 +102,37 @@ button.primary {
   font-weight: 700;
 }
 
+/* The built-in look draws these without a border, with `border: none`,
+   which leaves the width at its default of 3px; the dashed style above
+   would show at that width. The id in the list keeps this ahead of the
+   hover rule. */
+:is(
+    .tabs button,
+    #profiles button,
+    button.link,
+    .menu-items button,
+    .back,
+    #game-settings,
+    #profile-settings,
+    #mod-notices .dismiss,
+    .config-open,
+    .switch input
+  ),
+:is(
+    .tabs button,
+    #profiles button,
+    button.link,
+    .menu-items button,
+    .back,
+    #game-settings,
+    #profile-settings,
+    #mod-notices .dismiss,
+    .config-open,
+    .switch input
+  ):hover {
+  border-style: none;
+}
+
 .result,
 .mod-list,
 dialog {
@@ -146,14 +177,33 @@ dialog {
   border-radius: 0;
 }
 
+/* Off: an empty dashed box with a grey knob on the left. On: a solid white
+   box with a dark knob on the right. */
 .switch input {
   background: transparent;
-  outline: 1px dashed var(--pw-border);
+  box-shadow: inset 0 0 0 1px var(--pw-muted);
+}
+
+.switch input:not(:checked) {
+  background-image:
+    repeating-linear-gradient(90deg, var(--pw-muted) 0 3px, transparent 3px 6px),
+    repeating-linear-gradient(90deg, var(--pw-muted) 0 3px, transparent 3px 6px);
+  background-size: 100% 1px;
+  background-position: top, bottom;
+  background-repeat: no-repeat;
+  box-shadow:
+    inset 1px 0 0 var(--pw-muted),
+    inset -1px 0 0 var(--pw-muted);
+}
+
+.switch input::before {
+  background: var(--pw-muted);
+  box-shadow: none;
 }
 
 .switch input:checked {
   background: var(--pw-text);
-  outline-style: solid;
+  box-shadow: none;
 }
 
 .switch input:checked::before {
