@@ -1,7 +1,9 @@
 // The Add mods tab: a link box (see addlink.js), then a search of one of the
-// game's sources, where its mods can be found and added.
+// game's sources, where its mods can be found and added. The Mods tab's
+// search box can search a source too (see sourcesearch.js), which counts as
+// the source's latest search here.
 
-import { run, state, status } from "./state.js";
+import { run, sourceName, state, status } from "./state.js";
 import { $, h, ms, nextFrame } from "./dom.js";
 import { renderProfile } from "./profile.js";
 import { cardMain } from "./mods.js";
@@ -9,9 +11,6 @@ import { refreshDetails } from "./details.js";
 import { go } from "./nav.js";
 import { listOf, listTab, openList } from "./list.js";
 import { CONFIG_TAB, openConfig } from "./config.js";
-
-const SOURCE_NAMES = { thunderstore: "Thunderstore", nexus: "Nexus Mods" };
-const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
 
 /** The Add mods tab's key in state.tab. */
 export const ADD_TAB = "add";
@@ -23,7 +22,10 @@ let typing;
 let picked = null;
 
 /** The sources the open profile's game can be searched on. */
-const sources = () => state.profile?.searchSources ?? [];
+export const sources = () => state.profile?.searchSources ?? [];
+
+/** The source the Add mods tab would open on: the one last picked or searched. */
+export const lastSource = () => (sources().includes(picked) ? picked : (sources()[0] ?? null));
 
 /**
  * Opens the Mods tab ("mods"), a list's tab (see listTab), the Config tab
@@ -34,7 +36,7 @@ export function selectTab(key) {
   const config = key === CONFIG_TAB;
   const add = key === ADD_TAB;
   state.tab = key;
-  state.source = add ? (sources().includes(picked) ? picked : (sources()[0] ?? null)) : null;
+  state.source = add ? lastSource() : null;
   for (const tab of document.querySelectorAll("#tabs [role=tab]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
   }
@@ -120,42 +122,72 @@ export function renderTabs() {
 /** Each source's latest search, so an older one finishing late is ignored. */
 const searchSeq = {};
 
-/** Starts a new search from the form, replacing the source's results. */
-async function search() {
+/**
+ * Searches `source` for `text`, keeping it as the source's latest search,
+ * and returns it, or null if a newer search of the source started first or
+ * another profile was opened.
+ */
+async function searchSource(source, text, sort = null) {
   const p = state.profile;
-  const source = state.source;
-  if (!p || !source) return;
-  const form = new FormData($("#search"));
   const seq = (searchSeq[source] = (searchSeq[source] ?? 0) + 1);
-  status("Searching…");
-  const started = performance.now();
   const filter = await filterOf(source);
   // the first search on a tab is what starts its filter off
   if (state.source === source) renderFilterCount();
   const query = {
     game: p.game,
     source,
-    text: form.get("text"),
-    sort: form.get("sort") || null,
+    text,
+    sort,
     categories: filter.only,
     excludedCategories: filter.hide,
     page: 0,
   };
   const results = await run("search", { query });
-  const fetched = performance.now();
-  if (seq !== searchSeq[source] || state.profile?.id !== p.id) return;
-  state.searches[source] = {
+  if (seq !== searchSeq[source] || state.profile?.id !== p.id) return null;
+  return (state.searches[source] = {
     query,
     items: results.items,
     total: results.total,
     hasMore: results.has_more,
     loading: false,
-  };
+  });
+}
+
+/**
+ * Searches `source` for `text` from somewhere other than the Add mods tab,
+ * which then opens on it with this search showing; see openSearch().
+ */
+export function searchFor(source, text) {
+  picked = source;
+  return searchSource(source, text);
+}
+
+/**
+ * Opens the Add mods tab on `source`, showing `found` (from searchFor()) if
+ * nothing has replaced it as the source's latest search, to see more of it.
+ */
+export function openSearch(source, found) {
+  picked = source;
+  if (found && !state.searches[source]) state.searches[source] = found;
+  return go(() => selectTab(ADD_TAB));
+}
+
+/** Starts a new search from the form, replacing the source's results. */
+async function search() {
+  const p = state.profile;
+  const source = state.source;
+  if (!p || !source) return;
+  const form = new FormData($("#search"));
+  status("Searching…");
+  const started = performance.now();
+  const found = await searchSource(source, form.get("text"), form.get("sort") || null);
+  const fetched = performance.now();
+  if (!found) return;
   // The user may have switched tabs while this was in flight.
-  if (state.source === source) renderResults(state.searches[source]);
+  if (state.source === source) renderResults(found);
   await nextFrame();
   status(
-    `${results.total ?? results.items.length} mods · fetched in ${ms(fetched - started)}, ` +
+    `${found.total ?? found.items.length} mods · fetched in ${ms(fetched - started)}, ` +
       `rendered in ${ms(performance.now() - fetched)}`,
   );
 }
@@ -193,7 +225,7 @@ async function loadMore() {
 }
 
 const key = (item) => `${item.source}:${item.id}`;
-const addedMods = () => new Set(state.profile.mods.map(key));
+export const addedMods = () => new Set(state.profile.mods.map(key));
 
 /** Shows a source's last search, or nothing if it hasn't been searched. */
 function renderResults(search) {
@@ -211,7 +243,8 @@ function renderResults(search) {
   showMore(search);
 }
 
-function resultCard(item, added) {
+/** A search result, with a button to add it unless it's in `added` (see addedMods()). */
+export function resultCard(item, added) {
   const isAdded = added.has(key(item));
   return h(
     "li",

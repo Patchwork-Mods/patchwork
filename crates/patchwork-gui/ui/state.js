@@ -51,5 +51,15 @@ export async function run(command, args) {
   }
 }
 
+const SOURCE_NAMES = {
+  thunderstore: "Thunderstore",
+  nexus: "Nexus Mods",
+  github: "GitHub",
+  modio: "mod.io",
+};
+
+/** What to call a source, like "Nexus Mods" for `nexus`. */
+export const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
+
 export const gameInfo = (id) => state.overview.games.find((g) => g.id === id);
 export const profilesOf = (game) => state.overview.profiles.filter((p) => p.game === game);

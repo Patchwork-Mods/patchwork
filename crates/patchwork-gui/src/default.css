@@ -2485,6 +2485,26 @@ textarea {
   flex: 1;
 }
 
+/* What the Mods tab's search box found on a source, under the mods; see
+   sourcesearch.js. */
+#mods-more {
+  margin-top: var(--pw-gap);
+  padding-top: var(--pw-gap);
+  border-top: 1px solid var(--pw-border);
+}
+
+.mods-more-head {
+  flex-wrap: wrap;
+}
+
+.mods-more-all {
+  margin-left: auto;
+}
+
+#mods-more .empty {
+  margin-top: 0;
+}
+
 #browse-link {
   padding-bottom: var(--pw-gap);
   border-bottom: 1px solid var(--pw-border);

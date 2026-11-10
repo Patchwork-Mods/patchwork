@@ -1,14 +1,15 @@
 // Adding a mod from a link pasted into a link box, like `patchwork add
-// <link>`. There's one above the Mods tab's mods (#mods-link) and one at the
-// top of the Add mods tab (#browse-link); each works on its own. The source
-// that recognizes the link may have several files to choose between, like
-// a GitHub release's; they're listed under the link, and the one picked is
-// what later updates look for.
+// <link>`. There's one at the top of the Add mods tab (#browse-link), and the
+// Mods tab's search box (#mods-link) is one too while what's in it looks like
+// a link; each works on its own. The source that recognizes the link may have
+// several files to choose between, like a GitHub release's; they're listed
+// under the link, and the one picked is what later updates look for.
 
 import { run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { renderProfile } from "./profile.js";
 import { refreshDetails } from "./details.js";
+import { boxChanged } from "./sourcesearch.js";
 
 function size(bytes) {
   if (bytes == null) return "";
@@ -17,8 +18,37 @@ function size(bytes) {
   return `${(bytes / 1e6).toFixed(1)} MB`;
 }
 
-/** Makes `form` a link box, returning a function that empties it. */
-function linkBox(form) {
+/**
+ * The link `text` is, when it looks like one rather than words to search
+ * for: anything with a scheme, like `https://` or `nxm://`, or a domain
+ * with a path after it, which gets `https://` put in front. Words with
+ * spaces, or a bare domain, aren't links.
+ */
+export function asLink(text) {
+  const t = text.trim();
+  if (!t || /\s/.test(t)) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\/./i.test(t)) return t;
+  if (/^(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S/i.test(t)) return `https://${t}`;
+  return null;
+}
+
+/** The site a web link is on, like `nexusmods.com`. */
+export function site(link) {
+  try {
+    const url = new URL(link);
+    return /^https?:$/.test(url.protocol) ? url.hostname.replace(/^www\./, "") : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Makes `form` a link box, returning a function that empties it. With
+ * `search`, its box is for searching too, and only adds a mod when what's
+ * in it looks like a link, which is when its Add button shows; `onChange`
+ * is called whenever what's in the box changes, including being emptied.
+ */
+function linkBox(form, { search = false, onChange = () => {} } = {}) {
   const input = form.querySelector(".link-url");
   const submit = form.querySelector(".link-submit");
   const files = form.querySelector(".link-files");
@@ -40,10 +70,17 @@ function linkBox(form) {
     fileList.replaceChildren();
   }
 
+  /** Shows the Add button only for a link, in a search box. */
+  function showMode() {
+    if (search) submit.hidden = !asLink(input.value);
+    onChange();
+  }
+
   function clear() {
     input.value = "";
     forget();
     showError(null);
+    showMode();
   }
 
   function showChoices(choices) {
@@ -71,12 +108,13 @@ function linkBox(form) {
   input.addEventListener("input", () => {
     forget();
     showError(null);
+    showMode();
   });
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const p = state.profile;
-    const link = input.value.trim();
+    const link = asLink(input.value) ?? (search ? "" : input.value.trim());
     if (!p || !link) return;
     submit.disabled = true;
     showError(null);
@@ -123,7 +161,10 @@ function linkBox(form) {
   return clear;
 }
 
-const clears = [linkBox($("#mods-link")), linkBox($("#browse-link"))];
+const clears = [
+  linkBox($("#mods-link"), { search: true, onChange: () => boxChanged() }),
+  linkBox($("#browse-link")),
+];
 
 /** Empties both link boxes, for another profile. */
 export function clearLink() {

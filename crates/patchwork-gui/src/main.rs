@@ -1422,6 +1422,14 @@ struct Linked {
     choices: Vec<FileChoice>,
 }
 
+/// Which source a link pasted for `game` is for, without looking anything
+/// up, so the Mods tab's search box can say where Enter adds it from. None
+/// when no source recognizes it.
+#[tauri::command]
+fn link_source(app: State<'_, App>, game: String, link: String) -> Option<String> {
+    app.pw.parse_link(&game, &link).ok().map(|spec| spec.source)
+}
+
 #[tauri::command]
 async fn parse_link(app: State<'_, App>, id: String, link: String) -> CmdResult<Linked> {
     let profile = profile_ref(&id)?;
@@ -2092,6 +2100,7 @@ fn main() {
             update_mods,
             add_mod,
             parse_link,
+            link_source,
             search,
             search_categories,
             deploy,

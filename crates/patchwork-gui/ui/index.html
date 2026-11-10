@@ -156,12 +156,19 @@
 				</form>
 				<ul id="mod-notices"></ul>
 				<ul id="mod-problems" class="warnings"></ul>
-				<!-- The same as the one on the Add mods tab; see addlink.js. -->
+				<!-- One box for both searching this profile's mods and adding one
+				     from a link: it narrows the mods down to the ones matching, best
+				     first (see find_mods in main.rs), unless what's typed looks like
+				     a link, which Enter adds like the Add mods tab's link box. See
+				     asLink() in addlink.js. -->
 				<form id="mods-link" class="link-form stack">
 					<div class="row">
-						<input class="link-url" name="link" type="text" inputmode="url" placeholder="Add mod link" aria-label="Link to a mod" title="A mod's page on GitHub, Nexus Mods, Thunderstore or Modrinth, or a link straight to a download" autocomplete="off" spellcheck="false">
-						<button type="submit" class="link-submit">Add</button>
+						<input id="mod-search" class="link-url" name="link" type="search" placeholder="Search mods or paste a link" aria-label="Search this profile's mods, or add one from a link" title="Searches mods or adds a mod from a link" autocomplete="off" spellcheck="false">
+						<button type="submit" class="link-submit" hidden>Add</button>
 					</div>
+					<!-- What Enter does: adds the mod for a link, or searches a source
+					     for more mods (#mods-more); see sourcesearch.js. -->
+					<small class="link-hint muted" hidden></small>
 					<!-- When the link has several files, like a GitHub release. -->
 					<div class="link-files field" hidden>
 						<span>Which file? <small class="muted">Later releases' files are picked by the same name, with the
@@ -206,9 +213,6 @@
 							<summary title="Move mods with some tags, like libraries, out of the way">Filter</summary>
 							<div class="menu-items"></div>
 						</details>
-						<!-- Narrows the mods down to the ones matching, best first; see
-                 find_mods in main.rs. -->
-						<input id="mod-search" type="search" placeholder="Search mods" aria-label="Search this profile's mods" title="Searches names, authors and descriptions. Best matches go first; the load order stays the same." autocomplete="off" spellcheck="false">
 					</div>
 					<!-- Cards look like a source's search results; the list is denser,
                with rows that expand to show the rest. See setModsView() in
@@ -239,6 +243,10 @@
 					<ul id="dependencies-list" class="mod-list"></ul>
 				</details>
 				<p id="mods-empty" class="empty" hidden></p>
+				<!-- While searching the mods, a button to search one of the game's
+				     sources for the same thing, then what it found; see
+				     sourcesearch.js. -->
+				<section id="mods-more" class="stack" hidden></section>
 			</section>
 
 			<!-- One of the game's ordered lists, like the plugin load order;

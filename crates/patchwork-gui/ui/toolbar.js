@@ -1,9 +1,11 @@
-// The Mods tab's toolbar: filtering by tag, searching and sorting.
+// The Mods tab's toolbar and search box: filtering by tag, searching and
+// sorting.
 
 import { run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { openProfile } from "./profile.js";
 import { renderMods } from "./mods.js";
+import { asLink } from "./addlink.js";
 
 // Filtering. Mods with any of the profile's hiddenTags go in a collapsed
 // section under the rest, which keeps things like libraries out of the way
@@ -83,11 +85,20 @@ filterMenu.addEventListener("toggle", () => {
   if (filterMenu.open && state.profile) renderFilterMenu();
 });
 
+// The search box is also where links are pasted to add a mod (see
+// addlink.js); while it holds one, the mods aren't narrowed down.
 export const modSearch = $("#mod-search");
-export const modQuery = () => modSearch.value.trim();
+export const modQuery = () => (asLink(modSearch.value) ? "" : modSearch.value.trim());
+
+/** Whether the box held a link last time, when the mods shown were all of them. */
+let wasLink = false;
 
 modSearch.addEventListener("input", () => {
   if (!state.profile) return;
+  const isLink = !!asLink(modSearch.value);
+  // editing a link doesn't change which mods are shown
+  if (isLink && wasLink) return;
+  wasLink = isLink;
   renderMods(state.profile.mods);
 });
 
@@ -113,9 +124,7 @@ document.addEventListener("keydown", (e) => {
     : $("#main").hidden
       ? null
       : !$("#tab-mods").hidden
-        ? $("#mods-toolbar").hidden
-          ? !$("#mods-link").hidden && $("#mods-link .link-url")
-          : modSearch
+        ? !$("#mods-link").hidden && modSearch
         : !$("#tab-browse").hidden
           ? $("#search").hidden
             ? $("#browse-link .link-url")
@@ -125,6 +134,25 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
   box.focus();
   box.select();
+});
+
+// On the Mods tab, typing while no other field has focus types into the
+// search box, as nothing else there takes text. Space is left alone (it
+// presses buttons) until the box holds something, and keys another handler
+// already took (e.g. digits on a priority chip) are left with it.
+document.addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || e.isComposing) return;
+  if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest?.('input, textarea, select, [contenteditable], [role="menu"]')) return;
+  if (document.querySelector("dialog[open]") || !$("#profile-menu").hidden) return;
+  if (!$("#games-screen").hidden || $("#main").hidden || $("#tab-mods").hidden) return;
+  if ($("#mods-link").hidden || !state.profile) return;
+  if (e.key === " " && !modSearch.value) return;
+  e.preventDefault();
+  modSearch.focus();
+  const end = modSearch.value.length;
+  modSearch.setRangeText(e.key, end, end, "end");
+  modSearch.dispatchEvent(new Event("input", { bubbles: true }));
 });
 
 // Sorting. It rearranges the mods once rather than keeping them sorted, so

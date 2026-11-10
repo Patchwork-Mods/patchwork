@@ -1019,15 +1019,18 @@ document.addEventListener("click", (e) => {
   }
 });
 
-/** Lists the dependencies, the ones whose names match `query` if there is one. */
+/**
+ * Lists the dependencies, the ones whose names match `query` if there is
+ * one, counting only those; with none matching, the section is hidden.
+ */
 function renderDependencies(query) {
   const all = (state.profile.dependencies ?? []).filter((d) => !d.inProfile);
   const words = (query ?? "").toLowerCase();
   const shown = words ? all.filter((d) => d.name.toLowerCase().includes(words)) : all;
-  const replaced = all.filter((d) => d.replacedBy).length;
+  const replaced = shown.filter((d) => d.replacedBy).length;
   $("#dependencies").hidden = !shown.length;
   $("#dependencies > summary").textContent =
-    `Dependencies (${all.length - replaced})` + (replaced ? ` · ${replaced} replaced` : "");
+    `Dependencies (${shown.length - replaced})` + (replaced ? ` · ${replaced} replaced` : "");
   $("#dependencies-list").replaceChildren(...shown.map(dependencyRow));
 }
 
