@@ -183,12 +183,18 @@ for (const tab of document.querySelectorAll("#settings-tabs [role=tab]")) {
 }
 
 /** Opens the dialog, on `tab` if given (see selectSettingsTab), otherwise
- * where it was last left. */
+ * where it was last left. It opens straight away and each part fills in
+ * as it loads, since some are slow (asking xdg-mime about nxm:// links
+ * can take a second or more). */
 export async function openSettings(tab) {
   $("#settings-error").hidden = true;
   if (tab) selectSettingsTab(tab);
-  await Promise.all([render(), renderComputers(), renderDaemon(), renderLinks(), renderAppearance()]);
+  $("#links-state").textContent = "Checking…";
+  $("#links-handle").hidden = true;
   dialog.showModal();
+  const loads = [render(), renderComputers(), renderDaemon(), renderLinks(), renderAppearance()];
+  const failed = (await Promise.allSettled(loads)).find((r) => r.status === "rejected");
+  if (failed) showError(failed.reason);
 }
 
 $("#app-settings").addEventListener("click", () => openSettings().catch(() => {}));
