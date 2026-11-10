@@ -1372,8 +1372,10 @@ dialog button.danger-text {
   display: contents;
 }
 
-/* A mod's tags, kept behind a small icon that lists them while hovered. */
-.tags-mark {
+/* A mod's tags, and what it needs and what needs it, each kept behind a
+   small icon that lists them while hovered (see hoverMark() in mods.js). */
+.tags-mark,
+.ties-mark {
   display: inline-flex;
   align-items: center;
   color: var(--pw-muted);
@@ -1381,11 +1383,14 @@ dialog button.danger-text {
 }
 
 .tags-mark:hover,
-.tags-mark:focus-visible {
+.tags-mark:focus-visible,
+.ties-mark:hover,
+.ties-mark:focus-visible {
   color: var(--pw-text);
 }
 
-.tags-mark svg {
+.tags-mark svg,
+.ties-mark svg {
   width: 15px;
   height: 15px;
   fill: none;
@@ -1395,12 +1400,14 @@ dialog button.danger-text {
   stroke-linejoin: round;
 }
 
-.row-details .tags-mark {
+.row-details .tags-mark,
+.row-details .ties-mark {
   margin-right: 6px;
   vertical-align: middle;
 }
 
-.tags-popup {
+.tags-popup,
+.ties-popup {
   position: fixed;
   z-index: 100;
   max-width: 260px;
@@ -1410,6 +1417,27 @@ dialog button.danger-text {
   border-radius: var(--pw-radius);
   box-shadow: var(--pw-shadow-md);
   pointer-events: none;
+}
+
+.ties-popup {
+  max-width: 320px;
+  font-size: 12px;
+}
+
+.ties-popup h4 {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ties-popup ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ties-popup ul + h4 {
+  margin-top: 6px;
 }
 
 /* A mod's priority, as a chip (see priorityInput() in mods.js): a faint

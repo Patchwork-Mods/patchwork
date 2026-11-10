@@ -9,6 +9,7 @@ import {
   h,
   initials,
   link,
+  linkIcon,
   openExternal,
   tagIcon,
   trashIcon,
@@ -504,7 +505,6 @@ function rowDetails(m, item, onRemove) {
     count(item.rating, "likes"),
     h("span", {}, `${m.source}:${m.shownId}`),
     worksWith(m),
-    ...tiesOf(m),
   ].filter(Boolean);
   const urlButton = (url, text) =>
     url && h("button", { type: "button", title: url, onclick: () => openExternal(url) }, text);
@@ -514,6 +514,7 @@ function rowDetails(m, item, onRemove) {
       "div",
       { class: "facts muted" },
       tagsMark(m),
+      tiesMark(m),
       facts.flatMap((f, i) => (i ? [" · ", f] : [f])),
     ),
     m.softDependencies?.length > 0 && h("h4", { class: "requirements-title" }, "It also lists"),
@@ -539,58 +540,61 @@ function rowDetails(m, item, onRemove) {
   ];
 }
 
-/** The tag list popped up by hovering or focusing a mod's tag icon, if one is up. */
-let tagsPopup = null;
-const hideTags = () => {
-  tagsPopup?.remove();
-  tagsPopup = null;
+/** The list popped up by hovering or focusing a mod's tags or ties icon, if one is up. */
+let markPopup = null;
+const hidePopup = () => {
+  markPopup?.remove();
+  markPopup = null;
 };
 // it's placed once, so it goes rather than float off when anything scrolls
-document.addEventListener("scroll", hideTags, true);
+document.addEventListener("scroll", hidePopup, true);
 // nor does it outlive its icon, say when the mods are drawn again under the pointer
 document.addEventListener("pointerover", (e) => {
-  if (tagsPopup && !e.target.closest?.(".tags-mark")) hideTags();
+  if (markPopup && !e.target.closest?.(".tags-mark, .ties-mark")) hidePopup();
 });
 
 /**
- * A small tag icon that shows a mod's tags while hovered or focused, or
- * nothing when it hasn't any. The list is put on the page itself, since a
- * card clips what spills out of it.
+ * A small icon (with class `name`-mark) that pops up `content()` (in a
+ * `name`-popup) while hovered or focused. The popup is put on the page
+ * itself, since a card clips what spills out of it.
  */
-function tagsMark(m) {
-  const tags = modTags(m);
-  if (tags.length === 0) return null;
+function hoverMark(name, label, icon, content) {
   const show = () => {
-    hideTags();
-    tagsPopup = h(
-      "div",
-      { class: "tags-popup", role: "tooltip" },
-      h("div", { class: "tags" }, tags.map((t) => h("span", { class: "tag" }, t))),
-    );
-    document.body.append(tagsPopup);
+    hidePopup();
+    markPopup = h("div", { class: `${name}-popup`, role: "tooltip" }, content());
+    document.body.append(markPopup);
     const at = mark.getBoundingClientRect();
-    const pop = tagsPopup.getBoundingClientRect();
+    const pop = markPopup.getBoundingClientRect();
     const centred = at.left + at.width / 2 - pop.width / 2;
     const left = Math.min(Math.max(8, centred), innerWidth - pop.width - 8);
     const below = at.bottom + 6;
     const top = below + pop.height > innerHeight - 8 ? at.top - pop.height - 6 : below;
-    tagsPopup.style.left = `${left}px`;
-    tagsPopup.style.top = `${Math.max(8, top)}px`;
+    markPopup.style.left = `${left}px`;
+    markPopup.style.top = `${Math.max(8, top)}px`;
   };
   const mark = h(
     "span",
     {
-      class: "tags-mark",
+      class: `${name}-mark`,
       tabindex: "0",
-      "aria-label": `Tags: ${tags.join(", ")}`,
+      "aria-label": label,
       onpointerenter: show,
-      onpointerleave: hideTags,
+      onpointerleave: hidePopup,
       onfocus: show,
-      onblur: hideTags,
+      onblur: hidePopup,
     },
-    tagIcon(),
+    icon,
   );
   return mark;
+}
+
+/** A small tag icon that shows a mod's tags while hovered or focused, or nothing when it hasn't any. */
+function tagsMark(m) {
+  const tags = modTags(m);
+  if (tags.length === 0) return null;
+  return hoverMark("tags", `Tags: ${tags.join(", ")}`, tagIcon(), () =>
+    h("div", { class: "tags" }, tags.map((t) => h("span", { class: "tag" }, t))),
+  );
 }
 
 /** Which versions of the game a mod works with, if anything says. */
@@ -601,18 +605,26 @@ function worksWith(m) {
   return h("span", { title }, `Works with ${describeVersions(known.versions)}`);
 }
 
-/** What a profile's mod needs, what needs it and what it stands in for, from the lockfile. */
-function tiesOf(m) {
+/**
+ * A small link icon that lists what a profile's mod needs, what needs it and
+ * what it stands in for (from the lockfile) while hovered or focused, or
+ * nothing when it has no ties.
+ */
+function tiesMark(m) {
   const deps = state.profile?.dependencies ?? [];
-  const names = (list) => list.join(", ");
-  const needs = deps.filter((d) => d.neededBy.includes(m.name) && !d.replacedBy).map((d) => d.name);
-  const neededBy = deps.find((d) => d.key === m.key)?.neededBy ?? [];
-  const replaces = deps.filter((d) => d.replacedBy === m.name).map((d) => d.name);
-  return [
-    needs.length > 0 && h("span", {}, `Needs ${names(needs)}`),
-    neededBy.length > 0 && h("span", {}, `Needed by ${names(neededBy)}`),
-    replaces.length > 0 && h("span", {}, `Stands in for ${names(replaces)}`),
-  ];
+  const groups = [
+    ["Needs", deps.filter((d) => d.neededBy.includes(m.name) && !d.replacedBy).map((d) => d.name)],
+    ["Needed by", deps.find((d) => d.key === m.key)?.neededBy ?? []],
+    ["Stands in for", deps.filter((d) => d.replacedBy === m.name).map((d) => d.name)],
+  ].filter(([, names]) => names.length > 0);
+  if (groups.length === 0) return null;
+  const label = groups.map(([title, names]) => `${title} ${names.join(", ")}`).join("; ");
+  return hoverMark("ties", label, linkIcon(), () =>
+    groups.flatMap(([title, names]) => [
+      h("h4", {}, `${title} (${names.length})`),
+      h("ul", {}, [...names].sort((a, b) => a.localeCompare(b)).map((n) => h("li", {}, n))),
+    ]),
+  );
 }
 
 /** A mod's picture, or its initials when it hasn't got one. */
@@ -674,7 +686,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
   const tags = h("span", { class: "card-tags" });
   const fill = () => {
     const item = cardItem(m);
-    tags.replaceChildren(...[tagsMark(m)].filter(Boolean));
+    tags.replaceChildren(...[tagsMark(m), tiesMark(m)].filter(Boolean));
     cover.replaceChildren(modIcon(item));
     body.replaceChildren(cardBody(item));
     more.replaceChildren(...cardMore(m, item, settings).filter(Boolean));
@@ -754,9 +766,7 @@ function cardMore(m, item, settings) {
   const urlButton = (url, text, title) =>
     url &&
     h("button", { type: "button", title: `${title}: ${url}`, onclick: () => openExternal(url) }, text);
-  const facts = [h("span", {}, `${m.source}:${m.shownId}`), worksWith(m), ...tiesOf(m)].filter(
-    Boolean,
-  );
+  const facts = [h("span", {}, `${m.source}:${m.shownId}`), worksWith(m)].filter(Boolean);
   return [
     h(
       "div",
