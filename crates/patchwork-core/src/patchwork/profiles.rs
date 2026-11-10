@@ -1,6 +1,7 @@
 //! Creating, finding, loading and removing profiles, and where their files
 //! live.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -19,6 +20,9 @@ use crate::{Error, Result};
 struct State {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     current_profile: Option<String>,
+    /// The profile last used for each game, so the GUI can reopen it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    last_profiles: BTreeMap<String, String>,
 }
 
 impl Patchwork {
@@ -27,11 +31,22 @@ impl Patchwork {
         state.current_profile.map(|p| p.parse()).transpose()
     }
 
+    /// The profile last used for each game, by game id.
+    pub fn last_profiles(&self) -> Result<BTreeMap<String, ProfileRef>> {
+        let state: State = fsutil::read_toml(&self.paths.state_file())?.unwrap_or_default();
+        Ok(state
+            .last_profiles
+            .into_iter()
+            .filter_map(|(game, p)| Some((game, p.parse().ok()?)))
+            .collect())
+    }
+
+    /// Makes `profile` the current one, and the last one used for its game.
     pub fn use_profile(&self, profile: &ProfileRef) -> Result<()> {
-        self.load_profile(profile)?;
-        let state = State {
-            current_profile: Some(profile.to_string()),
-        };
+        let loaded = self.load_profile(profile)?;
+        let mut state: State = fsutil::read_toml(&self.paths.state_file())?.unwrap_or_default();
+        state.current_profile = Some(profile.to_string());
+        state.last_profiles.insert(loaded.game, profile.to_string());
         fsutil::write_toml(&self.paths.state_file(), &state)
     }
 
@@ -116,8 +131,14 @@ impl Patchwork {
             fs::remove_dir_all(&state).at(&state)?;
         }
         let mut state: State = fsutil::read_toml(&self.paths.state_file())?.unwrap_or_default();
-        if state.current_profile.as_deref() == Some(profile.to_string().as_str()) {
+        let id = profile.to_string();
+        let before = state.last_profiles.len();
+        state.last_profiles.retain(|_, p| *p != id);
+        let forgotten = state.last_profiles.len() != before;
+        if state.current_profile.as_deref() == Some(id.as_str()) {
             state.current_profile = None;
+            fsutil::write_toml(&self.paths.state_file(), &state)?;
+        } else if forgotten {
             fsutil::write_toml(&self.paths.state_file(), &state)?;
         }
         // so that it stops being synced, rather than coming back

@@ -752,6 +752,34 @@ async fn removing_a_profile_needs_it_undeployed_first() {
     assert_eq!(pw.current_profile().unwrap(), Some(other));
 }
 
+#[test]
+fn remembers_the_last_profile_of_each_game() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("game-a", "none")).unwrap();
+    pw.add_game(new_game("game-b", "none")).unwrap();
+    pw.create_profile("game-a", "first").unwrap();
+    let a = pw.create_profile("game-a", "second").unwrap();
+    let b = pw.create_profile("game-b", "only").unwrap();
+
+    pw.use_profile(&a).unwrap();
+    pw.use_profile(&b).unwrap();
+    assert_eq!(pw.current_profile().unwrap(), Some(b.clone()));
+    let last = pw.last_profiles().unwrap();
+    assert_eq!(last.get("game-a"), Some(&a));
+    assert_eq!(last.get("game-b"), Some(&b));
+
+    // removing a game's last profile forgets it, even when it isn't current
+    pw.remove_profile(&a).unwrap();
+    let last = pw.last_profiles().unwrap();
+    assert_eq!(last.get("game-a"), None);
+    assert_eq!(last.get("game-b"), Some(&b));
+    assert_eq!(pw.current_profile().unwrap(), Some(b));
+}
+
 /// Lets a test keep hold of a source it's handed to [`Patchwork`].
 struct SharedSource(std::sync::Arc<Versioned>);
 

@@ -70,6 +70,8 @@ export async function switchProfile(id) {
   clearLink();
   await run("use_profile", { id });
   state.overview.current = id;
+  const game = state.overview.profiles.find((p) => p.id === id)?.game;
+  if (game) state.overview.lastProfiles[game] = id;
   await openProfile(id);
 }
 

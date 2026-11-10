@@ -131,16 +131,16 @@ gameSearch.addEventListener("keydown", (e) => {
 });
 
 /**
- * Shows a game's profiles, opening `profile` if given, or else the current
- * profile if it's for this game, or else its first one.
+ * Shows a game's profiles, opening `profile` if given, or else the one last
+ * used for this game, or else its first one.
  */
 export async function openGame(id, profile = null) {
   state.game = id;
   state.profile = null;
   selectTab("mods");
-  const current = state.overview.current;
+  const last = state.overview.lastProfiles[id];
   const ps = profilesOf(id);
-  const pick = ps.find((p) => p.id === profile) ?? ps.find((p) => p.id === current) ?? ps[0];
+  const pick = ps.find((p) => p.id === profile) ?? ps.find((p) => p.id === last) ?? ps[0];
   // Load before showing the screen, so the last game's mods don't flash up
   // while this one's profile is fetched.
   try {

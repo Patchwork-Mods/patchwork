@@ -144,6 +144,8 @@ struct Overview {
     games: Vec<GameInfo>,
     profiles: Vec<ProfileInfo>,
     current: Option<String>,
+    /// The profile last used for each game, by game id.
+    last_profiles: BTreeMap<String, String>,
     /// Shared rule sets a new game's deployer can use.
     rulesets: Vec<String>,
     warnings: Vec<String>,
@@ -345,6 +347,12 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
         games,
         profiles,
         current: pw.current_profile().map_err(msg)?.map(|r| r.to_string()),
+        last_profiles: pw
+            .last_profiles()
+            .map_err(msg)?
+            .into_iter()
+            .map(|(game, p)| (game, p.to_string()))
+            .collect(),
         rulesets: registry.data_ids("rulesets").map(str::to_owned).collect(),
         warnings,
     })
