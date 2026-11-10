@@ -84,6 +84,10 @@ export async function openProfile(id) {
  */
 export function showProfile(profile, { keepMods = false } = {}) {
   state.profile = profile;
+  // The sidebar counts come from the overview, which commands that return
+  // the changed profile (like adding a mod) don't reload.
+  const listed = state.overview.profiles.find((p) => p.id === profile.id);
+  if (listed) listed.mods = profile.mods.length;
   state.searches = {};
   state.filters = {};
   renderSidebar();
