@@ -24,10 +24,33 @@ let current = null;
 
 const layer = (name, css) => (css ? `@layer ${name} {\n${css}\n}` : "");
 
-/** Applies the themes for `game` (or none, for All games). */
+/** theme() answers by game ("" for none), so that moving between screens
+ *  can paint straight away. Each is checked again in the background after
+ *  being used, and the cache is cleared when themes or their settings change. */
+const cache = new Map();
+
+/** Applies the themes for `game` (or none, for All games). Paints at once
+ *  from the cache when it can, returning without waiting on main.rs. */
 export async function applyTheme(game) {
-  document.body.dataset.game = game ?? "";
-  const theme = await invoke("theme", { game });
+  const key = game ?? "";
+  document.body.dataset.game = key;
+  const cached = cache.get(key);
+  if (cached) {
+    current = cached;
+    paint(cached);
+    fetchTheme(key).catch(() => {});
+    return;
+  }
+  await fetchTheme(key);
+}
+
+async function fetchTheme(key) {
+  const theme = await invoke("theme", { game: key || null });
+  const was = cache.get(key);
+  cache.set(key, theme);
+  // Another game may have been opened meanwhile, or nothing changed.
+  if (document.body.dataset.game !== key) return;
+  if (was && JSON.stringify(was) === JSON.stringify(theme)) return;
   current = theme;
   paint(theme);
   if (theme.problems.length) status(theme.problems.join("; "), true);
@@ -121,7 +144,10 @@ function endPreview() {
 listen("patchwork://themes-changed", () => refresh().catch(() => {}));
 
 async function refresh() {
-  const theme = await invoke("theme", { game: document.body.dataset.game || null });
+  cache.clear();
+  const key = document.body.dataset.game;
+  const theme = await invoke("theme", { game: key || null });
+  cache.set(key, theme);
   current = theme;
   if (theme.problems.length) status(theme.problems.join("; "), true);
   if (appearance.closest("dialog").open) {
@@ -326,6 +352,7 @@ function renderModeNote() {
 async function savePrefs(change) {
   prefs = { ...prefs, ...change };
   await run("set_theme_prefs", { prefs });
+  cache.clear();
   await applyTheme(document.body.dataset.game || null);
   renderModeNote();
 }

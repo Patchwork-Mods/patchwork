@@ -18,9 +18,11 @@ function showScreen(screen) {
 export async function showGames() {
   state.game = null;
   state.profile = null;
-  showScreen("games");
+  // Theme first, so the menu doesn't show for a frame in the game's look.
+  // It's cached after the first time, so this doesn't wait on main.rs.
   await applyTheme(null);
   renderGames();
+  showScreen("games");
 }
 
 const gameSearch = $("#game-search");
@@ -135,15 +137,20 @@ gameSearch.addEventListener("keydown", (e) => {
 export async function openGame(id, profile = null) {
   state.game = id;
   state.profile = null;
-  showScreen("game");
   selectTab("mods");
-  await applyTheme(id);
-  renderSidebar();
   const current = state.overview.current;
   const ps = profilesOf(id);
   const pick = ps.find((p) => p.id === profile) ?? ps.find((p) => p.id === current) ?? ps[0];
-  if (pick) await switchProfile(pick.id);
-  else renderProfile();
+  // Load before showing the screen, so the last game's mods don't flash up
+  // while this one's profile is fetched.
+  try {
+    if (pick) await switchProfile(pick.id);
+    else renderProfile();
+  } finally {
+    await applyTheme(id);
+    renderSidebar();
+    showScreen("game");
+  }
 }
 
 $("#back").addEventListener("click", () => go(showGames));

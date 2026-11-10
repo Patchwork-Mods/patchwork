@@ -309,7 +309,10 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
                     .map_err(msg)?
                     .map(|i| i.path.display().to_string()),
                 origin: entry.origins(),
-                image: game.image.as_deref().and_then(image_src),
+                image: match &game.image {
+                    Some(image) => image_src(image),
+                    None => game.detect.steam.first().map(|&app| steam_capsule(app)),
+                },
             })
         })
         .collect::<CmdResult<_>>()?;
@@ -345,6 +348,14 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
         rulesets: registry.data_ids("rulesets").map(str::to_owned).collect(),
         warnings,
     })
+}
+
+/// Steam's portrait library art for an app, used for games with no `image`.
+/// If Steam has none, the image fails to load and the card shows initials.
+fn steam_capsule(app: u32) -> String {
+    format!(
+        "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{app}/library_600x900.jpg"
+    )
 }
 
 /// Turns a game's `image` into something the webview can show, or `None` if

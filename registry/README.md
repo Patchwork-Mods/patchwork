@@ -53,7 +53,8 @@ A typical Thunderstore game looks like this:
 schema = 1
 id = "atlyss"
 name = "ATLYSS"
-image = "https://..."            # a URL, or a path relative to this file
+image = "https://..."            # a URL, or a path relative to this file;
+                                 # if left out, Steam's library art for detect.steam
 accent = "#e8a33d"               # optional: the app's accent while it's open
 
 [sources.thunderstore]
