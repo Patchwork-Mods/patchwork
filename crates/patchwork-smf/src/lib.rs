@@ -1192,7 +1192,7 @@ impl<'a> Build<'a> {
         let out = self.output(peacock::SUMMARY)?;
         fs::write(&out, summary).map_err(|e| format!("{}: {e}", out.display()))?;
         if !self.server_side.plugins.is_empty() {
-            self.warnings.push(peacock::setup_warning(root));
+            self.warnings.extend(peacock::setup_warning(root));
         }
         let mut placements = std::mem::take(&mut self.plugin_placements);
         placements.push(placement(peacock::SUMMARY));

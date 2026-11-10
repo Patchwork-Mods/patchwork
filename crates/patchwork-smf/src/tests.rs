@@ -768,6 +768,41 @@ fn peacock_gets_plugins_and_what_it_serves() {
         "{:?}",
         desired.warnings
     );
+
+    // A Peacock in the game's folder gets named, and once it's pointed at
+    // the summary there's nothing to ask.
+    let dir = env.game.join("Peacock");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("chunk0.js"), "").unwrap();
+    fs::write(
+        dir.join("options.ini"),
+        "[peacock]\nframeworkDeploySummaryPath=AUTO\n",
+    )
+    .unwrap();
+    let desired = env.build(std::slice::from_ref(&m)).unwrap();
+    let options = dir.join("options.ini").display().to_string();
+    assert!(
+        desired.warnings.iter().any(|w| w.contains(&options)),
+        "{:?}",
+        desired.warnings
+    );
+    let summary = std::path::absolute(&env.game)
+        .unwrap()
+        .join(peacock::SUMMARY);
+    fs::write(
+        dir.join("options.ini"),
+        format!(
+            "; Peacock\n[peacock]\nframeworkDeploySummaryPath = {}\n",
+            summary.display()
+        ),
+    )
+    .unwrap();
+    let desired = env.build(std::slice::from_ref(&m)).unwrap();
+    assert!(
+        !desired.warnings.iter().any(|w| w.contains("Peacock")),
+        "{:?}",
+        desired.warnings
+    );
 }
 
 #[test]
