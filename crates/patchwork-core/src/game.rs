@@ -28,6 +28,10 @@ pub struct GameDef {
     /// Left out of game lists, for builtin games a user doesn't play.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// The game's colour, which the GUI uses for its accent while the game
+    /// is open, unless the game has a theme of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent: Option<Accent>,
     /// Per-source settings, e.g. `[sources.thunderstore] community = "..."`.
     #[serde(default)]
     pub sources: BTreeMap<String, toml::Table>,
@@ -73,6 +77,67 @@ pub struct GameDef {
     /// ```
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: BTreeMap<String, toml::Table>,
+}
+
+/// A `#rrggbb` or `#rgb` colour, such as a game's accent. Only hex, so it
+/// can go straight into CSS and its brightness can be worked out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Accent(String);
+
+impl Accent {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Red, green and blue, 0–255.
+    pub fn rgb(&self) -> [u8; 3] {
+        let hex = &self.0[1..];
+        let digit = |i: usize, len: usize| u8::from_str_radix(&hex[i..i + len], 16).unwrap_or(0);
+        if hex.len() == 3 {
+            [0, 1, 2].map(|i| digit(i, 1) * 17)
+        } else {
+            [0, 2, 4].map(|i| digit(i, 2))
+        }
+    }
+
+    /// Whether dark text reads better on it than light text, going by
+    /// which has more contrast with it (WCAG relative luminance).
+    pub fn is_light(&self) -> bool {
+        let [r, g, b] = self.rgb().map(|c| {
+            let c = f64::from(c) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        });
+        let l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        // Contrast with black, (l + 0.05) / 0.05, against contrast with
+        // white, 1.05 / (l + 0.05), meet at about 0.179.
+        l > 0.179
+    }
+}
+
+impl TryFrom<String> for Accent {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, String> {
+        let ok = s.strip_prefix('#').is_some_and(|hex| {
+            matches!(hex.len(), 3 | 6) && hex.bytes().all(|b| b.is_ascii_hexdigit())
+        });
+        if ok {
+            Ok(Accent(s.to_ascii_lowercase()))
+        } else {
+            Err(format!("{s:?} isn't a colour like \"#c4643f\""))
+        }
+    }
+}
+
+impl From<Accent> for String {
+    fn from(a: Accent) -> String {
+        a.0
+    }
 }
 
 /// The key in `[ext.<id>]` that turns some of the extension's hooks off.
@@ -723,5 +788,29 @@ pub fn validate_game_id(id: &str) -> Result<(), Error> {
         Err(Error::invalid(format!(
             "`{id}` isn't a valid game id; use lowercase letters, digits and `-`"
         )))
+    }
+}
+
+#[cfg(test)]
+mod accent_tests {
+    use super::Accent;
+
+    #[test]
+    fn accents() {
+        let a = Accent::try_from("#C4643F".to_owned()).unwrap();
+        assert_eq!(a.as_str(), "#c4643f");
+        assert_eq!(a.rgb(), [0xc4, 0x64, 0x3f]);
+        assert_eq!(
+            Accent::try_from("#fa0".to_owned()).unwrap().rgb(),
+            [255, 170, 0]
+        );
+        for bad in ["c4643f", "#c4643", "red", "#ggg", "#fff;}", ""] {
+            assert!(Accent::try_from(bad.to_owned()).is_err(), "{bad}");
+        }
+        assert!(Accent::try_from("#ffd700".to_owned()).unwrap().is_light());
+        assert!(!Accent::try_from("#1a237e".to_owned()).unwrap().is_light());
+        // Black has more contrast with it than white does.
+        assert!(Accent::try_from("#c4643f".to_owned()).unwrap().is_light());
+        assert!(!Accent::try_from("#8b2e16".to_owned()).unwrap().is_light());
     }
 }

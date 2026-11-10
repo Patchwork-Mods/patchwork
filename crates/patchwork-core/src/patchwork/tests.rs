@@ -107,6 +107,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         description: None,
         image: None,
         hidden: false,
+        accent: None,
         sources: BTreeMap::new(),
         deployer: crate::game::DeployerSpec {
             kind: kind.to_owned(),

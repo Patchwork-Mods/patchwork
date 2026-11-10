@@ -9,6 +9,10 @@ compiled into patchwork: `build.rs` in `patchwork-core` picks up every
 - `rulesets/<id>.toml`: shared install rules for the `rules` deployer.
 - `runners/<id>.toml`: ways to start games that are just a command to fill
   in (see below).
+- `themes/<id>.css`: games' own themes for the app, each with
+  `game = "<id>"` in its `@theme` comment (see
+  [examples/themes](../examples/themes/README.md)). `build.rs` in
+  `patchwork-gui` builds these in.
 
 While you work on definitions, set `PATCHWORK_REGISTRY_PATH` to this
 directory so they're loaded at runtime without rebuilding:
@@ -25,6 +29,11 @@ Definitions are loaded in layers, and later layers win:
 2. installed registries, in `<data>/registries/<name>/`
 3. directories in `$PATCHWORK_REGISTRY_PATH`
 4. the user's own files, in `<config>/games/` and `<config>/rulesets/`
+
+Themes follow the same layers: a `themes/` folder in an installed registry
+or a `$PATCHWORK_REGISTRY_PATH` directory adds themes, and one with the
+same file name as an earlier one takes its place, up to the user's own in
+`<config>/themes/`.
 
 All of them use the same layout. A file for an id that's already defined is
 merged over the earlier one: tables merge key by key, and any other value
@@ -45,6 +54,7 @@ schema = 1
 id = "atlyss"
 name = "ATLYSS"
 image = "https://..."            # a URL, or a path relative to this file
+accent = "#e8a33d"               # optional: the app's accent while it's open
 
 [sources.thunderstore]
 community = "atlyss"

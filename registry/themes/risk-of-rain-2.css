@@ -1,0 +1,255 @@
+/*
+ * @theme
+ * name = "Risk of Rain 2"
+ * game = "risk-of-rain-2"
+ * modes = ["dark"]
+ *
+ * Night-sky HUD panels with cut corners, the item rarity colours along the
+ * top of each mod card (common, uncommon, legendary, boss, lunar, void,
+ * equipment), a health-bar green for switches and the equipment orange for
+ * the main buttons.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Item rarities, as they show on pickups and in the logbook. */
+  --ror-common: #e9ecef;
+  --ror-uncommon: #77c94a;
+  --ror-legendary: #e5463c;
+  --ror-boss: #e8cf3a;
+  --ror-lunar: #4f8dff;
+  --ror-void: #c46ad8;
+  --ror-equipment: #ff8a1c;
+  /* How far corners are cut. */
+  --ror-cut: 9px;
+
+  --pw-font: "Bahnschrift", "DIN Alternate", "Barlow Semi Condensed", "Roboto Condensed",
+    "Arial Narrow", system-ui, sans-serif;
+  --pw-radius: 0;
+
+  --pw-bg: #0b0f17;
+  --pw-surface: #141b27;
+  --pw-sidebar: #080b11;
+  --pw-text: #e3e7ee;
+  --pw-muted: #8793a6;
+  --pw-border: #2a3546;
+  --pw-accent: var(--ror-equipment);
+  --pw-accent-text: #120a02;
+  --pw-danger: var(--ror-legendary);
+  --pw-danger-text: #fff3f2;
+  --pw-warning: var(--ror-boss);
+  --pw-link: #8fb6ff;
+  --pw-focus: var(--ror-boss);
+  --pw-hover: #1b2433;
+  --pw-selection: color-mix(in srgb, var(--ror-lunar) 45%, transparent);
+  --pw-shadow-color: #000000;
+}
+
+/* The sky over Distant Roost: a cold glow from the top, a little teleporter
+   red low on the left. */
+body {
+  background:
+    radial-gradient(ellipse 70% 50% at 85% -10%, rgb(79 141 255 / 0.16), transparent 70%),
+    radial-gradient(ellipse 50% 40% at -5% 110%, rgb(229 70 60 / 0.12), transparent 70%),
+    var(--pw-bg);
+  background-attachment: fixed;
+}
+
+#sidebar,
+#statusbar {
+  background: rgb(8 11 17 / 0.85);
+}
+
+h1,
+h2,
+h3,
+.brand,
+.tabs button,
+.game-section > h2,
+legend {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.brand {
+  font-weight: 700;
+  color: #fff;
+}
+
+/* Cut corners, the HUD's one shape. */
+button,
+select,
+input:not([type="checkbox"]):not([type="radio"]),
+.result,
+.mod-list,
+dialog,
+.tag,
+.badge {
+  clip-path: polygon(
+    var(--ror-cut) 0,
+    100% 0,
+    100% calc(100% - var(--ror-cut)),
+    calc(100% - var(--ror-cut)) 100%,
+    0 100%,
+    0 var(--ror-cut)
+  );
+}
+
+.tag,
+.badge {
+  --ror-cut: 4px;
+  border-radius: 0;
+}
+
+/* Buttons the HUD would draw: thin, bright edge on a dark plate. */
+button {
+  background: linear-gradient(180deg, #1d2636, #141b27);
+  border-color: #3a475c;
+  letter-spacing: 0.03em;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--pw-muted);
+  background: linear-gradient(180deg, #263147, #182030);
+}
+
+button.primary {
+  background: linear-gradient(180deg, #ffa34a, var(--ror-equipment));
+  color: var(--pw-accent-text);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffb66d, #ff9533);
+}
+
+button.danger {
+  background: linear-gradient(180deg, #f0675e, var(--ror-legendary));
+}
+
+/* Clipping would cut the focus ring, so draw it inside. */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline-offset: -3px;
+}
+
+/* The chosen profile and tab, lit like a selected menu entry. */
+#profiles button[aria-current="true"] {
+  background: linear-gradient(90deg, rgb(255 138 28 / 0.22), transparent);
+  box-shadow: inset 3px 0 0 var(--ror-equipment);
+  color: #fff;
+}
+
+#profiles button:hover {
+  background: linear-gradient(90deg, rgb(255 255 255 / 0.06), transparent);
+}
+
+.tabs button[aria-selected="true"] {
+  color: #fff;
+  box-shadow: inset 0 -2px 0 var(--ror-boss);
+}
+
+/* Mod cards as item tooltips: a rarity bar on top, going round the set. */
+.result {
+  border-color: #2e3a4d;
+  background: rgb(20 27 39 / 0.92);
+  border-top: 3px solid var(--rarity, var(--ror-common));
+}
+
+.result-grid > :nth-child(7n + 1) { --rarity: var(--ror-common); }
+.result-grid > :nth-child(7n + 2) { --rarity: var(--ror-uncommon); }
+.result-grid > :nth-child(7n + 3) { --rarity: var(--ror-legendary); }
+.result-grid > :nth-child(7n + 4) { --rarity: var(--ror-boss); }
+.result-grid > :nth-child(7n + 5) { --rarity: var(--ror-lunar); }
+.result-grid > :nth-child(7n + 6) { --rarity: var(--ror-void); }
+.result-grid > :nth-child(7n + 7) { --rarity: var(--ror-equipment); }
+
+.result:hover {
+  border-color: var(--rarity, var(--ror-common));
+  border-top-color: var(--rarity, var(--ror-common));
+}
+
+.result h3,
+.result h3 a {
+  color: var(--rarity, #fff);
+}
+
+.result.disabled {
+  --rarity: #4b5566;
+}
+
+.card-sheet {
+  background: rgb(20 27 39 / 0.97);
+}
+
+.card-sheet::before {
+  border-radius: 0;
+  background: var(--rarity, var(--pw-border));
+}
+
+/* The list view: logbook rows, a rarity tick on the left of each. */
+.mod-list {
+  background: rgb(20 27 39 / 0.9);
+}
+
+.mod-row {
+  box-shadow: inset 3px 0 0 var(--rarity, transparent);
+}
+
+.mod-list > :nth-child(7n + 1) { --rarity: var(--ror-common); }
+.mod-list > :nth-child(7n + 2) { --rarity: var(--ror-uncommon); }
+.mod-list > :nth-child(7n + 3) { --rarity: var(--ror-legendary); }
+.mod-list > :nth-child(7n + 4) { --rarity: var(--ror-boss); }
+.mod-list > :nth-child(7n + 5) { --rarity: var(--ror-lunar); }
+.mod-list > :nth-child(7n + 6) { --rarity: var(--ror-void); }
+.mod-list > :nth-child(7n + 7) { --rarity: var(--ror-equipment); }
+
+.mod-list > :nth-child(even) {
+  background: rgb(255 255 255 / 0.02);
+}
+
+/* Switches as a health bar: green on, empty grey off, square ends. */
+.switch input,
+.switch input::before {
+  border-radius: 0;
+}
+
+.switch input {
+  background: #2a3343;
+  box-shadow: inset 0 0 0 1px #3a475c;
+}
+
+.switch input:checked {
+  background: linear-gradient(180deg, #8fdc5c, #4f9a2c);
+}
+
+.switch input::before {
+  background: #e3e7ee;
+}
+
+.tag {
+  border-color: #3a475c;
+  color: var(--pw-muted);
+}
+
+dialog {
+  border-color: #3a475c;
+  background: rgb(14 19 28 / 0.98);
+}
+
+dialog::backdrop {
+  background: rgb(4 6 10 / 0.7);
+}
+
+/* Split buttons (Deploy and its menu) are cut as one: only their outer
+   corners. */
+.split > button {
+  clip-path: polygon(var(--ror-cut) 0, 100% 0, 100% 100%, 0 100%, 0 var(--ror-cut));
+}
+
+.split > .menu > summary {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--ror-cut)), calc(100% - var(--ror-cut)) 100%, 0 100%);
+}

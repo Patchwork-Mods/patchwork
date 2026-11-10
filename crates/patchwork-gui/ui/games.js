@@ -6,6 +6,7 @@ import { refresh, renderProfile, renderSidebar, switchProfile } from "./profile.
 import { selectTab } from "./browse.js";
 import { go } from "./nav.js";
 import { openSettings, readSetting, settingField } from "./settings.js";
+import { applyTheme, renderGameTheme, saveGameTheme } from "./theme.js";
 
 function showScreen(screen) {
   document.body.dataset.screen = screen;
@@ -146,14 +147,6 @@ export async function openGame(id, profile = null) {
 }
 
 $("#back").addEventListener("click", () => go(showGames));
-
-async function applyTheme(game) {
-  document.body.dataset.game = game ?? "";
-  const theme = await invoke("theme", { game });
-  $("#theme-builtin").textContent = theme.builtin;
-  $("#theme-user").textContent = theme.user ?? "";
-  $("#theme-game").textContent = theme.game ?? "";
-}
 
 // Adding a game. Writes <config>/games/<id>.toml through create_game in
 // main.rs; anything the form doesn't cover can be added to that file later.
@@ -371,6 +364,7 @@ $("#game-settings").addEventListener("click", async () => {
   $("#game-settings-root-list").replaceChildren(
     ...rootSettings.map((r) => rootField(r, install.roots?.[r.id])),
   );
+  await renderGameTheme(game.id);
   $("#game-settings-title").textContent = `${game.name} settings`;
   $("#game-settings-env").textContent = env?.summary ? `Installed: ${env.summary}` : "";
   $("#game-settings-env").hidden = !env?.summary;
@@ -424,6 +418,7 @@ settingsForm.addEventListener("submit", async (e) => {
   submit.disabled = true;
   try {
     await invoke("set_game_settings", { game: state.game, settings });
+    await saveGameTheme();
   } catch (err) {
     $("#game-settings-error").textContent = String(err);
     $("#game-settings-error").hidden = false;

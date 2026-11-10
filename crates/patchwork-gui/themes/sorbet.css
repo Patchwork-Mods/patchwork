@@ -1,0 +1,122 @@
+/*
+ * @theme
+ * name = "Sorbet"
+ * modes = ["light", "dark"]
+ *
+ * Soft, round and light. Pastel colours with a dark-mode counterpart,
+ * pill-shaped buttons, very round cards that lift when hovered, and roomier
+ * spacing.
+ */
+
+:root {
+  --pw-font: "Nunito", "Quicksand", "Varela Round", "Comfortaa", system-ui, sans-serif;
+  --pw-radius: 16px;
+  --pw-gap: 16px;
+
+  --pw-bg: #fff5ef;
+  --pw-surface: #ffffff;
+  --pw-sidebar: #ffe7de;
+  --pw-text: #3b2f3a;
+  --pw-muted: #8a7686;
+  --pw-border: #f3d6cf;
+  --pw-accent: #ff6f9f;
+  --pw-accent-text: #ffffff;
+  --pw-danger: #e0465d;
+  --pw-danger-text: #ffffff;
+  --pw-warning: #f1a33b;
+  --pw-link: #7a5cff;
+  --pw-focus: #7a5cff;
+  --pw-hover: #fff0f4;
+  --pw-shadow-color: #c25a7a;
+  --pw-shadow-md: 0 8px 24px rgb(194 90 122 / 0.14);
+  --pw-shadow-lg: 0 14px 36px rgb(194 90 122 / 0.2);
+}
+
+:root[data-mode="dark"] {
+  --pw-bg: #231b25;
+  --pw-surface: #2e2431;
+  --pw-sidebar: #1c151e;
+  --pw-text: #f8e9f0;
+  --pw-muted: #b49fb0;
+  --pw-border: #47374a;
+  --pw-accent: #ff8fb5;
+  --pw-accent-text: #2a1020;
+  --pw-danger: #ff8a9c;
+  --pw-danger-text: #2a0d12;
+  --pw-link: #b6a3ff;
+  --pw-focus: #b6a3ff;
+  --pw-hover: #3a2d3d;
+  --pw-shadow-color: #000000;
+}
+
+body {
+  background: linear-gradient(160deg, var(--pw-bg), color-mix(in srgb, var(--pw-bg) 85%, #c9b8ff));
+}
+
+.brand {
+  font-weight: 800;
+  color: var(--pw-accent);
+}
+
+/* Pills. */
+button,
+select,
+input:not([type="checkbox"]):not([type="radio"]) {
+  border-radius: 999px;
+  padding-inline: 14px;
+}
+
+button.primary {
+  background: linear-gradient(135deg, var(--pw-accent), #ffa07a);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--pw-accent) 35%, transparent);
+  font-weight: 700;
+}
+
+#profiles button {
+  border-radius: 999px;
+}
+
+#profiles button[aria-current="true"] {
+  background: var(--pw-surface);
+  box-shadow: var(--pw-shadow-md);
+  color: var(--pw-accent);
+}
+
+.tabs button[aria-selected="true"] {
+  box-shadow: none;
+  background: var(--pw-surface);
+  color: var(--pw-accent);
+  font-weight: 700;
+}
+
+/* Cards: borderless, rounder still, lifting a little when hovered. */
+.result,
+.game-card {
+  border-color: transparent;
+  border-radius: 22px;
+  box-shadow: var(--pw-shadow-md);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.result:hover,
+.game-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--pw-shadow-lg);
+}
+
+.mod-list,
+dialog {
+  border-color: transparent;
+  border-radius: 22px;
+  box-shadow: var(--pw-shadow-md);
+}
+
+.tag {
+  border: none;
+  background: color-mix(in srgb, var(--pw-accent) 14%, transparent);
+  color: var(--pw-text);
+}
+
+.switch input:checked {
+  background: linear-gradient(135deg, var(--pw-accent), #ffa07a);
+}

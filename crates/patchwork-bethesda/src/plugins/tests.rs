@@ -74,6 +74,7 @@ impl Env {
             description: None,
             image: None,
             hidden: false,
+            accent: None,
             sources: Default::default(),
             deployer: DeployerSpec {
                 kind: KIND.to_owned(),

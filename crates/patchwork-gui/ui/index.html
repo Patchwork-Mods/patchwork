@@ -4,11 +4,14 @@
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 		<title>Patchwork</title>
-		<!-- The built-in look, then <config>/themes/user.css, then the selected
-         game's theme on top; see theme() in main.rs. -->
+		<!-- The built-in look, the theme picked for every game (unless the open
+         game's own theme replaces it), the game's theme, then
+         <config>/themes/user.css; see theme() in main.rs. -->
 		<style id="theme-builtin"></style>
-		<style id="theme-user"></style>
+		<style id="theme-global"></style>
+		<style id="theme-accent"></style>
 		<style id="theme-game"></style>
+		<style id="theme-user"></style>
 		<script type="module" src="app.js"></script>
 	</head>
 	<body data-screen="games">
@@ -432,6 +435,15 @@
 					</div>
 					<div id="game-settings-root-list" class="stack"></div>
 				</fieldset>
+				<fieldset class="stack">
+					<legend>Appearance</legend>
+					<label class="field">
+						<span>Theme</span>
+						<!-- Filled in by renderGameTheme() in theme.js. -->
+						<select id="game-settings-theme"></select>
+						<small id="game-settings-theme-note" class="muted"></small>
+					</label>
+				</fieldset>
 				<p class="muted hint">
 					Accounts for sources like Nexus Mods are in
 					<button type="button" id="game-settings-app" class="link">Settings</button>.
@@ -447,7 +459,7 @@
 		<!-- Settings for every game, in tabs: one section per source that takes
          any (see settings.js), linking the user's own computers (see
          sync.js) and the sync daemon (see daemon.js), plus which program
-         opens nxm:// links (see links.js). Only the sources' settings wait for Save; every other
+         opens nxm:// links (see links.js), and the app's look (see theme.js). Only the sources' settings wait for Save; every other
          button acts straight away. -->
 		<dialog id="settings-dialog">
 			<form id="settings-form" method="dialog" class="stack">
@@ -456,6 +468,7 @@
 					<button type="button" role="tab" data-tab="accounts" aria-selected="true">Accounts</button>
 					<button type="button" role="tab" data-tab="computers">My computers</button>
 					<button type="button" role="tab" data-tab="daemon">Background sync</button>
+					<button type="button" role="tab" data-tab="appearance">Appearance</button>
 				</div>
 				<div id="settings-sources" class="stack" data-panel="accounts"></div>
 				<fieldset id="links" class="stack" data-panel="accounts">
@@ -519,6 +532,38 @@
 						<button type="button" id="daemon-restart" hidden>Restart</button>
 						<button type="button" id="daemon-install" class="primary">Install</button>
 					</div>
+				</fieldset>
+				<fieldset id="appearance" class="stack" data-panel="appearance" hidden>
+					<legend>Appearance</legend>
+					<!-- One button per theme for every game, filled in by theme.js.
+					     Hovering or focusing one shows it on the whole window
+					     until the pointer or focus leaves; clicking picks it. -->
+					<div class="field">
+						<span id="theme-picker-label">Theme</span>
+						<div id="theme-picker" role="radiogroup" aria-labelledby="theme-picker-label"></div>
+						<small id="theme-picker-description" class="muted"></small>
+						<small id="theme-picker-note" class="muted" hidden></small>
+					</div>
+					<div class="field">
+						<label for="appearance-mode">Mode</label>
+						<select id="appearance-mode">
+							<option value="system">System</option>
+							<option value="light">Light</option>
+							<option value="dark">Dark</option>
+						</select>
+						<small id="appearance-mode-note" class="muted" hidden></small>
+					</div>
+					<div class="field">
+						<label for="appearance-game-themes">Game themes</label>
+						<select id="appearance-game-themes">
+							<option value="on">Full</option>
+							<option value="accent">Accent only</option>
+							<option value="off">Off</option>
+						</select>
+						<small class="muted">While a game is open, its own theme takes the place of yours when it has one, or
+							its colour is used for yours. A game's settings can pick another theme for it.</small>
+					</div>
+					<p id="appearance-problems" class="error" hidden></p>
 				</fieldset>
 				<p id="settings-error" class="error" hidden></p>
 				<div class="row end">

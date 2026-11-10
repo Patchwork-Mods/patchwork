@@ -9,10 +9,13 @@ and `<data>` are the platform's usual config and data directories, such as
 
 - `<config>/games/`, `<config>/rulesets/`, `<config>/themes/`: the user's
   own definitions and themes
+- `<config>/gui.toml`: the app's own preferences, such as which theme is
+  picked, for every game and for single games (`[theme.games]`)
 
 ## Registries
 
-- `<data>/registries/<name>/`: installed registries.
+- `<data>/registries/<name>/`: installed registries, laid out like
+  `registry/` (`games/`, `rulesets/`, `themes/` and so on).
   `$PATCHWORK_REGISTRY_PATH` adds more directories (`:`-separated) on top
 
 ## Profiles

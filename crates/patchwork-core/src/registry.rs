@@ -90,6 +90,22 @@ impl Registry {
             registry.insert(Origin::Builtin, kind, id, text, Path::new(&path));
         }
 
+        let (layers, problems) = Self::layers(paths);
+        registry.problems.extend(problems);
+        for (origin, dir) in layers {
+            registry.load_layer(&dir, origin);
+        }
+        Ok(registry)
+    }
+
+    /// The directories of every layer after the built-in one, in the order
+    /// they're loaded, each laid out as `<kind>/<id>.toml`. Other files
+    /// that come with registries (like the GUI's themes) are found the same
+    /// way. Also gives a problem for each `$PATCHWORK_REGISTRY_PATH` entry
+    /// that isn't a directory.
+    pub fn layers(paths: &Paths) -> (Vec<(Origin, PathBuf)>, Vec<Error>) {
+        let mut layers = Vec::new();
+        let mut problems = Vec::new();
         let registries = paths.registries();
         let mut names: Vec<_> = match fs::read_dir(&registries) {
             Ok(dir) => dir
@@ -101,22 +117,22 @@ impl Registry {
         };
         names.sort();
         for name in names {
-            registry.load_layer(&registries.join(&name), Origin::Registry(name));
+            layers.push((Origin::Registry(name.clone()), registries.join(&name)));
         }
 
         for dir in &paths.extra_registries {
             if !dir.is_dir() {
-                registry.problems.push(Error::invalid(format!(
+                problems.push(Error::invalid(format!(
                     "PATCHWORK_REGISTRY_PATH entry {} is not a directory",
                     dir.display()
                 )));
                 continue;
             }
-            registry.load_layer(dir, Origin::Dir(dir.clone()));
+            layers.push((Origin::Dir(dir.clone()), dir.clone()));
         }
 
-        registry.load_layer(paths.user_registry(), Origin::User);
-        Ok(registry)
+        layers.push((Origin::User, paths.user_registry().to_owned()));
+        (layers, problems)
     }
 
     fn load_layer(&mut self, root: &Path, origin: Origin) {
@@ -290,8 +306,15 @@ impl Registry {
 
 /// Game fields that don't affect deploying, so changing them doesn't make
 /// what was built for a game look out of date.
-const COSMETIC_GAME_FIELDS: &[&str] =
-    &["name", "description", "image", "hidden", "detect", "launch"];
+const COSMETIC_GAME_FIELDS: &[&str] = &[
+    "name",
+    "description",
+    "image",
+    "hidden",
+    "accent",
+    "detect",
+    "launch",
+];
 
 /// Moves what game definitions used to have where it is now, so older
 /// definitions (and overlays of them) keep working: `[deployer.plugins]`

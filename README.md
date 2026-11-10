@@ -164,10 +164,24 @@ patchwork ignore SkyUI nexus:30379 --undo
 
 ## Customising
 
-- **Themes.** The app writes `<config>/themes/user.css`, which applies to
-  every game, and you can add `<config>/themes/<game>.css` for a single game.
-  The `--pw-*` CSS variables and the ids and classes in the app's
-  `index.html` are kept stable for themes to use.
+- **Themes.** A theme is a CSS file in `<config>/themes/` that starts with
+  a `@theme` comment giving its name, and `game = "<id>"` if it's for one
+  game. Pick one for every game in **Settings → Appearance** (hover one
+  to try it on the whole window), or in `<config>/gui.toml`
+  (`[theme] theme = "sorbet"`); a game's own theme is used while that game
+  is open and replaces it. A game without one can still have its colour,
+  `accent = "#rrggbb"` in its definition, as the accent. **Game themes**
+  in Appearance (`game_themes = "on"`, `"accent"` or `"off"`) picks how
+  much of that you get, and a game's **Game settings** can pick a theme
+  for just that game (`[theme.games] <game> = "<theme>"`).
+  `<config>/themes/user.css` loads last, on top of whichever theme is in
+  use, for your own changes. Appearance also picks light, dark or the
+  system's mode; CSS for dark mode goes under
+  `:root[data-mode="dark"]`. The `--pw-*` CSS variables and the ids and
+  classes in the app's `index.html` are kept stable for themes to use.
+  Changes to theme files show as soon as they're saved. Games' own themes
+  come with the registry, in [registry/themes](registry/themes); see
+  [examples/themes](examples/themes) for how to write one.
 - **Game definitions.** Drop a TOML file into `<config>/games/` to change a
   built-in game. It only needs the fields you want to change, for example
   `hidden = true` to hide a game you don't own. A new file there adds a new

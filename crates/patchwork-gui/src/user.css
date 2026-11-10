@@ -1,12 +1,15 @@
 /*
- * Your changes to Patchwork's look, applied for every game. They load after
- * the built-in look, so only what you put here changes; the rest keeps up
- * with Patchwork's updates.
+ * Your changes to Patchwork's look, applied for every game. They load last,
+ * on top of the built-in look and whichever theme is in use, so only what
+ * you put here changes; the rest keeps up with Patchwork's updates.
  *
  * Uncomment a variable to change it. For more, see builtin.css (next to this
- * file) for the ids and classes to target, or use `body[data-game="<id>"]`.
- * A game's own theme goes in <game>.css and loads after this.
- */
+ * file) for the ids and classes to target, or use `body[data-game="<id>"]`,
+ * `:root[data-theme="<theme>"]` or `:root[data-game-theme="<theme>"]` to
+ * change only some games or themes.
+ *
+ * A whole theme goes in its own file here, <name>.css, starting with a
+ * `@theme` comment; see the built-in ones in Patchwork's source. */
 
 :root {
   /* --pw-font: system-ui, sans-serif; */
@@ -42,16 +45,15 @@
   /* --pw-cover-ratio: 1; */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* --pw-bg: #1b1b1a; */
-    /* --pw-surface: #252523; */
-    /* --pw-sidebar: #141413; */
-    /* --pw-text: #ecebe6; */
-    /* --pw-muted: #9c9a93; */
-    /* --pw-border: #3a3936; */
-    /* --pw-accent: #e07a52; */
-    /* --pw-accent-text: #141413; */
-    /* --pw-danger: #f2b8b5; */
-  }
+/* Only in dark mode. */
+:root[data-mode="dark"] {
+  /* --pw-bg: #1b1b1a; */
+  /* --pw-surface: #252523; */
+  /* --pw-sidebar: #141413; */
+  /* --pw-text: #ecebe6; */
+  /* --pw-muted: #9c9a93; */
+  /* --pw-border: #3a3936; */
+  /* --pw-accent: #e07a52; */
+  /* --pw-accent-text: #141413; */
+  /* --pw-danger: #f2b8b5; */
 }

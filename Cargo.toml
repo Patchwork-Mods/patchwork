@@ -39,6 +39,7 @@ iroh-gossip = "=0.101.0"
 iroh-tickets = "=1.0.0"
 jiff = { version = "0.2.38", features = ["serde"] }
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
+notify = "8.2.2"
 regex = "1.13.1"
 pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }
 roxmltree = "0.21.2"

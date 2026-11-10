@@ -233,6 +233,7 @@ fn hitman_def() -> GameDef {
         description: None,
         image: None,
         hidden: false,
+        accent: None,
         sources: Default::default(),
         deployer: DeployerSpec {
             kind: "smf".to_owned(),

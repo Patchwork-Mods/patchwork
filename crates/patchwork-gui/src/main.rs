@@ -9,6 +9,8 @@ mod links;
 mod selfupdate;
 mod setup;
 mod sync;
+mod theme_watch;
+mod themes;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
@@ -552,6 +554,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         description: None,
         image: None,
         hidden: false,
+        accent: None,
         sources,
         deployer: DeployerSpec {
             kind: "rules".to_owned(),
@@ -1757,33 +1760,153 @@ const BUILTIN_CSS: &str = include_str!("default.css");
 /// so users can see what there is to change.
 const USER_CSS: &str = include_str!("user.css");
 
+/// The CSS to load, in order: `builtin`, then `global`, `game` and `user`.
 #[derive(Serialize)]
 struct Theme {
     builtin: &'static str,
-    /// `<config>/themes/user.css`, applied on top of `builtin` for every game.
+    /// The theme picked for every game, unless `game` takes its place.
+    global: Option<AppliedTheme>,
+    /// The open game's own theme.
+    game: Option<AppliedTheme>,
+    /// The open game's colour, between `global` and `game`.
+    accent: Option<themes::AccentColors>,
+    /// `<config>/themes/user.css`, the user's own changes, last of all.
     user: Option<String>,
-    /// `<config>/themes/<game>.css`, applied on top of `user`.
-    game: Option<String>,
+    /// Light, dark or as the system is.
+    mode: themes::ModePref,
+    /// The modes the themes in use have looks for; empty for either.
+    modes: Vec<themes::Mode>,
+    /// Themes or preferences that couldn't be read.
+    problems: Vec<String>,
 }
 
-#[tauri::command]
-fn theme(app: State<'_, App>, game: Option<String>) -> Theme {
-    let dir = app.pw.paths().config.join("themes");
+#[derive(Serialize)]
+struct AppliedTheme {
+    id: String,
+    name: String,
+    css: String,
+    /// For the picker's preview, which works out the modes again.
+    modes: Vec<themes::Mode>,
+    layer: bool,
+}
+
+/// The themes there are, and the preferences that pick between them.
+#[derive(Serialize)]
+struct ThemeList {
+    themes: Vec<themes::ThemeInfo>,
+    prefs: themes::ThemePrefs,
+    problems: Vec<String>,
+}
+
+/// The `themes/` folder of each registry layer after the built-in one, in
+/// order, ending with the user's own `<config>/themes`.
+fn theme_dirs(paths: &Paths) -> Vec<(themes::ThemeOrigin, std::path::PathBuf)> {
+    let (layers, _) = patchwork_core::registry::Registry::layers(paths);
+    layers
+        .into_iter()
+        .map(|(origin, dir)| {
+            let origin = match origin {
+                patchwork_core::registry::Origin::User => themes::ThemeOrigin::User,
+                _ => themes::ThemeOrigin::Registry,
+            };
+            (origin, dir.join("themes"))
+        })
+        .collect()
+}
+
+/// Every theme (writing the files that should be in `<config>/themes`
+/// first), the `gui.toml` preferences, and anything that went wrong.
+fn load_themes(app: &App) -> (themes::Catalog, themes::ThemePrefs, Vec<String>) {
+    let config = &app.pw.paths().config;
+    let dir = config.join("themes");
+    let mut problems = Vec::new();
     if let Err(e) = write_theme_files(&dir) {
-        eprintln!("couldn't write the theme files in {}: {e}", dir.display());
+        problems.push(format!(
+            "couldn't write the theme files in {}: {e}",
+            dir.display()
+        ));
     }
-    let read = |name: &str| match std::fs::read_to_string(dir.join(name)) {
+    let registry = app.pw.registry();
+    let dirs = theme_dirs(app.pw.paths());
+    let catalog = themes::Catalog::load(&dirs, &|id| registry.game(id).is_ok());
+    let prefs = match themes::GuiPrefs::load(config) {
+        Ok(p) => p.theme,
+        Err(e) => {
+            problems.push(e);
+            themes::ThemePrefs::default()
+        }
+    };
+    (catalog, prefs, problems)
+}
+
+/// The themes to use with `game` open. `pick`, when given, is used as the
+/// theme picked for `game` instead of what `gui.toml` says, for a preview:
+/// a value of `[theme.games]`, or `""` for none.
+#[tauri::command]
+fn theme(app: State<'_, App>, game: Option<String>, pick: Option<String>) -> Theme {
+    let (catalog, mut prefs, mut problems) = load_themes(&app);
+    if let (Some(game), Some(pick)) = (&game, pick) {
+        if pick.is_empty() {
+            prefs.games.remove(game);
+        } else {
+            prefs.games.insert(game.clone(), pick);
+        }
+    }
+    let registry = app.pw.registry();
+    let accent = game
+        .as_deref()
+        .and_then(|g| registry.game(g).ok())
+        .and_then(|g| g.value.accent.as_ref());
+    let resolved = catalog.resolve(&prefs, game.as_deref(), accent);
+    problems.extend(catalog.problems.iter().cloned());
+    problems.extend(resolved.problems.iter().cloned());
+    let applied = |t: &themes::ThemeInfo| AppliedTheme {
+        id: t.id.clone(),
+        name: t.name.clone(),
+        css: t.css.clone(),
+        modes: t.modes.clone(),
+        layer: t.layer,
+    };
+    let path = app.pw.paths().config.join("themes").join("user.css");
+    let user = match std::fs::read_to_string(&path) {
         Ok(css) => Some(css),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
-            eprintln!("couldn't read {}: {e}", dir.join(name).display());
+            problems.push(format!("couldn't read {}: {e}", path.display()));
             None
         }
     };
     Theme {
         builtin: BUILTIN_CSS,
-        user: read("user.css"),
-        game: game.and_then(|g| read(&format!("{g}.css"))),
+        mode: prefs.mode,
+        modes: resolved.modes(),
+        global: resolved.global.map(applied),
+        game: resolved.game.map(applied),
+        accent: resolved.accent,
+        user,
+        problems,
+    }
+}
+
+/// Saves the `[theme]` preferences in `gui.toml`.
+#[tauri::command]
+fn set_theme_prefs(app: State<'_, App>, prefs: themes::ThemePrefs) -> CmdResult<()> {
+    let config = &app.pw.paths().config;
+    let mut file = themes::GuiPrefs::load(config)?;
+    // Keep keys the frontend didn't send back.
+    let rest = std::mem::take(&mut file.theme.rest);
+    file.theme = themes::ThemePrefs { rest, ..prefs };
+    file.save(config)
+}
+
+#[tauri::command]
+fn theme_list(app: State<'_, App>) -> ThemeList {
+    let (catalog, prefs, mut problems) = load_themes(&app);
+    problems.extend(catalog.problems);
+    ThemeList {
+        themes: catalog.themes.into_values().collect(),
+        prefs,
+        problems,
     }
 }
 
@@ -1874,6 +1997,10 @@ fn main() {
                 daemon: daemon::Daemon::new(paused),
             });
             sync::start_if_synced(app.handle());
+            let state = app.state::<App>();
+            let paths = state.pw.paths();
+            let dirs = theme_dirs(paths).into_iter().map(|(_, d)| d).collect();
+            theme_watch::start(app.handle().clone(), dirs, &paths.config.join("themes"));
 
             use tauri_plugin_deep_link::DeepLinkExt;
             let handle = app.handle().clone();
@@ -1967,6 +2094,8 @@ fn main() {
             links::handle_links,
             links::link_handler,
             theme,
+            theme_list,
+            set_theme_prefs,
             selfupdate::check_for_update,
             selfupdate::install_update,
             selfupdate::cancel_update,

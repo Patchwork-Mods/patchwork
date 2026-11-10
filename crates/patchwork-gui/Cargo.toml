@@ -20,6 +20,7 @@ anyhow.workspace = true
 base64.workspace = true
 futures-util.workspace = true
 jiff.workspace = true
+notify.workspace = true
 patchwork-core.workspace = true
 patchwork-builtin.workspace = true
 patchwork-sync.workspace = true
@@ -38,6 +39,9 @@ toml.workspace = true
 # malloc_trim, to give memory back after a deploy's build.
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc = "0.2.190"
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [build-dependencies]
 tauri-build.workspace = true

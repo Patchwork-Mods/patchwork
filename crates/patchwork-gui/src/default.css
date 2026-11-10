@@ -1,13 +1,18 @@
 /*
  * Patchwork's built-in look. It's compiled in and always loads first, so
- * users' own CSS (<config>/themes/user.css, then <game>.css) only needs the
- * rules it changes, and everything else keeps up with updates here. Treat
+ * themes and the user's own user.css only need the rules they change, and
+ * everything else keeps up with updates here. It loads in the pw-builtin
+ * cascade layer, which themes' layers come after, so a theme wins whatever
+ * its selectors are.
+ *
+ * The dark look is on :root[data-mode="dark"], set from the mode picked in
+ * Settings (or the system's when it's "System"), not a media query. Treat
  * the --pw-* variables and the ids and classes in index.html as things
  * people may have overridden: renaming one quietly breaks their override.
  */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --pw-font: system-ui, sans-serif;
   --pw-radius: 6px;
   --pw-gap: 12px;
@@ -48,18 +53,17 @@
   --pw-card-peek: 40px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --pw-bg: #1b1b1a;
-    --pw-surface: #252523;
-    --pw-sidebar: #141413;
-    --pw-text: #ecebe6;
-    --pw-muted: #9c9a93;
-    --pw-border: #3a3936;
-    --pw-accent: #e07a52;
-    --pw-accent-text: #141413;
-    --pw-danger: #f2b8b5;
-  }
+:root[data-mode="dark"] {
+  color-scheme: dark;
+  --pw-bg: #1b1b1a;
+  --pw-surface: #252523;
+  --pw-sidebar: #141413;
+  --pw-text: #ecebe6;
+  --pw-muted: #9c9a93;
+  --pw-border: #3a3936;
+  --pw-accent: #e07a52;
+  --pw-accent-text: #141413;
+  --pw-danger: #f2b8b5;
 }
 
 * {
@@ -2562,4 +2566,120 @@ legend {
 
 .settings-menu button.edited {
   color: var(--pw-accent);
+}
+
+/* Settings → Appearance: the theme picker (see theme.js). Each choice is a
+   small drawing of the app in that theme's colours: the theme's --pw-*
+   variables are set on .theme-sample itself, so everything inside it uses
+   them rather than the theme in use. */
+#theme-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.theme-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px;
+  text-align: left;
+  background: var(--pw-surface);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  cursor: pointer;
+}
+
+.theme-choice:hover {
+  border-color: var(--pw-accent);
+}
+
+.theme-choice[aria-checked="true"] {
+  border-color: var(--pw-accent);
+  box-shadow: 0 0 0 1px var(--pw-accent);
+}
+
+.theme-sample {
+  display: grid;
+  grid-template-columns: 28% 1fr;
+  height: 64px;
+  overflow: hidden;
+  border: 1px solid var(--pw-border);
+  border-radius: min(var(--pw-radius), 8px);
+  background: var(--pw-bg);
+  font-family: var(--pw-font);
+}
+
+.theme-sample-sidebar {
+  background: var(--pw-sidebar);
+  border-right: 1px solid var(--pw-border);
+  padding: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.theme-sample-sidebar i {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--pw-muted);
+  opacity: 0.6;
+}
+
+.theme-sample-sidebar i:first-child {
+  background: var(--pw-accent);
+  opacity: 1;
+}
+
+.theme-sample-main {
+  padding: 6px;
+}
+
+.theme-sample-card {
+  height: 100%;
+  padding: 5px 6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: var(--pw-surface);
+  color: var(--pw-text);
+  border: 1px solid var(--pw-border);
+  border-radius: min(var(--pw-radius), 6px);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.theme-sample-card .row {
+  gap: 4px;
+}
+
+.theme-sample-card b {
+  padding: 2px 6px;
+  border-radius: min(var(--pw-radius), 999px);
+  background: var(--pw-accent);
+  color: var(--pw-accent-text);
+  font-size: 9px;
+}
+
+.theme-sample-card s {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--pw-muted);
+  text-decoration: none;
+}
+
+.theme-choice-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.theme-choice-name .badge {
+  margin-left: auto;
+  font-weight: 400;
 }

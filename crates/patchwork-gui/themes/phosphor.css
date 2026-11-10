@@ -1,0 +1,123 @@
+/*
+ * @theme
+ * name = "Phosphor"
+ * modes = ["dark"]
+ *
+ * A green-screen terminal. One colour at several brightnesses, a monospace
+ * font, square corners, faint scanlines over everything and mod pictures
+ * tinted to match.
+ */
+
+:root {
+  color-scheme: dark;
+  --pw-font: "JetBrains Mono", "Iosevka", "DejaVu Sans Mono", ui-monospace, monospace;
+  --pw-radius: 0;
+
+  --pw-bg: #030b05;
+  --pw-surface: #06140a;
+  --pw-sidebar: #020803;
+  --pw-text: #4dff7a;
+  --pw-muted: #24a046;
+  --pw-border: #13512a;
+  --pw-accent: #4dff7a;
+  --pw-accent-text: #021006;
+  --pw-danger: #ffb000;
+  --pw-danger-text: #120b00;
+  --pw-link: #a8ffbf;
+  --pw-hover: #0b2414;
+  --pw-selection: rgb(77 255 122 / 0.3);
+  --pw-shadow-color: #00ff55;
+  --pw-shadow-sm: none;
+  --pw-shadow-md: 0 0 12px rgb(77 255 122 / 0.15);
+  --pw-shadow-lg: 0 0 24px rgb(77 255 122 / 0.2);
+  --pw-backdrop: rgb(0 0 0 / 0.75);
+}
+
+body {
+  text-shadow: 0 0 4px rgb(77 255 122 / 0.45);
+}
+
+/* Scanlines, drawn over the whole window and never in the way of a click. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(0 0 0 / 0.18) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+h1,
+h2,
+.brand {
+  text-transform: uppercase;
+}
+
+.brand::before {
+  content: "> ";
+  color: var(--pw-muted);
+}
+
+.brand::after {
+  content: "_";
+  animation: phosphor-blink 1.1s steps(1) infinite;
+}
+
+@keyframes phosphor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+button.primary,
+.segmented button[aria-pressed="true"] {
+  text-shadow: none;
+}
+
+#profiles button[aria-current="true"] {
+  background: var(--pw-text);
+  color: var(--pw-accent-text);
+  text-shadow: none;
+}
+
+#profiles button[aria-current="true"]::before {
+  content: "▶ ";
+}
+
+.switch input,
+.switch input::before,
+.tag,
+.badge {
+  border-radius: 0;
+}
+
+.switch input {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--pw-muted);
+}
+
+.switch input::before {
+  background: var(--pw-muted);
+}
+
+.switch input:checked::before {
+  background: var(--pw-accent-text);
+}
+
+/* Pictures in the same green. */
+.result img,
+.game-art img,
+.card-cover img,
+.mod-row img {
+  filter: grayscale(1) sepia(1) hue-rotate(70deg) saturate(3) brightness(0.85) contrast(1.1);
+}
+
+.result,
+.mod-list,
+dialog {
+  box-shadow: 0 0 0 1px var(--pw-border), 0 0 18px rgb(77 255 122 / 0.06);
+}

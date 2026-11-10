@@ -1,0 +1,161 @@
+/*
+ * @theme
+ * name = "Blueprint"
+ * modes = ["dark"]
+ *
+ * Drafting paper. A gridded blue sheet, white linework, dashed outlines,
+ * square corners and a construction line round each card, as if it were a
+ * part drawn to size.
+ */
+
+:root {
+  color-scheme: dark;
+  --pw-font: "Iosevka Aile", "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --pw-radius: 0;
+
+  --pw-bg: #0e3d72;
+  --pw-surface: #11467f;
+  --pw-sidebar: #0b3363;
+  --pw-text: #eef5ff;
+  --pw-muted: #a9c4e6;
+  --pw-border: #6f98c8;
+  --pw-accent: #ffffff;
+  --pw-accent-text: #0e3d72;
+  --pw-danger: #ffd0c4;
+  --pw-danger-text: #5a1406;
+  --pw-warning: #ffe28a;
+  --pw-link: #ffffff;
+  --pw-focus: #ffe28a;
+  --pw-hover: #154d8c;
+  --pw-selection: rgb(255 255 255 / 0.25);
+  --pw-shadow-color: #041a33;
+}
+
+/* Major lines every 100px, minor every 20px. */
+body {
+  background-color: var(--pw-bg);
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.13) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.13) 1px, transparent 1px),
+    linear-gradient(rgb(255 255 255 / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+  background-size:
+    100px 100px,
+    100px 100px,
+    20px 20px,
+    20px 20px;
+  background-attachment: fixed;
+}
+
+#sidebar,
+#statusbar {
+  background: rgb(11 51 99 / 0.85);
+}
+
+#sidebar {
+  border-right: 2px solid var(--pw-text);
+}
+
+h1,
+h2,
+h3,
+.brand,
+.tabs button,
+legend {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* Mod names are often one long word. */
+.result h3 {
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+.brand {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 2px solid var(--pw-text);
+}
+
+button,
+input,
+select,
+textarea,
+.tag,
+.badge {
+  border-style: dashed;
+  border-radius: 0;
+}
+
+button {
+  background: transparent;
+}
+
+button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.08);
+  border-style: solid;
+}
+
+button.primary {
+  border-style: solid;
+  font-weight: 700;
+}
+
+.result,
+.mod-list,
+dialog {
+  border: 1px solid var(--pw-text);
+  background-color: rgb(17 70 127 / 0.9);
+}
+
+/* A construction line a little way out from each card. */
+.result {
+  outline: 1px dashed rgb(255 255 255 / 0.25);
+  outline-offset: 5px;
+}
+
+.result:hover {
+  outline-color: var(--pw-warning);
+}
+
+.card-sheet {
+  background: var(--pw-surface);
+  border-top: 1px dashed var(--pw-border);
+}
+
+.result img,
+.card-cover img {
+  filter: grayscale(1) contrast(1.1);
+  mix-blend-mode: screen;
+  opacity: 0.85;
+}
+
+#profiles button[aria-current="true"] {
+  background: transparent;
+  outline: 1px solid var(--pw-text);
+  outline-offset: -1px;
+}
+
+.tabs button[aria-selected="true"] {
+  box-shadow: inset 0 -2px 0 var(--pw-text);
+}
+
+.switch input,
+.switch input::before {
+  border-radius: 0;
+}
+
+.switch input {
+  background: transparent;
+  outline: 1px dashed var(--pw-border);
+}
+
+.switch input:checked {
+  background: var(--pw-text);
+  outline-style: solid;
+}
+
+.switch input:checked::before {
+  background: var(--pw-bg);
+}
