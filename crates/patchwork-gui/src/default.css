@@ -21,6 +21,26 @@
   --pw-accent: #c4643f;
   --pw-accent-text: #ffffff;
   --pw-danger: #b3261e;
+  /* What shadows and the dark wash behind dialogs are mixed from. */
+  --pw-shadow-color: #000000;
+
+  /* Worked out from the colours above, so a theme only needs those, but each
+     can be set on its own too. Set the colours above on :root (not body):
+     these are worked out there, so a change further down won't reach them. */
+  --pw-danger-text: var(--pw-bg);
+  /* A nudge rather than a problem, like a mod's missing requirements. */
+  --pw-warning: var(--pw-accent);
+  --pw-link: var(--pw-accent);
+  --pw-focus: var(--pw-accent);
+  --pw-hover: var(--pw-bg);
+  --pw-selection: color-mix(in srgb, var(--pw-accent) 30%, transparent);
+  --pw-backdrop: color-mix(in srgb, var(--pw-shadow-color) 40%, transparent);
+  /* Small (a switch's knob), medium (menus) and large (popovers and dragged
+     items) raised things. */
+  --pw-shadow-sm: 0 1px 2px color-mix(in srgb, var(--pw-shadow-color) 30%, transparent);
+  --pw-shadow-md: 0 4px 16px color-mix(in srgb, var(--pw-shadow-color) 18%, transparent);
+  --pw-shadow-lg: 0 8px 24px color-mix(in srgb, var(--pw-shadow-color) 25%, transparent);
+
   /* Width over height of the cover image on search results. */
   --pw-cover-ratio: 1;
   /* How much of an added mod's picture still shows while its card's sheet
@@ -71,6 +91,14 @@ body[data-screen="games"] {
   grid-template-areas:
     "games"
     "status";
+}
+
+a {
+  color: var(--pw-link);
+}
+
+::selection {
+  background: var(--pw-selection);
 }
 
 h1,
@@ -131,7 +159,7 @@ button.primary {
 
 button.danger {
   background: var(--pw-danger);
-  color: var(--pw-bg);
+  color: var(--pw-danger-text);
   border-color: transparent;
 }
 
@@ -139,7 +167,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 button:focus-visible {
-  outline: 2px solid var(--pw-accent);
+  outline: 2px solid var(--pw-focus);
   outline-offset: 1px;
 }
 
@@ -200,7 +228,7 @@ button:focus-visible {
   color: var(--pw-accent-text);
   border-color: transparent;
   /* a line between the halves, since they're the same colour */
-  box-shadow: inset 1px 0 0 rgb(0 0 0 / 0.2);
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--pw-shadow-color) 20%, transparent);
 }
 
 #deploy.primary+.menu>summary::after {
@@ -300,7 +328,7 @@ button.link {
   padding: 0;
   border: none;
   background: none;
-  color: var(--pw-accent);
+  color: var(--pw-link);
   text-decoration: underline;
 }
 
@@ -579,7 +607,7 @@ button.link {
 }
 
 .menu summary:focus-visible {
-  outline: 2px solid var(--pw-accent);
+  outline: 2px solid var(--pw-focus);
   outline-offset: 1px;
 }
 
@@ -595,7 +623,7 @@ button.link {
   background: var(--pw-surface);
   border: 1px solid var(--pw-border);
   border-radius: var(--pw-radius);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+  box-shadow: var(--pw-shadow-md);
 }
 
 .menu-items button {
@@ -614,7 +642,7 @@ button.link {
 
 .menu-items button:hover,
 .menu-items button:focus-visible {
-  background: var(--pw-bg);
+  background: var(--pw-hover);
   outline: none;
 }
 
@@ -664,7 +692,7 @@ dialog button.danger-text {
 
 .menu-items label:hover,
 .menu-items label:focus-within {
-  background: var(--pw-bg);
+  background: var(--pw-hover);
 }
 
 .menu-items label span:first-of-type {
@@ -709,7 +737,7 @@ dialog button.danger-text {
 }
 
 .menu-items .category:hover {
-  background: var(--pw-bg);
+  background: var(--pw-hover);
 }
 
 .menu-items .category span {
@@ -885,7 +913,7 @@ dialog button.danger-text {
 
 .mod-row .author {
   font-size: 12px;
-  color: var(--pw-accent);
+  color: var(--pw-link);
 }
 
 .mod-row .card-update {
@@ -1065,7 +1093,7 @@ dialog button.danger-text {
   border: 1px solid currentColor;
   border-radius: 999px;
   background: none;
-  color: var(--pw-accent);
+  color: var(--pw-warning);
   cursor: pointer;
 }
 
@@ -1114,7 +1142,7 @@ dialog button.danger-text {
 }
 
 .requirement-missing {
-  color: var(--pw-accent);
+  color: var(--pw-warning);
 }
 
 .requirement-actions {
@@ -1156,7 +1184,7 @@ dialog button.danger-text {
   gap: 8px;
   padding: 6px 8px;
   margin-bottom: 4px;
-  border-left: 3px solid var(--pw-accent);
+  border-left: 3px solid var(--pw-warning);
   background: var(--pw-surface);
   border-radius: var(--pw-radius);
 }
@@ -1281,7 +1309,7 @@ dialog button.danger-text {
 .result .author {
   margin-top: -4px;
   font-size: 12px;
-  color: var(--pw-accent);
+  color: var(--pw-link);
 }
 
 .result p {
@@ -1376,7 +1404,7 @@ dialog button.danger-text {
   background: var(--pw-surface);
   border: 1px solid var(--pw-border);
   border-radius: var(--pw-radius);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 0.2);
+  box-shadow: var(--pw-shadow-md);
   pointer-events: none;
 }
 
@@ -1447,7 +1475,7 @@ dialog button.danger-text {
 }
 
 .mod-priority:focus-visible {
-  outline: 2px solid var(--pw-accent);
+  outline: 2px solid var(--pw-focus);
   outline-offset: 1px;
 }
 
@@ -1467,7 +1495,7 @@ dialog button.danger-text {
   background: var(--pw-surface);
   border: 1px solid var(--pw-border);
   border-radius: var(--pw-radius);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  box-shadow: var(--pw-shadow-lg);
 }
 
 .priority-popover p {
@@ -1550,7 +1578,7 @@ dialog button.danger-text {
   height: 16px;
   border-radius: 50%;
   background: var(--pw-surface);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  box-shadow: var(--pw-shadow-sm);
   transition: transform 0.15s;
 }
 
@@ -1727,7 +1755,7 @@ span.mod-version {
   position: relative;
   z-index: 1;
   background: var(--pw-surface);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  box-shadow: var(--pw-shadow-lg);
   transition: box-shadow 0.15s ease;
   /* its own layer, so moving it doesn't repaint everything under it */
   will-change: transform;
@@ -1800,7 +1828,7 @@ body.dragging-mod .drag-handle {
 .mod-card:hover .card-sheet,
 .mod-card:has(:focus-visible) .card-sheet {
   transform: translateY(calc(-1 * var(--raise, 0px)));
-  box-shadow: 0 -6px 16px rgb(0 0 0 / 0.18);
+  box-shadow: 0 -6px 16px color-mix(in srgb, var(--pw-shadow-color) 18%, transparent);
 }
 
 .mod-card:hover .card-sheet::before,
@@ -1988,7 +2016,7 @@ dialog {
 }
 
 dialog::backdrop {
-  background: rgb(0 0 0 / 0.4);
+  background: var(--pw-backdrop);
 }
 
 .plan-ops {
@@ -2021,7 +2049,7 @@ dialog::backdrop {
   position: relative;
   z-index: 1;
   background: var(--pw-surface);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  box-shadow: var(--pw-shadow-lg);
   will-change: transform;
 }
 
@@ -2187,10 +2215,6 @@ dialog::backdrop {
 
 .changelog-notes code {
   font: 12px ui-monospace, monospace;
-}
-
-.changelog-notes a {
-  color: var(--pw-accent);
 }
 
 /* Options dialog; see form.js. The groups of a page beside the picture
@@ -2517,7 +2541,7 @@ legend {
   background: var(--pw-surface);
   border: 1px solid var(--pw-border);
   border-radius: var(--pw-radius);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  box-shadow: var(--pw-shadow-lg);
 }
 
 .settings-menu button {

@@ -22,6 +22,22 @@
   /* --pw-accent: #c4643f; */
   /* --pw-accent-text: #ffffff; */
   /* --pw-danger: #b3261e; */
+  /* --pw-shadow-color: #000000; */
+
+  /* These are worked out from the colours above, so you only need to set
+     them to make one differ. Set colours here on :root rather than on body,
+     or these won't follow them. */
+  /* --pw-danger-text: var(--pw-bg); */
+  /* --pw-warning: var(--pw-accent); */
+  /* --pw-link: var(--pw-accent); */
+  /* --pw-focus: var(--pw-accent); */
+  /* --pw-hover: var(--pw-bg); */
+  /* --pw-selection: color-mix(in srgb, var(--pw-accent) 30%, transparent); */
+  /* --pw-backdrop: color-mix(in srgb, var(--pw-shadow-color) 40%, transparent); */
+  /* --pw-shadow-sm: 0 1px 2px color-mix(in srgb, var(--pw-shadow-color) 30%, transparent); */
+  /* --pw-shadow-md: 0 4px 16px color-mix(in srgb, var(--pw-shadow-color) 18%, transparent); */
+  /* --pw-shadow-lg: 0 8px 24px color-mix(in srgb, var(--pw-shadow-color) 25%, transparent); */
+
   /* Width over height of the cover image on search results. */
   /* --pw-cover-ratio: 1; */
 }
