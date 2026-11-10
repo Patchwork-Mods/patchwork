@@ -2964,11 +2964,6 @@ fn deploy_order<'a>(loaded: &Profile, lock: &'a Lockfile) -> Vec<&'a LockedMod> 
     order
 }
 
-/// Hashes everything a deploy depends on, for [`DeployPlan::inputs`].
-///
-/// Deployers can read any registry data, so all of it is included rather
-/// than only what this game uses. Patchwork's version stands in for changes
-/// to the deployers themselves.
 /// The settings each source takes, by id.
 fn source_specs(sources: &BTreeMap<String, Arc<dyn Source>>) -> BTreeMap<&str, &[SettingSpec]> {
     sources
@@ -3031,6 +3026,11 @@ fn existing_dir(path: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Hashes everything a deploy depends on, for [`DeployPlan::inputs`].
+///
+/// Deployers can read any registry data, so all of it is included rather
+/// than only what this game uses. Patchwork's version stands in for changes
+/// to the deployers themselves.
 #[allow(clippy::too_many_arguments)]
 fn deploy_inputs(
     profile: &ProfileRef,

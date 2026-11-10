@@ -18,9 +18,10 @@
 #   it, so nothing is published unless it passes.
 #
 # Releases are started by hand (dispatch-releases): Actions -> Release -> Run
-# workflow on main, with the tag to make. Running from main, rather than on a
-# pushed tag, is what lets a release save and restore main's caches. A dry run
-# (the default "tag") builds everything without releasing it.
+# workflow on main, with the tag to make (a bare version, like 0.2.0). Running
+# from main, rather than on a pushed tag, is what lets a release save and
+# restore main's caches. A dry run (the default "tag") builds everything
+# without releasing it.
 #
 # Copyright 2022-2024, axodotdev
 # SPDX-License-Identifier: MIT or Apache-2.0

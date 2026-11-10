@@ -87,7 +87,7 @@ section up to date.
    release's notes and what the app's update dialog shows; a dry run's plan
    output has it as `announcement_changelog` if dist found it.
 2. In GitHub's Actions tab, run the **Release** workflow on main with the
-   tag to make (e.g. `v0.2.0`).
+   tag to make: the bare version, like `0.2.0` (no `v`, as the 0.2.0 release was tagged).
 
 `release.yml` builds the CLI with dist, the app's bundles in the same jobs,
 and then the `latest.json` the app's updater reads. The GitHub Release (and
