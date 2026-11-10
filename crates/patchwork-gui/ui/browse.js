@@ -1,4 +1,5 @@
-// The source tabs, where a source's mods can be searched for and added.
+// The Add mods tab: a link box (see addlink.js), then a search of one of the
+// game's sources, where its mods can be found and added.
 
 import { run, state, status } from "./state.js";
 import { $, h, ms, nextFrame } from "./dom.js";
@@ -12,65 +13,107 @@ import { CONFIG_TAB, openConfig } from "./config.js";
 const SOURCE_NAMES = { thunderstore: "Thunderstore", nexus: "Nexus Mods" };
 const sourceName = (s) => SOURCE_NAMES[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
 
+/** The Add mods tab's key in state.tab. */
+export const ADD_TAB = "add";
+
 /** The search waiting for the user to stop typing. */
 let typing;
 
+/** The source last picked on the Add mods tab, kept while switching tabs. */
+let picked = null;
+
+/** The sources the open profile's game can be searched on. */
+const sources = () => state.profile?.searchSources ?? [];
+
 /**
  * Opens the Mods tab ("mods"), a list's tab (see listTab), the Config tab
- * or a source's tab; list tabs all share #tab-list, and source tabs
- * #tab-browse.
+ * or the Add mods tab; list tabs all share #tab-list.
  */
 export function selectTab(key) {
   const list = listOf(key);
   const config = key === CONFIG_TAB;
+  const add = key === ADD_TAB;
   state.tab = key;
-  state.source = key === "mods" || list || config ? null : key;
+  state.source = add ? (sources().includes(picked) ? picked : (sources()[0] ?? null)) : null;
   for (const tab of document.querySelectorAll("#tabs [role=tab]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
   }
   $("#tab-mods").hidden = key !== "mods";
   $("#tab-list").hidden = !list;
   $("#tab-config").hidden = !config;
-  $("#tab-browse").hidden = !state.source;
+  $("#tab-browse").hidden = !add;
   clearTimeout(typing);
   if (list) openList(list);
   if (config) openConfig();
-  if (state.source) {
-    // the search form is shared, so put back what this tab last searched for
-    const last = state.searches[key];
-    const form = $("#search");
-    form.elements.text.placeholder = `Search ${sourceName(key)}`;
-    form.elements.text.value = last?.query.text ?? "";
-    form.elements.sort.value = last?.query.sort ?? "";
-    renderResults(last);
-    renderFilterCount();
-    // a source opens on its home page, which is a search with no text
-    if (!last) search().catch(() => {});
-  }
+  if (add) showSource();
+}
+
+/** Shows the open source's search on the Add mods tab, or hides it if there's none. */
+function showSource() {
+  const source = state.source;
+  renderSourcePicker();
+  $("#search").hidden = !source;
+  if (!source) return renderResults(null);
+  // the search form is shared, so put back what this source last searched for
+  const last = state.searches[source];
+  const form = $("#search");
+  form.elements.text.placeholder = `Search ${sourceName(source)}`;
+  form.elements.text.value = last?.query.text ?? "";
+  form.elements.sort.value = last?.query.sort ?? "";
+  renderResults(last);
+  renderFilterCount();
+  // a source opens on its home page, which is a search with no text
+  if (!last) search().catch(() => {});
+}
+
+/** Switches the Add mods tab to searching `source`. */
+function pickSource(source) {
+  if (source === state.source) return;
+  picked = source;
+  clearTimeout(typing);
+  state.source = source;
+  showSource();
+}
+
+/** One button per source, when there's more than one to pick between. */
+function renderSourcePicker() {
+  const list = sources();
+  const picker = $("#source-picker");
+  picker.hidden = list.length < 2;
+  picker.replaceChildren(
+    ...list.map((s) =>
+      h(
+        "button",
+        { type: "button", "aria-pressed": String(s === state.source), onclick: () => pickSource(s) },
+        sourceName(s),
+      ),
+    ),
+  );
 }
 
 /**
- * Replaces the tabs after Mods, staying on the open one if it's still there:
- * one for each of the game's ordered lists, Config if the game has config
- * files, then one for each source.
+ * Replaces the tabs, staying on the open one if it's still there: Mods, one
+ * for each of the game's ordered lists, Config if the game has config files,
+ * then Add mods while there's a profile to add to.
  */
-export function renderSourceTabs(sources) {
-  const lists = state.profile?.lists ?? [];
-  const config = !!state.profile?.hasConfig;
+export function renderTabs() {
+  const p = state.profile;
+  const lists = p?.lists ?? [];
+  const config = !!p?.hasConfig;
   const tab = (key, label) =>
     h("button", { role: "tab", "data-tab": key, onclick: () => go(() => selectTab(key)) }, label);
   $("#tabs").replaceChildren(
     tab("mods", "Mods"),
     ...lists.map((l) => tab(listTab(l.id), l.title)),
     ...(config ? [tab(CONFIG_TAB, "Config")] : []),
-    ...sources.map((s) => tab(s, sourceName(s))),
+    ...(p ? [tab(ADD_TAB, "Add mods")] : []),
   );
   const open = listOf(state.tab);
   const still = open
     ? lists.some((l) => l.id === open)
     : state.tab === CONFIG_TAB
       ? config
-      : sources.includes(state.tab);
+      : state.tab === ADD_TAB && !!p;
   selectTab(still ? state.tab : "mods");
 }
 

@@ -2479,17 +2479,27 @@ textarea {
   flex: 1;
 }
 
-/* The files to pick from in "Add from link"; see addlink.js. */
-#link-file-list {
+/* The link boxes on the Mods and Add mods tabs, with the files to pick
+   from under it when a link has several; see addlink.js. */
+.link-form .row input {
+  flex: 1;
+}
+
+#browse-link {
+  padding-bottom: var(--pw-gap);
+  border-bottom: 1px solid var(--pw-border);
+}
+
+.link-file-list {
   max-height: 50vh;
   overflow-y: auto;
 }
 
-#link-file-list label {
+.link-file-list label {
   align-items: flex-start;
 }
 
-#link-file-list input {
+.link-file-list input {
   flex: none;
   margin-top: 4px;
 }

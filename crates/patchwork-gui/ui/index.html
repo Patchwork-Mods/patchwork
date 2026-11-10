@@ -94,9 +94,8 @@
 					</div>
 					<p id="profile-meta" class="muted"></p>
 				</div>
-				<!-- Mods, Plugins for games that have them, then one tab per source
-             the game can be searched on; see renderSourceTabs() in
-             browse.js. -->
+				<!-- Mods, Plugins for games that have them, Config, then Add mods;
+             see renderTabs() in browse.js. -->
 				<div id="tabs" class="tabs" role="tablist">
 					<button role="tab" data-tab="mods" aria-selected="true">Mods</button>
 				</div>
@@ -112,21 +111,19 @@
 					<details id="deploy-menu" class="menu">
 						<summary title="More deploy options" aria-label="More deploy options"></summary>
 						<div class="menu-items" role="menu">
-							<button
-								type="button"
-								role="menuitem"
-								id="verify-deploy"
-								title="Read every deployed file to check nothing changed it, and put back any that changed"
+							<button type="button"
+							        role="menuitem"
+							        id="verify-deploy"
+							        title="Read every deployed file to check nothing changed it, and put back any that changed"
 							>
 								Check files and deploy
 							</button>
 							<!-- Only for games that say where tools write; see capture.js. -->
-							<button
-								type="button"
-								role="menuitem"
-								id="capture"
-								title="Keep what tools like DynDOLOD or Nemesis wrote into the game's folder as a mod"
-								hidden
+							<button type="button"
+							        role="menuitem"
+							        id="capture"
+							        title="Keep what tools like DynDOLOD or Nemesis wrote into the game's folder as a mod"
+							        hidden
 							>
 								Capture tool output…
 							</button>
@@ -159,10 +156,22 @@
 				</form>
 				<ul id="mod-notices"></ul>
 				<ul id="mod-problems" class="warnings"></ul>
+				<!-- The same as the one on the Add mods tab; see addlink.js. -->
+				<form id="mods-link" class="link-form stack">
+					<div class="row">
+						<input class="link-url" name="link" type="text" inputmode="url" placeholder="Add mod link" aria-label="Link to a mod" title="A mod's page on GitHub, Nexus Mods, Thunderstore or Modrinth, or a link straight to a download" autocomplete="off" spellcheck="false">
+						<button type="submit" class="link-submit">Add</button>
+					</div>
+					<!-- When the link has several files, like a GitHub release. -->
+					<div class="link-files field" hidden>
+						<span>Which file? <small class="muted">Later releases' files are picked by the same name, with the
+								version left out.</small></span>
+						<div class="link-file-list stack"></div>
+					</div>
+					<p class="link-error error" hidden></p>
+				</form>
 				<div id="mods-toolbar" class="row">
 					<div class="row">
-						<!-- See addlink.js. -->
-						<button type="button" id="add-link" title="Add a mod from a link to its page, like a GitHub repo, or a download link">Add from link…</button>
 						<!-- Sorting rearranges the mods once; it doesn't keep them sorted.
                  Each item's data-keys go to sort_mods in main.rs. -->
 						<details id="sort-menu" class="menu">
@@ -229,7 +238,7 @@
 					<p class="muted">Downloaded because the mods above need them. Add one to the list to pick its version, or have a mod in the list stand in for it, like a fork of it.</p>
 					<ul id="dependencies-list" class="mod-list"></ul>
 				</details>
-				<p id="mods-empty" class="empty" hidden>No mods yet. Find some in the tabs above.</p>
+				<p id="mods-empty" class="empty" hidden></p>
 			</section>
 
 			<!-- One of the game's ordered lists, like the plugin load order;
@@ -258,15 +267,33 @@
 					Settings changed here are kept in the profile and applied when you deploy. Settings
 					changed in game are kept too.
 				</p>
-				<input id="config-filter" type="search" placeholder="Filter config files" autocomplete="off" />
+				<input id="config-filter" type="search" placeholder="Filter config files" autocomplete="off">
 				<ul id="config-files" class="config-files"></ul>
 				<p id="config-empty" class="empty" hidden>
 					No config files yet. Mods often make theirs the first time the game starts with them.
 				</p>
 			</section>
 
+			<!-- Adding mods: from a pasted link (see addlink.js), or by searching
+			     one of the game's sources (see browse.js). -->
 			<section id="tab-browse" class="tab" hidden>
+				<form id="browse-link" class="link-form stack">
+					<div class="row">
+						<input class="link-url" name="link" type="text" inputmode="url" placeholder="Add mod link" aria-label="Link to a mod" title="A mod's page on GitHub, Nexus Mods, Thunderstore or Modrinth, or a link straight to a download" autocomplete="off" spellcheck="false">
+						<button type="submit" class="link-submit">Add</button>
+					</div>
+					<!-- When the link has several files, like a GitHub release. -->
+					<div class="link-files field" hidden>
+						<span>Which file? <small class="muted">Later releases' files are picked by the same name, with the
+								version left out.</small></span>
+						<div class="link-file-list stack"></div>
+					</div>
+					<p class="link-error error" hidden></p>
+				</form>
 				<form id="search" class="row">
+					<!-- One button per source the game can be searched on, only when
+					     there's more than one; see renderSourcePicker() in browse.js. -->
+					<div id="source-picker" class="segmented" role="group" aria-label="Source" hidden></div>
 					<input name="text" type="search" placeholder="Search mods">
 					<select name="sort">
 						<option value="">Default order</option>
@@ -473,8 +500,10 @@
 				<div id="settings-sources" class="stack" data-panel="accounts"></div>
 				<fieldset id="links" class="stack" data-panel="accounts">
 					<legend>Links from the browser</legend>
-					<p class="muted">So Nexus Mods' <b>Mod Manager Download</b> buttons send their downloads to Patchwork, it has to
-						be the program your system opens <code>nxm://</code> links with.</p>
+					<p class="muted">So Nexus Mods' <b>Mod Manager Download</b>
+						buttons send their downloads to Patchwork, it has to
+						be the program your system opens <code>nxm://</code>
+						links with.</p>
 					<p id="links-state"></p>
 					<p id="links-error" class="error" hidden></p>
 					<div class="row end">
@@ -494,7 +523,8 @@
 						<small id="computers-me" class="muted"></small>
 					</div>
 					<div id="computers-ticket" class="field" hidden>
-						<label for="computers-text">On your other computer, open <b>Settings</b> and paste this ticket under <b>My
+						<label for="computers-text">On your other computer, open <b>Settings</b>
+							and paste this ticket under <b>My
 								computers</b></label>
 						<textarea id="computers-text" readonly rows="4"></textarea>
 						<small class="muted">Keep Patchwork open here until it has linked. The ticket lets whoever has it change every
@@ -516,7 +546,8 @@
 				<fieldset id="daemon" class="stack" data-panel="daemon" hidden>
 					<legend>Background sync</legend>
 					<p class="muted">Keeps synced profiles in step even while Patchwork is closed. It starts when you log in, and
-						steps aside while Patchwork or the <code>patchwork</code> command is open, since they sync by
+						steps aside while Patchwork or the <code>patchwork</code>
+						command is open, since they sync by
 						themselves. Changes that come in are downloaded, but never deployed.</p>
 					<p id="daemon-state"></p>
 					<p id="daemon-version" class="hint" hidden></p>
@@ -629,30 +660,6 @@
 			</form>
 		</dialog>
 
-		<!-- Adds a mod from a pasted link, asking which file if the mod has
-         several, like a GitHub release; see addlink.js. -->
-		<dialog id="link-dialog">
-			<form id="link-form" method="dialog" class="stack">
-				<h2>Add from link</h2>
-				<div class="field">
-					<label for="link-url">Link</label>
-					<input id="link-url" name="link" type="url" required placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false">
-					<small class="muted">A mod's page on GitHub, Nexus Mods, Thunderstore or Modrinth, or a link straight to a
-						download.</small>
-				</div>
-				<div id="link-files" class="field" hidden>
-					<span>Which file? <small class="muted">Later releases' files are picked by the same name, with the
-							version left out.</small></span>
-					<div id="link-file-list" class="stack"></div>
-				</div>
-				<p id="link-error" class="error" hidden></p>
-				<div class="row end">
-					<button type="button" value="cancel" formnovalidate>Cancel</button>
-					<button type="submit" id="link-submit" class="primary">Add</button>
-				</div>
-			</form>
-		</dialog>
-
 		<!-- Opened by right-clicking a profile in the sidebar; see profile.js. -->
 		<div id="profile-menu" class="menu-items context-menu" role="menu" hidden>
 			<button type="button" role="menuitem" id="rename-profile">Rename…</button>
@@ -752,11 +759,14 @@
 						<span>Read only <small class="muted">others get your mods and your changes; mods they add stay on their
 								computer</small></span>
 					</label>
-					<small class="muted">To keep this profile in step across your own computers, use <b>My computers</b> in
-						<b>Settings</b> instead; that covers every profile.</small>
+					<small class="muted">To keep this profile in step across your own computers, use <b>My computers</b>
+						in
+						<b>Settings</b>
+						instead; that covers every profile.</small>
 				</div>
 				<div id="share-ticket" class="field" hidden>
-					<label for="share-text">Send this ticket; they choose <b>Join…</b> and paste it</label>
+					<label for="share-text">Send this ticket; they choose <b>Join…</b>
+						and paste it</label>
 					<textarea id="share-text" name="ticket" readonly rows="4"></textarea>
 					<small id="share-note" class="muted"></small>
 				</div>
@@ -840,7 +850,8 @@
 				<p id="game-versions-source" class="muted"></p>
 				<label class="field">
 					<span>Works with <small class="muted">versions or ranges like <code>1.5.97</code>,
-							<code>1.6.*</code> or <code>&gt;=1.6.640 &lt;1.7</code>; separate several with
+							<code>1.6.*</code>
+							or <code>&gt;=1.6.640 &lt;1.7</code>; separate several with
 							commas</small></span>
 					<input name="versions" autocomplete="off" spellcheck="false">
 				</label>
@@ -966,15 +977,14 @@
 				<div class="options-body">
 					<div id="options-groups" class="options-groups"></div>
 					<aside class="options-preview">
-						<img id="options-picture" alt="" hidden />
+						<img id="options-picture" alt="" hidden>
 						<p id="options-description" class="muted"></p>
 					</aside>
 				</div>
 				<ul id="options-warnings" class="warnings"></ul>
 				<p id="options-summary" class="muted"></p>
 				<div class="row end">
-					<button type="button" id="options-reset" class="options-reset" hidden
-						title="Forget the options picked, and deploy with the defaults">
+					<button type="button" id="options-reset" class="options-reset" hidden title="Forget the options picked, and deploy with the defaults">
 						Use defaults
 					</button>
 					<button value="cancel">Cancel</button>

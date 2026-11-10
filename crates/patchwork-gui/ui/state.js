@@ -10,10 +10,10 @@ export const state = {
   /** The game being looked at, or null on the game picker. */
   game: null,
   profile: null,
-  /** The open tab: "mods", a list's (see listTab in list.js), "config" or a
-   * source's id. */
+  /** The open tab: "mods", a list's (see listTab in list.js), "config" or
+   * "add". */
   tab: "mods",
-  /** The source whose tab is open, or null on the Mods, lists' and Config tabs. */
+  /** The source being searched on the Add mods tab, or null on other tabs. */
   source: null,
   /** What the open list's tab is showing, from list in main.rs. */
   list: null,

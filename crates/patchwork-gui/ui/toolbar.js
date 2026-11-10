@@ -113,8 +113,14 @@ document.addEventListener("keydown", (e) => {
     : $("#main").hidden
       ? null
       : !$("#tab-mods").hidden
-        ? !$("#mods-toolbar").hidden && modSearch
-        : $("#search").elements.text;
+        ? $("#mods-toolbar").hidden
+          ? !$("#mods-link").hidden && $("#mods-link .link-url")
+          : modSearch
+        : !$("#tab-browse").hidden
+          ? $("#search").hidden
+            ? $("#browse-link .link-url")
+            : $("#search").elements.text
+          : null;
   if (!box) return;
   e.preventDefault();
   box.focus();

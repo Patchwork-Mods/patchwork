@@ -1436,7 +1436,7 @@ async fn parse_link(app: State<'_, App>, id: String, link: String) -> CmdResult<
     })
 }
 
-/// A search from a source's tab.
+/// A search of one source, from the Add mods tab.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Search {

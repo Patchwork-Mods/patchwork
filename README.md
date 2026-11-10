@@ -64,8 +64,8 @@ Windows, SmartScreen warns about the installer: choose **More info** →
 
 In the app, pick a game from the list. patchwork finds games installed
 through Steam on its own; you can also point it at a game folder yourself.
-Then make a profile, add mods from the tab for a source (Thunderstore,
-Nexus Mods, ...) or with **Add from link…**, and press **Deploy**.
+Then make a profile, add mods on the **Add mods** tab, by searching a source
+(Thunderstore, Nexus Mods, ...) or pasting a link, and press **Deploy**.
 
 Mods released on GitHub are added from a link to their repo: pick the file
 you want from the newest release (`ModName-0.1.2.zip`, say), and updates

@@ -8,7 +8,8 @@ import { refreshDetails } from "./details.js";
 import { loadConflicts } from "./conflicts.js";
 import { loadModConfigs } from "./config.js";
 import { modSearch } from "./toolbar.js";
-import { renderSourceTabs } from "./browse.js";
+import { renderTabs } from "./browse.js";
+import { clearLink } from "./addlink.js";
 import { markUpdates } from "./deploy.js";
 import { renderPlay } from "./play.js";
 import { go } from "./nav.js";
@@ -66,6 +67,7 @@ export function renderSidebar() {
 
 export async function switchProfile(id) {
   modSearch.value = "";
+  clearLink();
   await run("use_profile", { id });
   state.overview.current = id;
   await openProfile(id);
@@ -134,8 +136,9 @@ export function renderProfile({ keepMods = false } = {}) {
     $("#mod-problems").replaceChildren();
     $("#mods-empty").hidden = true;
     $("#mods-toolbar").hidden = true;
+    $("#mods-link").hidden = true;
     renderGamePath(!!game.install);
-    renderSourceTabs([]);
+    renderTabs();
     return;
   }
 
@@ -150,12 +153,13 @@ export function renderProfile({ keepMods = false } = {}) {
 
   if (!keepMods) renderMods(p.mods);
   $("#mods-toolbar").hidden = !p.mods.length;
+  $("#mods-link").hidden = false;
   $("#mod-problems").replaceChildren(
     ...p.issues.map((i) =>
       h("li", { class: i.severity, "data-kind": i.kind.type }, i.message, issueAction(p, i)),
     ),
   );
-  renderSourceTabs(p.searchSources);
+  renderTabs();
 }
 
 /** A button to deal with issue `i`, for the issues that have one. */

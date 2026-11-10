@@ -24,6 +24,8 @@ import { conflictMark } from "./conflicts.js";
 import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
 import { requirementsList, requirementsMark } from "./requirements.js";
 import { settingsButton } from "./config.js";
+import { ADD_TAB, selectTab } from "./browse.js";
+import { go } from "./nav.js";
 
 // The Mods tab shows mods either as cards, like a source's search results,
 // or as a denser list of rows that each expand to show the rest.
@@ -984,9 +986,14 @@ export async function renderMods(mods) {
   $("#hidden-mods").hidden = !hiddenMods.length;
   renderHiddenCount();
   $("#mods-empty").hidden = shown.length > 0;
-  $("#mods-empty").textContent = mods.length
-    ? `No mods match “${query}”.`
-    : "No mods yet. Find some in the tabs above.";
+  $("#mods-empty").replaceChildren(
+    ...(mods.length
+      ? [`No mods match “${query}”.`]
+      : [
+          "No mods yet. ",
+          h("button", { type: "button", class: "link", onclick: () => go(() => selectTab(ADD_TAB)) }, "Add some"),
+        ]),
+  );
   $("#filter-menu > summary").textContent = state.profile.hiddenTags.length
     ? `Filter (${state.profile.hiddenTags.length})`
     : "Filter";
