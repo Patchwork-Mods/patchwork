@@ -5799,7 +5799,7 @@ checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "patchwork-bethesda"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "patchwork-core",
@@ -5815,7 +5815,7 @@ dependencies = [
 
 [[package]]
 name = "patchwork-builtin"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "patchwork-bethesda",
  "patchwork-core",
@@ -5830,7 +5830,7 @@ dependencies = [
 
 [[package]]
 name = "patchwork-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5846,7 +5846,7 @@ dependencies = [
 
 [[package]]
 name = "patchwork-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axoupdater",
@@ -5874,7 +5874,7 @@ dependencies = [
 
 [[package]]
 name = "patchwork-deployers"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "globset",
  "patchwork-core",
@@ -5884,7 +5884,7 @@ dependencies = [
 
 [[package]]
 name = "patchwork-formats"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5903,7 +5903,7 @@ dependencies = [
 
 [[package]]
 name = "patchwork-gui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5931,14 +5931,14 @@ dependencies = [
 
 [[package]]
 name = "patchwork-helldivers"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "patchwork-core",
 ]
 
 [[package]]
 name = "patchwork-smf"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crc32fast",
  "glacier-bin1",
@@ -5958,7 +5958,7 @@ dependencies = [
 
 [[package]]
 name = "patchwork-sources"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "jiff",
@@ -5973,7 +5973,7 @@ dependencies = [
 
 [[package]]
 name = "patchwork-sync"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -6831,7 +6831,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "registry-gen"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",

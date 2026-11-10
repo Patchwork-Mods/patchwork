@@ -82,7 +82,10 @@ section up to date.
 
 ## Releasing
 
-1. Bump `version` in `Cargo.toml` and push it to main.
+1. Bump `version` in `Cargo.toml`, add a `## <version>` section to
+   `CHANGELOG.md`, and push them to main. That section becomes the GitHub
+   release's notes and what the app's update dialog shows; a dry run's plan
+   output has it as `announcement_changelog` if dist found it.
 2. In GitHub's Actions tab, run the **Release** workflow on main with the
    tag to make (e.g. `v0.2.0`).
 

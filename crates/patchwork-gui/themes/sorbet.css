@@ -75,6 +75,19 @@ input:not([type="checkbox"]):not([type="radio"]) {
   padding-inline: 14px;
 }
 
+/* Deploy and Play with their menus make one pill: the button is rounded on
+   the left only and its menu arrow on the right only, so the halves meet
+   flush. Without this the pill rule above rounds the button's inner edge
+   away from the arrow. */
+.split>button {
+  border-radius: 999px 0 0 999px;
+}
+
+.split>.menu>summary {
+  border-radius: 0 999px 999px 0;
+  padding-right: 10px;
+}
+
 /* Room for the drop-down arrow. */
 select {
   padding-right: 30px;
@@ -116,6 +129,16 @@ button.primary {
 .game-card:hover {
   transform: translateY(-3px);
   box-shadow: var(--pw-shadow-lg);
+}
+
+/* The roomier spacing is for the page, not between cards: they sit at
+   two thirds of the gap they would get from it. */
+.result-grid {
+  gap: calc(var(--pw-gap) * 2 / 3);
+}
+
+.game-grid {
+  gap: var(--pw-gap);
 }
 
 /* Pictures sit inset from the card's edge, rounded to follow its corners,

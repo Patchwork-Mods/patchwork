@@ -2237,7 +2237,8 @@ dialog::backdrop {
   margin-top: 6px;
 }
 
-#changelog-body {
+#changelog-body,
+#self-update-notes {
   max-height: 60vh;
   overflow-y: auto;
 }

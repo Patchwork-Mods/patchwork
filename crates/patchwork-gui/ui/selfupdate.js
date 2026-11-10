@@ -4,6 +4,7 @@
 
 import { invoke, status } from "./state.js";
 import { $, openExternal } from "./dom.js";
+import { renderEntries } from "./changelog.js";
 
 const { Channel } = window.__TAURI__.core;
 
@@ -60,6 +61,9 @@ button.addEventListener("click", async () => {
   status(`Patchwork ${found.latest} is available`);
   $("#self-update-summary").textContent =
     `Patchwork ${found.latest} is out. You have ${found.current}.`;
+  const notes = $("#self-update-notes");
+  notes.replaceChildren(...(found.notesHtml ? renderEntries([{ html: found.notesHtml }]) : []));
+  notes.hidden = !found.notesHtml;
   $("#self-update-manual").hidden = found.installable;
   $("#self-update-download").hidden = found.installable;
   error.hidden = true;

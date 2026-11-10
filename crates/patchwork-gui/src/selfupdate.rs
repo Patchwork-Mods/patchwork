@@ -1,5 +1,5 @@
 //! Updating the app itself, with Tauri's updater: it reads `latest.json` from
-//! the newest GitHub release (made by `.github/workflows/gui-release.yml`)
+//! the newest GitHub release (made by `.github/workflows/release.yml`, with notes from `CHANGELOG.md`)
 //! and installs the bundle that matches how this copy was installed.
 
 use std::sync::Mutex;
@@ -100,6 +100,8 @@ pub struct UpdateInfo {
     /// The newer release, if there is one.
     latest: Option<String>,
     available: bool,
+    /// The newer release's notes (its CHANGELOG.md section), as safe HTML.
+    notes_html: Option<String>,
     /// Whether [`install_update`] can replace this copy.
     installable: bool,
     releases_url: &'static str,
@@ -112,6 +114,11 @@ pub async fn check_for_update(handle: AppHandle) -> CmdResult<UpdateInfo> {
     Ok(UpdateInfo {
         current: handle.package_info().version.to_string(),
         available: update.is_some(),
+        notes_html: update
+            .as_ref()
+            .and_then(|u| u.body.as_deref())
+            .filter(|notes| !notes.trim().is_empty())
+            .map(crate::changelog::render_markdown),
         latest: update.map(|u| u.version),
         installable: installed_from().is_some(),
         releases_url: RELEASES_URL,
