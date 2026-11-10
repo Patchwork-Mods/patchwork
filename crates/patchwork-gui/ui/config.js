@@ -48,7 +48,14 @@ function renderConfig() {
     ...shown.map((f) =>
       h(
         "li",
-        { class: f.missing ? "config-file missing" : "config-file" },
+        {
+          class: f.missing ? "config-file missing" : "config-file",
+          // The whole row opens it, badges and gaps included; the button
+          // is there for the keyboard. Other buttons (Forget) do their own.
+          onclick: (e) => {
+            if (!f.missing && !e.target.closest("button:not(.config-open)")) showConfig(f);
+          },
+        },
         h(
           "button",
           {
@@ -58,7 +65,6 @@ function renderConfig() {
             title: f.missing
               ? "It isn't there now, so the settings changed in it aren't applied"
               : "Change its settings",
-            onclick: () => showConfig(f),
           },
           h("span", { class: "config-title" }, f.title ?? f.path.split("/").pop()),
           h("span", { class: "config-path muted" }, f.path),

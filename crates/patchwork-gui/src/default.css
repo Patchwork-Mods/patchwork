@@ -146,6 +146,30 @@ textarea {
   padding: 5px 10px;
 }
 
+/* Drop-downs: the webview draws its own grey box (ignoring the colours
+   above) unless appearance is off, so the arrow is drawn here, in the text
+   colour. A theme that colours them should set background-color rather
+   than the background shorthand, which would clear the arrow. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 26px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    right 14px center,
+    right 9px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+option {
+  background: var(--pw-surface);
+  color: var(--pw-text);
+}
+
 button {
   cursor: pointer;
 }
@@ -1030,6 +1054,10 @@ dialog button.danger-text {
   width: 150px;
 }
 
+select.mod-version {
+  padding-right: 22px;
+}
+
 #mod-problems li,
 #list-problems li {
   padding: 6px 8px;
@@ -1172,6 +1200,12 @@ dialog button.danger-text {
 #requirements-body {
   max-height: 60vh;
   overflow-y: auto;
+}
+
+/* Empty, they'd still take a gap each in the tab's column. */
+#mod-notices:empty,
+#mod-problems:empty {
+  display: none;
 }
 
 /* Things worth knowing that aren't problems, like what a new mod may need;
@@ -2032,6 +2066,10 @@ body.mod-settings-shown .mod-row .mod-settings[hidden] {
   padding: 2px 8px;
 }
 
+#statusbar select {
+  padding-right: 24px;
+}
+
 #status.error {
   color: var(--pw-danger);
 }
@@ -2118,12 +2156,22 @@ dialog::backdrop {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
+  padding: 6px 6px 6px 0;
   border-top: 1px solid var(--pw-border);
 }
 
 .config-file:first-child {
   border-top: none;
+}
+
+/* The whole row opens the file (see renderConfig), so it all lights up. */
+.config-file:not(.missing) {
+  cursor: pointer;
+}
+
+.config-file:not(.missing):hover,
+.config-file:has(.config-open:focus-visible) {
+  background: var(--pw-surface);
 }
 
 .config-open {
@@ -2137,10 +2185,6 @@ dialog::backdrop {
   border: none;
   background: none;
   padding: 4px 6px;
-}
-
-.config-open:hover:not(:disabled) {
-  background: var(--pw-surface);
 }
 
 .config-path {

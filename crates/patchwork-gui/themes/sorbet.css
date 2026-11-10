@@ -66,6 +66,11 @@ input:not([type="checkbox"]):not([type="radio"]) {
   padding-inline: 14px;
 }
 
+/* Room for the drop-down arrow. */
+select {
+  padding-right: 30px;
+}
+
 button.primary {
   background: linear-gradient(135deg, var(--pw-accent), #ffa07a);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--pw-accent) 35%, transparent);

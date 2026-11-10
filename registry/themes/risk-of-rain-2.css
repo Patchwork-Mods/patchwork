@@ -4,16 +4,44 @@
  * game = "risk-of-rain-2"
  * modes = ["dark"]
  *
- * Night-sky HUD panels with cut corners, the item rarity colours along the
- * top of each mod card (common, uncommon, legendary, boss, lunar, void,
- * equipment), a health-bar green for switches and the equipment orange for
- * the main buttons.
+ * The game's two looks. What you click is drawn like its pause and settings
+ * menus: large, bold slate plates with a thick grey edge that light up
+ * khaki on hover; the chosen one gets a heavy white edge with a black and
+ * yellow line inside it. Menus and dialogs sit on a blur of whatever is
+ * behind them; the mod list is drawn that way too, a column of plates on a
+ * dark square. What only shows things (the sidebar, the status bar, the mod
+ * cards) is HUD: dark, see-through panels, with the yellow and the
+ * red picked out where they mean something. Mods turn on and off with the
+ * game's checkbox: empty, or an X. The main pane shows the game's key art
+ * (loaded from the Risk of Rain 2 wiki, so it needs a connection), darkened
+ * so the HUD stays readable.
  */
 
 :root {
   color-scheme: dark;
 
-  /* Item rarities, as they show on pickups and in the logbook. */
+  /* Menus */
+  --ror-plate: #425261; /* a button at rest */
+  --ror-plate-hover: #b3b67d; /* under the pointer */
+  --ror-plate-text-hover: #1a1f24;
+  --ror-edge: #737a84; /* a button's edge */
+  --ror-edge-chosen: #ffffff; /* the chosen one's edge */
+  --ror-edge-width: 2px;
+  --ror-control: #d2d2d2; /* checkboxes and sliders */
+  /* Menus and dialogs: a dark tint over a blur of what's behind. */
+  --ror-menu-panel: rgb(22 30 37 / 0.72);
+  --ror-blur: blur(14px) saturate(1.2);
+
+  /* HUD */
+  --ror-hud: rgb(9 13 17 / 0.62);
+  --ror-hud-edge: rgb(115 122 132 / 0.45);
+  --ror-gold: #fbd671;
+  --ror-red: #a00100;
+
+  --ror-chosen: 0 0 0 1px var(--ror-edge-chosen), inset 0 0 0 1px #000000,
+    inset 0 0 0 2px var(--ror-gold);
+
+  /* Item rarities, for the strip along the top of each mod card. */
   --ror-common: #e9ecef;
   --ror-uncommon: #77c94a;
   --ror-legendary: #e5463c;
@@ -21,142 +49,501 @@
   --ror-lunar: #4f8dff;
   --ror-void: #c46ad8;
   --ror-equipment: #ff8a1c;
-  /* How far corners are cut. */
-  --ror-cut: 9px;
 
-  --pw-font: "Bahnschrift", "DIN Alternate", "Barlow Semi Condensed", "Roboto Condensed",
-    "Arial Narrow", system-ui, sans-serif;
-  --pw-radius: 0;
+  --pw-font: "Bombardier", "Bahnschrift", "DIN Alternate", "Barlow Semi Condensed",
+    "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
+  --pw-radius: 2px;
 
-  --pw-bg: #0b0f17;
-  --pw-surface: #141b27;
-  --pw-sidebar: #080b11;
-  --pw-text: #e3e7ee;
-  --pw-muted: #8793a6;
-  --pw-border: #2a3546;
-  --pw-accent: var(--ror-equipment);
-  --pw-accent-text: #120a02;
-  --pw-danger: var(--ror-legendary);
-  --pw-danger-text: #fff3f2;
-  --pw-warning: var(--ror-boss);
-  --pw-link: #8fb6ff;
-  --pw-focus: var(--ror-boss);
-  --pw-hover: #1b2433;
-  --pw-selection: color-mix(in srgb, var(--ror-lunar) 45%, transparent);
+  --pw-bg: #0d1318;
+  --pw-surface: #1a232b;
+  --pw-sidebar: #0a0f13;
+  --pw-text: #f2f2f2;
+  --pw-muted: #9aa3ad;
+  --pw-border: #36414c;
+  --pw-accent: var(--ror-gold);
+  --pw-accent-text: #1d1a0e;
+  /* The game's red is too dark to read as text on the HUD, so this is a
+     lighter one; buttons that delete things use the real one. */
+  --pw-danger: #ff5a4a;
+  --pw-danger-text: #ffffff;
+  --pw-warning: var(--ror-gold);
+  --pw-link: var(--ror-gold);
+  --pw-focus: var(--ror-edge-chosen);
+  --pw-hover: rgb(179 182 125 / 0.16);
+  --pw-selection: rgb(251 214 113 / 0.35);
   --pw-shadow-color: #000000;
+  --pw-backdrop: rgb(3 5 7 / 0.72);
 }
 
-/* The sky over Distant Roost: a cold glow from the top, a little teleporter
-   red low on the left. */
+/* The menu backdrop: a dim, cold sky. */
 body {
   background:
-    radial-gradient(ellipse 70% 50% at 85% -10%, rgb(79 141 255 / 0.16), transparent 70%),
-    radial-gradient(ellipse 50% 40% at -5% 110%, rgb(229 70 60 / 0.12), transparent 70%),
+    radial-gradient(ellipse 80% 60% at 70% -10%, rgb(96 128 150 / 0.22), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 0% 110%, rgb(66 82 97 / 0.35), transparent 70%),
     var(--pw-bg);
   background-attachment: fixed;
 }
 
-#sidebar,
-#statusbar {
-  background: rgb(8 11 17 / 0.85);
+/* The main pane: the key art, darkened and a little blurred, with the HUD
+   panels over it. The picture is on a layer of its own so the blur doesn't
+   reach what's in front; it hangs past the edges so they stay sharp. */
+#main {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--pw-bg);
+}
+
+#main::before {
+  content: "";
+  position: absolute;
+  inset: -24px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(rgb(9 13 17 / 0.72), rgb(9 13 17 / 0.82)),
+    url("https://riskofrain2.wiki.gg/images/Risk_of_Rain_2_key_art.jpg") center / cover no-repeat;
+  filter: blur(4px);
 }
 
 h1,
 h2,
 h3,
 .brand,
-.tabs button,
-.game-section > h2,
-legend {
+legend,
+.game-section > h2 {
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+  font-weight: 700;
 }
 
 .brand {
-  font-weight: 700;
   color: #fff;
 }
 
-/* Cut corners, the HUD's one shape. */
-button,
-select,
-input:not([type="checkbox"]):not([type="radio"]),
-.result,
-.mod-list,
-dialog,
-.tag,
-.badge {
-  clip-path: polygon(
-    var(--ror-cut) 0,
-    100% 0,
-    100% calc(100% - var(--ror-cut)),
-    calc(100% - var(--ror-cut)) 100%,
-    0 100%,
-    0 var(--ror-cut)
-  );
+/* ---- HUD: see-through panels ---- */
+
+#sidebar {
+  background: var(--ror-hud);
+  border-right: 1px solid var(--ror-hud-edge);
 }
 
-.tag,
-.badge {
-  --ror-cut: 4px;
-  border-radius: 0;
+#statusbar {
+  background: rgb(5 8 10 / 0.75);
+  border-top: 1px solid var(--ror-hud-edge);
 }
 
-/* Buttons the HUD would draw: thin, bright edge on a dark plate. */
-button {
-  background: linear-gradient(180deg, #1d2636, #141b27);
-  border-color: #3a475c;
-  letter-spacing: 0.03em;
+#profile-header {
+  background: rgb(9 13 17 / 0.4);
+  border-bottom: 1px solid var(--ror-hud-edge);
+  /* Revert, Update, Deploy and Play as close as the tabs are... */
+  gap: 4px;
 }
 
-button:hover:not(:disabled) {
-  border-color: var(--pw-muted);
-  background: linear-gradient(180deg, #263147, #182030);
+/* ...with the header's usual space left between the two groups. */
+#profile-header > #tabs {
+  margin-right: calc(var(--pw-gap) - 4px);
 }
 
-button.primary {
-  background: linear-gradient(180deg, #ffa34a, var(--ror-equipment));
-  color: var(--pw-accent-text);
+#status.error {
+  color: var(--pw-danger);
   font-weight: 700;
-  text-transform: uppercase;
 }
 
-button.primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, #ffb66d, #ff9533);
+/* ---- Menus: opaque plates ---- */
+
+/* Every button that draws a box; the ones the built-in look leaves bare
+   (icons, links, rows in menus) stay bare. */
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ),
+.menu summary {
+  background: var(--ror-plate);
+  border: var(--ror-edge-width) solid var(--ror-edge);
+  color: #fff;
+  font-weight: 700;
+  transition: background 0.08s, color 0.08s;
+}
+
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ):hover:not(:disabled),
+.menu summary:hover,
+.menu[open] > summary {
+  background: var(--ror-plate-hover);
+  border-color: var(--ror-plate-hover);
+  color: var(--ror-plate-text-hover);
+}
+
+.menu summary::after,
+.menu summary:hover::after {
+  color: inherit;
+}
+
+/* The main action (Deploy, Play) in the game's yellow. */
+button.primary,
+#deploy.primary + .menu > summary {
+  background: var(--ror-gold);
+  border-color: var(--ror-gold);
+  color: var(--pw-accent-text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 button.danger {
-  background: linear-gradient(180deg, #f0675e, var(--ror-legendary));
+  background: var(--ror-red);
+  border-color: #d0302a;
+  color: #fff;
 }
 
-/* Clipping would cut the focus ring, so draw it inside. */
+button.danger:hover:not(:disabled) {
+  background: #c0100c;
+  border-color: #ff6a5a;
+  color: #fff;
+}
+
+#update.has-updates {
+  border-color: var(--ror-gold);
+  color: var(--ror-gold);
+}
+
+#update.has-updates:hover:not(:disabled) {
+  color: var(--ror-plate-text-hover);
+}
+
+/* A chosen option, like the highlighted menu entry: a heavy white edge
+   with a black line and a yellow line inside it. */
+.segmented button[aria-pressed="true"],
+.tabs button[aria-selected="true"],
+#profiles button[aria-current="true"] {
+  background: var(--ror-plate);
+  border-color: var(--ror-edge-chosen);
+  color: #fff;
+  box-shadow: var(--ror-chosen);
+  position: relative;
+  z-index: 1;
+}
+
+.segmented button[aria-pressed="true"]:hover,
+.tabs button[aria-selected="true"]:hover,
+#profiles button[aria-current="true"]:hover {
+  background: var(--ror-plate-hover);
+  border-color: var(--ror-edge-chosen);
+  color: var(--ror-plate-text-hover);
+}
+
+.segmented {
+  gap: 4px;
+}
+
+.segmented button + button {
+  border-left: var(--ror-edge-width) solid var(--ror-edge);
+}
+
 button:focus-visible,
 select:focus-visible,
-input:focus-visible {
-  outline-offset: -3px;
+input:focus-visible,
+textarea:focus-visible,
+.menu summary:focus-visible {
+  outline: 2px solid var(--ror-edge-chosen);
+  outline-offset: 1px;
 }
 
-/* The chosen profile and tab, lit like a selected menu entry. */
-#profiles button[aria-current="true"] {
-  background: linear-gradient(90deg, rgb(255 138 28 / 0.22), transparent);
-  box-shadow: inset 3px 0 0 var(--ror-equipment);
+/* Tabs, as the settings menu's row of headers: big plates, the open one
+   edged in white. */
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+#settings-tabs {
+  border-bottom: none;
+  flex-wrap: wrap;
+}
+
+.tabs button {
+  padding: 6px 16px;
+  background: var(--ror-plate);
+  border: var(--ror-edge-width) solid var(--ror-edge);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tabs button:hover {
+  background: var(--ror-plate-hover);
+  border-color: var(--ror-plate-hover);
+  color: var(--ror-plate-text-hover);
+}
+
+/* Profiles: the pause menu's column of buttons. */
+#profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Room for the chosen one's outer edge. */
+  padding: 1px;
+}
+
+#profiles button {
+  padding: 9px 12px;
+  background: var(--ror-plate);
+  border: var(--ror-edge-width) solid var(--ror-edge);
+  font-size: 15px;
+  font-weight: 700;
   color: #fff;
 }
 
 #profiles button:hover {
-  background: linear-gradient(90deg, rgb(255 255 255 / 0.06), transparent);
+  background: var(--ror-plate-hover);
+  border-color: var(--ror-plate-hover);
+  color: var(--ror-plate-text-hover);
 }
 
-.tabs button[aria-selected="true"] {
+/* Drop-down menus and right-click menus: rows that light up khaki, on a
+   blur of what's behind. */
+.menu-items,
+.settings-menu {
+  background: var(--ror-menu-panel);
+  -webkit-backdrop-filter: var(--ror-blur);
+  backdrop-filter: var(--ror-blur);
+  border: var(--ror-edge-width) solid var(--ror-edge);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.6);
+}
+
+.menu-items button,
+.menu-items label,
+.settings-menu button {
+  font-weight: 600;
+}
+
+.menu-items button:hover,
+.menu-items button:focus-visible,
+.menu-items label:hover,
+.menu-items label:focus-within,
+.settings-menu button:hover,
+.settings-menu button:focus-visible {
+  background: var(--ror-plate-hover);
+  border-color: var(--ror-plate-hover);
+  color: var(--ror-plate-text-hover);
+}
+
+.menu-items button:hover .muted,
+.menu-items button:focus-visible .muted,
+.menu-items label:hover .muted,
+.menu-items button.danger-text:hover {
+  color: var(--ror-plate-text-hover);
+}
+
+.menu-items hr {
+  border-top-color: var(--ror-edge);
+}
+
+/* Fields: dark wells with the menu edge. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea {
+  background: #10171d;
+  border: 1px solid var(--ror-edge);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):hover,
+textarea:hover {
+  border-color: var(--ror-plate-hover);
+}
+
+/* Drop-downs, as the settings menu's: a plate. Colour only, so the
+   built-in look's arrow stays. */
+select {
+  background-color: var(--ror-plate);
+  border: var(--ror-edge-width) solid var(--ror-edge);
   color: #fff;
-  box-shadow: inset 0 -2px 0 var(--ror-boss);
+  font-weight: 700;
 }
 
-/* Mod cards as item tooltips: a rarity bar on top, going round the set. */
+select:hover:not(:disabled) {
+  background-color: var(--ror-plate-hover);
+  border-color: var(--ror-plate-hover);
+  color: var(--ror-plate-text-hover);
+}
+
+/* A card's version reads as text until it's hovered, as in the built-in
+   look. */
+.card-footer select.mod-version {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--pw-muted);
+  font-weight: 400;
+}
+
+.card-footer select.mod-version:hover {
+  background-color: transparent;
+  border-color: var(--ror-edge);
+  color: var(--pw-text);
+}
+
+/* Checkboxes (the mods' on/off switches too) and radios: light grey
+   squares with an X, and rounds with a dot. */
+input[type="checkbox"],
+input[type="radio"] {
+  --ror-tick: var(--ror-control);
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 2px solid var(--ror-control);
+  border-radius: 1px;
+  background: rgb(0 0 0 / 0.35);
+  box-shadow: none;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  transition: none;
+}
+
+input[type="radio"] {
+  border-radius: 50%;
+}
+
+input[type="checkbox"]::before,
+input[type="radio"]::before {
+  content: "";
+  position: static;
+  width: 10px;
+  height: 10px;
+  border-radius: 0;
+  box-shadow: none;
+  transform: none;
+  transition: none;
+  opacity: 0;
+}
+
+input[type="checkbox"]::before {
+  background:
+    linear-gradient(45deg, transparent 40%, var(--ror-tick) 40% 60%, transparent 60%),
+    linear-gradient(-45deg, transparent 40%, var(--ror-tick) 40% 60%, transparent 60%);
+}
+
+input[type="radio"]::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ror-tick);
+}
+
+input[type="checkbox"]:checked,
+input[type="radio"]:checked {
+  background: rgb(0 0 0 / 0.35);
+}
+
+input[type="checkbox"]:checked::before,
+input[type="radio"]:checked::before {
+  opacity: 1;
+  transform: none;
+}
+
+input[type="checkbox"]:hover:not(:disabled),
+input[type="radio"]:hover:not(:disabled),
+.switch:hover input:not(:disabled) {
+  --ror-tick: var(--ror-plate-hover);
+  border-color: var(--ror-plate-hover);
+}
+
+/* On a lit menu row the grey would vanish into the khaki. */
+.menu-items label:hover input,
+.menu-items label:focus-within input {
+  --ror-tick: var(--ror-plate-text-hover);
+  border-color: var(--ror-plate-text-hover);
+}
+
+/* Sliders: a thin dark bar with a light grey block to drag. */
+input[type="range"] {
+  appearance: none;
+  height: 6px;
+  padding: 0;
+  background: #10171d;
+  border: 1px solid var(--ror-edge);
+  border-radius: 0;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 10px;
+  height: 20px;
+  background: var(--ror-control);
+  border: none;
+  border-radius: 1px;
+  cursor: pointer;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  background: var(--ror-plate-hover);
+}
+
+/* Dialogs: a menu panel, with everything behind blurred out. */
+dialog {
+  background: var(--ror-menu-panel);
+  -webkit-backdrop-filter: var(--ror-blur);
+  backdrop-filter: var(--ror-blur);
+  border: var(--ror-edge-width) solid var(--ror-edge);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.7);
+}
+
+dialog::backdrop {
+  background: rgb(3 5 7 / 0.45);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+dialog h2:first-child,
+dialog form > h2:first-child {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ror-edge);
+}
+
+fieldset {
+  border-color: var(--pw-border);
+}
+
+/* ---- HUD: mods ---- */
+
+/* Mod cards as item pickups: a see-through panel with a strip of rarity
+   colour on top, going round the set. */
 .result {
-  border-color: #2e3a4d;
-  background: rgb(20 27 39 / 0.92);
+  background: var(--ror-hud);
+  border: 1px solid var(--ror-hud-edge);
   border-top: 3px solid var(--rarity, var(--ror-common));
+}
+
+.result:hover {
+  border-color: var(--ror-plate-hover);
+  border-top-color: var(--rarity, var(--ror-common));
 }
 
 .result-grid > :nth-child(7n + 1) { --rarity: var(--ror-common); }
@@ -167,89 +554,110 @@ input:focus-visible {
 .result-grid > :nth-child(7n + 6) { --rarity: var(--ror-void); }
 .result-grid > :nth-child(7n + 7) { --rarity: var(--ror-equipment); }
 
-.result:hover {
-  border-color: var(--rarity, var(--ror-common));
-  border-top-color: var(--rarity, var(--ror-common));
-}
-
 .result h3,
 .result h3 a {
   color: var(--rarity, #fff);
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .result.disabled {
-  --rarity: #4b5566;
+  --rarity: #59636e;
 }
 
+/* The sheet slides over the picture, so it needs to hide it. */
 .card-sheet {
-  background: rgb(20 27 39 / 0.97);
+  background: rgb(12 17 22 / 0.94);
 }
 
 .card-sheet::before {
   border-radius: 0;
-  background: var(--rarity, var(--pw-border));
+  background: var(--rarity, var(--ror-edge));
 }
 
-/* The list view: logbook rows, a rarity tick on the left of each. */
+.result img,
+.result .no-icon,
+.mod-row img,
+.mod-row .no-icon {
+  background: rgb(66 82 97 / 0.35);
+  opacity: 0.85;
+}
+
+/* Less room above the toolbar, so the list starts higher. */
+#tab-mods {
+  padding-top: 6px;
+}
+
+/* The list as a menu: a column of plates, spaced out, on a dark square
+   that blurs what's behind, like the game's menus. Hover lights the edge
+   khaki rather than the whole plate, so the text and controls in a row
+   stay readable; an open row gets the chosen look. */
 .mod-list {
-  background: rgb(20 27 39 / 0.9);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 18px;
+  background: rgb(5 8 10 / 0.55);
+  -webkit-backdrop-filter: var(--ror-blur);
+  backdrop-filter: var(--ror-blur);
+  border: none;
 }
 
 .mod-row {
-  box-shadow: inset 3px 0 0 var(--rarity, transparent);
+  background: rgb(66 82 97 / 0.92);
+  border: 3px solid var(--ror-edge);
+  border-radius: 1px;
+  padding: 7px 10px;
 }
 
-.mod-list > :nth-child(7n + 1) { --rarity: var(--ror-common); }
-.mod-list > :nth-child(7n + 2) { --rarity: var(--ror-uncommon); }
-.mod-list > :nth-child(7n + 3) { --rarity: var(--ror-legendary); }
-.mod-list > :nth-child(7n + 4) { --rarity: var(--ror-boss); }
-.mod-list > :nth-child(7n + 5) { --rarity: var(--ror-lunar); }
-.mod-list > :nth-child(7n + 6) { --rarity: var(--ror-void); }
-.mod-list > :nth-child(7n + 7) { --rarity: var(--ror-equipment); }
-
-.mod-list > :nth-child(even) {
-  background: rgb(255 255 255 / 0.02);
+.mod-row .mod-name {
+  font-weight: 700;
+  color: #fff;
 }
 
-/* Switches as a health bar: green on, empty grey off, square ends. */
-.switch input,
-.switch input::before {
+.mod-row:hover {
+  background: rgb(78 96 112 / 0.95);
+  border-color: var(--ror-plate-hover);
+}
+
+.mod-row.expanded {
+  border-color: var(--ror-edge-chosen);
+  box-shadow: var(--ror-chosen);
+}
+
+.mod-row.disabled {
+  background: rgb(42 52 62 / 0.85);
+}
+
+.mod-list > li.dragging {
+  background: var(--ror-plate);
+  border-color: var(--ror-plate-hover);
+}
+
+/* Tags and badges: small square labels. */
+.tag,
+.badge {
   border-radius: 0;
-}
-
-.switch input {
-  background: #2a3343;
-  box-shadow: inset 0 0 0 1px #3a475c;
-}
-
-.switch input:checked {
-  background: linear-gradient(180deg, #8fdc5c, #4f9a2c);
-}
-
-.switch input::before {
-  background: #e3e7ee;
-}
-
-.tag {
-  border-color: #3a475c;
+  border-color: var(--ror-edge);
   color: var(--pw-muted);
 }
 
-dialog {
-  border-color: #3a475c;
-  background: rgb(14 19 28 / 0.98);
+/* The priority chip, once set, in the HUD yellow. */
+.mod-priority {
+  border-radius: 1px;
 }
 
-dialog::backdrop {
-  background: rgb(4 6 10 / 0.7);
+.mod-priority.set {
+  color: var(--ror-gold);
+  border-color: rgb(251 214 113 / 0.5);
 }
 
-/* Split buttons (Deploy and its menu) are cut as one: only their outer
-   corners. */
-.split > button {
-  clip-path: polygon(var(--ror-cut) 0, 100% 0, 100% 100%, 0 100%, 0 var(--ror-cut));
+/* Problems and nudges in the HUD's red and yellow. */
+.mod-conflict.lost,
+.requirement-missing {
+  color: var(--pw-danger);
 }
 
-.split > .menu > summary {
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--ror-cut)), calc(100% - var(--ror-cut)) 100%, 0 100%);
+.error {
+  color: var(--pw-danger);
 }
