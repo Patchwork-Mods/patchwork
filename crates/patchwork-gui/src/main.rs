@@ -475,7 +475,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 .then(|| pw.known_versions(&lookup, &m.source, &m.id))
                 .flatten();
             let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
-            let locked = lock.iter().flat_map(|l| &l.mods).find(|l| l.key() == key);
+            let locked = lock.iter().flat_map(|l| &l.mods).find(|l| l.has_key(&key));
             UiMod {
                 shown_id: pw.display_id(lock.as_ref(), &m),
                 versions: known.map(|k| k.versions),
@@ -1053,7 +1053,7 @@ fn ui_list(pw: &Patchwork, r: &ProfileRef, list: &str) -> CmdResult<UiList> {
         .filter(|m| m.enabled)
         .filter(|m| {
             let key = mod_key(&m.source, &m.id);
-            !lock.iter().flat_map(|l| &l.mods).any(|l| l.key() == key)
+            !lock.iter().flat_map(|l| &l.mods).any(|l| l.has_key(&key))
         })
         .map(|m| m.name)
         .collect();
@@ -1369,7 +1369,10 @@ fn lock_changes(app: &App, before: Option<Lockfile>, after: Lockfile) -> Vec<Loc
         .into_iter()
         .filter_map(|m| {
             let key = m.key();
-            let old = before.iter().flat_map(|l| &l.mods).find(|l| l.key() == key);
+            let old = before
+                .iter()
+                .flat_map(|l| &l.mods)
+                .find(|l| l.has_key(&key));
             match old {
                 Some(old) if old.version == m.version && old.hash == m.hash => None,
                 _ => {

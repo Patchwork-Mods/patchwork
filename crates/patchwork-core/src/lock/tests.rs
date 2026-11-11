@@ -157,3 +157,20 @@ fn soft_dependencies_say_what_the_profile_has() {
     );
     assert!(text.contains(r#"need = "unknown""#), "{text}");
 }
+
+#[test]
+fn is_key_matches_mod_key() {
+    for (source, id) in [
+        ("thunderstore", "a-b"),
+        ("local", ""),
+        ("a:b", "c"),
+        ("a", "b:c"),
+    ] {
+        let key = mod_key(source, id);
+        assert!(is_key(source, id, &key));
+    }
+    assert!(!is_key("a", "b:c", "a:b:d"));
+    assert!(!is_key("a:b", "c", "a:bc"));
+    assert!(!is_key("nexus", "1", "nexus1"));
+    assert!(!is_key("nexus", "1", "nexus:12"));
+}

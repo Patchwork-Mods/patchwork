@@ -84,6 +84,11 @@ impl LockedMod {
         mod_key(&self.source, &self.id)
     }
 
+    /// Whether `key` is this mod's [`LockedMod::key`], without making one.
+    pub fn has_key(&self, key: &str) -> bool {
+        is_key(&self.source, &self.id, key)
+    }
+
     /// Whether its dependencies were replaced just as `replacements` (from
     /// [`crate::profile::Profile::replacements`]) says they should be. If
     /// not, it has to be resolved again to find which they are.
@@ -128,6 +133,14 @@ pub fn mod_key(source: &str, id: &str) -> String {
     format!("{source}:{id}")
 }
 
+/// Whether `key` is [`mod_key`]`(source, id)`, without making one: lookups
+/// by key run for every mod in a profile, against every mod in the lock.
+pub fn is_key(source: &str, id: &str, key: &str) -> bool {
+    key.strip_prefix(source)
+        .and_then(|rest| rest.strip_prefix(':'))
+        == Some(id)
+}
+
 /// A mod in a lockfile, or a dependency the profile replaced, and how it's
 /// tied to the rest; from [`Lockfile::dependency_info`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -163,12 +176,7 @@ impl Lockfile {
             }
         }
         let mut needers = |key: &str| needed_by.remove(key).unwrap_or_default();
-        let in_profile = |key: &str| {
-            profile
-                .mods
-                .iter()
-                .any(|m| mod_key(&m.source, &m.id) == key)
-        };
+        let in_profile = |key: &str| profile.mods.iter().any(|m| is_key(&m.source, &m.id, key));
         let mut info: Vec<DependencyInfo> = self
             .mods
             .iter()
@@ -244,25 +252,28 @@ impl Lockfile {
         profile: &crate::profile::Profile,
         key: &str,
     ) -> Vec<SoftDependencyInfo> {
-        let Some(locked) = self.mods.iter().find(|m| m.key() == key) else {
+        let Some(locked) = self.mods.iter().find(|m| m.has_key(key)) else {
             return Vec::new();
         };
+        if locked.soft_dependencies.is_empty() {
+            return Vec::new();
+        }
         let ignores = profile
             .mods
             .iter()
-            .find(|m| mod_key(&m.source, &m.id) == key)
+            .find(|m| is_key(&m.source, &m.id, key))
             .map_or(&[][..], |m| &m.ignores[..]);
         let replacements = profile.replacements();
         let name_of = |key: &str| {
             profile
                 .mods
                 .iter()
-                .find(|m| mod_key(&m.source, &m.id) == key)
+                .find(|m| is_key(&m.source, &m.id, key))
                 .map(|m| m.name.clone())
                 .or_else(|| {
                     self.mods
                         .iter()
-                        .find(|m| m.key() == key)
+                        .find(|m| m.has_key(key))
                         .map(|m| m.name.clone())
                 })
         };

@@ -12,6 +12,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -28,17 +30,38 @@ use crate::{Error, Result};
 pub(super) const LOCAL: &str = "local";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct Origins {
+pub(super) struct Origins {
     /// Where each local mod was added from, by id.
     #[serde(default)]
     origins: BTreeMap<String, PathBuf>,
 }
 
+/// The origins as last read, and the file's modification time and size
+/// then, to tell whether it's been written since (by another process, say).
+/// Showing a profile asks for every local mod's origin, so reading the file
+/// each time made that quadratic.
+pub(super) type OriginsCache = Option<(Option<(SystemTime, u64)>, Arc<Origins>)>;
+
 impl Patchwork {
     /// Where local mod `id` was added from on this machine, if it was.
     pub(super) fn local_origin(&self, id: &str) -> Result<Option<PathBuf>> {
-        let origins: Origins = fsutil::read_toml(&self.paths.local_mods())?.unwrap_or_default();
-        Ok(origins.origins.get(id).cloned())
+        Ok(self.local_origins()?.origins.get(id).cloned())
+    }
+
+    fn local_origins(&self) -> Result<Arc<Origins>> {
+        let path = self.paths.local_mods();
+        let stamp = fs::metadata(&path)
+            .ok()
+            .map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()));
+        let mut cache = self.local_origins.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached, origins)) = &*cache
+            && *cached == stamp
+        {
+            return Ok(origins.clone());
+        }
+        let origins = Arc::new(fsutil::read_toml::<Origins>(&path)?.unwrap_or_default());
+        *cache = Some((stamp, origins.clone()));
+        Ok(origins)
     }
 
     fn remember_local_origins(&self, added: Vec<(String, PathBuf)>) -> Result<()> {
@@ -48,7 +71,9 @@ impl Patchwork {
         let path = self.paths.local_mods();
         let mut origins: Origins = fsutil::read_toml(&path)?.unwrap_or_default();
         origins.origins.extend(added);
-        fsutil::write_toml(&path, &origins)
+        fsutil::write_toml(&path, &origins)?;
+        *self.local_origins.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        Ok(())
     }
 
     /// Puts a newly added local mod's file in the store and remembers where
@@ -73,7 +98,7 @@ impl Patchwork {
         let locked = lock
             .into_iter()
             .flat_map(|l| &l.mods)
-            .find(|l| l.key() == key)
+            .find(|l| l.has_key(&key))
             .and_then(|l| match &l.artifact {
                 ArtifactLocation::Local { name } => Some(name.clone()),
                 _ => None,

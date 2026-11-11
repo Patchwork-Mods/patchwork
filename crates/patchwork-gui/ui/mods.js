@@ -417,9 +417,14 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
   const update = h("div", { class: "card-update" });
   fillUpdate(update, m, onVersion);
   const details = h("div", { class: "row-details" });
+  // Most rows stay closed, so what they show when opened is only made then.
+  details.hidden = true;
   const head = h("div", { class: "row-head" });
+  let item;
+  // unlike h(), replaceChildren() would show false and undefined as text
+  const fillDetails = () => details.replaceChildren(...rowDetails(m, item, onRemove).filter(Boolean));
   const fill = () => {
-    const item = cardItem(m);
+    item = cardItem(m);
     head.replaceChildren(
       modIcon(item),
       h(
@@ -438,8 +443,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
         item.author && h("span", { class: "author" }, item.author),
       ),
     );
-    // unlike h(), replaceChildren() would show false and undefined as text
-    details.replaceChildren(...rowDetails(m, item, onRemove).filter(Boolean));
+    if (!details.hidden) fillDetails();
   };
   fill();
   summaryViews.set(key, fill);
@@ -461,6 +465,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
     else expandedRows.delete(key);
     row.classList.toggle("expanded", open);
     arrow.setAttribute("aria-expanded", String(open));
+    if (open && details.hidden) fillDetails();
     details.hidden = !open;
   };
   // clicking anywhere on the picture or name expands it too
@@ -683,15 +688,25 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
   const cover = h("div", { class: "card-cover" });
   const body = h("div", { class: "card-body" });
   const more = h("div", { class: "card-more" });
-  const settings = settingsButton(m, { label: true });
+  // made along with the rest of what's below the sheet: config.js only
+  // keeps buttons that are on the page up to date
+  let settings = null;
   // the tags come with the summary, so this fills in along with it
   const tags = h("span", { class: "card-tags" });
+  let item;
+  // Only made once the sheet is first raised (see measure below), since
+  // most cards never are.
+  let raised = false;
+  const fillMore = () => {
+    settings ??= settingsButton(m, { label: true });
+    more.replaceChildren(...cardMore(m, item, settings).filter(Boolean));
+  };
   const fill = () => {
-    const item = cardItem(m);
+    item = cardItem(m);
     tags.replaceChildren(...[tagsMark(m), tiesMark(m)].filter(Boolean));
     cover.replaceChildren(modIcon(item));
     body.replaceChildren(cardBody(item));
-    more.replaceChildren(...cardMore(m, item, settings).filter(Boolean));
+    if (raised) fillMore();
   };
   fill();
   summaryViews.set(m.key, fill);
@@ -754,6 +769,10 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
   // The sheet rises as far as what hangs below it needs, up to the strip
   // of picture left showing; CSS raises it while hovered or focused.
   const measure = () => {
+    if (!raised) {
+      raised = true;
+      fillMore();
+    }
     const room = Math.max(0, cover.offsetHeight - cardPeek(card));
     more.style.maxHeight = `${room}px`;
     card.style.setProperty("--raise", `${Math.min(more.scrollHeight, room)}px`);
@@ -868,20 +887,30 @@ function versionSelect(m, onVersion) {
       }
     },
   });
+  // Until it's used it only has the version showing: every version of
+  // every mod was most of the elements on the page.
+  const fillAll = () => {
+    if (filledSelects.has(select)) return;
+    filledSelects.add(select);
+    fillVersions(select, m);
+  };
+  select.addEventListener("focus", fillAll);
+  select.addEventListener("pointerdown", fillAll);
   fillVersions(select, m);
   versionSelects.set(m.key, select);
   return select;
 }
+
+/** Version dropdowns with every version in; see versionSelect(). */
+const filledSelects = new WeakSet();
 
 export function fillVersions(select, m) {
   // keep whatever's showing, which may be a choice that's still being saved
   const current = select.options.length ? select.value : (m.version ?? "");
   const versions = m.versions ?? [];
   const auto = !m.version && m.locked ? `Auto (${m.locked})` : "Auto";
-  const options = [
-    h("option", { value: "" }, auto),
-    ...versions.map((v) => h("option", { value: v }, v)),
-  ];
+  const listed = filledSelects.has(select) ? versions : versions.filter((v) => v === current);
+  const options = [h("option", { value: "" }, auto), ...listed.map((v) => h("option", { value: v }, v))];
   // a pinned version that's since been taken down still shows
   if (current && !versions.includes(current)) {
     options.push(h("option", { value: current }, m.versions ? `${current} (unavailable)` : current));

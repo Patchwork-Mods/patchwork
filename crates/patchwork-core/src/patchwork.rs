@@ -331,6 +331,7 @@ impl Builder {
             reporter: self.reporter,
             categories: Mutex::default(),
             fetching_versions: Mutex::default(),
+            local_origins: Mutex::default(),
             changed: broadcast::channel(CHANGES_BUFFERED).0,
             _lock: lock,
         };
@@ -378,6 +379,8 @@ pub struct Patchwork {
     /// source, id)`, so a fetch already underway is waited on rather than
     /// repeated.
     fetching_versions: Mutex<HashMap<(String, String, String), FetchLock>>,
+    /// See [`local::OriginsCache`].
+    local_origins: Mutex<local::OriginsCache>,
     /// Told about every change to a profile or its lockfile; see
     /// [`Patchwork::watch_profiles`].
     changed: broadcast::Sender<ProfileChange>,
@@ -973,7 +976,7 @@ impl Patchwork {
             let locked = lock
                 .iter()
                 .flat_map(|l| &l.mods)
-                .find(|m| m.name == *wanted || m.key() == *wanted);
+                .find(|m| m.name == *wanted || m.has_key(wanted));
             let key = match locked {
                 Some(m) => m.key(),
                 None if wanted.contains(':') => wanted.clone(),
@@ -2640,10 +2643,9 @@ impl Patchwork {
         let game = &entry.value;
         let locked = lock.game.env == game.env.picks(&loaded.env)
             && loaded.mods.iter().filter(|m| m.enabled).all(|m| {
-                let key = mod_key(&m.source, &m.id);
                 lock.mods
                     .iter()
-                    .any(|l| l.key() == key && l.requested == m.version)
+                    .any(|l| l.source == m.source && l.id == m.id && l.requested == m.version)
             });
         if !locked {
             return Ok(DeployStatus::Stale);
