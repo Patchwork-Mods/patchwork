@@ -63,8 +63,9 @@ impl Store {
         let dest = self.blob(&hash);
         if !dest.is_file() {
             let tmp = self.scratch(&dest)?;
-            fs::copy(path, &tmp).at(path)?;
-            fs::rename(&tmp, &dest).at(&dest)?;
+            let file = tmp.path().join("blob");
+            fs::copy(path, &file).at(path)?;
+            publish(&file, &dest)?;
         }
         Ok(hash)
     }
@@ -85,11 +86,11 @@ impl Store {
         if !dest.is_dir() {
             let tmp = self.scratch(&dest)?;
             for (rel, src) in &files {
-                let target = rel.under(&tmp);
+                let target = rel.under(tmp.path());
                 create_parent(&target)?;
                 fs::copy(src, &target).at(src)?;
             }
-            fs::rename(&tmp, &dest).at(&dest)?;
+            publish(tmp.path(), &dest)?;
         }
         Ok(hash)
     }
@@ -125,8 +126,8 @@ impl Store {
                 let tree = self.tree(hash);
                 if !tree.is_dir() {
                     let tmp = self.scratch(&tree)?;
-                    unpack::unpack(&self.blob(hash), &tmp)?;
-                    fs::rename(&tmp, &tree).at(&tree)?;
+                    unpack::unpack(&self.blob(hash), tmp.path())?;
+                    publish(tmp.path(), &tree)?;
                 }
                 tree
             }
@@ -137,19 +138,29 @@ impl Store {
             .collect())
     }
 
-    /// A fresh temporary path next to `dest`, so the final rename stays on
-    /// one filesystem and is atomic.
-    fn scratch(&self, dest: &Path) -> Result<PathBuf> {
+    /// A fresh scratch directory next to `dest`, so moving what's built in
+    /// it into place stays on one filesystem and is atomic. Each call gets
+    /// its own, since the GUI can fill the same entry from two commands at
+    /// once, and it's removed when dropped.
+    fn scratch(&self, dest: &Path) -> Result<tempfile::TempDir> {
         let dir = dest.parent().expect("store paths have parents");
         fs::create_dir_all(dir).at(dir)?;
         let name = dest.file_name().unwrap_or_default().to_string_lossy();
-        let tmp = dir.join(format!(".{name}.tmp"));
-        if tmp.is_dir() {
-            fs::remove_dir_all(&tmp).at(&tmp)?;
-        } else if tmp.exists() {
-            fs::remove_file(&tmp).at(&tmp)?;
-        }
-        Ok(tmp)
+        tempfile::Builder::new()
+            .prefix(&format!(".{name}."))
+            .suffix(".tmp")
+            .tempdir_in(dir)
+            .at(dir)
+    }
+}
+
+/// Moves `tmp` into place as `dest`. If something else put `dest` there
+/// first it's the same content, since entries are named by their hash, so
+/// that one is kept.
+fn publish(tmp: &Path, dest: &Path) -> Result<()> {
+    match fs::rename(tmp, dest) {
+        Err(_) if dest.exists() => Ok(()),
+        renamed => renamed.at(dest),
     }
 }
 

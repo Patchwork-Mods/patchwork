@@ -89,3 +89,28 @@ fn identical_dirs_share_a_hash() {
         .unwrap();
     assert_ne!(a, b);
 }
+
+#[test]
+fn an_archive_can_be_unpacked_by_several_callers_at_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let archive = tmp.path().join("mod.zip");
+    let entries: Vec<_> = (0..200).map(|i| (format!("f/{i}.txt"), "x")).collect();
+    let entries: Vec<_> = entries.iter().map(|(n, c)| (n.as_str(), *c)).collect();
+    write_zip(&archive, &entries);
+    let store = Store::new(tmp.path().join("store"));
+    let hash = store
+        .ingest_path(&archive, ArtifactFormat::Archive)
+        .unwrap();
+
+    std::thread::scope(|s| {
+        let unpacks: Vec<_> = (0..8)
+            .map(|_| s.spawn(|| store.files(&hash, ArtifactFormat::Archive, "mod.zip")))
+            .collect();
+        for unpack in unpacks {
+            assert_eq!(unpack.join().unwrap().unwrap().len(), 200);
+        }
+    });
+    // nothing is left behind next to the tree
+    let trees = fs::read_dir(tmp.path().join("store/trees")).unwrap();
+    assert_eq!(trees.count(), 1);
+}
