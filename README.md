@@ -1,8 +1,8 @@
-# patchwork
-
-<img src="docs/images/patchwork_logo.svg" alt="patchwork" width="160">
-
-A mod manager built to be flexible and convenient, with support for hundreds of games
+<p align="center"><img src="docs/images/patchwork_logo.svg" alt="patchwork logo" width="160"></p>
+<h1 align="center">Patchwork</h1>
+<p align="center">A mod manager for 300+ games and every major mod site, with endless customizability and
+modpacks that sync between friends</p>
+<hr>
 
 ### Goals:
 
@@ -16,15 +16,15 @@ A mod manager built to be flexible and convenient, with support for hundreds of 
 - An extensive library of games, including:
   - Almost all thunderstore games
   - Hitman 3,
-  - Helldivers 2,
+  - Helldivers 2
 - And some games which are supported but currently untested:
   - Skyrim (Special Edition and VR), Enderal, Fallout 4 (and VR), Starfield,
-    Oblivion, Fallout 3 and Fallout: New Vegas, with a load order for their
-    plugins and LOOT sorting,
+    Oblivion, Fallout 3 and Fallout: New Vegas.
 - You can easily add support for additional games, or customize how mods are managed
 for existing games.
-- Patchwork can get mods from thunderstore, nexus, and just local files.
-- Fully customizable CSS, so you can style the gui however you like
+- Patchwork can get mods from thunderstore, nexus, modrinth, github, and mod.io.
+- Fully customizable CSS, so you can style the gui however you like.
+- Full modpack support, so importing from other mod managers should be easy
 - Uses [iroh](https://www.iroh.computer/) to share files with friends via p2p, letting
 your modpacks auto-sync whenever you both are online.
 
@@ -43,41 +43,61 @@ your modpacks auto-sync whenever you both are online.
 
 ## Installing
 
-Each [release](https://github.com/patchwork-mods/patchwork/releases/latest)
-comes in two forms:
+Download the file for your OS from the
+[latest release](https://github.com/patchwork-mods/patchwork/releases/latest).
+The app comes with the `patchwork` CLI, and updates itself from the button at
+the top of the game list.
 
-- **The app**, which includes the `patchwork` CLI. It comes as an installer
-  for Windows, a `.dmg` for macOS, and an AppImage, `.deb` or `.rpm` for
-  Linux. The app updates itself from the button at the top of the game list.
-  The Windows installer, `.deb` and `.rpm` put `patchwork` on your PATH. On
-  macOS or with the AppImage, use **Install command-line tool** at the top of
-  the game list.
-- **Just the CLI**, from its shell or PowerShell installer. Update it with
-  `patchwork self-update`.
+### Windows
 
-Neither is signed yet. The first time you open the app, macOS blocks it:
-allow it under System Settings → Privacy & Security → **Open Anyway**. On
-Windows, SmartScreen warns about the installer: choose **More info** →
-**Run anyway**.
+Download and run the `.exe` installer. SmartScreen will warn you, since the installer isn't signed yet. Choose
+   **More info** → **Run anyway**.
+
+### macOS
+
+Download the `.dmg`, open it, and drag patchwork into Applications. The first time you open it, macOS blocks it,
+since it isn't signed yet. Allow it under System Settings → Privacy & Security → **Open Anyway**.
+
+To use the CLI, click **Install command-line tool** at the top of the game list.
+
+### Linux
+
+| Distro | Download |
+| --- | --- |
+| Debian, Ubuntu, Mint, ... | `.deb` |
+| Fedora, openSUSE, ... | `.rpm` |
+| Anything else | `.AppImage` |
+
+The `.deb` and `.rpm` put the CLI on your PATH. With the AppImage, click
+**Install command-line tool** at the top of the game list.
+
+### Just the CLI
+
+If you don't want the app, install only the CLI:
+
+```sh
+# Linux / macOS
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/patchwork-mods/patchwork/releases/latest/download/patchwork-cli-installer.sh | sh
+```
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/patchwork-mods/patchwork/releases/latest/download/patchwork-cli-installer.ps1 | iex"
+```
+
+Update it with `patchwork self-update`.
 
 ## Getting started
 
-In the app, pick a game from the list. patchwork finds games installed
-through Steam on its own; you can also point it at a game folder yourself.
-Then make a profile, add mods on the **Add mods** tab, by searching a source
-(Thunderstore, Nexus Mods, ...) or pasting a link, and press **Deploy**.
+Patchwork is fundamentally based on `Suppliers` and `Deployers`. Each supported
+game will have a custom deployer set up for it. You can install mods through the
+`Add Mod` tab, or by typing a link into the search bar.
 
 Mods released on GitHub are added from a link to their repo: pick the file
 you want from the newest release (`ModName-0.1.2.zip`, say), and updates
 find the same file in later releases (`ModName-*.zip`).
 
-mod.io works for games that also load its mods from a folder of their own
-(Core Keeper, Ready or Not, Blade & Sorcery). It needs a read-only API key
-from [mod.io/me/access](https://mod.io/me/access), set in Settings or with
-`patchwork config set modio.api_key <key>`. Don't also subscribe to those
-mods in the game's own mod browser, or they load twice.
-
-The CLI does the same:
+We also have a CLI to control patchwork:
 
 ```sh
 patchwork game detect                       # find Steam, GOG and Epic games
