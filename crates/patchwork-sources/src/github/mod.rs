@@ -12,6 +12,18 @@
 //! prerelease if no other release has a matching file. Only the newest 100
 //! releases are looked at, and only public repos can be downloaded from.
 //!
+//! GitHub itself isn't searched, but a game can list mods to show on the
+//! Add mods tab (and to search among), each an id as above with an
+//! optional name to show instead of the repo's:
+//!
+//! ```toml
+//! [sources.github]
+//! mods = [
+//!     "someone/SomeMod",
+//!     { id = "someone/Big-Releases/Big.*.-.Data.zip", name = "Big (data)" },
+//! ]
+//! ```
+//!
 //! GitHub allows 60 requests an hour without signing in. The `token`
 //! setting (or `GITHUB_TOKEN`) raises that to 5000; a fine-grained token
 //! with no permissions at all is enough.
@@ -27,7 +39,7 @@ use async_trait::async_trait;
 use jiff::Timestamp;
 use patchwork_core::Result;
 use patchwork_core::changelog::ChangelogEntry;
-use patchwork_core::search::ModSummary;
+use patchwork_core::search::{ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::settings::{SettingKind, SettingSpec};
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, FileChoice, ModSpec, ResolvedMod, Source, SourceContext,
@@ -396,6 +408,98 @@ async fn releases(ctx: &SourceContext<'_>, id: &ModId<'_>) -> Result<Releases> {
     Ok(found)
 }
 
+/// `id`'s repo, reused for a while like [`releases`].
+async fn repo(ctx: &SourceContext<'_>, id: &ModId<'_>) -> Result<Repo> {
+    static KNOWN: LazyLock<Mutex<HashMap<String, (Instant, Repo)>>> = LazyLock::new(Mutex::default);
+    let key = id.repo().to_ascii_lowercase();
+    if let Some((at, known)) = KNOWN.lock().unwrap().get(&key)
+        && at.elapsed() < FRESH_FOR
+    {
+        return Ok(known.clone());
+    }
+    let url = format!("{API}/repos/{}", id.repo());
+    let found: Repo = get_json(ctx.settings, &url, || no_repo(id)).await?;
+    KNOWN
+        .lock()
+        .unwrap()
+        .insert(key, (Instant::now(), found.clone()));
+    Ok(found)
+}
+
+fn to_summary(id: &ModId<'_>, repo: Repo) -> ModSummary {
+    ModSummary {
+        source: ID.to_owned(),
+        id: match id.pattern {
+            Some(p) => id.with(p),
+            None => id.repo(),
+        },
+        file: id.pattern.and_then(|p| pattern::label(p, &repo.name, true)),
+        name: repo.name,
+        url: Some(repo.html_url),
+        author: Some(repo.owner.login),
+        author_url: repo.owner.html_url,
+        summary: repo.description,
+        icon_url: repo.owner.avatar_url,
+        downloads: None,
+        rating: repo.stargazers_count,
+        updated: repo.pushed_at,
+        latest_version: None,
+        categories: Vec::new(),
+    }
+}
+
+/// One of the mods a game lists in `[sources.github] mods`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+enum Listed {
+    Id(String),
+    Named { id: String, name: Option<String> },
+}
+
+impl Listed {
+    fn id(&self) -> &str {
+        match self {
+            Listed::Id(id) | Listed::Named { id, .. } => id,
+        }
+    }
+
+    fn name(&self) -> Option<&str> {
+        match self {
+            Listed::Id(_) => None,
+            Listed::Named { name, .. } => name.as_deref(),
+        }
+    }
+}
+
+/// The mods the game's `[sources.github]` lists.
+fn listed(config: Option<&toml::Table>) -> Result<Vec<Listed>> {
+    let Some(mods) = config.and_then(|c| c.get("mods")) else {
+        return Ok(Vec::new());
+    };
+    mods.clone().try_into().map_err(|e| {
+        error(format!(
+            "the game's `[sources.github] mods` isn't a list of ids: {e}"
+        ))
+    })
+}
+
+/// Whether every word of `text` is in what `summary` shows, ignoring case.
+fn matches_text(summary: &ModSummary, text: &str) -> bool {
+    let shown = [
+        Some(summary.name.as_str()),
+        summary.file.as_deref(),
+        summary.summary.as_deref(),
+        summary.author.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ")
+    .to_lowercase();
+    text.split_whitespace()
+        .all(|word| shown.contains(&word.to_lowercase()))
+}
+
 fn no_repo(id: &ModId<'_>) -> String {
     format!("there's no GitHub repo {} (or it's private)", id.repo())
 }
@@ -504,27 +608,8 @@ impl Source for GitHub {
 
     async fn summary(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Option<ModSummary>> {
         let id = ModId::parse(id)?;
-        let url = format!("{API}/repos/{}", id.repo());
-        let repo: Repo = get_json(ctx.settings, &url, || no_repo(&id)).await?;
-        Ok(Some(ModSummary {
-            source: ID.to_owned(),
-            id: match id.pattern {
-                Some(p) => id.with(p),
-                None => id.repo(),
-            },
-            file: id.pattern.and_then(|p| pattern::label(p, &repo.name, true)),
-            name: repo.name,
-            url: Some(repo.html_url),
-            author: Some(repo.owner.login),
-            author_url: repo.owner.html_url,
-            summary: repo.description,
-            icon_url: repo.owner.avatar_url,
-            downloads: None,
-            rating: repo.stargazers_count,
-            updated: repo.pushed_at,
-            latest_version: None,
-            categories: Vec::new(),
-        }))
+        let repo = repo(ctx, &id).await?;
+        Ok(Some(to_summary(&id, repo)))
     }
 
     /// The notes of the releases with a file the pattern picks, from
@@ -579,6 +664,39 @@ impl Source for GitHub {
             id,
             version: None,
         }))
+    }
+
+    /// Only the mods the game lists can be searched, so only games that
+    /// list some offer it.
+    fn search_sorts(&self) -> &[SortBy] {
+        &[SortBy::Relevance]
+    }
+
+    /// The mods the game lists, in its order, that have every word of the
+    /// search text in their name, file, description or owner.
+    async fn search(&self, ctx: &SourceContext<'_>, query: &SearchQuery) -> Result<SearchPage> {
+        let sort = SortBy::Relevance;
+        if query.page > 0 {
+            return Ok(SearchPage::empty(sort));
+        }
+        let mut items = Vec::new();
+        for listed in listed(ctx.config)? {
+            let id = ModId::parse(listed.id())?;
+            let mut summary = to_summary(&id, repo(ctx, &id).await?);
+            if let Some(name) = listed.name() {
+                summary.name = name.to_owned();
+                summary.file = None;
+            }
+            if query.text().is_none_or(|text| matches_text(&summary, text)) {
+                items.push(summary);
+            }
+        }
+        Ok(SearchPage {
+            total: Some(items.len() as u64),
+            items,
+            has_more: false,
+            sort,
+        })
     }
 }
 

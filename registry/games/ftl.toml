@@ -1,7 +1,7 @@
 schema = 1
 id = "ftl"
 name = "FTL: Faster Than Light"
-description = "Takes Slipstream mods (.ftl or .zip with data/, img/, audio/ and fonts/ folders, including .xml.append patches). Deploying builds a new ftl.dat with every mod patched in, in load order."
+description = "Takes Slipstream mods (.ftl or .zip with data/, img/, audio/ and fonts/ folders, including .xml.append patches). Deploying builds a new ftl.dat with every mod patched in, in load order, and puts Hyperspace's code where the game loads it."
 # The built ftl.dat is around a gigabyte with Multiverse, so it's linked
 # rather than copied into the game folder (falling back to a copy across
 # drives).
@@ -9,6 +9,18 @@ link = "hardlink"
 
 [sources.nexus]
 game_domain = "fasterthanlight"
+
+# Hyperspace and Multiverse are released on GitHub; these show on the Add
+# mods tab. Hyperspace has a zip for each system: Linux for Steam's or
+# GOG's Linux build, Windows for the Windows one (also under Proton), which
+# needs FTL 1.6.9. Multiverse needs Hyperspace, and its assets (which only
+# some releases have) under its data.
+[sources.github]
+mods = [
+    { id = "FTL-Hyperspace/FTL-Hyperspace", name = "Hyperspace" },
+    { id = "FTL-Multiverse-Team/FTL-Multiverse-Releases/Multiverse.*.-.Assets.Patch.above.Data.zip", name = "Multiverse (assets)" },
+    { id = "FTL-Multiverse-Team/FTL-Multiverse-Releases/Multiverse.*.-.Data.zip", name = "Multiverse (data)" },
+]
 
 [deployer]
 kind = "ftl"

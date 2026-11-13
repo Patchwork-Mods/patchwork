@@ -540,7 +540,7 @@ mod deploying {
             [
                 ("Hyperspace.ftl", hyperspace),
                 ("README.txt", b"read me".to_vec()),
-                ("Linux/Hyperspace.so", b"elf".to_vec()),
+                ("Linux/Hyperspace.1.6.13.amd64.so", b"elf".to_vec()),
             ],
         );
         let plan = t.deploy().unwrap();
@@ -602,5 +602,143 @@ mod deploying {
                 .to_string()
                 .contains("ftl.dat wasn't found")
         );
+    }
+
+    const SCRIPT: &str = "#!/bin/sh\nhere=\"$(dirname \"$0\")\"\nexec \"$here/FTL.amd64\" \"$@\"\n";
+
+    /// Hyperspace's Linux and Windows release zips, as unpacked.
+    fn hyperspace(platform: &str) -> Vec<(&'static str, Vec<u8>)> {
+        let ftl = zip(&[("data/hyperspace.xml", "<FTL/>")]);
+        let mut files = vec![("Hyperspace.ftl", ftl), ("README.txt", b"hi".to_vec())];
+        match platform {
+            "Linux" => files.extend([
+                ("Linux/Hyperspace.1.6.12.amd64.so", b"gog".to_vec()),
+                ("Linux/Hyperspace.1.6.13.amd64.so", b"steam".to_vec()),
+            ]),
+            _ => files.extend([
+                (
+                    "Windows - Extract these files into where FTLGame.exe is/Hyperspace.dll",
+                    b"hs".to_vec(),
+                ),
+                (
+                    "Windows - Extract these files into where FTLGame.exe is/xinput1_4.dll",
+                    b"proxy".to_vec(),
+                ),
+            ]),
+        }
+        files
+    }
+
+    fn linux_game() -> TestGame {
+        game()
+            .game_file("data/FTL.amd64", "elf")
+            .game_file("data/FTL", SCRIPT)
+    }
+
+    #[test]
+    fn hyperspace_for_steams_linux_build_is_preloaded() {
+        let t = linux_game().mod_files("Hyperspace", hyperspace("Linux"));
+        File::options()
+            .write(true)
+            .open(t.path("data/FTL.amd64"))
+            .unwrap()
+            .set_len(STEAM_LINUX_SIZE)
+            .unwrap();
+        let plan = t.deploy().unwrap();
+        assert!(plan.warnings().is_empty(), "{:?}", plan.warnings());
+        assert_eq!(
+            plan.placed(),
+            [
+                "data/FTL",
+                "data/Hyperspace.1.6.13.amd64.so",
+                "data/ftl.dat"
+            ]
+        );
+        assert_eq!(plan.placed_by("data/FTL"), Some("Hyperspace"));
+        assert_eq!(t.read("data/Hyperspace.1.6.13.amd64.so").unwrap(), "steam");
+        let script = t.read("data/FTL").unwrap();
+        let preload = script.find("export LD_PRELOAD=").unwrap();
+        assert!(preload < script.find("exec ").unwrap(), "{script}");
+        assert!(
+            script.contains("LD_PRELOAD=\"Hyperspace.1.6.13.amd64.so"),
+            "{script}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(t.path("data/FTL"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o111, 0o111);
+        }
+
+        // Taking it out puts the game's script back.
+        t.set_enabled("Hyperspace", false).unwrap();
+        t.deploy().unwrap();
+        assert_eq!(t.read("data/FTL").unwrap(), SCRIPT);
+        assert!(!t.exists("data/Hyperspace.1.6.13.amd64.so"));
+    }
+
+    #[test]
+    fn hyperspace_for_other_linux_builds_is_1_6_12() {
+        let t = linux_game().mod_files("Hyperspace", hyperspace("Linux"));
+        let plan = t.deploy().unwrap();
+        assert!(plan.places("data/Hyperspace.1.6.12.amd64.so"));
+        assert!(!plan.places("data/Hyperspace.1.6.13.amd64.so"));
+        assert!(t.read("data/FTL").unwrap().contains("1.6.12"));
+    }
+
+    #[test]
+    fn hyperspace_dlls_go_next_to_the_windows_exe() {
+        let t = game()
+            .game_file("FTLGame.exe", "exe")
+            .mod_files("Hyperspace", hyperspace("Windows"));
+        let plan = t.deploy().unwrap();
+        assert!(plan.warnings().is_empty(), "{:?}", plan.warnings());
+        assert_eq!(
+            plan.placed(),
+            ["Hyperspace.dll", "data/ftl.dat", "xinput1_4.dll"]
+        );
+    }
+
+    #[test]
+    fn code_for_another_platform_is_warned_about() {
+        let t = game()
+            .game_file("FTLGame.exe", "exe")
+            .mod_files("Hyperspace", hyperspace("Linux"));
+        let plan = t.deploy().unwrap();
+        assert_eq!(plan.placed(), ["data/ftl.dat"]);
+        assert!(
+            plan.warnings()
+                .iter()
+                .any(|w| w.starts_with("Hyperspace has code for Linux")),
+            "{:?}",
+            plan.warnings()
+        );
+
+        let t = linux_game().mod_files("Hyperspace", [("Hyperspace.1.6.9.amd64.so", "old")]);
+        let plan = t.deploy().unwrap();
+        assert!(!plan.places("data/FTL"));
+        assert!(
+            plan.warnings()
+                .iter()
+                .any(|w| w.contains("Hyperspace for FTL 1.6.9, but this is FTL 1.6.12")),
+            "{:?}",
+            plan.warnings()
+        );
+    }
+
+    #[test]
+    fn scripts_get_the_preload_before_their_exec() {
+        assert_eq!(
+            hyperspace_so_version("Hyperspace.1.6.13.amd64.so"),
+            Some("1.6.13")
+        );
+        assert_eq!(hyperspace_so_version("liblua5.3.so.0"), None);
+        assert_eq!(preloading_script("#!/bin/sh\necho hi\n", "x.so"), None);
+        let script = preloading_script("a\nexec b\n# exec\n", "x.so").unwrap();
+        assert!(script.starts_with("a\n# Added by patchwork"), "{script}");
+        assert!(script.ends_with("\nexec b\n# exec\n"), "{script}");
     }
 }

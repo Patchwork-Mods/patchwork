@@ -31,6 +31,21 @@
 //!
 //! If ftlman has patched the game, it keeps the game's own archive as
 //! `ftl.dat.vanilla`, and that's what mods are applied to.
+//!
+//! ## Hyperspace
+//!
+//! Hyperspace (and so Multiverse) also needs code loaded into the game,
+//! which its release zips have outside the mod folders. Those files are
+//! deployed for the copy of the game they're for, and left out otherwise:
+//!
+//! - `.dll`s go next to `FTLGame.exe`, for Windows (Hyperspace's
+//!   `xinput1_4.dll` loads `Hyperspace.dll`; under Proton, core's launch
+//!   code tells Wine to use it).
+//! - `.so`s go next to `data/FTL.amd64`, for Linux. Of the
+//!   `Hyperspace.<version>.amd64.so`s, only the one for the game's version
+//!   is: 1.6.13 for Steam's (told apart by `FTL.amd64`'s size, as
+//!   ftlman does), 1.6.12 for GOG's and Humble's. The game's `data/FTL`
+//!   script, which Steam runs, is replaced with one that preloads it.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -90,6 +105,104 @@ const BUILT_BY: &str = "FTL mods";
 /// The built archive, in the build's output.
 const BUILT: &str = "ftl.dat";
 
+/// The Windows game's exe, which Hyperspace's DLLs go next to.
+const WINDOWS_EXE: &str = "FTLGame.exe";
+
+/// The Linux game's 64-bit binary, which Hyperspace's `.so`s go next to,
+/// and the script that starts it.
+const LINUX_BINARY: &str = "data/FTL.amd64";
+const LINUX_SCRIPT: &str = "data/FTL";
+
+/// The size of Steam's `FTL.amd64`, which is 1.6.13; GOG's and Humble's
+/// are 1.6.12.
+const STEAM_LINUX_SIZE: u64 = 72_443_660;
+
+/// The copy of the game a mod's own code (Hyperspace's) has to be for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Platform {
+    Windows,
+    /// The native Linux build, with its version.
+    Linux(&'static str),
+}
+
+impl Platform {
+    fn of(game: &GameFiles<'_>) -> Option<Self> {
+        if game.original(&RelPath::new(WINDOWS_EXE).unwrap()).is_some() {
+            return Some(Platform::Windows);
+        }
+        let binary = game.original(&RelPath::new(LINUX_BINARY).unwrap())?;
+        let steam = fs::metadata(binary).is_ok_and(|m| m.len() == STEAM_LINUX_SIZE);
+        Some(Platform::Linux(if steam { "1.6.13" } else { "1.6.12" }))
+    }
+
+    /// Which platform a mod's file (by its name) is code for, if it's code.
+    fn of_file(name: &str) -> Option<Self> {
+        let name = name.to_ascii_lowercase();
+        if name.ends_with(".dll") {
+            Some(Platform::Windows)
+        } else if name.ends_with(".so") || name.contains(".so.") {
+            Some(Platform::Linux(""))
+        } else {
+            None
+        }
+    }
+
+    fn same_kind(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Platform::Windows, Platform::Windows) | (Platform::Linux(_), Platform::Linux(_))
+        )
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Platform::Windows => "Windows",
+            Platform::Linux(_) => "Linux",
+        }
+    }
+
+    /// The folder its code goes in.
+    fn dir(self) -> &'static str {
+        match self {
+            Platform::Windows => "",
+            Platform::Linux(_) => "data/",
+        }
+    }
+}
+
+/// The game version a `Hyperspace.<version>.amd64.so` is for.
+fn hyperspace_so_version(name: &str) -> Option<&str> {
+    let lower = name.to_ascii_lowercase();
+    if !lower.starts_with("hyperspace.") || !lower.ends_with(".amd64.so") {
+        return None;
+    }
+    let version = &name["hyperspace.".len()..name.len() - ".amd64.so".len()];
+    (!version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .then_some(version)
+}
+
+/// The game's `data/FTL` script, made to preload `preload` (a file next
+/// to it) as Hyperspace's instructions say. `None` if it has no `exec`
+/// line to put that before.
+///
+/// `LD_PRELOAD` is split at spaces with no way to escape them, and Steam's
+/// folder is "FTL Faster Than Light", so `preload` is named alone and found
+/// through `LD_LIBRARY_PATH`, which only splits at colons.
+fn preloading_script(script: &str, preload: &str) -> Option<String> {
+    let mut lines: Vec<&str> = script.split_inclusive('\n').collect();
+    let at = lines
+        .iter()
+        .rposition(|l| l.trim_start().starts_with("exec "))?;
+    let added = format!(
+        "# Added by patchwork for Hyperspace.\n\
+         patchwork_dir=\"$(dirname \"$(readlink -f \"$0\")\")\"\n\
+         export LD_LIBRARY_PATH=\"$patchwork_dir${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}\"\n\
+         export LD_PRELOAD=\"{preload}${{LD_PRELOAD:+:$LD_PRELOAD}}\"\n"
+    );
+    lines.insert(at, &added);
+    Some(lines.concat())
+}
+
 /// The game's archive: where it goes, and the unpatched copy to start
 /// from.
 fn locate(game: &GameFiles<'_>) -> Option<(RelPath, PathBuf)> {
@@ -146,6 +259,8 @@ impl Deployer for FtlDeployer {
         let index = pkg::read_index(&mut BufReader::new(File::open(&base).at(&base)?))
             .map_err(|e| Error::parse(&base, e))?;
         let mut files = Files::new(&base, index)?;
+        let platform = Platform::of(&build.game);
+        let mut preload = None;
         for m in mods {
             build.reporter.report(Event::Building {
                 step: m.name.clone(),
@@ -158,7 +273,8 @@ impl Deployer for FtlDeployer {
             for w in &mut desired.warnings[before..] {
                 *w = format!("{}: {w}", m.name);
             }
-            if !entries.iter().any(|(rel, _)| installed(rel)) {
+            let code = code(m, platform, &mut desired, &mut preload);
+            if !code && !entries.iter().any(|(rel, _)| installed(rel)) {
                 desired.warnings.push(format!(
                     "{} has no data/, audio/, fonts/ or img/ folder, so nothing from it is deployed",
                     m.name
@@ -175,6 +291,9 @@ impl Deployer for FtlDeployer {
             src: Src::Built(RelPath::new(BUILT).unwrap()),
             mod_name: BUILT_BY.to_owned(),
         });
+        if let Some((so, mod_name)) = preload {
+            self.preload(build, &so, mod_name, &mut desired)?;
+        }
         Ok(desired)
     }
 
@@ -187,15 +306,140 @@ impl Deployer for FtlDeployer {
         let Some((rel, base)) = locate(game) else {
             return Ok(None);
         };
-        let meta = fs::metadata(&base).at(&base)?;
-        let modified = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_nanos());
-        let key = format!("{rel} {} {} {modified}", base.display(), meta.len());
+        let mut key = format!("{rel} {}", stamp(&base)?);
+        // Which copy of the game it is, for Hyperspace's code, and the
+        // script that's changed to load it.
+        for other in [WINDOWS_EXE, LINUX_BINARY, LINUX_SCRIPT] {
+            if let Some(path) = game.original(&RelPath::new(other).unwrap()) {
+                key.push_str(&format!("\n{other} {}", stamp(&path)?));
+            }
+        }
         Ok(Some(ContentHash::of(key.as_bytes())))
     }
+}
+
+impl FtlDeployer {
+    /// Replaces the game's `data/FTL` script with one that preloads `so`.
+    fn preload(
+        &self,
+        build: &BuildContext<'_>,
+        so: &str,
+        mod_name: String,
+        desired: &mut DesiredState,
+    ) -> Result<()> {
+        let rel = RelPath::new(LINUX_SCRIPT).unwrap();
+        let Some(path) = build.game.original(&rel) else {
+            desired.warnings.push(format!(
+                "{mod_name}: the game has no {LINUX_SCRIPT} script to load {so} from; \
+                 start FTL.amd64 with LD_PRELOAD={so}"
+            ));
+            return Ok(());
+        };
+        let script = fs::read_to_string(&path).at(&path)?;
+        let Some(script) = preloading_script(&script, so) else {
+            desired.warnings.push(format!(
+                "{mod_name}: {LINUX_SCRIPT} isn't the script it's expected to be, \
+                 so it wasn't changed to load {so}"
+            ));
+            return Ok(());
+        };
+        let out = build.out.join("FTL");
+        fs::write(&out, script).at(&out)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&out, fs::Permissions::from_mode(0o755)).at(&out)?;
+        }
+        desired.placements.push(Placement {
+            dst: Dest::game(rel),
+            src: Src::Built(RelPath::new("FTL").unwrap()),
+            mod_name,
+        });
+        Ok(())
+    }
+}
+
+/// The path, size and modification time of the file at `path`.
+fn stamp(path: &Path) -> Result<String> {
+    let meta = fs::metadata(path).at(path)?;
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    Ok(format!("{} {} {modified}", path.display(), meta.len()))
+}
+
+/// Places `m`'s code (Hyperspace's DLLs or `.so`s) that's for `platform`,
+/// noting the Hyperspace `.so` for the game's `data/FTL` to preload.
+/// Returns whether anything was placed, and warns if the mod only has
+/// code for another platform.
+fn code(
+    m: &InstalledMod,
+    platform: Option<Platform>,
+    desired: &mut DesiredState,
+    preload: &mut Option<(String, String)>,
+) -> bool {
+    let mut placed = false;
+    let mut other = None;
+    let mut versions = Vec::new();
+    for file in &m.files {
+        let rel = file.rel.as_str();
+        let name = file.rel.file_name();
+        let Some(kind) = Platform::of_file(name) else {
+            continue;
+        };
+        if installed(rel) {
+            continue;
+        }
+        let Some(platform) = platform else {
+            continue;
+        };
+        if !kind.same_kind(platform) {
+            other = Some(kind);
+            continue;
+        }
+        if let Platform::Linux(game) = platform
+            && let Some(version) = hyperspace_so_version(name)
+        {
+            versions.push(version.to_owned());
+            if version != game {
+                continue;
+            }
+            *preload = Some((name.to_owned(), m.name.clone()));
+        }
+        let dst = format!("{}{name}", platform.dir());
+        desired.placements.push(Placement {
+            dst: Dest::game(RelPath::new(&dst).unwrap()),
+            src: Src::Mod {
+                hash: m.hash,
+                rel: file.rel.clone(),
+            },
+            mod_name: m.name.clone(),
+        });
+        placed = true;
+    }
+    if let Some(Platform::Linux(game)) = platform
+        && !versions.is_empty()
+        && !versions.iter().any(|v| v == game)
+    {
+        desired.warnings.push(format!(
+            "{} has Hyperspace for FTL {}, but this is FTL {game}",
+            m.name,
+            versions.join(" and ")
+        ));
+    }
+    if let (Some(platform), Some(other), false) = (platform, other, placed) {
+        desired.warnings.push(format!(
+            "{} has code for {}, but this copy of FTL is for {}, so it won't load; \
+             add the mod's {} download instead",
+            m.name,
+            other.name(),
+            platform.name(),
+            platform.name()
+        ));
+    }
+    placed
 }
 
 /// Whether a mod's file (by its path in the mod) goes into the archive.

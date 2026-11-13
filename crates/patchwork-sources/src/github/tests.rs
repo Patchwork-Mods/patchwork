@@ -268,3 +268,46 @@ fn infers_title_patterns() {
         assert_eq!(pattern::infer_title(title, version), expected, "{title}");
     }
 }
+
+#[test]
+fn reads_the_mods_a_game_lists() {
+    let config: toml::Table = toml::from_str(
+        r#"mods = ["a/b", { id = "c/d/D-*.zip", name = "D (data)" }, { id = "e/f" }]"#,
+    )
+    .unwrap();
+    let found = listed(Some(&config)).unwrap();
+    assert_eq!(
+        found.iter().map(|l| (l.id(), l.name())).collect::<Vec<_>>(),
+        [
+            ("a/b", None),
+            ("c/d/D-*.zip", Some("D (data)")),
+            ("e/f", None)
+        ]
+    );
+    assert!(listed(None).unwrap().is_empty());
+    let bad: toml::Table = toml::from_str("mods = [1]").unwrap();
+    assert!(listed(Some(&bad)).is_err());
+}
+
+#[test]
+fn search_text_matches_every_word() {
+    let summary = ModSummary {
+        source: ID.to_owned(),
+        id: "FTL-Hyperspace/FTL-Hyperspace".to_owned(),
+        name: "FTL-Hyperspace".to_owned(),
+        file: None,
+        url: None,
+        author: Some("FTL-Hyperspace".to_owned()),
+        author_url: None,
+        summary: Some("A hard-coding modding library for FTL".to_owned()),
+        icon_url: None,
+        downloads: None,
+        rating: None,
+        updated: None,
+        latest_version: None,
+        categories: Vec::new(),
+    };
+    assert!(matches_text(&summary, "hyperspace"));
+    assert!(matches_text(&summary, "FTL library"));
+    assert!(!matches_text(&summary, "multiverse"));
+}
