@@ -181,7 +181,8 @@ async function savePriority(m, priority) {
     return;
   }
   // the cards and rows on screen were made from these, so keep them up to date
-  profile.mods = profile.mods.map((n, i) => Object.assign(mods[i], n));
+  // (a priority of 0 isn't sent at all, so it's cleared first)
+  profile.mods = profile.mods.map((n, i) => Object.assign(mods[i], { priority: 0 }, n));
   showProfile(profile, { keepMods: true });
   showingLoadOrder(profile.mods);
   refreshChips();
@@ -988,7 +989,8 @@ async function toggleMod(m, input) {
     return;
   }
   // the cards and rows on screen were made from these, so keep them up to date
-  profile.mods = profile.mods.map((n, i) => Object.assign(mods[i], n));
+  // (a priority of 0 isn't sent at all, so it's cleared first)
+  profile.mods = profile.mods.map((n, i) => Object.assign(mods[i], { priority: 0 }, n));
   item.classList.toggle("disabled", !enabled);
   const onOff = input.parentElement.querySelector("span");
   if (onOff) onOff.textContent = enabled ? "On" : "Off";

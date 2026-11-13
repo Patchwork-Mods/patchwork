@@ -1203,6 +1203,8 @@ fn set_config(
 #[serde(rename_all = "camelCase")]
 struct UiModConflicts {
     name: String,
+    /// See [`ModConflicts::lost`].
+    lost: bool,
     #[serde(flatten)]
     conflicts: ModConflicts,
 }
@@ -1218,6 +1220,7 @@ async fn conflicts(app: State<'_, App>, id: String) -> CmdResult<Vec<UiModConfli
         .into_iter()
         .map(|(name, conflicts)| UiModConflicts {
             name: name.to_owned(),
+            lost: conflicts.lost(),
             conflicts,
         })
         .collect())

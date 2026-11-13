@@ -907,7 +907,7 @@ fn conflicts_show_which_mod_wins() {
 
     let out = env.run(&["conflicts"]);
     assert!(
-        out.contains("textures  (other mods' copies of all of these are deployed)\n  overridden by better (1 file)"),
+        out.contains("textures  (every one of its files is overwritten by later mods)\n  overridden by better (1 file)"),
         "{out}"
     );
     assert!(

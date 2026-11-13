@@ -37,6 +37,9 @@ impl FileConflict {
 pub struct Conflicts {
     /// Every mod that was looked at, in load order.
     pub mods: Vec<String>,
+    /// How many files each mod places, counting paths that differ only in
+    /// case once.
+    pub file_counts: HashMap<String, usize>,
     /// Sorted by where they go.
     pub files: Vec<FileConflict>,
 }
@@ -62,6 +65,10 @@ pub struct ModConflicts {
     pub overridden_by: Vec<ModFiles>,
     /// Files it shares with other mods that are the same in all of them.
     pub identical: usize,
+    /// How many files it places in all.
+    pub files: usize,
+    /// How many of those a later mod's copy replaces, the same or not.
+    pub overwritten: usize,
 }
 
 impl ModConflicts {
@@ -75,11 +82,11 @@ impl ModConflicts {
         !self.overrides.is_empty() || !self.overridden_by.is_empty()
     }
 
-    /// Whether none of its files that differ from another mod's are
-    /// deployed: it's overridden in everything it shares and overrides
-    /// nothing.
+    /// Whether every one of its files is replaced by a later mod's copy, so
+    /// deploying it changes nothing. A mod that only loses some of its files
+    /// is how overwriting is meant to work.
     pub fn lost(&self) -> bool {
-        self.overrides.is_empty() && !self.overridden_by.is_empty()
+        self.files > 0 && self.overwritten == self.files
     }
 }
 
@@ -110,6 +117,12 @@ pub fn find(mods: &[InstalledMod], placements: &[Placement]) -> Conflicts {
         copies.retain(|(name, _)| *name != p.mod_name);
         copies.push((&p.mod_name, sources.get(&(*hash, rel)).copied()));
     }
+    let mut file_counts: HashMap<String, usize> = HashMap::new();
+    for (_, copies) in &groups {
+        for (name, _) in copies {
+            *file_counts.entry((*name).to_owned()).or_default() += 1;
+        }
+    }
     let mut files: Vec<FileConflict> = groups
         .into_iter()
         .filter(|(_, copies)| copies.len() > 1)
@@ -125,6 +138,7 @@ pub fn find(mods: &[InstalledMod], placements: &[Placement]) -> Conflicts {
     files.sort_by(|a, b| a.dst.cmp(&b.dst));
     Conflicts {
         mods: mods.iter().map(|m| m.name.clone()).collect(),
+        file_counts,
         files,
     }
 }
@@ -165,10 +179,14 @@ impl Conflicts {
         let mut overrides: Vec<ModFiles> = Vec::new();
         let mut overridden_by: Vec<ModFiles> = Vec::new();
         let mut identical = 0;
+        let mut overwritten = 0;
         for file in &self.files {
             let Some(at) = file.mods.iter().position(|m| m == name) else {
                 continue;
             };
+            if at + 1 < file.mods.len() {
+                overwritten += 1;
+            }
             if file.identical {
                 identical += 1;
                 continue;
@@ -195,6 +213,8 @@ impl Conflicts {
             overrides,
             overridden_by,
             identical,
+            files: self.file_counts.get(name).copied().unwrap_or(0),
+            overwritten,
         }
     }
 
@@ -311,7 +331,9 @@ mod tests {
 
         let by_mod = conflicts.by_mod();
         let a = &by_mod[0].1;
-        assert!(a.overrides.is_empty() && a.lost());
+        // only-a.txt is still its own
+        assert!(a.overrides.is_empty() && !a.lost());
+        assert_eq!((a.files, a.overwritten), (2, 1));
         let names = |list: &[ModFiles]| list.iter().map(|m| m.mod_name.clone()).collect::<Vec<_>>();
         assert_eq!(names(&a.overridden_by), ["b", "c"]);
 
@@ -324,6 +346,22 @@ mod tests {
         assert_eq!(names(&c.overrides), ["a", "b"]);
         assert!(c.overridden_by.is_empty() && !c.lost());
         assert_eq!(c.identical, 1);
+    }
+
+    #[test]
+    fn a_mod_is_lost_only_when_every_file_is_overwritten() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mods = [
+            mod_with(tmp.path(), "a", &[("x.txt", "a"), ("same.txt", "same")]),
+            mod_with(tmp.path(), "b", &[("X.txt", "b"), ("y.txt", "b")]),
+            mod_with(tmp.path(), "c", &[("same.txt", "same")]),
+        ];
+        let conflicts = find_in(&mods);
+        let by_mod = conflicts.by_mod();
+        // an identical copy replacing it still leaves it nothing to deploy
+        assert!(by_mod[0].1.lost());
+        assert!(!by_mod[1].1.lost());
+        assert!(!by_mod[2].1.lost());
     }
 
     #[test]

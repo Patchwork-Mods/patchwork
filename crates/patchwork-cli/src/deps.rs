@@ -36,7 +36,7 @@ pub(crate) fn print_conflicts(conflicts: &Conflicts, only: Option<&str>) {
             continue;
         }
         let lost = if of.lost() {
-            "  (other mods' copies of all of these are deployed)"
+            "  (every one of its files is overwritten by later mods)"
         } else {
             ""
         };

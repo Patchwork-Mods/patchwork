@@ -44,6 +44,10 @@ function conflictsOf(name) {
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const fileCount = (list) => list.reduce((n, m) => n + m.files.length, 0);
 
+/** The other mods in `list` by name, or just how many once there are more than two. */
+const mods = (list) =>
+  list.length <= 2 ? list.map((m) => m.mod).join(" and ") : `${list.length} mods`;
+
 /**
  * A mod's conflict mark, empty until there are conflicts to show. Only files
  * that differ count: ones that are the same in every mod don't matter.
@@ -66,24 +70,26 @@ function fillMark(mark, name) {
   const loses = fileCount(c?.overriddenBy ?? []);
   mark.hidden = !wins && !loses;
   if (mark.hidden) return;
-  const lost = !wins;
-  mark.classList.toggle("lost", lost);
-  const parts = [
-    wins && `Its copies of ${plural(wins, "file", "files")} replace other mods'`,
-    loses && `other mods' copies of ${plural(loses, "file", "files")} replace its own`,
-  ].filter(Boolean);
-  const text = parts.join("; ") + ". Click to see which.";
-  mark.title = text[0].toUpperCase() + text.slice(1);
-  mark.setAttribute("aria-label", `Conflicts: ${mark.title}`);
-  // overriding more than it's overridden reads as winning, and vice versa
-  mark.textContent = lost ? "⇣" : loses ? "⇅" : "⇡";
+  // red only when deploying it changes nothing; losing some files is normal
+  mark.classList.toggle("lost", Boolean(c?.lost));
+  // one short line each way, e.g. "Overwritten by SMIM Quality Addon (48 files)"
+  const line = (verb, list, n) =>
+    list.length > 0 && `${verb} ${mods(list)} (${plural(n, "file", "files")})`;
+  mark.title = [
+    line("Overwritten by", c?.overriddenBy ?? [], loses),
+    line("Overwrites", c?.overrides ?? [], wins),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  mark.setAttribute("aria-label", mark.title.replace("\n", "; "));
+  mark.textContent = !wins ? "⇣" : loses ? "⇅" : "⇡";
 }
 
 /** Opens #conflicts-dialog on `name`'s conflicts. */
 function showConflicts(name) {
   const c = conflictsOf(name);
   if (!c) return;
-  $("#conflicts-title").textContent = `${name}'s conflicts`;
+  $("#conflicts-title").textContent = `${name}: shared files`;
   const section = (title, note, list) =>
     list.length > 0 &&
     h(
@@ -108,20 +114,20 @@ function showConflicts(name) {
   $("#conflicts-body").replaceChildren(
     ...[
       section(
-        "Overrides",
-        `These mods come before ${name} in the load order, so its copies of these files are deployed instead of theirs.`,
-        c.overrides,
+        "Overwritten by",
+        `Their copies are used. Move ${name} below them to use its own.`,
+        c.overriddenBy,
       ),
       section(
-        "Overridden by",
-        `These mods come after ${name}, so their copies of these files are deployed instead of its own. Move ${name} below them to change that.`,
-        c.overriddenBy,
+        "Overwrites",
+        `${name}'s copies are used, since it's below them.`,
+        c.overrides,
       ),
       c.identical > 0 &&
         h(
           "p",
           { class: "muted" },
-          `${plural(c.identical, "more file is", "more files are")} the same in every mod that has ${c.identical === 1 ? "it" : "them"}, so it doesn't matter which is deployed.`,
+          `${plural(c.identical, "other shared file is", "other shared files are")} identical in every mod, so it doesn't matter which copy is used.`,
         ),
     ].filter(Boolean),
   );

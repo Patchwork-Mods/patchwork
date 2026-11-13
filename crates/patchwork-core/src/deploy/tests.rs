@@ -151,7 +151,8 @@ fn later_mods_win_conflicts() {
             placement(&env, "x.cfg", "second", "b"),
         ],
     );
-    assert_eq!(plan.warnings.len(), 1);
+    // overwriting is expected, so it isn't warned about
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
     assert_eq!(
         fs::read_to_string(env.game.join("x.cfg")).unwrap(),
         "second"
@@ -844,7 +845,7 @@ fn spellings_of_one_file_conflict() {
             placement(&env, "mods/X.CFG", "second", "b"),
         ],
     );
-    assert_eq!(plan.warnings.len(), 1, "{:?}", plan.warnings);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
     assert_eq!(state.files.len(), 1);
     assert_eq!(
         fs::read_to_string(env.game.join("Mods/x.cfg")).unwrap(),
