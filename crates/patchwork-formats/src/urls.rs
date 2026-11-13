@@ -107,6 +107,7 @@ impl ProfileFormat for UrlList {
                 game_versions: None,
                 ext: Default::default(),
                 replaces: Vec::new(),
+                seen: None,
                 ignores: Vec::new(),
             });
         }

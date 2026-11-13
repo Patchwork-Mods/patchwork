@@ -937,6 +937,7 @@ impl Patchwork {
             game_versions: None,
             ext: Default::default(),
             replaces: Vec::new(),
+            seen: None,
             ignores: Vec::new(),
         };
         loaded.mods.push(added.clone());
@@ -1065,6 +1066,10 @@ impl Patchwork {
 
     /// Pins a mod to `version`, or with `None` lets it follow the newest
     /// version again. Takes effect the next time the profile's locked.
+    ///
+    /// Whoever pins a mod can see which versions are out, so the newest
+    /// one known counts as [`ProfileMod::seen`]: only a version newer than
+    /// it is pointed out as an update.
     pub fn set_version(
         &self,
         profile: &ProfileRef,
@@ -1073,6 +1078,8 @@ impl Patchwork {
     ) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
         let label = loaded.label();
+        // a game the registry no longer has just has no versions known
+        let lookup = self.lookup(&loaded).ok();
         let m = loaded
             .find_mut(name)
             .ok_or_else(|| no_such_mod(&label, name))?;
@@ -1082,7 +1089,30 @@ impl Patchwork {
                 m.source
             )));
         }
+        m.seen = version.as_ref().and_then(|version| {
+            let known = self.known_versions(lookup.as_ref()?, &m.source, &m.id)?;
+            latest_version(&known.versions)
+                .filter(|latest| latest != version)
+                .map(str::to_owned)
+        });
         m.version = version;
+        self.save_profile(profile, &loaded)
+    }
+
+    /// Stops pointing out `version` as an update to pinned mod `name` (see
+    /// [`ProfileMod::seen`]); a version newer than it still is.
+    pub fn dismiss_update(&self, profile: &ProfileRef, name: &str, version: &str) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let m = loaded
+            .find_mut(name)
+            .ok_or_else(|| no_such_mod(&label, name))?;
+        if m.version.is_none() {
+            return Err(Error::invalid(format!(
+                "`{name}` isn't pinned, so it's updated rather than told about updates"
+            )));
+        }
+        m.seen = Some(version.to_owned());
         self.save_profile(profile, &loaded)
     }
 
@@ -1322,7 +1352,9 @@ impl Patchwork {
     /// The version profile mod `m` could move to (see [`newer_version`]),
     /// going by its versions as last fetched, from the one it's pinned to
     /// or else the one `lock` has it at. `None` if it's at the latest, has
-    /// never been locked, or its versions have never been fetched.
+    /// never been locked, or its versions have never been fetched, or if
+    /// it's pinned and the latest is the one the user has already seen
+    /// (see [`ProfileMod::seen`]).
     pub fn known_update(
         &self,
         lookup: &Lookup,
@@ -1339,7 +1371,9 @@ impl Patchwork {
                 .as_deref()
         });
         let known = self.known_versions(lookup, &m.source, &m.id)?;
-        newer_version(&known.versions, current).map(str::to_owned)
+        newer_version(&known.versions, current)
+            .filter(|newest| m.version.is_none() || m.seen.as_deref() != Some(newest))
+            .map(str::to_owned)
     }
 
     fn known_versions_file(&self, lookup: &Lookup, source: &str, id: &str) -> PathBuf {

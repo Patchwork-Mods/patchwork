@@ -33,6 +33,7 @@ fn profile_mod(source: &str, id: &str, enabled: bool) -> ProfileMod {
         game_versions: None,
         ext: Default::default(),
         replaces: Vec::new(),
+        seen: None,
         ignores: Vec::new(),
     }
 }

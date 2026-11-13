@@ -14,6 +14,9 @@ dialog shows, so the heading has to match the version being released.
 - Nexus mods with more than one main file (a plugin and its preloader, say)
   ask which to add, and each can be added as a mod of its own. A link to one
   file on a mod's Files tab adds that file.
+- A pinned mod's newer version is a quiet note instead of an update button,
+  and goes away once dismissed (or when you pin) until an even newer one is
+  out.
 - Priority is set from a chip and popover instead of a number field.
 - Lots of small improvements to the mod page.
 

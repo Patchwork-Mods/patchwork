@@ -812,35 +812,68 @@ function cardMore(m, item, settings) {
 
 /**
  * Says when a newer version than the one in use is out (`m.update`, which
- * the backend works out), as a button that moves the mod to it: a pinned mod
- * gets pinned to it, and one that follows the latest version is updated on
- * its own, as Update would.
+ * the backend works out). A mod that follows the latest version gets a
+ * button that updates it, as Update would. A pinned mod is pinned for a
+ * reason, so it only gets a quiet note: clicking it pins the mod to the new
+ * version, and × dismisses it until an even newer one is out (the backend
+ * leaves out versions the user has seen; see `seen` in profile.rs).
  */
 export function fillUpdate(el, m, onVersion) {
   const newest = m.update;
   const current = m.version ?? m.locked;
+  el.classList.toggle("pinned", !!m.version);
   if (!newest) {
     el.replaceChildren();
     return;
   }
-  const button = h(
-    "button",
-    m.version
-      ? {
+  if (m.version) {
+    const dismiss = h(
+      "button",
+      {
+        type: "button",
+        class: "dismiss",
+        "aria-label": `Dismiss ${newest}`,
+        title: `Stop pointing out ${newest}; only a newer version will be`,
+        onclick: async () => {
+          dismiss.disabled = true;
+          try {
+            const profile = await run("dismiss_update", { id: state.profile.id, name: m.name, version: newest });
+            Object.assign(m, profile.mods.find((n) => n.key === m.key));
+            fillUpdate(el, m, onVersion);
+          } catch {
+            dismiss.disabled = false;
+          }
+        },
+      },
+      "×",
+    );
+    el.replaceChildren(
+      h(
+        "button",
+        {
+          type: "button",
           title: `Pinned to ${current}; click to pin to ${newest} instead`,
           onclick: () => onVersion?.(newest),
-        }
-      : {
-          title: `Click to update to ${newest}`,
-          onclick: async () => {
-            button.disabled = true;
-            try {
-              await updateMod(m);
-            } finally {
-              button.disabled = false;
-            }
-          },
         },
+        `${newest} available`,
+      ),
+      dismiss,
+    );
+    return;
+  }
+  const button = h(
+    "button",
+    {
+      title: `Click to update to ${newest}`,
+      onclick: async () => {
+        button.disabled = true;
+        try {
+          await updateMod(m);
+        } finally {
+          button.disabled = false;
+        }
+      },
+    },
     `↑ ${newest}`,
   );
   el.replaceChildren(button);

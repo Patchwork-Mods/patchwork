@@ -14,6 +14,7 @@ fn profile_mod(name: &str) -> ProfileMod {
         game_versions: None,
         ext: Default::default(),
         replaces: Vec::new(),
+        seen: None,
         ignores: Vec::new(),
     }
 }

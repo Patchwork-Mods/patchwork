@@ -528,6 +528,96 @@ impl Source for SlowVersions {
     }
 }
 
+/// Lists whatever versions it's given, newest first.
+struct ListedVersions(std::sync::Arc<Mutex<Vec<String>>>);
+
+#[async_trait::async_trait]
+impl Source for ListedVersions {
+    fn id(&self) -> &str {
+        "listed"
+    }
+
+    async fn resolve(
+        &self,
+        _: &SourceContext<'_>,
+        _: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        unimplemented!()
+    }
+
+    fn lists_versions(&self) -> bool {
+        true
+    }
+
+    async fn versions(&self, _: &SourceContext<'_>, _: &str) -> Result<Vec<String>> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+}
+
+#[tokio::test]
+async fn a_pinned_mod_is_told_only_about_versions_not_yet_seen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let listed = std::sync::Arc::new(Mutex::new(vec!["1.1".to_owned(), "1.0".to_owned()]));
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(ListedVersions(listed.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let mut loaded = pw.load_profile(&profile).unwrap();
+    loaded.mods.push(ProfileMod {
+        name: "mod".to_owned(),
+        source: "listed".to_owned(),
+        id: "a".to_owned(),
+        version: None,
+        seen: None,
+        enabled: true,
+        priority: 0,
+        game_versions: None,
+        ext: Default::default(),
+        replaces: Vec::new(),
+        ignores: Vec::new(),
+    });
+    pw.save_profile(&profile, &loaded).unwrap();
+    let lookup = pw.lookup(&loaded).unwrap();
+    let update = || {
+        let loaded = pw.load_profile(&profile).unwrap();
+        pw.known_update(&lookup, &loaded.mods[0], None)
+    };
+    pw.versions(&lookup, "listed", "a").await.unwrap();
+
+    // pinning to an older version than the latest known means it's been seen
+    pw.set_version(&profile, "mod", Some("1.0".to_owned()))
+        .unwrap();
+    assert_eq!(
+        pw.load_profile(&profile).unwrap().mods[0].seen.as_deref(),
+        Some("1.1")
+    );
+    assert_eq!(update(), None);
+
+    // a newer one is pointed out until it's dismissed
+    listed.lock().unwrap().insert(0, "1.2".to_owned());
+    pw.versions(&lookup, "listed", "a").await.unwrap();
+    assert_eq!(update().as_deref(), Some("1.2"));
+    pw.dismiss_update(&profile, "mod", "1.2").unwrap();
+    assert_eq!(update(), None);
+    listed.lock().unwrap().insert(0, "1.3".to_owned());
+    pw.versions(&lookup, "listed", "a").await.unwrap();
+    assert_eq!(update().as_deref(), Some("1.3"));
+
+    // pinning to the latest leaves nothing seen, and unpinning forgets it
+    pw.set_version(&profile, "mod", Some("1.3".to_owned()))
+        .unwrap();
+    assert_eq!(pw.load_profile(&profile).unwrap().mods[0].seen, None);
+    pw.set_version(&profile, "mod", Some("1.0".to_owned()))
+        .unwrap();
+    pw.set_version(&profile, "mod", None).unwrap();
+    assert_eq!(pw.load_profile(&profile).unwrap().mods[0].seen, None);
+    assert!(pw.dismiss_update(&profile, "mod", "1.3").is_err());
+}
+
 #[tokio::test]
 async fn versions_being_fetched_are_waited_on_not_fetched_again() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1025,6 +1115,7 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         game_versions: None,
         ext: Default::default(),
         replaces: Vec::new(),
+        seen: None,
         ignores: Vec::new(),
     });
     loaded.hidden_tags = vec!["library".to_owned()];
@@ -1075,6 +1166,7 @@ fn priorities_change_the_load_order_but_not_the_list() {
             game_versions: None,
             ext: Default::default(),
             replaces: Vec::new(),
+            seen: None,
             ignores: Vec::new(),
         });
     }
@@ -1234,6 +1326,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         game_versions: None,
         ext: Default::default(),
         replaces: Vec::new(),
+        seen: None,
         ignores: Vec::new(),
     };
     let locked = |path: &Path, hash| LockedMod {

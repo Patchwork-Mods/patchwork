@@ -178,6 +178,12 @@ pub struct ProfileMod {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// For a mod pinned to a `version`, the newest version the user already
+    /// knows is out, from when they pinned it or dismissed the note about
+    /// it, so only a version newer than that is pointed out. See
+    /// [`crate::Patchwork::known_update`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen: Option<String>,
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
     /// Mods with a higher priority load later, so they win over ones with a
@@ -217,6 +223,8 @@ struct ProfileModFile {
     id: String,
     #[serde(default)]
     version: Option<String>,
+    #[serde(default)]
+    seen: Option<String>,
     #[serde(default = "enabled_by_default")]
     enabled: bool,
     #[serde(default)]
@@ -252,6 +260,7 @@ impl From<ProfileModFile> for ProfileMod {
             source: file.source,
             id: file.id,
             version: file.version,
+            seen: file.seen,
             enabled: file.enabled,
             priority: file.priority,
             game_versions: file.game_versions,

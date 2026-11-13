@@ -1737,6 +1737,27 @@ span.mod-version {
   background: var(--pw-accent);
 }
 
+/* A pinned mod is pinned for a reason, so a newer version is only noted */
+.card-update.pinned {
+  font-weight: normal;
+  color: var(--pw-muted);
+}
+
+.card-update.pinned button {
+  padding: 1px 4px;
+  border-color: transparent;
+}
+
+.card-update.pinned button:hover {
+  color: var(--pw-text);
+  background: transparent;
+  text-decoration: underline;
+}
+
+.card-update.pinned .dismiss:hover {
+  text-decoration: none;
+}
+
 .result .remove {
   position: absolute;
   top: 6px;

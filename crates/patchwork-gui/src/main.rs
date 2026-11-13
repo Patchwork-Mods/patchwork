@@ -1319,6 +1319,20 @@ async fn set_replaces(
     profile_detail(&app.pw, id)
 }
 
+/// Stops pointing out `version` as an update to pinned mod `name`, until a
+/// newer one is out.
+#[tauri::command]
+fn dismiss_update(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    version: String,
+) -> CmdResult<ProfileDetail> {
+    let r = profile_ref(&id)?;
+    app.pw.dismiss_update(&r, &name, &version).map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
 /// Sets whether mod `name` ignores its soft dependency `ident`, so it isn't
 /// pointed out as missing.
 #[tauri::command]
@@ -2142,6 +2156,7 @@ fn main() {
             set_replaces,
             set_game_versions,
             set_ignored,
+            dismiss_update,
             changelog::preview_updates,
             changelog::mod_changelog,
             update_mods,
