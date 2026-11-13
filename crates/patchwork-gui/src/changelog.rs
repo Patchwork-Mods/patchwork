@@ -8,9 +8,9 @@
 
 use futures_util::{StreamExt, stream};
 use jiff::{SignedDuration, Timestamp};
-use patchwork_core::Patchwork;
 use patchwork_core::changelog::ChangelogEntry;
 use patchwork_core::lock::mod_key;
+use patchwork_core::{Patchwork, newer_version};
 use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, TagEnd, html};
 use serde::Serialize;
 use tauri::State;
@@ -105,12 +105,10 @@ pub async fn preview_updates(
                     .versions_since(lookup, &m.source, &m.id, since)
                     .await
                     .map_err(|e| format!("{}: {e}", m.name))?;
-                let Some(newest) = versions.into_iter().next() else {
+                let Some(newest) = newer_version(&versions, m.version.as_deref()) else {
                     return Ok(None);
                 };
-                if m.version.as_deref() == Some(newest.as_str()) {
-                    return Ok(None);
-                }
+                let newest = newest.to_owned();
                 let changes = pw
                     .changes(
                         lookup,

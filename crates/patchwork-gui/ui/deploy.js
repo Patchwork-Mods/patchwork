@@ -296,9 +296,11 @@ function confirmUpdates(updates, failures) {
   );
 }
 
-/** Whether a mod follows the latest version and a newer one than it's locked at is out. */
-const canUpdate = (m) =>
-  m.versioned && !m.version && m.locked && m.versions?.[0] && m.versions[0] !== m.locked;
+/**
+ * Whether a mod follows the latest version and has an update, which the
+ * backend works out (`m.update`) the same way as the Update dialog does.
+ */
+const canUpdate = (m) => !m.version && !!m.update;
 
 /**
  * Has the Update button stand out, as "Update (N)", while any mod that

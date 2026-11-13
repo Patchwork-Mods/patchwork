@@ -248,6 +248,10 @@ struct UiMod {
     /// What a search would show for it (picture, summary, ...), as last
     /// fetched. The same goes for it as for `versions`.
     summary: Option<ModSummary>,
+    /// The newer version it could move to, going by `versions`; see
+    /// [`Patchwork::known_update`]. The UI's update notes and Update button
+    /// go by this rather than working it out themselves.
+    update: Option<String>,
     /// The choices to make about it, like a FOMOD installer's options.
     /// Only known once it's been downloaded.
     options: Vec<ModOptionsInfo>,
@@ -476,7 +480,11 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 .flatten();
             let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
             let locked = lock.iter().flat_map(|l| &l.mods).find(|l| l.has_key(&key));
+            let update = versioned
+                .then(|| pw.known_update(&lookup, &m, lock.as_ref()))
+                .flatten();
             UiMod {
+                update,
                 shown_id: pw.display_id(lock.as_ref(), &m),
                 versions: known.map(|k| k.versions),
                 summary: summary.and_then(|k| k.summary),

@@ -464,7 +464,78 @@ async fn searches() {
 #[test]
 fn lists_file_versions_newest_first() {
     let files: NexusFiles = serde_json::from_str(FILES).unwrap();
-    assert_eq!(file_versions(files.files), ["6.0", "5.2SE", "5.1SE"]);
+    // the primary file's version leads, though "Something new" is newer
+    assert_eq!(
+        file_versions(&files.files, true, |_| 1),
+        ["5.2SE", "6.0", "5.1SE"]
+    );
+}
+
+/// SMIM (skyrimspecialedition/659): an optional file numbered on its own
+/// was uploaded after the main file.
+const SMIM_FILES: &str = r#"{
+    "files": [
+        {
+            "file_id": 1,
+            "name": "SMIM SE 2-07",
+            "version": "2.07",
+            "category_name": "OLD_VERSION",
+            "is_primary": false,
+            "file_name": "SMIM SE 2-07-659-2-07.7z",
+            "uploaded_timestamp": 1600000000
+        },
+        {
+            "file_id": 2,
+            "name": "SMIM SE 2-08",
+            "version": "2.08",
+            "category_name": "MAIN",
+            "is_primary": true,
+            "file_name": "SMIM SE 2-08-659-2-08.7z",
+            "uploaded_timestamp": 1650000000
+        },
+        {
+            "file_id": 3,
+            "name": "Some patch",
+            "version": "1.0",
+            "category_name": "OPTIONAL",
+            "is_primary": false,
+            "file_name": "Some patch-659-1-0.7z",
+            "uploaded_timestamp": 1700000000
+        },
+        {
+            "file_id": 4,
+            "name": "Some extra",
+            "version": "1.1",
+            "category_name": "MISCELLANEOUS",
+            "is_primary": false,
+            "file_name": "Some extra-659-1-1.7z",
+            "uploaded_timestamp": 1710000000
+        }
+    ]
+}"#;
+
+#[test]
+fn add_ons_dont_count_as_the_latest_version() {
+    let files: NexusFiles = serde_json::from_str(SMIM_FILES).unwrap();
+    assert_eq!(file_versions(&files.files, true, |_| 1), ["2.08", "2.07"]);
+    // a mod added for the optional file lists that file's versions
+    let patch: Vec<NexusFile> = files
+        .files
+        .into_iter()
+        .filter(|f| picked(Some(FilePick::Named("Some patch")), f))
+        .collect();
+    assert_eq!(file_versions(&patch, false, |_| 1), ["1.0"]);
+}
+
+#[test]
+fn the_latest_version_suits_the_installed_game() {
+    let game = labelled_skyrim();
+    let files: NexusFiles = serde_json::from_str(RUNTIME_FILES).unwrap();
+    let mut files = files.files;
+    files[1].version = Some("6".to_owned());
+    let versions = |installed| file_versions(&files, true, |f| fit(&game, installed, f));
+    assert_eq!(versions(Some("1.5.97")), ["6", "7"]);
+    assert_eq!(versions(Some("1.6.1170")), ["7", "6"]);
 }
 
 #[tokio::test]

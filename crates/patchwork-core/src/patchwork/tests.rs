@@ -48,6 +48,16 @@ fn summary_is_behind_once_later_versions_have_a_newer_one() {
     assert!(!s.is_behind(&known_versions("1.2.0", earlier)));
 }
 
+#[test]
+fn updates_go_to_the_latest_version() {
+    let versions = ["2.08".to_owned(), "2.07".to_owned()];
+    assert_eq!(newer_version(&versions, Some("2.07")), Some("2.08"));
+    assert_eq!(newer_version(&versions, Some("2.08")), None);
+    // a mod at no version in particular has nothing to compare
+    assert_eq!(newer_version(&versions, None), None);
+    assert_eq!(newer_version(&[], Some("2.08")), None);
+}
+
 /// Answers one HTTP request with `status` and `body`, returning its URL.
 fn serve_once(status: &'static str, body: &'static [u8]) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

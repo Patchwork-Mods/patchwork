@@ -15,11 +15,12 @@ import { markUpdates } from "./deploy.js";
 // away; refresh_details then fetches whichever are out of date in the
 // background (see details.rs), and they're put in here as they come in.
 
-/** Puts freshly fetched versions into a mod's dropdown. */
-function showVersions(key, versions) {
+/** Puts freshly fetched versions, and the update they mean, into a mod's dropdown. */
+function showVersions(key, versions, update) {
   const m = state.profile?.mods.find((m) => m.key === key);
   if (!m) return;
   m.versions = versions;
+  m.update = update;
   markUpdates();
   const note = updateNotes.get(key);
   if (note?.el.isConnected) fillUpdate(note.el, m, note.onVersion);
@@ -67,7 +68,7 @@ export function refreshDetails() {
 listen("patchwork://details", ({ payload: e }) => {
   switch (e.kind) {
     case "versions":
-      if (e.game === state.profile?.game) showVersions(e.key, e.versions);
+      if (e.game === state.profile?.game) showVersions(e.key, e.versions, e.update);
       return;
     case "summary":
       if (e.game === state.profile?.game) showSummary(e.key, e.summary);

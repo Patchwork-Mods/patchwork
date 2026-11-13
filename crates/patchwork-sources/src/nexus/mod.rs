@@ -491,14 +491,36 @@ fn fit(game: &GameDef, installed: Option<&str>, file: &NexusFile) -> u8 {
     }
 }
 
-/// The distinct versions among `files`, newest upload first. Nexus versions
-/// are free text, so upload time is the only reliable order.
-fn file_versions(mut files: Vec<NexusFile>) -> Vec<String> {
-    files.sort_by_key(|f| std::cmp::Reverse(f.uploaded_timestamp));
+/// The distinct versions among `files`, the one an update would install
+/// (what [`pick_file`] picks) first and the rest newest upload first, since
+/// Nexus versions are free text. For a `whole_mod`, optional and
+/// miscellaneous files are left out: their versions number add-ons and
+/// patches, not the mod, and asking for one would install that file.
+fn file_versions(
+    files: &[NexusFile],
+    whole_mod: bool,
+    fit: impl Fn(&NexusFile) -> u8,
+) -> Vec<String> {
+    let latest = pick_file(files, None, &fit);
+    let mut rest: Vec<&NexusFile> = files
+        .iter()
+        .filter(|f| {
+            !whole_mod
+                || !matches!(
+                    f.category_name,
+                    Some(FileCategory::Optional | FileCategory::Miscellaneous)
+                )
+        })
+        .collect();
+    rest.sort_by_key(|f| std::cmp::Reverse(f.uploaded_timestamp));
     let mut versions: Vec<String> = Vec::new();
-    for v in files.into_iter().filter_map(|f| f.version) {
-        if !v.is_empty() && !versions.contains(&v) {
-            versions.push(v);
+    for v in latest
+        .into_iter()
+        .chain(rest)
+        .filter_map(|f| f.version.as_deref())
+    {
+        if !v.is_empty() && !versions.iter().any(|known| known == v) {
+            versions.push(v.to_owned());
         }
     }
     versions
@@ -680,8 +702,8 @@ impl Source for Nexus {
         true
     }
 
-    /// The versions of the mod's files (or of the ones `id` picks), newest
-    /// upload first.
+    /// The versions of the mod's files (or of the ones `id` picks), the one
+    /// an update would install first; see [`file_versions`].
     async fn versions(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Vec<String>> {
         let nexus_id = NexusId::parse(id)?;
         let (base, api_key) = self.mod_api(ctx, nexus_id.mod_id)?;
@@ -689,7 +711,10 @@ impl Source for Nexus {
             .get_json(&format!("{base}/files.json"), api_key)
             .await?;
         files.files.retain(|f| picked(nexus_id.file, f));
-        Ok(file_versions(files.files))
+        let installed = ctx.env.and_then(|env| env.version.as_deref());
+        Ok(file_versions(&files.files, nexus_id.file.is_none(), |f| {
+            fit(ctx.game, installed, f)
+        }))
     }
 
     /// The mod's main files, when it has more than one that suits the

@@ -811,14 +811,15 @@ function cardMore(m, item, settings) {
 }
 
 /**
- * Says when a newer version than the one in use is out, as a button that
- * moves the mod to it: a pinned mod gets pinned to it, and one that follows
- * the latest version is updated on its own, as Update would.
+ * Says when a newer version than the one in use is out (`m.update`, which
+ * the backend works out), as a button that moves the mod to it: a pinned mod
+ * gets pinned to it, and one that follows the latest version is updated on
+ * its own, as Update would.
  */
 export function fillUpdate(el, m, onVersion) {
-  const newest = m.versions?.[0];
+  const newest = m.update;
   const current = m.version ?? m.locked;
-  if (!m.versioned || !newest || !current || newest === current) {
+  if (!newest) {
     el.replaceChildren();
     return;
   }

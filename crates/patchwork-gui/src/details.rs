@@ -39,6 +39,8 @@ impl Kind {
 /// A mod to fetch something for.
 #[derive(Clone)]
 struct Job {
+    /// The profile it was found in.
+    profile: ProfileRef,
     game: String,
     /// What its versions are looked up for.
     lookup: Lookup,
@@ -67,6 +69,8 @@ enum DetailsEvent {
         game: String,
         key: String,
         versions: Vec<String>,
+        /// What they mean for the mod; see `UiMod::update`.
+        update: Option<String>,
     },
     Summary {
         game: String,
@@ -131,6 +135,7 @@ impl Details {
                                 game,
                                 key,
                                 versions,
+                                update: known_update(pw, job),
                             },
                         );
                         // a newer version than the summary knows of means the
@@ -165,6 +170,18 @@ impl Details {
     }
 }
 
+/// What [`Patchwork::known_update`] says of `job`'s mod, as the profile is
+/// now: it may have been pinned or locked while its versions were fetched.
+fn known_update(pw: &Patchwork, job: &Job) -> Option<String> {
+    let loaded = pw.load_profile(&job.profile).ok()?;
+    let m = loaded
+        .mods
+        .iter()
+        .find(|m| mod_key(&m.source, &m.id) == job.key)?;
+    let lock = pw.load_lock(&job.profile).ok().flatten();
+    pw.known_update(&job.lookup, m, lock.as_ref())
+}
+
 /// Starts fetching whatever's stale about `profile`'s mods, and stops any
 /// earlier refresh from starting more fetches. Fetches already in flight
 /// carry on, and aren't started again.
@@ -185,6 +202,7 @@ pub fn refresh(handle: &AppHandle, profile: &ProfileRef) -> CmdResult<()> {
         let outdated = app.details.outdated.lock().unwrap();
         for m in loaded.mods {
             let job = Job {
+                profile: profile.clone(),
                 game: loaded.game.clone(),
                 lookup: lookup.clone(),
                 key: mod_key(&m.source, &m.id),
@@ -216,6 +234,7 @@ pub fn refresh(handle: &AppHandle, profile: &ProfileRef) -> CmdResult<()> {
                 continue;
             }
             let job = Job {
+                profile: profile.clone(),
                 game: loaded.game.clone(),
                 lookup: lookup.clone(),
                 source: dep.source.clone(),

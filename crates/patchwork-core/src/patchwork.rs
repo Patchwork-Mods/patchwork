@@ -116,6 +116,29 @@ impl KnownVersions {
     pub fn is_stale(&self) -> bool {
         Timestamp::now().duration_since(self.fetched) > Self::TTL
     }
+
+    /// The version a mod that follows the latest one gets the next time
+    /// it's locked. Sources list it first.
+    pub fn latest(&self) -> Option<&str> {
+        latest_version(&self.versions)
+    }
+}
+
+/// The version a mod that follows the latest one gets the next time it's
+/// locked, going by `versions` as a source lists them.
+pub fn latest_version(versions: &[String]) -> Option<&str> {
+    versions.first().map(String::as_str)
+}
+
+/// The version a mod at `current` could move to, going by `versions` as a
+/// source lists them: the latest one, unless it's already at it. A mod at
+/// no version in particular has nothing to compare, so no update.
+///
+/// Every check for updates goes by this (the GUI's update notes, its Update
+/// button and update preview), so they can't disagree.
+pub fn newer_version<'a>(versions: &'a [String], current: Option<&str>) -> Option<&'a str> {
+    let current = current?;
+    latest_version(versions).filter(|latest| *latest != current)
 }
 
 /// How many mods locking resolves or downloads at once.
@@ -220,7 +243,7 @@ impl KnownSummary {
             .summary
             .as_ref()
             .and_then(|s| s.latest_version.as_ref());
-        match (latest, versions.versions.first()) {
+        match (latest, versions.latest()) {
             (Some(latest), Some(newest)) => versions.fetched > self.fetched && latest != newest,
             _ => false,
         }
@@ -1294,6 +1317,29 @@ impl Patchwork {
             .ok()
             .flatten()
             .filter(|k| k.id == id)
+    }
+
+    /// The version profile mod `m` could move to (see [`newer_version`]),
+    /// going by its versions as last fetched, from the one it's pinned to
+    /// or else the one `lock` has it at. `None` if it's at the latest, has
+    /// never been locked, or its versions have never been fetched.
+    pub fn known_update(
+        &self,
+        lookup: &Lookup,
+        m: &ProfileMod,
+        lock: Option<&Lockfile>,
+    ) -> Option<String> {
+        let current = m.version.as_deref().or_else(|| {
+            let key = mod_key(&m.source, &m.id);
+            lock?
+                .mods
+                .iter()
+                .find(|l| l.has_key(&key))?
+                .version
+                .as_deref()
+        });
+        let known = self.known_versions(lookup, &m.source, &m.id)?;
+        newer_version(&known.versions, current).map(str::to_owned)
     }
 
     fn known_versions_file(&self, lookup: &Lookup, source: &str, id: &str) -> PathBuf {
