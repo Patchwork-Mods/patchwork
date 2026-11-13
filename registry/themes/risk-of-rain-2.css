@@ -112,8 +112,6 @@ h3,
 .brand,
 legend,
 .game-section > h2 {
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   font-weight: 700;
 }
 
@@ -210,8 +208,6 @@ button.primary,
   background: var(--ror-gold);
   border-color: var(--ror-gold);
   color: var(--pw-accent-text);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 button.danger {
@@ -290,8 +286,6 @@ textarea:focus-visible,
   background: var(--ror-plate);
   border: var(--ror-edge-width) solid var(--ror-edge);
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .tabs button:hover {
@@ -557,8 +551,6 @@ fieldset {
 .result h3,
 .result h3 a {
   color: var(--rarity, #fff);
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 .result.disabled {
