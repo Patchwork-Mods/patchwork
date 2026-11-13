@@ -233,12 +233,18 @@ pub fn checked_edits(contents: &Contents, edits: &Edits) -> (Edits, Vec<String>)
     (kept, problems)
 }
 
-/// The settings in `now` that aren't what they are in `before`.
+/// The settings in `now` that aren't what they are in `before`. Settings
+/// `before` hasn't got aren't counted: a mod that rewrites its config file
+/// in a newer layout when the game starts adds settings nobody chose, and
+/// deploying couldn't put them in the mod's own copy anyway.
 pub fn changed(before: &Edits, now: &Edits) -> Edits {
     let mut changed = Edits::new();
     for (group, values) in now {
         for (id, value) in values {
-            if before.get(group).and_then(|v| v.get(id)) != Some(value) {
+            let Some(old) = before.get(group).and_then(|v| v.get(id)) else {
+                continue;
+            };
+            if old != value {
                 changed
                     .entry(group.clone())
                     .or_default()

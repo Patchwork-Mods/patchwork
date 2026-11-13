@@ -3371,7 +3371,8 @@ format = "test.kv""#,
     );
 
     // the game changes them, which isn't a stale deploy; deploying again
-    // keeps what it changed, and doesn't write into the store's copy
+    // keeps what it changed, and doesn't write into the store's copy;
+    // settings it added aren't kept, since they can't be put back
     fs::write(
         game.join("config/fast.cfg"),
         "[speed]\nlevel = 7\nname = quick\n",
@@ -3389,8 +3390,10 @@ format = "test.kv""#,
         Value::Int(7)
     );
     let saved = pw.load_profile(&profile).unwrap().config;
-    assert_eq!(saved[&own]["video"]["new"], Value::Int(3));
-    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    assert!(!saved[&own]["video"].contains_key("new"), "{saved:?}");
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    pw.apply(&plan).unwrap();
     assert_eq!(
         fs::read_to_string(game.join("config/fast.cfg")).unwrap(),
         "[speed]\nlevel = 7\nname = quick\n"

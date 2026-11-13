@@ -139,7 +139,7 @@ fn edits_are_checked_against_the_file() {
 }
 
 #[test]
-fn only_changed_settings_count_as_changed() {
+fn only_changed_settings_it_had_count_as_changed() {
     let before = contents().values();
     let mut now = before.clone();
     now.get_mut("g")
@@ -153,6 +153,6 @@ fn only_changed_settings_count_as_changed() {
         found["g"],
         BTreeMap::from([("on".to_owned(), Value::Bool(true))])
     );
-    assert_eq!(found["new"]["x"], Value::Int(1));
+    assert!(!found.contains_key("new"), "{found:?}");
     assert!(changed(&before, &before).is_empty());
 }
