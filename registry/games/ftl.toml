@@ -1,0 +1,19 @@
+schema = 1
+id = "ftl"
+name = "FTL: Faster Than Light"
+description = "Takes Slipstream mods (.ftl or .zip with data/, img/, audio/ and fonts/ folders, including .xml.append patches). Deploying builds a new ftl.dat with every mod patched in, in load order."
+# The built ftl.dat is around a gigabyte with Multiverse, so it's linked
+# rather than copied into the game folder (falling back to a copy across
+# drives).
+link = "hardlink"
+
+[sources.nexus]
+game_domain = "fasterthanlight"
+
+[deployer]
+kind = "ftl"
+
+[detect]
+steam = [212680]
+folder = "FTL Faster Than Light"
+exe = ["FTLGame.exe", "data/FTL.amd64", "FTL.app/Contents/MacOS/FTL"]

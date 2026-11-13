@@ -5821,6 +5821,7 @@ dependencies = [
  "patchwork-core",
  "patchwork-deployers",
  "patchwork-formats",
+ "patchwork-ftl",
  "patchwork-helldivers",
  "patchwork-smf",
  "patchwork-sources",
@@ -5898,6 +5899,15 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "uuid",
  "walkdir",
+ "zip 8.6.0",
+]
+
+[[package]]
+name = "patchwork-ftl"
+version = "0.3.0"
+dependencies = [
+ "patchwork-core",
+ "tempfile",
  "zip 8.6.0",
 ]
 

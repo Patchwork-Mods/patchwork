@@ -846,8 +846,9 @@ Each step leaves `main` working and shippable.
    Built (2026-11-05), with these differences:
    - Only games' code got crates of its own, not every extension:
      `patchwork-bethesda` (the `bethesda` and `fomod` extensions),
-     `patchwork-helldivers` (`helldivers`, added 2026-11-05) and
-     `patchwork-smf` (`smf`). Each crate's `lib.rs` has its `Extension`s.
+     `patchwork-helldivers` (`helldivers`, added 2026-11-05),
+     `patchwork-ftl` (`ftl`, added 2026-11-13) and `patchwork-smf`
+     (`smf`). Each crate's `lib.rs` has its `Extension`s.
      FOMOD stays its own extension, so other games can turn it on, but
      lives with Bethesda's code since that's who uses it now.
    - Sources, formats and the `rules` deployer stay in `patchwork-sources`,
@@ -856,7 +857,7 @@ Each step leaves `main` working and shippable.
      crates. `generic`, `thunderstore`, `nexus`, `modrinth`, `github` and
      `modio` (added 2026-11-07) stay in `patchwork-builtin`.
    - `patchwork-builtin` has a feature per game crate (`bethesda`,
-     `helldivers`, `smf`, all on by default) and `register(builder)`, which adds every extension the
+     `ftl`, `helldivers`, `smf`, all on by default) and `register(builder)`, which adds every extension the
      build has. The frontends call that instead of naming each extension,
      so they need no `cfg`s. They don't pass the features through yet; a
      build without one sets `default-features = false` on
