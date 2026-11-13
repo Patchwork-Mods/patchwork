@@ -107,6 +107,12 @@ pub struct ModSummary {
     /// The same id [`crate::source::Source::resolve`] takes.
     pub id: String,
     pub name: String,
+    /// Which of the mod's files the id picks, for ids that pick one of
+    /// several, like `Preloader` for `nexus:17230/Engine Fixes * - Preloader`.
+    /// It's shown with the name, so mods added for two files of one mod
+    /// can be told apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
     /// The mod's page on the source's site.
     pub url: Option<String>,
     pub author: Option<String>,

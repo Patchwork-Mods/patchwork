@@ -434,7 +434,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
         h(
           "span",
           { class: "mod-name" },
-          item.name,
+          modTitle(m, item),
           issueMark(m),
           conflictMark(m),
           unsharedMark(m),
@@ -652,7 +652,7 @@ function cardBody(item) {
   return h(
     "div",
     { class: "result-body" },
-    h("h3", {}, link(item.url, item.name)),
+    h("h3", {}, link(item.url, item.name), fileMark(item)),
     item.author && h("div", { class: "author" }, link(item.author_url, item.author)),
     summary && h("p", { class: "muted", title: summary }, summary),
     h(
@@ -668,6 +668,31 @@ function cardBody(item) {
 /** A mod's picture and details, from a search result (a ModSummary). */
 export function cardMain(item) {
   return h("div", { class: "card-main" }, modIcon(item), cardBody(item));
+}
+
+/** Says which of its mod's files a mod is for, when it's one of several. */
+function fileMark(item) {
+  return (
+    item.file &&
+    h("span", { class: "mod-file", title: `Just the "${item.file}" file of ${item.name}` }, item.file)
+  );
+}
+
+/** A list row's name, which shows in full on hover and when the row is
+ * opened, and which file of the mod it's for. Two mods showing the same
+ * name with nothing to tell them apart (say their summaries were fetched
+ * before they said which file) show their names in the profile instead,
+ * which are never the same. */
+function modTitle(m, item) {
+  const shared =
+    !item.file &&
+    m.summary &&
+    (state.profile?.mods ?? []).some(
+      (o) => o !== m && o.summary?.name === item.name && !o.summary.file,
+    );
+  const name = shared ? m.name : item.name;
+  const full = item.file ? `${name} (${item.file})` : name;
+  return [h("span", { class: "mod-title", title: full }, name), fileMark(item)];
 }
 
 /** What a profile's mod shows on its card: its summary, once that's been fetched. */
@@ -1108,7 +1133,11 @@ function dependencyRow(d) {
       h(
         "div",
         { class: "row-title" },
-        h("span", { class: "mod-name", title: d.key }, item.name),
+        h(
+          "span",
+          { class: "mod-name", title: `${item.name} (${d.key})` },
+          h("span", { class: "mod-title" }, item.name),
+        ),
         h(
           "span",
           { class: "needed-by" },

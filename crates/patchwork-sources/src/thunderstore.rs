@@ -263,6 +263,7 @@ fn listed_to_summary(community: &str, package: ListedPackage) -> ModSummary {
         updated: package.last_updated,
         // the listing doesn't say; it's only needed once a mod's picked
         latest_version: None,
+        file: None,
         categories: package
             .categories
             .into_iter()

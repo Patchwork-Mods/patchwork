@@ -512,6 +512,7 @@ impl Source for GitHub {
                 Some(p) => id.with(p),
                 None => id.repo(),
             },
+            file: id.pattern.and_then(|p| pattern::label(p, &repo.name, true)),
             name: repo.name,
             url: Some(repo.html_url),
             author: Some(repo.owner.login),

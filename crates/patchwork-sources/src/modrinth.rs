@@ -459,6 +459,7 @@ fn hit_to_summary(game: &GameDef, hit: Hit) -> ModSummary {
         updated: hit.date_modified,
         latest_version: None,
         // loaders are in there too, but they aren't what it's about
+        file: None,
         categories: hit
             .categories
             .into_iter()
@@ -482,6 +483,7 @@ fn project_to_summary(project: Project) -> ModSummary {
         rating: project.followers,
         updated: project.updated,
         latest_version: None,
+        file: None,
         categories: project.categories.into_iter().map(category).collect(),
     }
 }

@@ -150,3 +150,81 @@ pub fn matches(pattern: &str, name: &str) -> bool {
 pub fn fill(pattern: &str, version: &str) -> String {
     pattern.replacen('*', version, 1)
 }
+
+/// What to show next to a mod's name for the file `pattern` picks: the
+/// pattern without its `*`s, a version's `v` before them, `extension`, or
+/// the words at its start that are in the mod's name already. So
+/// `Engine Fixes * - Preloader` of "SSE Engine Fixes" is `Preloader`.
+/// `None` if that leaves nothing.
+pub fn label(pattern: &str, mod_name: &str, extension: bool) -> Option<String> {
+    let pattern = match extension {
+        true => split_extension(pattern).0,
+        false => pattern,
+    };
+    let separator = |c: char| !c.is_alphanumeric();
+    let in_name: Vec<String> = mod_name
+        .split(separator)
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let text = pattern
+        .split('*')
+        .map(|part| {
+            // the `v` of `v*`, unless it ends a word like `Dev*`
+            match part.strip_suffix(['v', 'V']) {
+                Some(rest) if rest.is_empty() || rest.ends_with(separator) => rest,
+                _ => part,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut rest = text.as_str();
+    loop {
+        let start = rest.trim_start_matches(separator);
+        let end = start.find(separator).unwrap_or(start.len());
+        let word = &start[..end];
+        if word.is_empty() || !in_name.contains(&word.to_lowercase()) {
+            rest = start;
+            break;
+        }
+        rest = &start[end..];
+    }
+    let label = rest.split_whitespace().collect::<Vec<_>>().join(" ");
+    let label = label.trim_matches(|c: char| c.is_whitespace() || "-_.,:;+".contains(c));
+    (!label.is_empty()).then(|| label.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::label;
+
+    #[test]
+    fn label_leaves_out_the_mod_name_and_version() {
+        let mod_name = "SSE Engine Fixes (skse64 plugin)";
+        assert_eq!(
+            label("Engine Fixes * - Main File", mod_name, false).as_deref(),
+            Some("Main File")
+        );
+        assert_eq!(
+            label("Engine Fixes - SKSE64 Preloader *", mod_name, false).as_deref(),
+            Some("Preloader")
+        );
+        // a file named for the mod and nothing else has nothing to add
+        assert_eq!(label("Engine Fixes v*", mod_name, false), None);
+        assert_eq!(
+            label("SomeMod-*-lite.zip", "SomeMod", true).as_deref(),
+            Some("lite")
+        );
+        assert_eq!(label("SomeMod-v*.zip", "SomeMod", true), None);
+        // only words at the start go; later ones are what tells files apart
+        assert_eq!(
+            label("Patch for SkyUI *", "SkyUI", false).as_deref(),
+            Some("Patch for SkyUI")
+        );
+        // a title's dot isn't an extension
+        assert_eq!(
+            label("Mr. Smith Dev*", "Other", false).as_deref(),
+            Some("Mr. Smith Dev")
+        );
+    }
+}

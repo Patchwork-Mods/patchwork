@@ -112,7 +112,7 @@ function itemRow(i) {
         h(
           "span",
           { class: "mod-name" },
-          i.name,
+          h("span", { class: "mod-title" }, i.name),
           ...i.badges.map((b) => h("span", { class: "badge list-badge" }, capitalized(b))),
         ),
         i.modName && h("span", { class: "muted" }, `from ${i.modName}`),

@@ -422,6 +422,7 @@ fn mod_summary(game: &str, m: Mod) -> ModSummary {
         rating: m.stats.as_ref().and_then(|s| s.ratings_positive),
         updated: m.date_updated.and_then(|t| Timestamp::from_second(t).ok()),
         latest_version: m.modfile.as_ref().map(file_version),
+        file: None,
         categories: m
             .tags
             .into_iter()

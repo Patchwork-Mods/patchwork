@@ -751,10 +751,17 @@ impl Source for Nexus {
         Ok(changelog_entries(changelogs))
     }
 
-    /// Doesn't need an API key.
+    /// Doesn't need an API key. An id for one of the mod's files says
+    /// which in `file`, going by its name; an `@<file id>` can't say.
     async fn summary(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Option<ModSummary>> {
-        let mod_id = NexusId::parse(id)?.mod_id;
-        self.mod_summary(&config(ctx)?.game_domain, mod_id).await
+        let id = NexusId::parse(id)?;
+        let mut summary = self
+            .mod_summary(&config(ctx)?.game_domain, id.mod_id)
+            .await?;
+        if let (Some(s), Some(FilePick::Named(p))) = (&mut summary, id.file) {
+            s.file = pattern::label(p, &s.name, false);
+        }
+        Ok(summary)
     }
 
     /// Mod pages don't pin a version, so it's dropped, and they don't pick

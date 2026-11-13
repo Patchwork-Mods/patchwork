@@ -24,6 +24,7 @@ fn known_summary(latest: &str, fetched: &str) -> KnownSummary {
             rating: None,
             updated: None,
             latest_version: Some(latest.to_owned()),
+            file: None,
             categories: Vec::new(),
         }),
     }

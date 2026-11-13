@@ -939,6 +939,57 @@ dialog button.danger-text {
   font-weight: 600;
 }
 
+/* A list row's name runs to a second line before it's cut short, so names
+   that differ only at the end can be told apart, and shows in full while
+   the row is open (and on hover). The marks after it stay on its line. */
+.row-title>.mod-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  white-space: normal;
+}
+
+.mod-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.mod-row.expanded .mod-title {
+  -webkit-line-clamp: unset;
+  line-clamp: none;
+}
+
+.row-title>.mod-name>:not(.mod-title) {
+  flex: none;
+}
+
+/* Which file of its mod a mod is for, when it's one of several, like a
+   mod's main file and its patch. */
+.mod-file {
+  margin-left: 6px;
+  padding: 0 6px;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  border-radius: 999px;
+  color: var(--pw-accent);
+  background: color-mix(in srgb, var(--pw-accent) 15%, transparent);
+  vertical-align: middle;
+}
+
+.row-title>.mod-name>.mod-file {
+  flex: 0 1 auto;
+}
+
 .mod-row .author {
   font-size: 12px;
   color: var(--pw-link);

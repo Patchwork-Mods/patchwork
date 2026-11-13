@@ -205,6 +205,7 @@ pub(super) fn node_to_summary(game_domain: &str, node: ModNode) -> ModSummary {
         rating: node.endorsements,
         updated: node.updated_at,
         latest_version: node.version,
+        file: None,
         categories: node
             .mod_category
             .into_iter()
