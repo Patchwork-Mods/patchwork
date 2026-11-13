@@ -27,6 +27,7 @@ import "./setup.js";
 import "./capture.js";
 import "./addlink.js";
 import "./sourcesearch.js";
+import "./wheel.js";
 
 setModsView(modsView);
 refresh()
