@@ -16,7 +16,7 @@
 //! setting (or `GITHUB_TOKEN`) raises that to 5000; a fine-grained token
 //! with no permissions at all is enough.
 
-mod pattern;
+use crate::pattern;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;

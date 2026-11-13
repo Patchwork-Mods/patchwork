@@ -225,11 +225,12 @@ impl Source for OwnFiles {
     ) -> Result<crate::source::ResolvedMod> {
         Ok(crate::source::ResolvedMod {
             id: id.to_owned(),
-            name: id.to_owned(),
+            // `a/x` and `a/y` are two files of mod `a`
+            name: id.split('/').next().unwrap().to_owned(),
             version: Some("1.0".to_owned()),
             artifact: ArtifactLocation::Source {
                 file: "7".to_owned(),
-                name: format!("{id}.txt"),
+                name: format!("{}.txt", id.replace('/', "-")),
             },
             format: ArtifactFormat::File,
             dependencies: Vec::new(),
@@ -295,6 +296,31 @@ async fn own_files_profile(
         pw.add_mod(&profile, spec, None, true).await.unwrap();
     }
     (pw, profile, downloads)
+}
+
+#[tokio::test]
+async fn names_another_file_of_a_mod_after_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, profile, _) = own_files_profile(tmp.path(), None, &["a/main"]).await;
+    let spec = |id: &str| ModSpec {
+        source: "own".to_owned(),
+        id: id.to_owned(),
+        version: None,
+    };
+    let added = pw.add_mod(&profile, spec("a/preloader"), None, true).await;
+    assert_eq!(added.unwrap().name, "a (a-preloader.txt)");
+    // the same file twice is still refused
+    let err = pw.add_mod(&profile, spec("a/main"), None, true).await;
+    assert!(
+        err.unwrap_err()
+            .to_string()
+            .contains("already has that mod")
+    );
+    // and a name asked for is kept to
+    let err = pw
+        .add_mod(&profile, spec("a/third"), Some("a".to_owned()), true)
+        .await;
+    assert!(err.unwrap_err().to_string().contains("named `a`"));
 }
 
 fn pending(err: Error) -> Vec<PendingDownload> {

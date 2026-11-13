@@ -42,8 +42,8 @@ use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::{Origin, SettingSpec, SettingState, Settings};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{
-    ArtifactFormat, ArtifactLocation, Download, FileChoice, ModSpec, Need, PendingDownload, Source,
-    SourceContext, SourceFile,
+    ArtifactFormat, ArtifactLocation, Download, FileChoice, ModSpec, Need, PendingDownload,
+    ResolvedMod, Source, SourceContext, SourceFile, is_archive_name,
 };
 use crate::store::Store;
 use crate::sync::dedupe_names;
@@ -876,15 +876,8 @@ impl Patchwork {
         let id = if spec.source == LOCAL {
             self.add_local(&resolved)?
         } else {
-            resolved.id
+            resolved.id.clone()
         };
-        let name = name.unwrap_or(resolved.name);
-        if loaded.mods.iter().any(|m| m.name == name) {
-            return Err(Error::invalid(format!(
-                "{} already has a mod named `{name}`; pick another with --name",
-                loaded.label()
-            )));
-        }
         if loaded
             .mods
             .iter()
@@ -892,6 +885,22 @@ impl Patchwork {
         {
             return Err(Error::invalid(format!(
                 "{} already has that mod",
+                loaded.label()
+            )));
+        }
+        let taken = |name: &str| loaded.mods.iter().any(|m| m.name == name);
+        let name = match name {
+            Some(name) => name,
+            // another of the same mod's files, say, which goes by the file
+            None if taken(&resolved.name) => match file_named(&resolved) {
+                Some(other) if !taken(&other) => other,
+                _ => resolved.name,
+            },
+            None => resolved.name,
+        };
+        if taken(&name) {
+            return Err(Error::invalid(format!(
+                "{} already has a mod named `{name}`; pick another with --name",
                 loaded.label()
             )));
         }
@@ -3179,6 +3188,20 @@ pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use lists::ListInfo;
 pub use options::{ModOptionsInfo, ModOptionsView};
 pub use sync::{Applied as SyncApplied, ProfileChange};
+
+/// What to call `resolved` when its own name is taken: its name with its
+/// file's after it, without the archive's extension, like
+/// `BepInEx (BepInEx_win_x86_5.4.23)` for a second file of BepInEx.
+fn file_named(resolved: &ResolvedMod) -> Option<String> {
+    let file = resolved.artifact.file_name();
+    let stem = match is_archive_name(&file) {
+        true => file
+            .rsplit_once('.')
+            .map_or(file.as_str(), |(stem, _)| stem),
+        false => file.as_str(),
+    };
+    (!stem.is_empty() && stem != resolved.name).then(|| format!("{} ({stem})", resolved.name))
+}
 
 #[cfg(test)]
 mod tests;

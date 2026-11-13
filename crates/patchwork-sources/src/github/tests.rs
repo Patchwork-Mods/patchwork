@@ -244,3 +244,27 @@ fn orders_tags() {
     );
     assert_eq!(GitHub.compare_versions("nightly", "v1"), None);
 }
+
+#[test]
+fn infers_title_patterns() {
+    let cases = [
+        ("SkyUI 5.2 SE", Some("5.2SE"), "SkyUI * SE"),
+        (
+            "Engine Fixes 7.0.18 - Main File",
+            Some("7.0.18"),
+            "Engine Fixes * - Main File",
+        ),
+        ("Mod v1.2", Some("v1.2"), "Mod v*"),
+        (
+            "Engine Fixes - SKSE64 Preloader",
+            Some("7.0.18"),
+            "Engine Fixes - SKSE64 Preloader",
+        ),
+        ("Main File", None, "Main File"),
+        // dotted numbers when the version isn't in it
+        ("Textures 2.1 2K", Some("3"), "Textures * 2K"),
+    ];
+    for (title, version, expected) in cases {
+        assert_eq!(pattern::infer_title(title, version), expected, "{title}");
+    }
+}

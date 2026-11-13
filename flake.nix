@@ -78,34 +78,45 @@
                 wayland
               ];
 
-            env = {
-              # Required by rust-analyzer
-              RUST_SRC_PATH = "${pkgs.rustToolchain}/lib/rustlib/src/rust/library";
-            }
-            // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-              # So patchwork-gui can find GTK/WebKit at runtime, and TLS
-              # works inside the webview.
-              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
-                with pkgs;
-                [
-                  webkitgtk_4_1
-                  gtk3
-                  libsoup_3
-                  glib
-                  cairo
-                  pango
-                  gdk-pixbuf
-                  harfbuzz
-                  atk
-                  dbus
-                  # The folder picker (rfd's xdg-portal backend) links it.
-                  wayland
-                  # libstdc++, for DirectXTex (HITMAN texture conversion).
-                  stdenv.cc.cc.lib
-                ]
-              );
-              GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules/";
-            };
+            env =
+              let
+                # What patchwork-gui loads at runtime: GTK/WebKit, the folder
+                # picker's (rfd's xdg-portal backend) wayland, and libstdc++
+                # for DirectXTex (HITMAN texture conversion).
+                guiLibs = pkgs.lib.makeLibraryPath (
+                  with pkgs;
+                  [
+                    webkitgtk_4_1
+                    gtk3
+                    libsoup_3
+                    glib
+                    cairo
+                    pango
+                    gdk-pixbuf
+                    harfbuzz
+                    atk
+                    dbus
+                    wayland
+                    stdenv.cc.cc.lib
+                  ]
+                );
+                gioModules = "${pkgs.glib-networking}/lib/gio/modules/";
+              in
+              {
+                # Required by rust-analyzer
+                RUST_SRC_PATH = "${pkgs.rustToolchain}/lib/rustlib/src/rust/library";
+              }
+              // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+                # So patchwork-gui can find GTK/WebKit at runtime, and TLS
+                # works inside the webview.
+                LD_LIBRARY_PATH = guiLibs;
+                GIO_MODULE_DIR = gioModules;
+                # The same, built into patchwork-gui (see its build.rs), so
+                # it also runs outside this shell: when the browser starts
+                # it for an nxm:// link, say.
+                PATCHWORK_GUI_RPATH = guiLibs;
+                PATCHWORK_GUI_GIO_MODULE_DIR = gioModules;
+              };
           };
         }
       );

@@ -227,6 +227,13 @@ async function loadMore() {
 const key = (item) => `${item.source}:${item.id}`;
 export const addedMods = () => new Set(state.profile.mods.map(key));
 
+/**
+ * Whether one of the files of search result `item` is in `added`, like
+ * `nexus:17230/Engine Fixes - SKSE64 Preloader` for `nexus:17230`: ids that
+ * pick one of a mod's files have it after a slash.
+ */
+const fileAdded = (item, added) => [...added].some((k) => k.startsWith(`${key(item)}/`));
+
 /** Shows a source's last search, or nothing if it hasn't been searched. */
 function renderResults(search) {
   if (!search) {
@@ -246,7 +253,7 @@ function renderResults(search) {
 /** A search result, with a button to add it unless it's in `added` (see addedMods()). */
 export function resultCard(item, added) {
   const isAdded = added.has(key(item));
-  return h(
+  const card = h(
     "li",
     { class: "result" },
     cardMain(item),
@@ -255,26 +262,80 @@ export function resultCard(item, added) {
       {
         class: "add",
         disabled: isAdded,
-        onclick: async (e) => {
-          e.target.disabled = true;
-          status(`Adding ${item.name}…`);
-          const added = await run("add_mod", {
-            id: state.profile.id,
-            source: item.source,
-            modId: item.id,
-          }).catch(() => (e.target.disabled = false));
-          if (added) {
-            status(`Added ${added.name}`);
-            e.target.textContent = "Added";
-            state.profile = added.profile;
-            renderProfile();
-            refreshDetails();
-          }
-        },
+        title: !isAdded && fileAdded(item, added) ? "Add another of its files" : null,
+        onclick: (e) => addResult(item, card, e.target),
       },
       isAdded ? "Added" : "Add",
     ),
   );
+  return card;
+}
+
+/** Adds mod `modId` of search result `item`, returning whether it was. */
+async function addFile(item, modId) {
+  const p = state.profile;
+  status(`Adding ${item.name}…`);
+  const added = await run("add_mod", { id: p.id, source: item.source, modId }).catch(() => null);
+  if (!added) return false;
+  status(`Added ${added.name}`);
+  if (state.profile?.id === p.id) {
+    state.profile = added.profile;
+    renderProfile();
+    refreshDetails();
+  }
+  return true;
+}
+
+/**
+ * The Add button of `item`'s card: adds the mod, or when it has several
+ * files to choose between (a Nexus mod with a plugin and a preloader, say)
+ * lists them in the card, where each can be added in turn.
+ */
+async function addResult(item, card, button) {
+  button.disabled = true;
+  status(`Looking up ${item.name}…`);
+  const choices = await run("file_choices", {
+    id: state.profile.id,
+    source: item.source,
+    modId: item.id,
+  }).catch(() => null);
+  if (!choices) {
+    button.disabled = false;
+    return;
+  }
+  if (choices.length < 2) {
+    if (await addFile(item, choices[0]?.id ?? item.id)) button.textContent = "Added";
+    else button.disabled = false;
+    return;
+  }
+  status("Pick the files to add");
+  const added = addedMods();
+  const files = h(
+    "div",
+    { class: "result-files stack" },
+    h("small", { class: "muted" }, "Which files?"),
+    ...choices.map((c) => {
+      const isAdded = added.has(`${item.source}:${c.id}`);
+      return h(
+        "button",
+        {
+          type: "button",
+          disabled: isAdded,
+          title: c.description ?? null,
+          onclick: async (e) => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            if (await addFile(item, c.id)) b.classList.add("added");
+            else b.disabled = false;
+          },
+        },
+        c.name,
+      );
+    }),
+  );
+  files.querySelectorAll("button:disabled").forEach((b) => b.classList.add("added"));
+  button.replaceWith(files);
+  files.querySelector("button:enabled")?.focus();
 }
 
 // #more sits under the results while there are more pages, and loads the

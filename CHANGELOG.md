@@ -11,6 +11,9 @@ dialog shows, so the heading has to match the version being released.
   press Enter to search the game's sources.
 - A mod's page shows which versions of other mods it needs, and its
   dependencies are in a hover tab in the list view.
+- Nexus mods with more than one main file (a plugin and its preloader, say)
+  ask which to add, and each can be added as a mod of its own. A link to one
+  file on a mod's Files tab adds that file.
 - Priority is set from a chip and popover instead of a number field.
 - Lots of small improvements to the mod page.
 

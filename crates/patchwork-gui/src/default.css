@@ -1379,6 +1379,22 @@ select.mod-version {
   margin: 0 10px 10px;
 }
 
+/* A search result's files to add, in place of its Add button, when it has
+   several (see browse.js). Added ones get a check mark. */
+.result-files {
+  margin: 0 10px 10px;
+  gap: 4px;
+}
+
+.result-files button {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.result-files button.added::before {
+  content: "✓ ";
+}
+
 /* An added mod's card: an on/off switch and the version along the bottom,
    and a remove button over the picture that shows on hover. */
 .result {

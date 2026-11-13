@@ -1455,6 +1455,26 @@ async fn parse_link(app: State<'_, App>, id: String, link: String) -> CmdResult<
     })
 }
 
+/// The files mod `mod_id` from `source` could be added to profile `id` as,
+/// when there's a choice, like a Nexus mod with a plugin and a preloader.
+#[tauri::command]
+async fn file_choices(
+    app: State<'_, App>,
+    id: String,
+    source: String,
+    mod_id: String,
+) -> CmdResult<Vec<FileChoice>> {
+    let spec = ModSpec {
+        source,
+        id: mod_id,
+        version: None,
+    };
+    app.pw
+        .file_choices(&profile_ref(&id)?, &spec)
+        .await
+        .map_err(msg)
+}
+
 /// A search of one source, from the Add mods tab.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1987,6 +2007,14 @@ fn instance_id(identifier: &str) -> Option<String> {
 }
 
 fn main() {
+    // where the build said GIO's modules are (see build.rs), so the webview
+    // has TLS even when started outside the shell that built it
+    if let Some(dir) = option_env!("PATCHWORK_GUI_GIO_MODULE_DIR")
+        && std::env::var_os("GIO_MODULE_DIR").is_none()
+    {
+        // SAFETY: nothing else is running yet to read the environment
+        unsafe { std::env::set_var("GIO_MODULE_DIR", dir) };
+    }
     if std::env::args().any(|a| a == daemon::FLAG) {
         if let Err(e) = daemon::run(|paths| open(paths, Silent)) {
             eprintln!("error: {e:#}");
@@ -2110,6 +2138,7 @@ fn main() {
             changelog::mod_changelog,
             update_mods,
             add_mod,
+            file_choices,
             parse_link,
             link_source,
             search,

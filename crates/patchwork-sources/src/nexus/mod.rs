@@ -1,3 +1,4 @@
+use crate::pattern;
 use async_trait::async_trait;
 use patchwork_core::Result;
 use patchwork_core::changelog::ChangelogEntry;
@@ -5,9 +6,10 @@ use patchwork_core::compat::{self, GameVersions};
 use patchwork_core::game::GameDef;
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::settings::{SettingKind, SettingSpec};
+use patchwork_core::source::FileChoice;
 use patchwork_core::source::{
     ArtifactFormat, ArtifactLocation, Download, Handoff, ModSpec, ResolvedMod, Source,
-    SourceContext, compare_dotted, url_parts,
+    SourceContext, compare_dotted, is_archive_name, url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -29,6 +31,14 @@ const API_KEY: SettingSpec = SettingSpec::new("api_key", "API key", SettingKind:
 /// Mods from Nexus Mods. Ids are the numeric mod id from the mod's page, e.g.
 /// `nexus:266` for nexusmods.com/skyrimspecialedition/mods/266. Versions are
 /// matched against the version of the mod's files.
+///
+/// A mod with several main files to download, like a plugin and a
+/// preloader, is added once for each, with the file's name after the id:
+/// `nexus:17230/Engine Fixes - SKSE64 Preloader`. The name is a pattern
+/// (see [`crate::pattern`]) matched against the names on the mod's Files
+/// tab, so `SkyUI * SE` keeps picking the newest upload. `nexus:266/@4000`
+/// is file 4000 exactly, which is what a link to one file is read as until
+/// [`Source::choices`] swaps it for its name.
 ///
 /// Everything but searching needs a personal API key, the `api_key` setting
 /// (or `NEXUS_API_KEY`; get one from
@@ -174,6 +184,123 @@ fn config(ctx: &SourceContext<'_>) -> Result<Config> {
         .map_err(|e| error(format!("bad [sources.nexus] for {}: {e}", ctx.game.id)))
 }
 
+/// A mod's id, `<mod id>`, `<mod id>/<file name pattern>` or
+/// `<mod id>/@<file id>`; see [`Nexus`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NexusId<'a> {
+    mod_id: u64,
+    file: Option<FilePick<'a>>,
+}
+
+/// Which of a mod's files an id is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilePick<'a> {
+    /// The newest file whose name fits the pattern.
+    Named(&'a str),
+    /// That file and no other.
+    Id(u64),
+}
+
+impl<'a> NexusId<'a> {
+    fn parse(id: &'a str) -> Result<Self> {
+        let (mod_id, file) = match id.split_once('/') {
+            Some((m, f)) => (m, Some(f.trim()).filter(|f| !f.is_empty())),
+            None => (id, None),
+        };
+        let mod_id = mod_id.trim().parse().map_err(|_| {
+            error(format!(
+                "`{id}` should be a numeric Nexus mod id, maybe with `/<file name>` after it"
+            ))
+        })?;
+        let file = match file {
+            None => None,
+            Some(f) => Some(match f.strip_prefix('@') {
+                Some(n) => FilePick::Id(
+                    n.parse()
+                        .map_err(|_| error(format!("`{f}` in `{id}` should be @<file id>")))?,
+                ),
+                None => FilePick::Named(f),
+            }),
+        };
+        Ok(NexusId { mod_id, file })
+    }
+
+    fn with_name(&self, pattern: &str) -> String {
+        format!("{}/{pattern}", self.mod_id)
+    }
+}
+
+impl std::fmt::Display for NexusId<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.file {
+            None => write!(f, "{}", self.mod_id),
+            Some(FilePick::Named(p)) => write!(f, "{}/{p}", self.mod_id),
+            Some(FilePick::Id(n)) => write!(f, "{}/@{n}", self.mod_id),
+        }
+    }
+}
+
+/// The name a file goes by on the mod's Files tab.
+fn title(file: &NexusFile) -> &str {
+    file.name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&file.file_name)
+}
+
+/// Whether `file` is one `pick` could mean. Picking by name leaves out
+/// nothing but files with other names, so old uploads with the same name
+/// are there for asking for a version.
+fn picked(pick: Option<FilePick<'_>>, file: &NexusFile) -> bool {
+    match pick {
+        None => true,
+        Some(FilePick::Named(p)) => pattern::matches(p, title(file)),
+        Some(FilePick::Id(n)) => file.file_id == n,
+    }
+}
+
+/// Whether `file` is one of a mod's current files, rather than an old
+/// or archived one.
+fn current(file: &NexusFile) -> bool {
+    !matches!(
+        file.category_name,
+        Some(FileCategory::OldVersion | FileCategory::Archived)
+    )
+}
+
+/// The pattern that keeps picking `file` in later uploads.
+fn file_pattern(file: &NexusFile) -> String {
+    pattern::infer_title(title(file), file.version.as_deref())
+}
+
+/// What to call a mod added for one of its files: the file's name, without
+/// the version, if it says what mod it's for (shares a word with the mod's
+/// name), and otherwise the mod's name with the file's after it, so a file
+/// called "Main File" doesn't lose which mod it's from.
+fn file_mod_name(mod_name: &str, pattern: &str) -> String {
+    let label = pattern
+        .replace('*', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let label = label.trim_matches(|c: char| " -_.,:v".contains(c));
+    if label.is_empty() {
+        return mod_name.to_owned();
+    }
+    let words = |s: &str| -> Vec<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.chars().count() >= 4)
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let mod_words = words(mod_name);
+    match words(label).iter().any(|w| mod_words.contains(w)) {
+        true => label.to_owned(),
+        false => format!("{mod_name} - {label}"),
+    }
+}
+
 /// What an `nxm://` link is for, which the site hands to mod managers when
 /// a user clicks "Mod Manager Download". `key` and `expires` are what lets
 /// accounts without premium get a download link through the API.
@@ -189,20 +316,13 @@ struct NxmLink<'a> {
 /// Reads links like
 /// `nxm://skyrimspecialedition/mods/12604/files/2000?key=..&expires=..&user_id=..`.
 fn parse_nxm(link: &str) -> Option<NxmLink<'_>> {
-    let rest = link.strip_prefix("nxm://")?;
-    let (path, query) = rest.split_once('?')?;
-    let [domain, "mods", id, "files", file] = path.split('/').collect::<Vec<_>>()[..] else {
-        return None;
-    };
+    let (domain, id, file) = parse_nxm_path(link)?;
+    let (_, query) = link.split_once('?')?;
     let param = |name: &str| {
         query
             .split('&')
             .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
     };
-    let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if !numeric(id) || !numeric(file) {
-        return None;
-    }
     Some(NxmLink {
         domain,
         id,
@@ -210,6 +330,106 @@ fn parse_nxm(link: &str) -> Option<NxmLink<'_>> {
         key: param("key")?,
         expires: param("expires")?,
     })
+}
+
+/// The game domain, mod id and file id in an `nxm://` link, with or
+/// without the query that makes it a download link.
+fn parse_nxm_path(link: &str) -> Option<(&str, &str, &str)> {
+    let rest = link.strip_prefix("nxm://")?;
+    let path = rest.split(['?', '#']).next().unwrap_or(rest);
+    let [domain, "mods", id, "files", file] = path.split('/').collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (numeric(id) && numeric(file)).then_some((domain, id, file))
+}
+
+/// The files `id` could be added as; see [`Nexus::choices`]. `fit` is how
+/// well a file suits the installed game, as for [`pick_file`].
+fn file_choices(
+    id: &NexusId<'_>,
+    files: &[NexusFile],
+    fit: impl Fn(&NexusFile) -> u8,
+) -> Vec<FileChoice> {
+    let choice = |file: &NexusFile, pattern: String| {
+        let version = file
+            .version
+            .as_deref()
+            .filter(|v| !v.is_empty())
+            .map(|v| format!("version {v}; "))
+            .unwrap_or_default();
+        let later = match pattern.contains('*') {
+            true => format!("updates pick files named {pattern}"),
+            false => format!("updates pick files named exactly {pattern}"),
+        };
+        FileChoice {
+            id: id.with_name(&pattern),
+            name: title(file).to_owned(),
+            size: None,
+            description: Some(format!("{version}{later}")),
+        }
+    };
+    if let Some(FilePick::Named(_)) = id.file {
+        return Vec::new();
+    }
+    if let Some(FilePick::Id(n)) = id.file {
+        return files
+            .iter()
+            .find(|f| f.file_id == n)
+            .map(|f| vec![choice(f, file_pattern(f))])
+            .unwrap_or_default();
+    }
+    let mut main: Vec<&NexusFile> = files
+        .iter()
+        .filter(|f| current(f) && f.category_name == Some(FileCategory::Main))
+        .collect();
+    // files for other versions of the game aren't a choice; pick_file
+    // leaves them out by itself
+    if main.iter().any(|f| fit(f) > 0) {
+        main.retain(|f| fit(f) > 0);
+    }
+    main.sort_by_key(|f| {
+        (
+            std::cmp::Reverse(f.is_primary.unwrap_or(false)),
+            std::cmp::Reverse(f.uploaded_timestamp),
+        )
+    });
+    let mut choices: Vec<FileChoice> = Vec::new();
+    for file in main {
+        let pattern = file_pattern(file);
+        // the same file uploaded twice under one name is one choice
+        if !choices.iter().any(|c| c.id == id.with_name(&pattern)) {
+            choices.push(choice(file, pattern));
+        }
+    }
+    if choices.len() < 2 {
+        choices.clear();
+    }
+    choices
+}
+
+/// Why no file of mod `id` fits `pick` and `version`, listing the names
+/// the mod's current files go by when it's the name that didn't fit.
+fn no_file(
+    id: &str,
+    pick: Option<FilePick<'_>>,
+    version: Option<&str>,
+    files: &[NexusFile],
+) -> patchwork_core::Error {
+    match (pick, version) {
+        (Some(FilePick::Named(p)), _) if !files.iter().any(|f| picked(pick, f)) => {
+            let mut names: Vec<&str> = files.iter().filter(|f| current(f)).map(title).collect();
+            names.sort_unstable();
+            names.dedup();
+            error(format!(
+                "nexus:{id} has no file named like `{p}`; its files are: {}",
+                names.join(", ")
+            ))
+        }
+        (Some(FilePick::Id(n)), None) => error(format!("nexus:{id}: there's no file {n}")),
+        (_, Some(v)) => error(format!("nexus:{id} has no file with version {v}")),
+        (_, None) => error(format!("nexus:{id} has no downloadable files")),
+    }
 }
 
 /// The page where a user can download `file` of mod `id` themselves.
@@ -222,7 +442,7 @@ fn file_page(domain: &str, id: &str, file: &str) -> String {
 /// then the newest upload; old and archived files are only considered when
 /// a version is asked for.
 fn pick_file<'a>(
-    files: &'a [NexusFile],
+    files: impl IntoIterator<Item = &'a NexusFile>,
     version: Option<&str>,
     fit: impl Fn(&NexusFile) -> u8,
 ) -> Option<&'a NexusFile> {
@@ -233,13 +453,10 @@ fn pick_file<'a>(
         _ => 0,
     };
     files
-        .iter()
+        .into_iter()
         .filter(|f| match version {
             Some(v) => f.version.as_deref() == Some(v),
-            None => !matches!(
-                f.category_name,
-                Some(FileCategory::OldVersion | FileCategory::Archived)
-            ),
+            None => current(f),
         })
         .max_by_key(|f| {
             let fit = if version.is_some() { 0 } else { fit(f) };
@@ -327,7 +544,10 @@ fn nexus_to_resolved_mod(game: &GameDef, mod_: &NexusMod, file: &NexusFile) -> R
             file: file.file_id.to_string(),
             name: file.file_name.clone(),
         },
-        format: ArtifactFormat::Archive,
+        format: match is_archive_name(&file.file_name) {
+            true => ArtifactFormat::Archive,
+            false => ArtifactFormat::File,
+        },
         // Nexus doesn't say which requirements are optional, so none are
         // installed by themselves; see `Nexus::requirements`.
         dependencies: Vec::new(),
@@ -378,44 +598,55 @@ impl Source for Nexus {
         id: &str,
         version: Option<&str>,
     ) -> Result<ResolvedMod> {
-        let (base, api_key) = self.mod_api(ctx, id)?;
+        let nexus_id = NexusId::parse(id)?;
+        let (base, api_key) = self.mod_api(ctx, nexus_id.mod_id)?;
         let mod_: NexusMod = self.get_json(&format!("{base}.json"), api_key).await?;
         let files: NexusFiles = self
             .get_json(&format!("{base}/files.json"), api_key)
             .await?;
         let installed = ctx.env.and_then(|env| env.version.as_deref());
-        let file =
-            pick_file(&files.files, version, |f| fit(ctx.game, installed, f)).ok_or_else(|| {
-                match version {
-                    Some(v) => error(format!("{id} has no file with version {v}")),
-                    None => error(format!("{id} has no downloadable files")),
-                }
-            })?;
-        if !file.file_name.to_ascii_lowercase().ends_with(".zip") {
-            return Err(error(format!(
-                "{} is not a zip, and only zips are supported for now",
-                file.file_name
-            )));
-        }
+        let file = match nexus_id.file {
+            // the very file, however old, unless another version is asked for
+            Some(FilePick::Id(n)) => files
+                .files
+                .iter()
+                .find(|f| f.file_id == n)
+                .filter(|f| version.is_none_or(|v| f.version.as_deref() == Some(v))),
+            pick => pick_file(
+                files.files.iter().filter(|f| picked(pick, f)),
+                version,
+                |f| fit(ctx.game, installed, f),
+            ),
+        };
+        let file = file.ok_or_else(|| no_file(id, nexus_id.file, version, &files.files))?;
         let mut resolved = nexus_to_resolved_mod(ctx.game, &mod_, file);
+        if let Some(pick) = nexus_id.file {
+            resolved.id = nexus_id.to_string();
+            let pattern = match pick {
+                FilePick::Named(p) => p.to_owned(),
+                FilePick::Id(_) => file_pattern(file),
+            };
+            resolved.name = file_mod_name(&resolved.name, &pattern);
+        }
         // They're only shown, so the mod can do without them if the
         // GraphQL API is having a bad day.
         let domain = config(ctx)?.game_domain;
         resolved.soft_dependencies = self
-            .requirements(&domain, mod_.mod_id)
+            .requirements(&domain, nexus_id.mod_id)
             .await
             .unwrap_or_default();
         Ok(resolved)
     }
 
     async fn download(&self, ctx: &SourceContext<'_>, id: &str, file: &str) -> Result<Download> {
-        let (base, api_key) = self.mod_api(ctx, id)?;
+        let mod_id = NexusId::parse(id)?.mod_id;
+        let (base, api_key) = self.mod_api(ctx, mod_id)?;
         let url = format!("{base}/files/{file}/download_link.json");
         let response = self.get(&url, api_key).await?;
         if response.status() == reqwest::StatusCode::FORBIDDEN {
             let domain = config(ctx)?.game_domain;
             return Ok(Download::NeedsUser {
-                page: file_page(&domain, id, file),
+                page: file_page(&domain, &mod_id.to_string(), file),
             });
         }
         let links: Vec<NexusDownloadLink> = decode(&url, response).await?;
@@ -431,7 +662,7 @@ impl Source for Nexus {
         if !nxm.domain.eq_ignore_ascii_case(&config(ctx)?.game_domain) {
             return Ok(None);
         }
-        let (base, api_key) = self.mod_api(ctx, nxm.id)?;
+        let (base, api_key) = self.mod_api(ctx, NexusId::parse(nxm.id)?.mod_id)?;
         // the key and expiry came from a URL, so they're still encoded
         let url = format!(
             "{base}/files/{}/download_link.json?key={}&expires={}",
@@ -449,13 +680,35 @@ impl Source for Nexus {
         true
     }
 
-    /// The versions of the mod's files, newest upload first.
+    /// The versions of the mod's files (or of the ones `id` picks), newest
+    /// upload first.
     async fn versions(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Vec<String>> {
-        let (base, api_key) = self.mod_api(ctx, id)?;
+        let nexus_id = NexusId::parse(id)?;
+        let (base, api_key) = self.mod_api(ctx, nexus_id.mod_id)?;
+        let mut files: NexusFiles = self
+            .get_json(&format!("{base}/files.json"), api_key)
+            .await?;
+        files.files.retain(|f| picked(nexus_id.file, f));
+        Ok(file_versions(files.files))
+    }
+
+    /// The mod's main files, when it has more than one that suits the
+    /// installed game, like an SKSE plugin and its preloader. A link to one
+    /// file (`<mod id>/@<file id>`) has just that one, under its name, so
+    /// updates keep to it.
+    async fn choices(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Vec<FileChoice>> {
+        let nexus_id = NexusId::parse(id)?;
+        if matches!(nexus_id.file, Some(FilePick::Named(_))) {
+            return Ok(Vec::new());
+        }
+        let (base, api_key) = self.mod_api(ctx, nexus_id.mod_id)?;
         let files: NexusFiles = self
             .get_json(&format!("{base}/files.json"), api_key)
             .await?;
-        Ok(file_versions(files.files))
+        let installed = ctx.env.and_then(|env| env.version.as_deref());
+        Ok(file_choices(&nexus_id, &files.files, |f| {
+            fit(ctx.game, installed, f)
+        }))
     }
 
     /// The mod's changelogs, which are for the whole mod rather than any one
@@ -466,7 +719,7 @@ impl Source for Nexus {
         id: &str,
         _version: Option<&str>,
     ) -> Result<Vec<ChangelogEntry>> {
-        let (base, api_key) = self.mod_api(ctx, id)?;
+        let (base, api_key) = self.mod_api(ctx, NexusId::parse(id)?.mod_id)?;
         let changelogs: NexusChangelogs = self
             .get_json(&format!("{base}/changelogs.json"), api_key)
             .await?;
@@ -475,19 +728,36 @@ impl Source for Nexus {
 
     /// Doesn't need an API key.
     async fn summary(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Option<ModSummary>> {
-        let mod_id: u64 = id
-            .parse()
-            .map_err(|_| error(format!("`{id}` should be a numeric Nexus mod id")))?;
+        let mod_id = NexusId::parse(id)?.mod_id;
         self.mod_summary(&config(ctx)?.game_domain, mod_id).await
     }
 
-    /// Mod pages don't pin a version, so it's dropped.
+    /// Mod pages don't pin a version, so it's dropped, and they don't pick
+    /// a file either, except for a link to one file (`@<file id>`).
     fn mod_url(&self, ctx: &SourceContext<'_>, id: &str, _version: Option<&str>) -> Option<String> {
         let domain = config(ctx).ok()?.game_domain;
-        Some(format!("https://www.nexusmods.com/{domain}/mods/{id}"))
+        let nexus_id = NexusId::parse(id).ok()?;
+        let mod_id = nexus_id.mod_id;
+        Some(match nexus_id.file {
+            Some(FilePick::Id(n)) => file_page(&domain, &mod_id.to_string(), &n.to_string()),
+            _ => format!("https://www.nexusmods.com/{domain}/mods/{mod_id}"),
+        })
     }
 
+    /// Reads links to a mod's page, and to one of its files: a page link
+    /// with `file_id=` in it, or an `nxm://` link.
     fn parse_url(&self, ctx: &SourceContext<'_>, url: &str) -> Result<Option<ModSpec>> {
+        if let Some(nxm) = parse_nxm_path(url) {
+            let expected = config(ctx)?.game_domain;
+            if !nxm.0.eq_ignore_ascii_case(&expected) {
+                return Ok(None);
+            }
+            return Ok(Some(ModSpec {
+                source: "nexus".to_owned(),
+                id: format!("{}/@{}", nxm.1, nxm.2),
+                version: None,
+            }));
+        }
         let Some(("nexusmods.com", segments)) = url_parts(url) else {
             return Ok(None);
         };
@@ -503,9 +773,21 @@ impl Source for Nexus {
                 "{url} is a mod for {domain}, not {expected}"
             )));
         }
+        let file_id = url
+            .split_once('?')
+            .map(|(_, query)| query.split('#').next().unwrap_or(query))
+            .and_then(|query| {
+                query
+                    .split('&')
+                    .find_map(|pair| pair.strip_prefix("file_id="))
+            })
+            .filter(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()));
         Ok(Some(ModSpec {
             source: "nexus".to_owned(),
-            id: id.to_string(),
+            id: match file_id {
+                Some(f) => format!("{id}/@{f}"),
+                None => id.to_string(),
+            },
             version: None,
         }))
     }
@@ -529,11 +811,8 @@ impl Source for Nexus {
 impl Nexus {
     /// The API URL for mod `id` in the game's domain, and the API key that
     /// requests for it need.
-    fn mod_api<'a>(&self, ctx: &SourceContext<'a>, id: &str) -> Result<(String, &'a str)> {
+    fn mod_api<'a>(&self, ctx: &SourceContext<'a>, mod_id: u64) -> Result<(String, &'a str)> {
         let config = config(ctx)?;
-        let mod_id: u64 = id
-            .parse()
-            .map_err(|_| error(format!("`{id}` should be a numeric Nexus mod id")))?;
         let api_key = api_key(ctx.settings).ok_or_else(|| {
             error(
                 "Nexus needs an API key; add one in Settings, or with `patchwork config set nexus.api_key <key>` (get one from https://www.nexusmods.com/settings/api-keys)"

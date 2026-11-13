@@ -5,6 +5,7 @@ mod local;
 mod modio;
 mod modrinth;
 mod nexus;
+mod pattern;
 mod thunderstore;
 mod url;
 

@@ -588,3 +588,211 @@ async fn fetches_requirements() {
         "{soft:?}"
     );
 }
+
+/// A plugin and its preloader, both main files, like SSE Engine Fixes has,
+/// with an older upload of the plugin.
+const SPLIT_FILES: &str = r#"{
+    "files": [
+        {
+            "file_id": 10,
+            "name": "Engine Fixes 7.0.17 - Main File",
+            "version": "7.0.17",
+            "category_name": "OLD_VERSION",
+            "is_primary": false,
+            "file_name": "EngineFixes-17230-7-0-17.7z",
+            "uploaded_timestamp": 1680000000
+        },
+        {
+            "file_id": 11,
+            "name": "Engine Fixes 7.0.18 - Main File",
+            "version": "7.0.18",
+            "category_name": "MAIN",
+            "is_primary": true,
+            "file_name": "EngineFixes-17230-7-0-18.7z",
+            "uploaded_timestamp": 1690000000
+        },
+        {
+            "file_id": 12,
+            "name": "Engine Fixes - SKSE64 Preloader",
+            "version": "7.0.18",
+            "category_name": "MAIN",
+            "is_primary": false,
+            "file_name": "Preloader-17230-7-0-18.7z",
+            "uploaded_timestamp": 1690000001
+        },
+        {
+            "file_id": 13,
+            "name": "Engine Fixes - SKSE64 Preloader",
+            "version": "7.0.18",
+            "category_name": "MAIN",
+            "is_primary": false,
+            "file_name": "Preloader-17230-7-0-18b.7z",
+            "uploaded_timestamp": 1690000002
+        },
+        {
+            "file_id": 14,
+            "name": "Some Patch",
+            "version": "1",
+            "category_name": "OPTIONAL",
+            "is_primary": false,
+            "file_name": "Patch.7z",
+            "uploaded_timestamp": 1690000003
+        }
+    ]
+}"#;
+
+#[test]
+fn parses_ids() {
+    let id = |s| NexusId::parse(s).unwrap();
+    assert_eq!(
+        id("266"),
+        NexusId {
+            mod_id: 266,
+            file: None
+        }
+    );
+    assert_eq!(
+        id("266/"),
+        NexusId {
+            mod_id: 266,
+            file: None
+        }
+    );
+    assert_eq!(
+        id("17230/Engine Fixes - SKSE64 Preloader"),
+        NexusId {
+            mod_id: 17230,
+            file: Some(FilePick::Named("Engine Fixes - SKSE64 Preloader"))
+        }
+    );
+    // a slash in a file's name is part of the pattern
+    assert_eq!(
+        id("1/SE/AE * Patch").file,
+        Some(FilePick::Named("SE/AE * Patch"))
+    );
+    assert_eq!(id("1/@42").file, Some(FilePick::Id(42)));
+    for s in ["17230/@42", "17230/Main *", "266"] {
+        assert_eq!(id(s).to_string(), s);
+    }
+    for bad in ["SkyUI", "", "1/@x", "/Main"] {
+        assert!(NexusId::parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn offers_each_main_file() {
+    let files: NexusFiles = serde_json::from_str(SPLIT_FILES).unwrap();
+    let id = NexusId::parse("17230").unwrap();
+    let choices = file_choices(&id, &files.files, |_| 1);
+    let ids: Vec<&str> = choices.iter().map(|c| c.id.as_str()).collect();
+    // primary first; the preloader uploaded twice is one choice; the
+    // optional and old files aren't offered
+    assert_eq!(
+        ids,
+        [
+            "17230/Engine Fixes * - Main File",
+            "17230/Engine Fixes - SKSE64 Preloader"
+        ]
+    );
+    assert_eq!(choices[0].name, "Engine Fixes 7.0.18 - Main File");
+    let description = choices[1].description.as_deref().unwrap();
+    assert!(description.contains("named exactly"), "{description}");
+
+    // once picked, there's nothing left to choose
+    let picked_id = NexusId::parse(ids[1]).unwrap();
+    assert!(file_choices(&picked_id, &files.files, |_| 1).is_empty());
+
+    // and each picks its own file, the newest upload of it
+    let pick = |id: &str, version| {
+        let pick = NexusId::parse(id).unwrap().file;
+        pick_file(
+            files.files.iter().filter(|f| picked(pick, f)),
+            version,
+            |_| 1,
+        )
+        .map(|f| f.file_id)
+    };
+    assert_eq!(pick(ids[0], None), Some(11));
+    assert_eq!(pick(ids[0], Some("7.0.17")), Some(10));
+    assert_eq!(pick(ids[1], None), Some(13));
+    assert_eq!(pick("17230/nothing like it", None), None);
+
+    let err = no_file("17230/x", Some(FilePick::Named("x")), None, &files.files);
+    assert!(err.to_string().contains("Some Patch"), "{err}");
+}
+
+#[test]
+fn offers_no_choice_between_runtimes() {
+    // one file for each version of the game is pick_file's to sort out
+    let game = labelled_skyrim();
+    let files: NexusFiles = serde_json::from_str(RUNTIME_FILES).unwrap();
+    let id = NexusId::parse("17230").unwrap();
+    let choices = |installed: Option<&str>| {
+        file_choices(&id, &files.files, |f| fit(&game, installed, f)).len()
+    };
+    assert_eq!(choices(Some("1.6.1170")), 0);
+    assert_eq!(choices(Some("1.5.97")), 0);
+    // without a version to go on, both
+    assert_eq!(choices(None), 2);
+
+    let single: NexusFiles = serde_json::from_str(FILES).unwrap();
+    assert!(file_choices(&NexusId::parse("12604").unwrap(), &single.files, |_| 1).is_empty());
+}
+
+#[test]
+fn links_to_one_file() {
+    let game = skyrim();
+    let ctx = SourceContext {
+        game: &game,
+        config: game.sources.get("nexus"),
+        settings: None,
+        env: None,
+    };
+    let nexus = Nexus::default();
+    let id = |url: &str| nexus.parse_url(&ctx, url).unwrap().map(|s| s.id);
+    assert_eq!(
+        id("https://www.nexusmods.com/skyrimspecialedition/mods/17230?tab=files&file_id=12")
+            .as_deref(),
+        Some("17230/@12")
+    );
+    assert_eq!(
+        id("nxm://skyrimspecialedition/mods/17230/files/12?key=a&expires=1").as_deref(),
+        Some("17230/@12")
+    );
+    assert_eq!(id("nxm://fallout4/mods/1/files/2"), None);
+    assert_eq!(
+        nexus.mod_url(&ctx, "17230/@12", None).as_deref(),
+        Some("https://www.nexusmods.com/skyrimspecialedition/mods/17230?tab=files&file_id=12")
+    );
+    assert_eq!(
+        nexus.mod_url(&ctx, "17230/Main *", None).as_deref(),
+        Some("https://www.nexusmods.com/skyrimspecialedition/mods/17230")
+    );
+
+    // which `choices` turns into the file's name
+    let files: NexusFiles = serde_json::from_str(SPLIT_FILES).unwrap();
+    let choices = file_choices(&NexusId::parse("17230/@11").unwrap(), &files.files, |_| 1);
+    let ids: Vec<&str> = choices.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(ids, ["17230/Engine Fixes * - Main File"]);
+    // even an optional file
+    let choices = file_choices(&NexusId::parse("17230/@14").unwrap(), &files.files, |_| 1);
+    assert_eq!(choices[0].id, "17230/Some Patch");
+}
+
+#[test]
+fn names_mods_after_their_file() {
+    assert_eq!(
+        file_mod_name(
+            "SSE Engine Fixes (skse64 plugin)",
+            "Engine Fixes - SKSE64 Preloader"
+        ),
+        "Engine Fixes - SKSE64 Preloader"
+    );
+    assert_eq!(
+        file_mod_name("SSE Engine Fixes", "Engine Fixes * - Main File"),
+        "Engine Fixes - Main File"
+    );
+    assert_eq!(file_mod_name("SkyUI", "Main File"), "SkyUI - Main File");
+    assert_eq!(file_mod_name("SkyUI", "SkyUI v*"), "SkyUI");
+    assert_eq!(file_mod_name("SkyUI", "*"), "SkyUI");
+}

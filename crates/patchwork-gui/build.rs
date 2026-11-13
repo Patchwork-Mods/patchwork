@@ -3,7 +3,22 @@ use std::path::Path;
 
 fn main() {
     registry_themes();
+    runtime_paths();
     tauri_build::build();
+}
+
+/// Builds in where to find GTK/WebKit and GIO's modules, when the build
+/// says (the Nix dev shell does), so the binary runs without the shell's
+/// `LD_LIBRARY_PATH` and `GIO_MODULE_DIR`, as it must when the browser
+/// starts it for an `nxm://` link.
+fn runtime_paths() {
+    println!("cargo:rerun-if-env-changed=PATCHWORK_GUI_RPATH");
+    println!("cargo:rerun-if-env-changed=PATCHWORK_GUI_GIO_MODULE_DIR");
+    if let Ok(rpath) = std::env::var("PATCHWORK_GUI_RPATH")
+        && !rpath.is_empty()
+    {
+        println!("cargo:rustc-link-arg-bins=-Wl,-rpath,{rpath}");
+    }
 }
 
 /// Lists the themes in `registry/themes/` (games' own themes, which come

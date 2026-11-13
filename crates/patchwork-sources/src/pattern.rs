@@ -1,4 +1,5 @@
-//! File name patterns, which pick a mod's file out of each release's.
+//! File name patterns, which pick a mod's file out of each release's
+//! (GitHub) or out of its files list (Nexus).
 //!
 //! A pattern is a file name in which `*` stands for any run of characters,
 //! like `ModName-*.zip`. Matching ignores ASCII case.
@@ -45,6 +46,17 @@ pub fn infer(name: &str, tag: &str) -> String {
         None => wildcard_dotted_numbers(stem),
     };
     format!("{stem}{extension}")
+}
+
+/// Guesses the pattern that picks the same file out of later uploads from
+/// a file's display name, which unlike a file name has no extension: like
+/// [`infer`], the file's `version` in the name becomes `*`, or failing that
+/// any dotted numbers do, so `SkyUI 5.2 SE` is `SkyUI * SE`.
+pub fn infer_title(title: &str, version: Option<&str>) -> String {
+    match version.and_then(|v| find_version(title, tag_version(v)?)) {
+        Some((start, end)) => format!("{}*{}", &title[..start], &title[end..]),
+        None => wildcard_dotted_numbers(title),
+    }
 }
 
 /// Where `version` is in `text`, as a byte range, ignoring ASCII case: its

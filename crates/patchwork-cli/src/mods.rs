@@ -140,7 +140,10 @@ pub(crate) fn choose_file(source: &str, choices: &[FileChoice]) -> Result<Option
     if !std::io::stdin().is_terminal() {
         let ids: Vec<String> = choices
             .iter()
-            .map(|c| format!("{source}:{}", c.id))
+            .map(|c| match c.id.contains(' ') {
+                true => format!("'{source}:{}'", c.id),
+                false => format!("{source}:{}", c.id),
+            })
             .collect();
         bail!(
             "it has more than one file; add one of these instead: {}",
