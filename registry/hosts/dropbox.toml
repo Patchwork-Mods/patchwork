@@ -1,0 +1,6 @@
+# Dropbox shared files. Their links download the file itself with `dl=1`.
+name = "Dropbox"
+links = ['^https?://(?:www\.)?dropbox\.com/(?:s|scl/fi)/(?:[^/?#]+/)*(?<file>[^/?#]+)']
+file = "${file}"
+download = "${url}"
+query = { dl = "1" }

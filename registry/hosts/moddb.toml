@@ -1,0 +1,8 @@
+# ModDB and IndieDB. Their pages turn away anything that isn't a browser,
+# so the user downloads the file from the page and patchwork takes it from
+# there. Their downloads are nearly always archives.
+name = "ModDB"
+links = ['^https?://(?:www\.)?(?<site>moddb|indiedb)\.com/(?<path>(?:[^/?#]+/)+downloads/[^/?#]+)']
+link = "https://www.${site}.com/${path}"
+browser = true
+format = "archive"

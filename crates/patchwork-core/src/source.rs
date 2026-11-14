@@ -13,6 +13,7 @@ use crate::changelog::ChangelogEntry;
 use crate::compat::{EnvSupport, GameVersions};
 use crate::environment::GameEnv;
 use crate::game::GameDef;
+use crate::links::Links;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::SettingSpec;
 
@@ -384,6 +385,9 @@ pub struct SourceContext<'a> {
     /// `[env]`), when anything's known, so sources with a file for each
     /// version of the game or mod loader can pick the right one.
     pub env: Option<&'a GameEnv>,
+    /// The file hosts patchwork knows, for sources that come across links
+    /// to files on Dropbox, MediaFire and the like.
+    pub links: &'a Links,
 }
 
 /// Somewhere mods come from (local files, thunderstore, github, etc.)

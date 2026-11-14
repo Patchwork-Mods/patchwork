@@ -17,6 +17,7 @@ use crate::event::{Event, Reporter};
 use crate::ext::ExtTables;
 use crate::game::GameDef;
 use crate::hash::ContentHash;
+use crate::links::Links;
 use crate::lock::Lockfile;
 use crate::profile::ProfileMod;
 use crate::settings::Settings;
@@ -68,6 +69,8 @@ pub struct FormatContext<'a> {
     pub sources: &'a BTreeMap<String, Arc<dyn Source>>,
     /// The user's settings for `sources`.
     pub settings: Arc<Settings>,
+    /// The file hosts patchwork knows, for `sources`.
+    pub links: Links,
     pub reporter: &'a dyn Reporter,
     /// An empty directory for unpacking bundled artifacts into on import.
     pub scratch: &'a Path,
@@ -90,6 +93,7 @@ impl FormatContext<'_> {
                 config: game.sources.get(id),
                 settings: self.settings.source(id),
                 env: None,
+                links: &self.links,
             };
             (source.as_ref(), ctx)
         }))

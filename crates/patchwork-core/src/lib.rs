@@ -32,6 +32,7 @@ pub mod game;
 pub mod hash;
 pub mod issue;
 pub mod launch;
+pub mod links;
 pub mod list;
 pub mod locate;
 pub mod lock;

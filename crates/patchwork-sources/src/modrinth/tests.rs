@@ -44,6 +44,7 @@ fn ctx<'a>(game: &'a GameDef, env: Option<&'a GameEnv>) -> SourceContext<'a> {
         config: game.sources.get(ID),
         settings: None,
         env,
+        links: patchwork_core::links::Links::none(),
     }
 }
 

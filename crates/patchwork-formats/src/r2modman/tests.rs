@@ -69,6 +69,7 @@ async fn r2z_round_trips() {
         game: Some(&game),
         sources: &sources,
         settings: Default::default(),
+        links: Default::default(),
         reporter: &Silent,
         scratch: scratch.path(),
     };

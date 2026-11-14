@@ -103,6 +103,7 @@ fn urls_round_trip() {
         config: game.sources.get("nexus"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let nexus = Nexus::default();
     let url = nexus.mod_url(&ctx, "12604", Some("5.2SE")).unwrap();
@@ -256,6 +257,7 @@ async fn ignores_links_for_other_games() {
         config: game.sources.get("nexus"),
         settings: Some(&settings),
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     // nothing is fetched, so this works offline
     let accepted = Nexus::default()
@@ -275,6 +277,7 @@ async fn needs_game_domain_config() {
         config: None,
         settings: Some(&settings),
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let err = Nexus::default()
         .resolve(&ctx, "12604", None)
@@ -291,6 +294,7 @@ async fn needs_api_key() {
         config: game.sources.get("nexus"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let err = Nexus::default()
         .resolve(&ctx, "12604", None)
@@ -308,6 +312,7 @@ async fn rejects_non_numeric_ids() {
         config: game.sources.get("nexus"),
         settings: Some(&settings),
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let err = Nexus::default()
         .resolve(&ctx, "SkyUI", None)
@@ -332,6 +337,7 @@ async fn test_get_mod() {
         config: game.sources.get("nexus"),
         settings: Some(&settings),
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let resolved = Nexus::default().resolve(&ctx, "12604", None).await.unwrap();
     assert_eq!(resolved.id, "12604");
@@ -447,6 +453,7 @@ async fn searches() {
         config: game.sources.get("nexus"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let nexus = Nexus::default();
     let query = SearchQuery {
@@ -547,6 +554,7 @@ async fn summarizes_one_mod() {
         config: game.sources.get("nexus"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let nexus = Nexus::default();
     let skyui = nexus.summary(&ctx, "12604").await.unwrap().unwrap();
@@ -818,6 +826,7 @@ fn links_to_one_file() {
         config: game.sources.get("nexus"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let nexus = Nexus::default();
     let id = |url: &str| nexus.parse_url(&ctx, url).unwrap().map(|s| s.id);

@@ -1,0 +1,15 @@
+# MediaFire. A file's page has a download button with a link that expires;
+# some pages hide it base64-encoded in `data-scrambled-url`.
+name = "MediaFire"
+links = [
+    '^https?://(?:www\.)?mediafire\.com/(?:file|file_premium|download)/(?<key>\w+)(?:/(?<file>[^/?#]+))?',
+    '^https?://(?:www\.)?mediafire\.com/\?(?<key>\w+)$',
+]
+link = ["https://www.mediafire.com/file/${key}/${file}/file", "https://www.mediafire.com/?${key}"]
+file = "${file}"
+
+[[steps]]
+find = [
+    'data-scrambled-url="(?<b64>[^"]+)"',
+    'href="(?<url>https?://download\d+\.mediafire\.com/[^"]+)"',
+]

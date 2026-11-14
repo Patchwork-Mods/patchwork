@@ -124,6 +124,7 @@ fn links_round_trip() {
         config: None,
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let id = "someone/SomeMod/SomeMod-*.zip";
     let url = GitHub.mod_url(&ctx, id, Some("v1.2")).unwrap();

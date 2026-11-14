@@ -844,6 +844,7 @@ impl Patchwork {
                 config: def.sources.get(id),
                 settings: settings.source(id),
                 env: None,
+                links: registry.links(),
             };
             if let Some(spec) = source.parse_url(&ctx, link)? {
                 return Ok(spec);
@@ -881,6 +882,7 @@ impl Patchwork {
             config: game.sources.get(&spec.source),
             settings: settings.source(&spec.source),
             env: env.as_ref(),
+            links: registry.links(),
         };
         source.choices(&ctx, &spec.id).await
     }
@@ -1327,6 +1329,7 @@ impl Patchwork {
             config: def.sources.get(source),
             settings: settings.source(source),
             env: env.as_ref(),
+            links: registry.links(),
         };
         let versions = self.source(source)?.versions(&ctx, id).await?;
         let known = KnownVersions {
@@ -1396,6 +1399,7 @@ impl Patchwork {
             config: def.sources.get(source),
             settings: settings.source(source),
             env: None,
+            links: registry.links(),
         };
         let summary = self.source(source)?.summary(&ctx, id).await?;
         let known = KnownSummary {
@@ -1439,6 +1443,7 @@ impl Patchwork {
             config: def.sources.get(source),
             settings: settings.source(source),
             env: env.as_ref(),
+            links: registry.links(),
         };
         self.source(source)?.changelog(&ctx, id, version).await
     }
@@ -1469,6 +1474,7 @@ impl Patchwork {
             config: def.sources.get(source),
             settings: settings.source(source),
             env: None,
+            links: registry.links(),
         };
         self.source(source).ok()?.mod_url(&ctx, id, None)
     }
@@ -1511,6 +1517,7 @@ impl Patchwork {
             config: game.sources.get(&spec.source),
             settings: settings.source(&spec.source),
             env: env.as_ref(),
+            links: registry.links(),
         };
         match origin {
             Some(path) => {
@@ -1563,6 +1570,7 @@ impl Patchwork {
             config: game.sources.get(source.id()),
             settings: settings.source(source.id()),
             env: None,
+            links: registry.links(),
         };
         let known = source.search_categories(&ctx).await?;
         self.categories.lock().unwrap().insert(key, known.clone());
@@ -1598,6 +1606,7 @@ impl Patchwork {
             config: game.sources.get(source.id()),
             settings: settings.source(source.id()),
             env: None,
+            links: registry.links(),
         };
         if query.categories.is_empty() && query.excluded_categories.is_empty() {
             return source.search(&ctx, query).await;
@@ -2129,6 +2138,7 @@ impl Patchwork {
                     config: game.sources.get(source),
                     settings: settings.source(source),
                     env: None,
+                    links: registry.links(),
                 };
                 match self.source(source)?.download(&ctx, id, &file.file).await? {
                     Download::Url(url) => {
@@ -2199,6 +2209,7 @@ impl Patchwork {
                     config: Some(config),
                     settings: settings.source(source_id),
                     env: None,
+                    links: registry.links(),
                 };
                 let Some(handoff) = source.accept_link(&ctx, link).await? else {
                     continue;
@@ -2261,6 +2272,7 @@ impl Patchwork {
             game,
             sources: &self.sources,
             settings: self.settings(),
+            links: self.registry().links().clone(),
             reporter: self.reporter.as_ref(),
             scratch,
         }

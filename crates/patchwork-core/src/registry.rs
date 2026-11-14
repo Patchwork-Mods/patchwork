@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::builtin;
 use crate::game::{GAME_SCHEMA, GameDef};
 use crate::hash::ContentHash;
+use crate::links::{self, Links};
 use crate::paths::Paths;
 use crate::{Error, Result};
 
@@ -77,6 +78,8 @@ pub struct Registry {
     /// Each game's merged TOML, which the next overlay is merged into.
     game_tables: BTreeMap<String, toml::Table>,
     data: BTreeMap<(String, String), Entry<toml::Table>>,
+    /// The file hosts in `hosts`, ready to use.
+    links: Links,
     /// Files that failed to load. One broken file shouldn't make every other
     /// game unusable, so these are reported rather than fatal.
     pub problems: Vec<Error>,
@@ -95,6 +98,9 @@ impl Registry {
         for (origin, dir) in layers {
             registry.load_layer(&dir, origin);
         }
+        let (links, problems) = Links::from_registry(&registry);
+        registry.links = links;
+        registry.problems.extend(problems);
         Ok(registry)
     }
 
@@ -285,6 +291,11 @@ impl Registry {
         self.data.get(&(kind.to_owned(), id.to_owned()))
     }
 
+    /// The file hosts it knows, from its `hosts` entries.
+    pub fn links(&self) -> &Links {
+        &self.links
+    }
+
     /// The ids of every entry of `kind`, e.g. the `rulesets` a game can use.
     pub fn data_ids<'a>(&'a self, kind: &'a str) -> impl Iterator<Item = &'a str> {
         self.data
@@ -294,12 +305,13 @@ impl Registry {
     }
 
     /// The hash of every entry that isn't a game, keyed by kind and id,
-    /// except runners: how a game is started has no effect on what's deployed
-    /// to it, like the `launch` in [`COSMETIC_GAME_FIELDS`].
+    /// except runners and hosts: how a game is started or where its mods
+    /// are downloaded from has no effect on what's deployed to it, like the
+    /// `launch` in [`COSMETIC_GAME_FIELDS`].
     pub fn data_hashes(&self) -> impl Iterator<Item = (&str, &str, ContentHash)> {
         self.data
             .iter()
-            .filter(|((kind, _), _)| kind != crate::launch::runner::KIND)
+            .filter(|((kind, _), _)| kind != crate::launch::runner::KIND && kind != links::KIND)
             .map(|((kind, id), entry)| (kind.as_str(), id.as_str(), entry.hash))
     }
 }

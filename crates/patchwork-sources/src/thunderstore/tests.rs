@@ -97,6 +97,7 @@ fn urls_round_trip() {
         config: game.sources.get("thunderstore"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let url = Thunderstore
         .mod_url(&ctx, "notnotnotswipez-MoreCompany", Some("1.11.0"))
@@ -259,6 +260,7 @@ async fn needs_community_config() {
         config: None,
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let err = Thunderstore
         .resolve(&ctx, "notnotnotswipez-MoreCompany", None)
@@ -278,6 +280,7 @@ async fn test_get_mod() {
         config: game.sources.get("thunderstore"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
 
     let latest = Thunderstore
@@ -323,6 +326,7 @@ async fn summarizes_one_mod() {
         config: game.sources.get("thunderstore"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let summary = Thunderstore
         .summary(&ctx, "notnotnotswipez-MoreCompany")
@@ -343,6 +347,7 @@ async fn searches() {
         config: game.sources.get("thunderstore"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
 
     let home = Thunderstore
@@ -416,6 +421,7 @@ async fn rejects_other_communities() {
         config: game.sources.get("thunderstore"),
         settings: None,
         env: None,
+        links: patchwork_core::links::Links::none(),
     };
     let err = Thunderstore
         .resolve(&ctx, "notnotnotswipez-MoreCompany", None)

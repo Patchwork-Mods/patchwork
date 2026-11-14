@@ -7,6 +7,8 @@ compiled into patchwork: `build.rs` in `patchwork-core` picks up every
 - `games/<id>.toml`: game definitions. `id` must match the file name and use
   only lowercase letters, digits and `-`.
 - `rulesets/<id>.toml`: shared install rules for the `rules` deployer.
+- `hosts/<id>.toml`: file hosts like Dropbox and MediaFire, whose links go to
+  a page about a file (see below).
 - `runners/<id>.toml`: ways to start games that are just a command to fill
   in (see below).
 - `themes/<id>.css`: games' own themes for the app, each with
@@ -120,6 +122,53 @@ and users can pick any runner for a game in its settings. The built-in
 runners (Steam, native, Proton, Wine) are code. Simpler ones are data files
 in `runners/`, and `runners/umu.toml` explains the format, including the
 settings users can change.
+
+## File hosts
+
+`hosts/<id>.toml` teaches patchwork a file host whose links go to a page
+about a file rather than the file itself, like Dropbox, Google Drive,
+MediaFire or ModDB. Any source can use them; the `url` source does, so
+pasting such a link adds the file for every game. The mod keeps the page's
+link, and each download follows it again, since hosts' download links
+expire.
+
+```toml
+name = "MediaFire"
+# Regexes for the host's links, tried in order. Named groups become
+# `${name}` variables, along with `${url}` (the link as given).
+links = ['^https?://(?:www\.)?mediafire\.com/file/(?<key>\w+)(?:/(?<file>[^/?#]+))?']
+# The link to keep in profiles (`${link}`). A list means the first whose
+# variables all have values; with none, the link as given is kept.
+link = ["https://www.mediafire.com/file/${key}/${file}/file", "https://www.mediafire.com/?${key}"]
+# The file's name, if the link has it. Without it, patchwork asks the host
+# when the mod is added (a step's `name`, or what the download is called).
+file = "${file}"
+
+# Pages to read on the way to the file. Each fetches `fetch` (by default
+# the link the step before found, or `${link}` for the first) and finds
+# the next link with the first `find` regex that matches: its `url` group,
+# its base64 `b64` group decoded, or its first group. Relative links and
+# HTML entities are fine. `name` can find the file's name on the page.
+[[steps]]
+find = ['data-scrambled-url="(?<b64>[^"]+)"', 'href="(?<url>https://download\d+\.mediafire\.com/[^"]+)"']
+```
+
+Also:
+
+- `download`: where the file is, if it can be worked out from the link
+  without reading any pages (Google Drive), or from the last step's
+  `${found}`. By default it's what the last step found, or `${link}`.
+- `query`: parameters to set on the download link, like Dropbox's
+  `{ dl = "1" }`.
+- `browser = true`: the host turns away anything that isn't a browser
+  (ModDB), so the user downloads the file from the page and hands it to
+  patchwork, as with Nexus Mods without Premium. A host that answers 401,
+  403 or 429 is treated the same way.
+- `format`: `"archive"` or `"file"`, for when the file's name can't be
+  found out, as with `browser` hosts.
+
+A host that sends a web page instead of the file (Google Drive does when a
+file's had too many downloads) is reported rather than installed.
 
 ## Other data
 

@@ -26,6 +26,7 @@ fn ctx<'a>(game: &'a GameDef, settings: Option<&'a toml::Table>) -> SourceContex
         config: game.sources.get(ID),
         settings,
         env: None,
+        links: patchwork_core::links::Links::none(),
     }
 }
 
