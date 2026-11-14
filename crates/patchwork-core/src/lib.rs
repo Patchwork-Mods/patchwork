@@ -84,6 +84,20 @@ pub fn http() -> &'static reqwest::Client {
     &CLIENT
 }
 
+/// Whether `response` is a web page rather than a file, going by its
+/// `Content-Type`. Links to a folder, a mod's page or a sign-in page give
+/// one of these where a file was wanted.
+pub fn is_web_page(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|t| t.to_str().ok())
+        .is_some_and(|t| {
+            let t = t.trim_start().to_ascii_lowercase();
+            t.starts_with("text/html") || t.starts_with("application/xhtml+xml")
+        })
+}
+
 /// GETs `url` with the shared [`http`] client. If the server says it's
 /// getting too many requests (as Thunderstore does when a big profile is
 /// locked), waits as long as it asks, or a little longer each time, and tries

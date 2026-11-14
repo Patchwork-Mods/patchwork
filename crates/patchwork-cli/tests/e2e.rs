@@ -509,19 +509,27 @@ fn hidden_tags_travel_with_zips() {
 fn profiles_can_be_shared_as_links() {
     let alice = Env::new();
     alice.run(&["profile", "new", "lethal-company/main"]);
-    alice.run(&["add", "url:https://example.com/mods/Cool.Mod.zip"]);
-    alice.run(&["add", "url:https://example.com/Other.dll", "--disabled"]);
+    // adding a link checks there's a file at it
+    let file = "200 OK\r\nContent-Type: application/octet-stream";
+    let base = patchwork_core::ext::testing::serve(vec![
+        ("/mods/Cool.Mod.zip", file, "zip".to_owned()),
+        ("/Other.dll", file, "dll".to_owned()),
+        ("/a.zip", file, "a".to_owned()),
+        ("/b.pak", file, "b".to_owned()),
+    ]);
+    alice.run(&["add", &format!("url:{base}/mods/Cool.Mod.zip")]);
+    alice.run(&["add", &format!("url:{base}/Other.dll"), "--disabled"]);
     let local = alice.path("Local.zip");
     write_zip(&local, &[("plugins/a.dll", "a")]);
     alice.run(&["add", local.to_str().unwrap()]);
     let links = alice.run(&["profile", "export", "--format", "urls"]);
-    assert_eq!(links.trim(), "https://example.com/mods/Cool.Mod.zip");
+    assert_eq!(links.trim(), format!("{base}/mods/Cool.Mod.zip"));
 
     let bob = Env::new();
     let out = bob.run(&[
         "profile",
         "import",
-        "https://example.com/a.zip, https://example.com/b.pak",
+        &format!("{base}/a.zip, {base}/b.pak"),
         "--name",
         "linked",
         "--game",
@@ -530,11 +538,11 @@ fn profiles_can_be_shared_as_links() {
     assert!(out.contains("(2 mods, from urls)"), "{out}");
     let list = bob.run(&["list"]);
     assert!(
-        list.contains("[x] a  (url:https://example.com/a.zip)"),
+        list.contains(&format!("[x] a  (url:{base}/a.zip)")),
         "{list}"
     );
     assert!(
-        list.contains("[x] b  (url:https://example.com/b.pak)"),
+        list.contains(&format!("[x] b  (url:{base}/b.pak)")),
         "{list}"
     );
 

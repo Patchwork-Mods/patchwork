@@ -33,6 +33,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::future::Future;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -54,6 +56,38 @@ use crate::source::{
     ArtifactFormat, ArtifactLocation, ModSpec, ResolvedMod, Source, SourceContext,
 };
 use crate::{Builder, Error, GameInstall, ModOptionsView, Patchwork, Result};
+
+/// Answers requests by path, for as long as the test runs: `(path,
+/// headers, body)`, where `headers` is the status line's rest and any
+/// headers. Any `{base}` in a body is replaced by the server's base URL,
+/// which is what's returned.
+pub fn serve(routes: Vec<(&'static str, &'static str, String)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let routes: Vec<_> = routes
+        .into_iter()
+        .map(|(path, head, body)| (path, head, body.replace("{base}", &base)))
+        .collect();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut request = [0; 2048];
+            let n = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..n]);
+            let path = request.split_whitespace().nth(1).unwrap_or_default();
+            let (head, body) = routes
+                .iter()
+                .find(|(p, _, _)| *p == path)
+                .map_or(("404 Not Found", ""), |(_, h, b)| (*h, b.as_str()));
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {head}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    base
+}
 
 /// The id of the source the harness adds mods with. A mod's id is its name.
 pub const SOURCE: &str = "test";

@@ -14,8 +14,9 @@ use patchwork_core::{Error, Result};
 /// is the page's link, and each download follows it to wherever the file
 /// is then. Hosts that turn patchwork away leave the download to the user.
 ///
-/// Nothing checks whether what's at the URL changes, other than the lockfile's
-/// hash.
+/// A URL is checked for a file when it's resolved (a web page is turned
+/// down), but nothing checks whether what's at it changes, other than the
+/// lockfile's hash.
 pub struct UrlSource;
 
 fn error(message: String) -> Error {
@@ -58,6 +59,26 @@ fn resolved(
         env: Default::default(),
         kind: None,
     }
+}
+
+/// Starts downloading `url` (then stops) to check there's a file there, so
+/// a link to a web page, like a shared folder or a mod's page, is turned
+/// down when it's added rather than when it's deployed.
+async fn check_file(url: &str) -> Result<()> {
+    let response = patchwork_core::http_get(url)
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|result| Error::Reqwest {
+            url: url.to_owned(),
+            result,
+        })?;
+    if patchwork_core::is_web_page(&response) {
+        return Err(error(format!(
+            "{url} is a web page, not a file; link to the file itself (if it's a folder, \
+             open it and copy the link to the file you want)"
+        )));
+    }
+    Ok(())
 }
 
 /// A link on a file host. Its file is a [`ArtifactLocation::Source`] one,
@@ -128,6 +149,7 @@ impl Source for UrlSource {
         if name.is_empty() {
             return Err(error(format!("{id} doesn't end in a file name")));
         }
+        check_file(id).await?;
         let format = format_of(&file_name);
         Ok(resolved(id.to_owned(), name.to_owned(), artifact, format))
     }

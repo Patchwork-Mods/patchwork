@@ -3022,6 +3022,14 @@ async fn download(url: &str, dest: &Path) -> Result<()> {
         .await
         .and_then(|r| r.error_for_status())
         .map_err(reqwest_error)?;
+    // No mod is a web page; this is a link to a folder or a mod's page, or
+    // a host wanting a sign-in.
+    if crate::is_web_page(&response) {
+        return Err(Error::invalid(format!(
+            "{url} sent a web page instead of a file; it may need a sign-in, or link to a \
+             page about the file rather than the file itself"
+        )));
+    }
     if let Some(dir) = dest.parent() {
         fs::create_dir_all(dir).at(dir)?;
     }

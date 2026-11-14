@@ -1,4 +1,5 @@
 use super::*;
+use patchwork_core::ext::testing::serve;
 use patchwork_core::game::GameDef;
 
 fn game() -> GameDef {
@@ -15,7 +16,7 @@ fn game() -> GameDef {
 }
 
 #[tokio::test]
-async fn resolves_without_fetching() {
+async fn resolves_files() {
     let game = game();
     let ctx = SourceContext {
         game: &game,
@@ -24,28 +25,58 @@ async fn resolves_without_fetching() {
         env: None,
         links: patchwork_core::links::Links::none(),
     };
+    let file = || "200 OK\r\nContent-Type: application/octet-stream";
+    let base = serve(vec![
+        ("/files/Cool.Mod.zip?dl=1", file(), "zip".to_owned()),
+        ("/thing_P.pak", file(), "pak".to_owned()),
+        // no Content-Type at all is taken as a file
+        ("/a.7z", "200 OK", "7z".to_owned()),
+        ("/b.RAR", file(), "rar".to_owned()),
+        (
+            "/drive/folders/1EYSBtvs",
+            "200 OK\r\nContent-Type: text/html; charset=utf-8",
+            "<html>Armory 1.0.zip</html>".to_owned(),
+        ),
+    ]);
+    let url = |path: &str| format!("{base}{path}");
+
     let zip = UrlSource
-        .resolve(&ctx, "https://example.com/files/Cool.Mod.zip?dl=1", None)
+        .resolve(&ctx, &url("/files/Cool.Mod.zip?dl=1"), None)
         .await
         .unwrap();
     assert_eq!(zip.name, "Cool.Mod");
     assert_eq!(zip.format, ArtifactFormat::Archive);
     let pak = UrlSource
-        .resolve(&ctx, "https://example.com/thing_P.pak", None)
+        .resolve(&ctx, &url("/thing_P.pak"), None)
         .await
         .unwrap();
     assert_eq!(pak.format, ArtifactFormat::File);
-    for archive in ["https://example.com/a.7z", "https://example.com/b.RAR"] {
-        let resolved = UrlSource.resolve(&ctx, archive, None).await.unwrap();
+    for archive in ["/a.7z", "/b.RAR"] {
+        let resolved = UrlSource.resolve(&ctx, &url(archive), None).await.unwrap();
         assert_eq!(resolved.format, ArtifactFormat::Archive, "{archive}");
     }
 
-    for bad in ["ftp://example.com/a.zip", "https://example.com/"] {
-        assert!(UrlSource.resolve(&ctx, bad, None).await.is_err(), "{bad}");
+    let folder = UrlSource
+        .resolve(&ctx, &url("/drive/folders/1EYSBtvs"), None)
+        .await
+        .unwrap_err();
+    assert!(folder.to_string().contains("web page"), "{folder}");
+    let missing = UrlSource
+        .resolve(&ctx, &url("/gone.zip"), None)
+        .await
+        .unwrap_err();
+    assert!(missing.to_string().contains("404"), "{missing}");
+
+    for bad in [
+        "ftp://example.com/a.zip".to_owned(),
+        // no file name, so not fetched
+        "https://example.invalid/".to_owned(),
+    ] {
+        assert!(UrlSource.resolve(&ctx, &bad, None).await.is_err(), "{bad}");
     }
     assert!(
         UrlSource
-            .resolve(&ctx, "https://example.com/a.zip", Some("1.0"))
+            .resolve(&ctx, &url("/a.7z"), Some("1.0"))
             .await
             .is_err()
     );

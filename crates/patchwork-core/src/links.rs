@@ -200,7 +200,7 @@ impl HostLink {
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned)
         };
-        if header(reqwest::header::CONTENT_TYPE).is_some_and(|t| t.starts_with("text/html")) {
+        if crate::is_web_page(&response) {
             return Err(Error::invalid(format!(
                 "{} sent a web page instead of the file at {}; it may need a sign-in, or be \
                  out of downloads for now",

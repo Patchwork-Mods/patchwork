@@ -89,6 +89,19 @@ async fn downloads_to_a_file() {
 }
 
 #[tokio::test]
+async fn web_pages_fail_the_download() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("download.tmp");
+    let page = serve_once(
+        "200 OK\r\nContent-Type: text/html; charset=utf-8",
+        b"<html>a folder</html>",
+    );
+    let err = download(&page, &dest).await.unwrap_err();
+    assert!(err.to_string().contains("web page"), "{err}");
+    assert!(!dest.exists());
+}
+
+#[tokio::test]
 async fn http_errors_fail_the_download() {
     let tmp = tempfile::tempdir().unwrap();
     let dest = tmp.path().join("download.tmp");
