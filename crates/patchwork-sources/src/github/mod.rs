@@ -283,6 +283,7 @@ fn choices(id: &ModId<'_>, release: &Release) -> Vec<FileChoice> {
                 name: asset.name.clone(),
                 size: asset.size,
                 description: Some(format!("From {}; {later}", release.tag_name)),
+                ..Default::default()
             }
         })
         .collect()

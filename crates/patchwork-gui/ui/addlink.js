@@ -3,7 +3,10 @@
 // Mods tab's search box (#mods-link) is one too while what's in it looks like
 // a link; each works on its own. The source that recognizes the link may have
 // several files to choose between, like a GitHub release's; they're listed
-// under the link, and the one picked is what later updates look for.
+// under the link, and the one picked is what later updates look for. A
+// shared folder's files are listed the same way, with its folders opening
+// in place to list theirs, and files that don't look like mods (a PDF, a
+// picture) dimmed.
 
 import { run, state, status } from "./state.js";
 import { $, h } from "./dom.js";
@@ -53,6 +56,7 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
   const submit = form.querySelector(".link-submit");
   const files = form.querySelector(".link-files");
   const fileList = form.querySelector(".link-file-list");
+  const fileAdd = form.querySelector(".link-file-add");
   const error = form.querySelector(".link-error");
 
   /** What the link in the box is for, once it's been looked up. */
@@ -68,6 +72,7 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
     linked = null;
     files.hidden = true;
     fileList.replaceChildren();
+    fileAdd.disabled = true;
   }
 
   /** Shows the Add button only for a link, in a search box. */
@@ -83,27 +88,68 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
     showMode();
   }
 
-  function showChoices(choices) {
-    fileList.replaceChildren(
-      ...choices.map((c) =>
-        h(
-          "label",
-          { class: "row" },
-          h("input", { type: "radio", name: "file", value: c.id, required: true }),
-          h(
-            "span",
-            {},
-            c.name,
-            c.size != null && h("small", { class: "muted" }, ` ${size(c.size)}`),
-            c.description && h("br"),
-            c.description && h("small", { class: "muted" }, c.description),
-          ),
-        ),
+  /** A file to pick, or a folder that lists its own when opened. */
+  function choiceRow(c) {
+    if (c.folder) return folderRow(c);
+    return h(
+      "label",
+      { class: c.notMod ? "row link-file not-mod" : "row link-file" },
+      h("input", { type: "radio", name: "file", value: c.id, required: true }),
+      h(
+        "span",
+        {},
+        c.name,
+        c.size != null && h("small", { class: "muted" }, ` ${size(c.size)}`),
+        c.notMod && h("small", { class: "muted" }, " (probably not a mod)"),
+        c.description && h("br"),
+        c.description && h("small", { class: "muted" }, c.description),
       ),
     );
-    files.hidden = false;
-    fileList.querySelector("input")?.focus();
   }
+
+  function folderRow(c) {
+    const list = h("div", { class: "link-folder-list stack", hidden: true });
+    const toggle = h(
+      "button",
+      {
+        type: "button",
+        class: "link-folder-toggle",
+        "aria-expanded": "false",
+        onclick: async () => {
+          const open = toggle.getAttribute("aria-expanded") !== "true";
+          toggle.setAttribute("aria-expanded", String(open));
+          list.hidden = !open;
+          if (!open || list.childElementCount) return;
+          list.append(h("small", { class: "muted" }, "Looking in the folder…"));
+          const choices = await run("file_choices", {
+            id: state.profile.id,
+            source: linked.source,
+            modId: c.id,
+          }).catch((err) => {
+            list.replaceChildren(h("small", { class: "error" }, String(err)));
+            return null;
+          });
+          if (!choices) return;
+          list.replaceChildren(
+            ...(choices.length ? choices.map(choiceRow) : [h("small", { class: "muted" }, "Nothing in it")]),
+          );
+        },
+      },
+      `${c.name}/`,
+    );
+    return h("div", { class: "link-folder stack" }, toggle, list);
+  }
+
+  function showChoices(choices) {
+    fileList.replaceChildren(...choices.map(choiceRow));
+    files.hidden = false;
+    fileList.querySelector("input, button")?.focus();
+  }
+
+  // a file picked, including one in an opened folder
+  fileList.addEventListener("change", () => {
+    fileAdd.disabled = !new FormData(form).get("file");
+  });
 
   input.addEventListener("input", () => {
     forget();
@@ -117,6 +163,7 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
     const link = asLink(input.value) ?? (search ? "" : input.value.trim());
     if (!p || !link) return;
     submit.disabled = true;
+    fileAdd.disabled = true;
     showError(null);
     try {
       let modId;
@@ -125,7 +172,7 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
       } else {
         status("Looking up the link…");
         const found = await run("parse_link", { id: p.id, link });
-        if (found.choices.length > 1) {
+        if (found.choices.length > 1 || found.choices[0]?.folder) {
           linked = found;
           showChoices(found.choices);
           status("Pick a file to add");
@@ -155,6 +202,7 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
       linked = null;
     } finally {
       submit.disabled = false;
+      fileAdd.disabled = files.hidden || !new FormData(form).get("file");
     }
   });
 

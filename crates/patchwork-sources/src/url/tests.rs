@@ -163,3 +163,57 @@ async fn hosted_links_are_left_to_the_host() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn folder_links_list_their_files_to_pick_from() {
+    let game = game();
+    let base = serve(vec![(
+        "/list/top",
+        "200 OK",
+        r#"<a href="{base}/folder/sub">Old</a><a href="{base}/f/abc">Mod 1.0.zip</a><a href="{base}/f/def">Manual.PDF</a>"#
+            .to_owned(),
+    )]);
+    let links = patchwork_core::links::Links::parse(&[(
+        "test",
+        &r#"
+        name = "Test"
+        links = '^BASE_RE/f/(?<key>\w+)'
+        [folder]
+        links = '^BASE_RE/folder/(?<id>\w+)'
+        fetch = "BASE/list/${id}"
+        entries = '<a href="(?<link>[^"]+)">(?<name>[^<]*)</a>'
+        "#
+        // the dots in the base match themselves too
+        .replace("BASE_RE", &base)
+        .replace("BASE", &base),
+    )])
+    .unwrap();
+    let ctx = SourceContext {
+        game: &game,
+        config: None,
+        settings: None,
+        env: None,
+        links: &links,
+    };
+
+    let top = format!("{base}/folder/top");
+    let choices = UrlSource.choices(&ctx, &top).await.unwrap();
+    let summary: Vec<_> = choices
+        .iter()
+        .map(|c| (c.name.as_str(), c.id.clone(), c.folder, c.not_mod))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("Old", format!("{base}/folder/sub"), true, false),
+            ("Mod 1.0.zip", format!("{base}/f/abc"), false, false),
+            ("Manual.PDF", format!("{base}/f/def"), false, true),
+        ]
+    );
+
+    let err = UrlSource.resolve(&ctx, &top, None).await.unwrap_err();
+    assert!(err.to_string().contains("is a folder on Test"), "{err}");
+    // other links have nothing to choose between
+    let file = format!("{base}/f/abc");
+    assert!(UrlSource.choices(&ctx, &file).await.unwrap().is_empty());
+}

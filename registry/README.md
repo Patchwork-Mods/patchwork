@@ -170,6 +170,26 @@ Also:
 A host that sends a web page instead of the file (Google Drive does when a
 file's had too many downloads) is reported rather than installed.
 
+### Folders
+
+A `[folder]` table lets patchwork list a host's shared folders, so pasting
+a folder's link asks which file in it to add (a folder link can't be added
+itself). Each entry on the folder's page that links to one of the host's
+files becomes a file to pick, and one that links to another folder opens
+as a folder of its own; other entries (like Google Docs) are left out.
+
+```toml
+[folder]
+# Like the host's own `links` and `link`, for folders.
+links = ['^https?://drive\.google\.com/drive/(?:u/\d+/)?folders/(?<id>[\w-]+)']
+link = "https://drive.google.com/drive/folders/${id}"
+# The page that lists what's in it; by default `${link}`.
+fetch = "https://drive.google.com/embeddedfolderview?id=${id}"
+# Matched over and over on that page, once per entry: its `link` and
+# `name` groups, and an optional `size` group in bytes.
+entries = '(?s)<div class="flip-entry"[^>]*>.*?<a href="(?<link>[^"]+)".*?class="flip-entry-title">(?<name>[^<]*)<'
+```
+
 ## Other data
 
 Any other directory here is loaded as raw TOML, for sources and deployers

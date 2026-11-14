@@ -2570,7 +2570,7 @@ textarea {
 
 /* The link boxes on the Mods and Add mods tabs, with the files to pick
    from under it when a link has several; see addlink.js. */
-.link-form .row input {
+.link-form .link-url {
   flex: 1;
 }
 
@@ -2599,6 +2599,11 @@ textarea {
   border-bottom: 1px solid var(--pw-border);
 }
 
+.link-files-head {
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .link-file-list {
   max-height: 50vh;
   overflow-y: auto;
@@ -2608,9 +2613,55 @@ textarea {
   align-items: flex-start;
 }
 
-.link-file-list input {
+/* Files and folders share one column on the left: the radio button or the
+   folder's arrow, then the name, so everything lines up flush left. */
+.link-file-list .link-file input {
   flex: none;
-  margin-top: 4px;
+  width: 14px;
+  height: 14px;
+  margin: 2px 1px 0;
+  padding: 0;
+}
+
+.link-file.not-mod {
+  opacity: 0.6;
+}
+
+/* A folder in a shared folder's files: a toggle with its own files under it. */
+.link-folder {
+  gap: 4px;
+}
+
+.link-folder-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.link-folder-toggle:hover {
+  color: var(--pw-accent);
+}
+
+.link-folder-toggle::before {
+  content: "▸";
+  flex: none;
+  width: 16px;
+  text-align: center;
+}
+
+.link-folder-toggle[aria-expanded="true"]::before {
+  content: "▾";
+}
+
+/* Indented to line up with the folder's name. */
+.link-folder-list {
+  margin-left: 24px;
 }
 
 .field small,

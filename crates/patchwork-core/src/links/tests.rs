@@ -152,9 +152,128 @@ fn bad_hosts_are_problems() {
         "empty-find",
         "name = 'E'\nlinks = 'x'\n[[steps]]\nfind = []",
     );
+    registry.add_data(
+        KIND,
+        "folder-groups",
+        "name = 'F'\nlinks = 'x'\n[folder]\nlinks = 'y'\nentries = '(?<link>a)'",
+    );
     let (links, problems) = Links::from_registry(&registry);
     assert_eq!(links.hosts.len(), 1);
-    assert_eq!(problems.len(), 4, "{problems:?}");
+    assert_eq!(problems.len(), 5, "{problems:?}");
+}
+
+#[test]
+fn builtin_hosts_recognize_folder_links() {
+    let links = builtin();
+    for url in [
+        "https://drive.google.com/drive/folders/1EYS-b_x?usp=sharing",
+        "https://drive.google.com/drive/u/0/folders/1EYS-b_x",
+        "https://drive.google.com/embeddedfolderview?id=1EYS-b_x#list",
+    ] {
+        let folder = links.folder(url).unwrap_or_else(|| panic!("{url}"));
+        assert_eq!(
+            folder.link,
+            "https://drive.google.com/drive/folders/1EYS-b_x"
+        );
+        assert_eq!(folder.host_name(), "Google Drive");
+    }
+    assert!(
+        links
+            .folder("https://drive.google.com/file/d/1AbC/view")
+            .is_none()
+    );
+    assert!(links.folder("https://example.com/folders/x").is_none());
+}
+
+/// Two entries as Google Drive's embedded folder view had them in 2026.
+#[test]
+fn builtin_drive_folder_entries_match_its_page() {
+    let links = builtin();
+    let drive = links.hosts.iter().find(|h| h.id == "google-drive").unwrap();
+    let page = r#"<div class="flip-entries"><div class="flip-entry" id="entry-1ig" tabindex="0" role="link"><div class="flip-entry-info"><a href="https://drive.google.com/drive/folders/1ig" target="_blank"><div class="flip-entry-visual"><div class="flip-entry-visual-card"><div class="flip-entry-icon"><div aria-label="Folder" class="icon-color-1 drive-sprite-folder-grid-shared-icon"></div></div></div></div><div class="flip-entry-list-icon"><div aria-label="Folder" class="icon-color-1 drive-sprite-folder-list-shared-icon"></div></div><div class="flip-entry-title">Outdated Tech trees</div></a></div><div class="flip-entry-last-modified"><div>Aug 19</div></div></div><div class="flip-entry" id="entry-14ck" tabindex="0" role="link"><div class="flip-entry-info"><a href="https://drive.google.com/file/d/14ck/view?usp=drive_web" target="_blank"><div class="flip-entry-visual"><div class="flip-entry-visual-card"><div class="flip-entry-icon"><img src="https://drive-thirdparty.googleusercontent.com/128/type/application/x-zip-compressed" alt="Compressed Archive"/></div></div></div><div class="flip-entry-list-icon"><img src="https://drive-thirdparty.googleusercontent.com/16/type/application/x-zip-compressed" alt=""/></div><div class="flip-entry-title">Armory 1.1.zip</div></a></div><div class="flip-entry-last-modified"><div>8/12/23</div></div></div></div>"#;
+    let found: Vec<_> = drive
+        .folder
+        .as_ref()
+        .unwrap()
+        .entries
+        .captures_iter(page)
+        .map(|c| (c["link"].to_owned(), c["name"].to_owned()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                "https://drive.google.com/drive/folders/1ig".to_owned(),
+                "Outdated Tech trees".to_owned()
+            ),
+            (
+                "https://drive.google.com/file/d/14ck/view?usp=drive_web".to_owned(),
+                "Armory 1.1.zip".to_owned()
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn folders_list_their_files_and_folders() {
+    let base = serve(vec![
+        (
+            "/list?id=top",
+            "200 OK",
+            r#"
+            <li><a href="/folder/sub">Old &amp; outdated</a></li>
+            <li size="1234"><a href="{base}/f/abc?usp=x">Mod 1.0.zip</a></li>
+            <li><a href="https://elsewhere.example/doc">A doc</a></li>
+            <li><a href="/f/def">readme.pdf</a></li>
+            "#
+            .to_owned(),
+        ),
+        ("/list?id=empty", "200 OK", "<p>Sign in</p>".to_owned()),
+    ]);
+    // the base goes in regexes escaped and in templates as is
+    let links = Links::parse(&[(
+        "test",
+        &r#"
+        name = "Test"
+        links = '^BASE_RE/f/(?<key>\w+)'
+        link = "BASE/f/${key}"
+        [folder]
+        links = '^BASE_RE/folder/(?<id>\w+)'
+        link = "BASE/folder/${id}"
+        fetch = "BASE/list?id=${id}"
+        entries = '<li(?: size="(?<size>\d+)")?><a href="(?<link>[^"]+)">(?<name>[^<]*)</a>'
+        "#
+        .replace("BASE_RE", &regex::escape(&base))
+        .replace("BASE", &base),
+    )])
+    .unwrap();
+
+    assert!(links.find(&format!("{base}/folder/top")).is_none());
+    let folder = links.folder(&format!("{base}/folder/top?x=1")).unwrap();
+    assert_eq!(folder.link, format!("{base}/folder/top"));
+    let listed = folder.list().await.unwrap();
+    let entry = |name: &str, link: String, folder, size| FolderEntry {
+        name: name.to_owned(),
+        link,
+        folder,
+        size,
+    };
+    assert_eq!(
+        listed.entries,
+        [
+            entry("Old & outdated", format!("{base}/folder/sub"), true, None),
+            entry("Mod 1.0.zip", format!("{base}/f/abc"), false, Some(1234)),
+            entry("readme.pdf", format!("{base}/f/def"), false, None),
+        ]
+    );
+
+    let err = links
+        .folder(&format!("{base}/folder/empty"))
+        .unwrap()
+        .list()
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("private"), "{err}");
 }
 
 #[tokio::test]

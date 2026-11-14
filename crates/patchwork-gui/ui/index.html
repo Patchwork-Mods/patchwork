@@ -169,11 +169,13 @@
 					<!-- What Enter does: adds the mod for a link, or searches a source
 					     for more mods (#mods-more); see sourcesearch.js. -->
 					<small class="link-hint muted" hidden></small>
-					<!-- When the link has several files, like a GitHub release. -->
+					<!-- When the link has several files, like a GitHub release, or is a
+					     shared folder (.link-folder opens a folder in it); see addlink.js. -->
 					<div class="link-files field" hidden>
-						<span>Which file? <small class="muted">Later releases' files are picked by the same name, with the
-								version left out.</small></span>
+						<span class="link-files-head">Select a file:</span>
 						<div class="link-file-list stack"></div>
+						<!-- Enabled once a file is picked. -->
+						<div class="row"><button type="submit" class="link-file-add primary" disabled>Add selected file</button></div>
 					</div>
 					<p class="link-error error" hidden></p>
 				</form>
@@ -290,11 +292,13 @@
 						<input class="link-url" name="link" type="text" inputmode="url" placeholder="Add mod link" aria-label="Link to a mod" title="A mod's page on GitHub, Nexus Mods, Thunderstore or Modrinth, or a link straight to a download" autocomplete="off" spellcheck="false">
 						<button type="submit" class="link-submit">Add</button>
 					</div>
-					<!-- When the link has several files, like a GitHub release. -->
+					<!-- When the link has several files, like a GitHub release, or is a
+					     shared folder (.link-folder opens a folder in it); see addlink.js. -->
 					<div class="link-files field" hidden>
-						<span>Which file? <small class="muted">Later releases' files are picked by the same name, with the
-								version left out.</small></span>
+						<span class="link-files-head">Select a file:</span>
 						<div class="link-file-list stack"></div>
+						<!-- Enabled once a file is picked. -->
+						<div class="row"><button type="submit" class="link-file-add primary" disabled>Add selected file</button></div>
 					</div>
 					<p class="link-error error" hidden></p>
 				</form>

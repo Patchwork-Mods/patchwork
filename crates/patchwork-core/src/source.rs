@@ -165,7 +165,8 @@ pub struct Handoff {
 }
 
 /// One of the files a mod could be added as; see [`Source::choices`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileChoice {
     /// The id to add the mod with if this is picked.
     pub id: String,
@@ -176,6 +177,14 @@ pub struct FileChoice {
     /// What else to know about it, like which files later versions will
     /// pick.
     pub description: Option<String>,
+    /// Whether it's a folder of more files rather than a file, like one in
+    /// a shared folder: [`Source::choices`] given its id lists them.
+    #[serde(default)]
+    pub folder: bool,
+    /// Whether it looks like it isn't a mod, like a PDF or a picture next
+    /// to the mod in a shared folder. It can still be picked.
+    #[serde(default)]
+    pub not_mod: bool,
 }
 
 /// A request for a mod from a particular source.

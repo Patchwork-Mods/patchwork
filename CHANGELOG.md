@@ -11,6 +11,9 @@ dialog shows, so the heading has to match the version being released.
   like any other download link, for every game. ModDB only lets browsers
   download, so it asks you to download the file and hand it over. More
   hosts can be added as registry data (`hosts/`).
+- A link to a shared Google Drive folder lists what's in it to pick a file
+  from, with its folders opening in place and files that don't look like
+  mods (PDFs, pictures) dimmed.
 - The Mods tab's search box also takes links: paste one to add that mod, or
   press Enter to search the game's sources.
 - A mod's page shows which versions of other mods it needs, and its

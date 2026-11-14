@@ -1,7 +1,7 @@
-# Google Drive files shared by link (not folders or Google Docs). `confirm=t`
-# skips the "can't scan this file for viruses" page big files get. A file
-# that's had too many downloads lately gets a web page instead, which
-# patchwork reports rather than installing.
+# Google Drive files shared by link (not Google Docs). `confirm=t` skips
+# the "can't scan this file for viruses" page big files get. A file that's
+# had too many downloads lately gets a web page instead, which patchwork
+# reports rather than installing.
 name = "Google Drive"
 links = [
     '^https?://drive\.google\.com/file/d/(?<id>[\w-]+)',
@@ -10,3 +10,13 @@ links = [
 ]
 link = "https://drive.google.com/file/d/${id}/view"
 download = "https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t"
+
+# Shared folders, listed from the plain page Drive makes for embedding one.
+[folder]
+links = [
+    '^https?://drive\.google\.com/drive/(?:u/\d+/)?folders/(?<id>[\w-]+)',
+    '^https?://drive\.google\.com/embeddedfolderview\?(?:[^#]*&)?id=(?<id>[\w-]+)',
+]
+link = "https://drive.google.com/drive/folders/${id}"
+fetch = "https://drive.google.com/embeddedfolderview?id=${id}"
+entries = '(?s)<div class="flip-entry"[^>]*>.*?<a href="(?<link>[^"]+)".*?class="flip-entry-title">(?<name>[^<]*)<'

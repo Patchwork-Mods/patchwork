@@ -367,6 +367,7 @@ fn file_choices(
             name: title(file).to_owned(),
             size: None,
             description: Some(format!("{version}{later}")),
+            ..Default::default()
         }
     };
     if let Some(FilePick::Named(_)) = id.file {

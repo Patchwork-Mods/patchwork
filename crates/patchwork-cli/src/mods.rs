@@ -131,23 +131,31 @@ pub(crate) fn print_mods<'a>(
 
 /// Asks which of a mod's files to add, if there's more than one; see
 /// `Patchwork::file_choices`. `None` means the mod's id is fine as it is.
-pub(crate) fn choose_file(source: &str, choices: &[FileChoice]) -> Result<Option<String>> {
+/// A folder can be picked too, which the caller then asks about in turn.
+pub(crate) fn choose_file<'a>(
+    source: &str,
+    choices: &'a [FileChoice],
+) -> Result<Option<&'a FileChoice>> {
     match choices {
         [] => return Ok(None),
-        [only] => return Ok(Some(only.id.clone())),
+        [only] => return Ok(Some(only)),
         _ => {}
     }
     if !std::io::stdin().is_terminal() {
         let ids: Vec<String> = choices
             .iter()
-            .map(|c| match c.id.contains(' ') {
-                true => format!("'{source}:{}'", c.id),
-                false => format!("{source}:{}", c.id),
+            .map(|c| {
+                let spec = match c.id.contains(' ') {
+                    true => format!("'{source}:{}'", c.id),
+                    false => format!("{source}:{}", c.id),
+                };
+                let slash = if c.folder { "/" } else { "" };
+                format!("\n  {}{slash}: {spec}", c.name)
             })
             .collect();
         bail!(
-            "it has more than one file; add one of these instead: {}",
-            ids.join(", ")
+            "it has more than one file; add one of these instead:{}",
+            ids.concat()
         );
     }
     eprintln!("which file?");
@@ -156,7 +164,12 @@ pub(crate) fn choose_file(source: &str, choices: &[FileChoice]) -> Result<Option
             .size
             .map(|s| format!(" ({:.1} MB)", s as f64 / 1_000_000.0))
             .unwrap_or_default();
-        eprintln!("  {}. {}{size}", i + 1, choice.name);
+        let (slash, note) = match (choice.folder, choice.not_mod) {
+            (true, _) => ("/", " (folder)"),
+            (false, true) => ("", " (probably not a mod)"),
+            (false, false) => ("", ""),
+        };
+        eprintln!("  {}. {}{slash}{size}{note}", i + 1, choice.name);
         if let Some(description) = &choice.description {
             eprintln!("     {description}");
         }
@@ -170,7 +183,7 @@ pub(crate) fn choose_file(source: &str, choices: &[FileChoice]) -> Result<Option
         }
         match line.trim().parse::<usize>() {
             Ok(n) if (1..=choices.len()).contains(&n) => {
-                return Ok(Some(choices[n - 1].id.clone()));
+                return Ok(Some(&choices[n - 1]));
             }
             _ => eprintln!("that isn't one of them"),
         }
@@ -206,8 +219,16 @@ pub(crate) async fn add(pw: &Patchwork, explicit: &Option<String>, args: Add) ->
         },
         false => pw.parse_spec(&spec, version)?,
     };
-    if let Some(id) = choose_file(&spec.source, &pw.file_choices(&profile, &spec).await?)? {
-        spec.id = id;
+    // a folder's files are chosen between in turn
+    loop {
+        let choices = pw.file_choices(&profile, &spec).await?;
+        let Some(choice) = choose_file(&spec.source, &choices)? else {
+            break;
+        };
+        spec.id = choice.id.clone();
+        if !choice.folder {
+            break;
+        }
     }
     let added = pw.add_mod(&profile, spec, name, !disabled).await?;
     println!("added {} to {}", added.name, loaded.label());

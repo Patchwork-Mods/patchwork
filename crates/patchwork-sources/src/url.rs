@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use patchwork_core::links::{self, HostLink};
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, Download, ResolvedMod, Source, SourceContext, is_archive_name,
+    ArtifactFormat, ArtifactLocation, Download, FileChoice, ResolvedMod, Source, SourceContext,
+    is_archive_name,
 };
 use patchwork_core::{Error, Result};
 
@@ -13,6 +14,8 @@ use patchwork_core::{Error, Result};
 /// MediaFire, ModDB; see [`patchwork_core::links`]) work too: the mod's id
 /// is the page's link, and each download follows it to wherever the file
 /// is then. Hosts that turn patchwork away leave the download to the user.
+/// A link to a shared folder on a host that can list them can't be added
+/// itself; [`Source::choices`] lists what's in it to pick from instead.
 ///
 /// A URL is checked for a file when it's resolved (a web page is turned
 /// down), but nothing checks whether what's at it changes, other than the
@@ -59,6 +62,18 @@ fn resolved(
         env: Default::default(),
         kind: None,
     }
+}
+
+/// Whether a file in a shared folder looks like something other than a
+/// mod, like the mod's manual or a screenshot, by its extension.
+fn looks_like_not_mod(file_name: &str) -> bool {
+    const NOT_MODS: &[&str] = &[
+        "pdf", "txt", "md", "rtf", "doc", "docx", "odt", "htm", "html", "png", "jpg", "jpeg",
+        "gif", "webp", "bmp", "svg", "mp4", "mkv", "webm", "mov", "avi",
+    ];
+    file_name
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| NOT_MODS.iter().any(|n| ext.eq_ignore_ascii_case(n)))
 }
 
 /// Starts downloading `url` (then stops) to check there's a file there, so
@@ -140,6 +155,13 @@ impl Source for UrlSource {
         if !(id.starts_with("https://") || id.starts_with("http://")) {
             return Err(error(format!("`{id}` isn't an http(s) URL")));
         }
+        if let Some(folder) = ctx.links.folder(id) {
+            return Err(error(format!(
+                "{} is a folder on {}; add one of the files in it instead",
+                folder.link,
+                folder.host_name()
+            )));
+        }
         if let Some(hosted) = ctx.links.find(id) {
             return resolve_hosted(hosted).await;
         }
@@ -171,6 +193,28 @@ impl Source for UrlSource {
             Err(e) if links::refused(&e) => Ok(needs_user()),
             Err(e) => Err(e),
         }
+    }
+
+    /// What's in `id`, if it's a link to a shared folder: its files, and
+    /// folders that list theirs the same way.
+    async fn choices(&self, ctx: &SourceContext<'_>, id: &str) -> Result<Vec<FileChoice>> {
+        let Some(folder) = ctx.links.folder(id) else {
+            return Ok(Vec::new());
+        };
+        Ok(folder
+            .list()
+            .await?
+            .entries
+            .into_iter()
+            .map(|entry| FileChoice {
+                not_mod: !entry.folder && looks_like_not_mod(&entry.name),
+                id: entry.link,
+                name: entry.name,
+                size: entry.size,
+                description: None,
+                folder: entry.folder,
+            })
+            .collect())
     }
 
     fn mod_url(

@@ -82,6 +82,99 @@ impl Links {
         let url = url.trim();
         self.hosts.iter().find_map(|host| host.find(url))
     }
+
+    /// The shared folder `url` is, if a host that knows it can list its
+    /// folders. Doesn't fetch anything.
+    pub fn folder(&self, url: &str) -> Option<FolderLink> {
+        let url = url.trim();
+        self.hosts.iter().find_map(|host| host.find_folder(url))
+    }
+}
+
+/// A link to a shared folder on a host, from [`Links::folder`].
+#[derive(Debug, Clone)]
+pub struct FolderLink {
+    host: Arc<Host>,
+    /// The link the same folder always has on this host.
+    pub link: String,
+    vars: BTreeMap<String, String>,
+}
+
+/// What's in a shared folder, from [`FolderLink::list`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Folder {
+    /// What's in it, in the order the host lists them. Entries whose
+    /// links the host can't download (like Google Docs) are left out.
+    pub entries: Vec<FolderEntry>,
+}
+
+/// A file or folder in a [`Folder`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderEntry {
+    pub name: String,
+    /// The link to keep for it, as [`HostLink::link`] or
+    /// [`FolderLink::link`] would give.
+    pub link: String,
+    /// Whether it's a folder, which [`Links::folder`] knows.
+    pub folder: bool,
+    /// Its size in bytes, if the host says.
+    pub size: Option<u64>,
+}
+
+impl FolderLink {
+    /// What to call the host, like `Google Drive`.
+    pub fn host_name(&self) -> &str {
+        &self.host.name
+    }
+
+    /// Reads the folder's page for what's in it. Fails if nothing is
+    /// found, since a private folder looks the same as a host that's
+    /// changed its pages.
+    pub async fn list(&self) -> Result<Folder> {
+        let def = self
+            .host
+            .folder
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("only hosts with folders make FolderLinks"));
+        let page = def
+            .fetch
+            .expand(&self.vars)
+            .unwrap_or_else(|| self.link.clone());
+        let (final_url, body) = fetch_page(&page).await?;
+        let base = reqwest::Url::parse(&final_url).ok();
+        let mut entries = Vec::new();
+        for caps in def.entries.captures_iter(&body) {
+            let (Some(link), Some(entry_name)) = (caps.name("link"), caps.name("name")) else {
+                continue;
+            };
+            let link = unescape_html(link.as_str());
+            let link = match &base {
+                Some(base) => base.join(&link).map_or(link, |u| u.to_string()),
+                None => link,
+            };
+            let (link, folder) = if let Some(sub) = self.host.find_folder(&link) {
+                (sub.link, true)
+            } else if let Some(file) = self.host.find(&link) {
+                (file.link, false)
+            } else {
+                continue;
+            };
+            entries.push(FolderEntry {
+                name: unescape_html(entry_name.as_str().trim()),
+                link,
+                folder,
+                size: caps.name("size").and_then(|s| s.as_str().parse().ok()),
+            });
+        }
+        if entries.is_empty() {
+            return Err(Error::invalid(format!(
+                "couldn't find any files in {}; it may be empty or private, or {} may have \
+                 changed its pages",
+                self.link, self.host.name
+            )));
+        }
+        Ok(Folder { entries })
+    }
 }
 
 /// A link to a file on a host, from [`Links::find`].
@@ -247,6 +340,16 @@ struct Host {
     query: BTreeMap<String, String>,
     format: Option<ArtifactFormat>,
     browser: bool,
+    folder: Option<FolderDef>,
+}
+
+/// How to list a host's shared folders: its `[folder]` table.
+#[derive(Debug)]
+struct FolderDef {
+    links: Vec<Regex>,
+    link: Templates,
+    fetch: Templates,
+    entries: Regex,
 }
 
 #[derive(Debug)]
@@ -275,6 +378,19 @@ struct HostDef {
     format: Option<ArtifactFormat>,
     #[serde(default)]
     browser: bool,
+    #[serde(default)]
+    folder: Option<FolderTable>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FolderTable {
+    links: OneOrMany,
+    #[serde(default)]
+    link: OneOrMany,
+    #[serde(default)]
+    fetch: OneOrMany,
+    entries: String,
 }
 
 #[derive(Deserialize)]
@@ -344,6 +460,26 @@ impl Host {
         if def.format == Some(ArtifactFormat::Dir) {
             return Err("`format` can't be `dir`".to_owned());
         }
+        let folder = def
+            .folder
+            .map(|f| {
+                let links = regexes(f.links)?;
+                if links.is_empty() {
+                    return Err("`folder.links` is empty".to_owned());
+                }
+                let entries = Regex::new(&f.entries).map_err(|e| e.to_string())?;
+                let names: Vec<_> = entries.capture_names().flatten().collect();
+                if !(names.contains(&"link") && names.contains(&"name")) {
+                    return Err("`folder.entries` needs `link` and `name` groups".to_owned());
+                }
+                Ok(FolderDef {
+                    links,
+                    link: Templates(f.link.into_vec()),
+                    fetch: Templates(f.fetch.into_vec()),
+                    entries,
+                })
+            })
+            .transpose()?;
         Ok(Host {
             id: id.to_owned(),
             name: def.name,
@@ -355,18 +491,24 @@ impl Host {
             query: def.query,
             format: def.format,
             browser: def.browser,
+            folder,
+        })
+    }
+
+    fn find_folder(self: &Arc<Self>, url: &str) -> Option<FolderLink> {
+        let def = self.folder.as_ref()?;
+        let mut vars = link_vars(&def.links, url)?;
+        let link = def.link.expand(&vars).unwrap_or_else(|| url.to_owned());
+        vars.insert("link".to_owned(), link.clone());
+        Some(FolderLink {
+            host: self.clone(),
+            link,
+            vars,
         })
     }
 
     fn find(self: &Arc<Self>, url: &str) -> Option<HostLink> {
-        let caps = self.links.iter().find_map(|re| re.captures(url))?;
-        let mut vars: BTreeMap<String, String> = self
-            .links
-            .iter()
-            .flat_map(|re| re.capture_names().flatten())
-            .filter_map(|name| Some((name.to_owned(), caps.name(name)?.as_str().to_owned())))
-            .collect();
-        vars.insert("url".to_owned(), url.to_owned());
+        let mut vars = link_vars(&self.links, url)?;
         let link = self.link.expand(&vars).unwrap_or_else(|| url.to_owned());
         vars.insert("link".to_owned(), link.clone());
         let file = self
@@ -381,6 +523,19 @@ impl Host {
             vars,
         })
     }
+}
+
+/// The `${var}`s for `url` from the first of `links` that matches it:
+/// their named groups, and `url`.
+fn link_vars(links: &[Regex], url: &str) -> Option<BTreeMap<String, String>> {
+    let caps = links.iter().find_map(|re| re.captures(url))?;
+    let mut vars: BTreeMap<String, String> = links
+        .iter()
+        .flat_map(|re| re.capture_names().flatten())
+        .filter_map(|name| Some((name.to_owned(), caps.name(name)?.as_str().to_owned())))
+        .collect();
+    vars.insert("url".to_owned(), url.to_owned());
+    Some(vars)
 }
 
 /// Alternatives for a value with `${var}`s in it: the first whose
