@@ -127,30 +127,45 @@ document.addEventListener("keydown", (e) => {
         ? !$("#mods-link").hidden && modSearch
         : !$("#tab-browse").hidden
           ? $("#browse-search")
-          : null;
+          : !$("#tab-config").hidden
+            ? $("#config-filter")
+            : null;
   if (!box) return;
   e.preventDefault();
   box.focus();
   box.select();
 });
 
-// On the Mods tab, typing while no other field has focus types into the
-// search box, as nothing else there takes text. Space is left alone (it
-// presses buttons) until the box holds something, and keys another handler
-// already took (e.g. digits on a priority chip) are left with it.
+// Typing while no field has focus types into the one box the page has: the
+// game picker's search, the Mods tab's search (or, with no profile yet, the
+// box that starts one), the Add mods tab's search or the Config tab's filter.
+// Nothing happens while the game path form is also asking for input, as then
+// there are two. Space is left alone (it presses buttons) until the box holds
+// something, and keys another handler already took (e.g. digits on a priority
+// chip) are left with it.
+function typingTarget() {
+  if (!$("#games-screen").hidden) return $("#game-search");
+  if ($("#main").hidden) return null;
+  if (!$("#tab-browse").hidden) return $("#browse-search");
+  if (!$("#tab-config").hidden) return $("#config-filter");
+  if ($("#tab-mods").hidden || !$("#game-path").hidden) return null;
+  if (!$("#no-profile").hidden) return $("#no-profile-start input");
+  return !$("#mods-link").hidden && state.profile ? modSearch : null;
+}
+
 document.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.isComposing) return;
   if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.target.closest?.('input, textarea, select, [contenteditable], [role="menu"]')) return;
   if (document.querySelector("dialog[open]") || !$("#profile-menu").hidden) return;
-  if (!$("#games-screen").hidden || $("#main").hidden || $("#tab-mods").hidden) return;
-  if ($("#mods-link").hidden || !state.profile) return;
-  if (e.key === " " && !modSearch.value) return;
+  const box = typingTarget();
+  if (!box || box.disabled) return;
+  if (e.key === " " && !box.value) return;
   e.preventDefault();
-  modSearch.focus();
-  const end = modSearch.value.length;
-  modSearch.setRangeText(e.key, end, end, "end");
-  modSearch.dispatchEvent(new Event("input", { bubbles: true }));
+  box.focus();
+  const end = box.value.length;
+  box.setRangeText(e.key, end, end, "end");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
 });
 
 // Sorting. It rearranges the mods once rather than keeping them sorted, so

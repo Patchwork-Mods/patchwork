@@ -8,7 +8,7 @@ import { refreshDetails } from "./details.js";
 import { loadConflicts } from "./conflicts.js";
 import { loadModConfigs } from "./config.js";
 import { modSearch } from "./toolbar.js";
-import { ADD_TAB, renderTabs, selectTab, sources } from "./browse.js";
+import { renderTabs } from "./browse.js";
 import { clearLink } from "./addlink.js";
 import { markUpdates } from "./deploy.js";
 import { renderPlay } from "./play.js";
@@ -146,7 +146,6 @@ export function renderProfile({ keepMods = false } = {}) {
     $("#profile-meta").textContent = "No profile yet";
     $("#no-profile-title").textContent = `No profiles for ${game.name} yet`;
     mountStarter("#no-profile-start", game.id);
-    $("#no-profile-browse").hidden = !sources().length;
     $("#mods").replaceChildren();
     $("#hidden-mods").hidden = true;
     $("#dependencies").hidden = true;
@@ -201,7 +200,6 @@ function mountStarter(selector, game, options) {
 }
 
 $("#no-profile-import").addEventListener("click", () => $("#import-profile").click());
-$("#no-profile-browse button").addEventListener("click", () => go(() => selectTab(ADD_TAB)));
 
 // Right-clicking a profile in the sidebar: rename, duplicate, export or
 // delete it. Delete asks again in a dialog before anything is deleted.
