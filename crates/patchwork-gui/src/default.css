@@ -26,6 +26,8 @@
   --pw-accent: #c4643f;
   --pw-accent-text: #ffffff;
   --pw-danger: #b3261e;
+  /* A favorite game's star. */
+  --pw-favorite: #f5c518;
   /* What shadows and the dark wash behind dialogs are mixed from. */
   --pw-shadow-color: #000000;
 
@@ -375,6 +377,53 @@ button.link {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: calc(var(--pw-gap) * 1.5);
+}
+
+/* The li holds the card and its favorite star, laid over the card's corner
+   (a button can't go inside another). */
+.game-grid > li {
+  position: relative;
+}
+
+.game-grid .favorite {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.game-grid .favorite svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.game-grid li:hover .favorite,
+.game-grid .favorite:focus-visible,
+.game-grid .favorite[aria-pressed="true"] {
+  opacity: 1;
+}
+
+.game-grid .favorite[aria-pressed="true"] {
+  color: var(--pw-favorite);
+}
+
+.game-grid .favorite[aria-pressed="true"] svg {
+  fill: currentColor;
 }
 
 .game-card {

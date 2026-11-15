@@ -33,7 +33,7 @@
 //! a header is named after the file, and one named after a game
 //! (`<game>.css`) is that game's theme.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use patchwork_core::game::Accent;
@@ -434,6 +434,9 @@ pub struct ThemePrefs {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuiPrefs {
+    /// Games pinned to the top of the game picker, by id.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub favorites: BTreeSet<String>,
     pub theme: ThemePrefs,
     #[serde(flatten)]
     pub rest: toml::Table,
@@ -792,5 +795,21 @@ mod tests {
                 .unwrap();
         assert_eq!(p.theme.game_themes, GameThemes::Accent);
         assert_eq!(p.theme.games["ror2"], NONE);
+    }
+
+    #[test]
+    fn favorites_round_trip_beside_the_theme() {
+        let mut p: GuiPrefs = toml::from_str("later = 1\n[theme]\nmode = \"dark\"").unwrap();
+        assert!(p.favorites.is_empty());
+        p.favorites.insert("valheim".into());
+        p.favorites.insert("ror2".into());
+        let text = toml::to_string(&p).unwrap();
+        let back: GuiPrefs = toml::from_str(&text).unwrap();
+        assert_eq!(
+            back.favorites.iter().collect::<Vec<_>>(),
+            ["ror2", "valheim"]
+        );
+        assert_eq!(back.theme.mode, ModePref::Dark);
+        assert_eq!(back.rest["later"].as_integer(), Some(1));
     }
 }

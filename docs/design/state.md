@@ -10,7 +10,8 @@ and `<data>` are the platform's usual config and data directories, such as
 - `<config>/games/`, `<config>/rulesets/`, `<config>/themes/`: the user's
   own definitions and themes
 - `<config>/gui.toml`: the app's own preferences, such as which theme is
-  picked, for every game and for single games (`[theme.games]`)
+  picked, for every game and for single games (`[theme.games]`), and the
+  games starred as favorites (`favorites`)
 
 ## Registries
 

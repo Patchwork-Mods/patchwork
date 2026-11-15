@@ -12,7 +12,7 @@ mod sync;
 mod theme_watch;
 mod themes;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Display;
 use std::sync::Mutex;
 
@@ -146,6 +146,8 @@ struct Overview {
     current: Option<String>,
     /// The profile last used for each game, by game id.
     last_profiles: BTreeMap<String, String>,
+    /// Games pinned to the top of the game picker, by id; see `gui.toml`.
+    favorites: BTreeSet<String>,
     /// Shared rule sets a new game's deployer can use.
     rulesets: Vec<String>,
     warnings: Vec<String>,
@@ -349,6 +351,12 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
             name: p.name,
         })
         .collect();
+    let favorites = themes::GuiPrefs::load(&pw.paths().config)
+        .map(|p| p.favorites)
+        .unwrap_or_else(|e| {
+            warnings.push(e);
+            BTreeSet::new()
+        });
     Ok(Overview {
         games,
         profiles,
@@ -359,6 +367,7 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
             .into_iter()
             .map(|(game, p)| (game, p.to_string()))
             .collect(),
+        favorites,
         rulesets: registry.data_ids("rulesets").map(str::to_owned).collect(),
         warnings,
     })
@@ -1981,6 +1990,19 @@ fn set_theme_prefs(app: State<'_, App>, prefs: themes::ThemePrefs) -> CmdResult<
     file.save(config)
 }
 
+/// Pins `game` to the top of the game picker, or unpins it.
+#[tauri::command]
+fn set_favorite(app: State<'_, App>, game: String, favorite: bool) -> CmdResult<()> {
+    let config = &app.pw.paths().config;
+    let mut file = themes::GuiPrefs::load(config)?;
+    if favorite {
+        file.favorites.insert(game);
+    } else {
+        file.favorites.remove(&game);
+    }
+    file.save(config)
+}
+
 #[tauri::command]
 fn theme_list(app: State<'_, App>) -> ThemeList {
     let (catalog, prefs, mut problems) = load_themes(&app);
@@ -2189,6 +2211,7 @@ fn main() {
             theme,
             theme_list,
             set_theme_prefs,
+            set_favorite,
             selfupdate::check_for_update,
             selfupdate::install_update,
             selfupdate::cancel_update,

@@ -45,6 +45,11 @@
 					<input id="game-search" type="search" placeholder="Search games" aria-label="Search games" autocomplete="off" spellcheck="false">
 				</div>
 			</header>
+			<!-- Games starred with a card's .favorite button; kept in gui.toml. -->
+			<section id="favorite-games" class="game-section" aria-labelledby="favorite-games-title" hidden>
+				<h2 id="favorite-games-title">Favorites <span class="count muted"></span></h2>
+				<ul class="game-grid"></ul>
+			</section>
 			<section id="installed-games" class="game-section" aria-labelledby="installed-games-title">
 				<h2 id="installed-games-title">Installed <span class="count muted"></span></h2>
 				<ul class="game-grid"></ul>

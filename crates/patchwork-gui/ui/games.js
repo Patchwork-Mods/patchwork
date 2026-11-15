@@ -30,8 +30,9 @@ const gameQuery = () => gameSearch.value.trim();
 let renders = 0;
 
 /**
- * Lays out the games matching the search, best first: the ones with an
- * install folder set, then the rest, with adding a game at the very end.
+ * Lays out the games matching the search, best first: the favorites, then
+ * the ones with an install folder set, then the rest, with adding a game at
+ * the very end.
  */
 async function renderGames() {
   const render = ++renders;
@@ -39,8 +40,11 @@ async function renderGames() {
   const query = gameQuery();
   const shown = query ? await findGames(games, query).catch(() => null) : games;
   if (!shown || render !== renders) return;
-  const installed = shown.filter((g) => g.install);
-  const others = shown.filter((g) => !g.install);
+  const favorites = new Set(state.overview.favorites);
+  const rest = shown.filter((g) => !favorites.has(g.id));
+  const installed = rest.filter((g) => g.install);
+  const others = rest.filter((g) => !g.install);
+  fillSection($("#favorite-games"), shown.filter((g) => favorites.has(g.id)));
   // While searching, adding a game is only offered when nothing matches.
   fillSection($("#installed-games"), installed);
   fillSection($("#other-games"), others, query ? null : addGameCard());
@@ -73,6 +77,7 @@ function gameCard(g) {
   return h(
     "li",
     {},
+    favoriteButton(g),
     h(
       "button",
       { class: "game-card", "data-game": g.id, onclick: () => go(() => openGame(g.id)) },
@@ -86,6 +91,49 @@ function gameCard(g) {
           : null,
     ),
   );
+}
+
+const starPath = "M12 2.5l2.9 6 6.6.8-4.9 4.6 1.3 6.5L12 17.2l-5.9 3.2 1.3-6.5-4.9-4.6 6.6-.8z";
+
+/** The star in a card's corner, which pins the game to the top. */
+function favoriteButton(g) {
+  const on = state.overview.favorites.includes(g.id);
+  const label = on ? `Unfavorite ${g.name}` : `Favorite ${g.name}`;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", starPath);
+  svg.append(path);
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "favorite",
+      title: on ? "Unfavorite" : "Favorite: show it above the rest",
+      "aria-label": label,
+      "aria-pressed": String(on),
+      onclick: () => setFavorite(g, !on),
+    },
+    svg,
+  );
+}
+
+async function setFavorite(g, favorite) {
+  try {
+    await invoke("set_favorite", { game: g.id, favorite });
+  } catch (err) {
+    status(String(err), true);
+    return;
+  }
+  const favorites = state.overview.favorites.filter((id) => id !== g.id);
+  if (favorite) favorites.push(g.id);
+  state.overview.favorites = favorites;
+  await renderGames();
+  // The card moved sections, so keep focus on its star for the keyboard.
+  document.querySelector(`.game-card[data-game="${CSS.escape(g.id)}"]`)?.parentElement
+    .querySelector(".favorite")
+    ?.focus();
 }
 
 /** The game's picture, or its initials if it has none or it won't load. */
