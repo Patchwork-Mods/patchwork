@@ -341,11 +341,11 @@ button:focus-visible {
 }
 
 /* Installed games, then the rest. */
-.game-section + .game-section {
+.game-section+.game-section {
   margin-top: calc(var(--pw-gap) * 2.5);
 }
 
-.game-section > h2 {
+.game-section>h2 {
   margin-bottom: var(--pw-gap);
 }
 
@@ -381,7 +381,7 @@ button.link {
 
 /* The li holds the card and its favorite star, laid over the card's corner
    (a button can't go inside another). */
-.game-grid > li {
+.game-grid>li {
   position: relative;
 }
 
@@ -400,7 +400,6 @@ button.link {
   background: rgb(0 0 0 / 0.45);
   color: #fff;
   opacity: 0;
-  transition: opacity 0.1s;
 }
 
 .game-grid .favorite svg {
@@ -853,20 +852,20 @@ dialog button.danger-text {
   padding-top: var(--pw-gap);
 }
 
-#hidden-mods > summary,
-#dependencies > summary {
+#hidden-mods>summary,
+#dependencies>summary {
   cursor: pointer;
   color: var(--pw-muted);
   user-select: none;
 }
 
-#hidden-mods > summary:hover,
-#dependencies > summary:hover {
+#hidden-mods>summary:hover,
+#dependencies>summary:hover {
   color: var(--pw-text);
 }
 
-#hidden-mods > p,
-#dependencies > p {
+#hidden-mods>p,
+#dependencies>p {
   margin: 4px 0 var(--pw-gap);
   font-size: 12px;
 }
@@ -1216,7 +1215,7 @@ select.mod-version {
 }
 
 /* On a card, under its details rather than beside its name. */
-.result > .mod-conflict {
+.result>.mod-conflict {
   align-self: flex-start;
   margin: 0 10px 8px;
 }
@@ -1235,7 +1234,7 @@ select.mod-version {
   cursor: pointer;
 }
 
-.result > .mod-requirements {
+.result>.mod-requirements {
   align-self: flex-start;
   margin: 0 10px 8px;
 }
@@ -1333,7 +1332,7 @@ select.mod-version {
   border-radius: var(--pw-radius);
 }
 
-#mod-notices li > span {
+#mod-notices li>span {
   flex: 1;
 }
 
@@ -1363,7 +1362,7 @@ select.mod-version {
   overflow-y: auto;
 }
 
-.history > li {
+.history>li {
   padding: 8px 0;
   border-top: 1px solid var(--pw-border);
 }
@@ -1384,7 +1383,7 @@ select.mod-version {
   font-size: 13px;
 }
 
-.conflict-mod > summary {
+.conflict-mod>summary {
   display: flex;
   gap: 8px;
   cursor: pointer;
@@ -1592,7 +1591,7 @@ select.mod-version {
   list-style: none;
 }
 
-.ties-popup ul + h4 {
+.ties-popup ul+h4 {
   margin-top: 6px;
 }
 
@@ -2281,7 +2280,7 @@ dialog::backdrop {
 
 /* Config tab; see config.js. A row per config file, opening its
    settings in the options dialog. */
-#tab-config > p {
+#tab-config>p {
   margin: 0;
 }
 
@@ -2355,7 +2354,7 @@ dialog::backdrop {
   overflow-y: auto;
 }
 
-.update-list > li {
+.update-list>li {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: start;
@@ -2364,7 +2363,7 @@ dialog::backdrop {
   border-top: 1px solid var(--pw-border);
 }
 
-.update-list > li:first-child {
+.update-list>li:first-child {
   border-top: none;
 }
 
@@ -2390,7 +2389,7 @@ dialog::backdrop {
   color: var(--pw-danger);
 }
 
-.changelog-entry + .changelog-entry {
+.changelog-entry+.changelog-entry {
   margin-top: 12px;
 }
 
@@ -2404,11 +2403,11 @@ dialog::backdrop {
   overflow-wrap: anywhere;
 }
 
-.changelog-notes > :first-child {
+.changelog-notes> :first-child {
   margin-top: 0;
 }
 
-.changelog-notes > :last-child {
+.changelog-notes> :last-child {
   margin-bottom: 0;
 }
 
@@ -2479,7 +2478,7 @@ dialog::backdrop {
   font-weight: 600;
 }
 
-.options-group > p {
+.options-group>p {
   margin: 0 0 4px;
   font-size: 12px;
 }
@@ -2877,6 +2876,7 @@ legend {
   color: var(--pw-danger);
   margin: 0;
 }
+
 /* A button on an issue that deals with it, like saying a mod works with
    the installed version of the game. */
 #mod-problems .issue-action {
