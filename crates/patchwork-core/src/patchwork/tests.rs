@@ -3677,6 +3677,19 @@ async fn replaced_dependencies_give_way_to_the_mod_replacing_them() {
     assert_eq!(about("deps:lib").needed_by, ["app"]);
     assert!(!about("deps:lib").in_profile);
     assert!(about("deps:app").needed_by.is_empty());
+    assert!(info.iter().all(|i| i.in_use));
+
+    // with what needs them turned off, the dependencies aren't in use
+    pw.set_enabled(&profile, "app", false).unwrap();
+    let info = lock.dependency_info(&pw.load_profile(&profile).unwrap());
+    let about = |key: &str| info.iter().find(|i| i.key == key).unwrap();
+    assert!(!about("deps:app").in_use);
+    assert!(!about("deps:lib").in_use);
+    assert!(
+        about("deps:fork").in_use,
+        "fork is a profile mod of its own"
+    );
+    pw.set_enabled(&profile, "app", true).unwrap();
 
     pw.set_replaces(&profile, "fork", &[]).unwrap();
     let lock = pw.lock(&profile, false).await.unwrap();

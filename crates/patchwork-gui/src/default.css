@@ -833,6 +833,12 @@ dialog button.danger-text {
   color: var(--pw-muted);
 }
 
+/* After the name of a dependency only disabled mods need. */
+.dependency-off {
+  margin-left: 6px;
+  font-weight: normal;
+}
+
 .dependency-row.replaced .row-head {
   opacity: 0.6;
 }

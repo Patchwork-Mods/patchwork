@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -163,6 +163,10 @@ pub struct DependencyInfo {
     /// The name of the profile mod standing in for it, if it's been
     /// replaced.
     pub replaced_by: Option<String>,
+    /// Whether an enabled profile mod needs it, directly or through other
+    /// dependencies (or it's an enabled profile mod itself). One that isn't
+    /// in use isn't deployed.
+    pub in_use: bool,
 }
 
 impl Lockfile {
@@ -177,6 +181,7 @@ impl Lockfile {
         }
         let mut needers = |key: &str| needed_by.remove(key).unwrap_or_default();
         let in_profile = |key: &str| profile.mods.iter().any(|m| is_key(&m.source, &m.id, key));
+        let in_use = self.in_use(profile);
         let mut info: Vec<DependencyInfo> = self
             .mods
             .iter()
@@ -184,6 +189,7 @@ impl Lockfile {
                 let key = m.key();
                 DependencyInfo {
                     in_profile: in_profile(&key),
+                    in_use: in_use.contains(&key),
                     needed_by: needers(&key),
                     source: m.source.clone(),
                     id: m.id.clone(),
@@ -208,6 +214,7 @@ impl Lockfile {
                 name: id.to_owned(),
                 version: None,
                 in_profile: false,
+                in_use: in_use.contains(key),
                 needed_by: needers(key),
                 replaced_by: profile
                     .mods
@@ -217,6 +224,31 @@ impl Lockfile {
             });
         }
         info
+    }
+
+    /// The keys of every mod `profile`'s enabled mods bring in: themselves,
+    /// their dependencies, theirs, and so on, along with the dependencies
+    /// they had replaced.
+    fn in_use(&self, profile: &crate::profile::Profile) -> HashSet<String> {
+        let by_key: HashMap<String, &LockedMod> = self.mods.iter().map(|m| (m.key(), m)).collect();
+        let mut seen = HashSet::new();
+        let mut stack: Vec<String> = profile
+            .mods
+            .iter()
+            .filter(|m| m.enabled)
+            .map(|m| mod_key(&m.source, &m.id))
+            .collect();
+        while let Some(key) = stack.pop() {
+            let Some(locked) = by_key.get(&key) else {
+                continue;
+            };
+            if !seen.insert(key) {
+                continue;
+            }
+            stack.extend(locked.dependencies.iter().cloned());
+            seen.extend(locked.replaced.keys().cloned());
+        }
+        seen
     }
 }
 

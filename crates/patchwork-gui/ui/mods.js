@@ -1021,6 +1021,8 @@ async function toggleMod(m, input) {
   if (onOff) onOff.textContent = enabled ? "On" : "Off";
   showProfile(profile, { keepMods: true });
   renderHiddenCount();
+  // dependencies only disabled mods need show as disabled too
+  renderDependencies(modQuery());
   if (item.isConnected) $("#tab-mods").scrollTop += item.getBoundingClientRect().top - top;
 }
 
@@ -1137,6 +1139,8 @@ function dependencyRow(d) {
           "span",
           { class: "mod-name", title: `${item.name} (${d.key})` },
           h("span", { class: "mod-title" }, item.name),
+          // only mods that are off need it, so it isn't deployed
+          d.neededBy.length > 0 && !d.inUse ? h("span", { class: "dependency-off" }, "(Disabled)") : null,
         ),
         h(
           "span",
@@ -1167,7 +1171,7 @@ function dependencyRow(d) {
           "button",
           {
             type: "button",
-            title: "Add it to the list, so you can pick its version or turn it off",
+            title: "Add it to the main list, so you can pick its version or turn it off",
             onclick: (e) => addDependency(d, e.target),
           },
           "Add to list",
@@ -1176,7 +1180,10 @@ function dependencyRow(d) {
       ];
   return h(
     "li",
-    { class: d.replacedBy ? "mod-row dependency-row replaced" : "mod-row dependency-row", "data-key": d.key },
+    {
+      class: ["mod-row dependency-row", d.replacedBy && "replaced", !d.inUse && "disabled"].filter(Boolean).join(" "),
+      "data-key": d.key,
+    },
     head,
     ...actions,
   );

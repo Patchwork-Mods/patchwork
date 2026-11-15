@@ -143,7 +143,12 @@ pub(crate) fn deps(pw: &Patchwork, explicit: &Option<String>, all: bool) -> Resu
         } else {
             format!("  needed by {}", i.needed_by.join(", "))
         };
-        println!("{}  {what}  ({}){needed}", i.name, i.key);
+        let off = if i.needed_by.is_empty() || i.in_use {
+            ""
+        } else {
+            " (disabled)"
+        };
+        println!("{}{off}  {what}  ({}){needed}", i.name, i.key);
     }
     Ok(())
 }
