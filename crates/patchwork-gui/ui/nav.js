@@ -5,7 +5,7 @@
 import { gameInfo, profilesOf, state } from "./state.js";
 import { openGame, showGames } from "./games.js";
 import { switchProfile } from "./profile.js";
-import { ADD_TAB, selectTab } from "./browse.js";
+import { ADD_TAB, selectTab, sources } from "./browse.js";
 import { listTab } from "./list.js";
 
 /** Where the user is now. */
@@ -60,7 +60,7 @@ async function restore(place) {
   if (
     place.tab === "mods" ||
     p?.lists.some((l) => listTab(l.id) === place.tab) ||
-    (p && place.tab === ADD_TAB)
+    (place.tab === ADD_TAB && (p || sources().length))
   ) {
     selectTab(place.tab);
   }

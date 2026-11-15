@@ -638,6 +638,60 @@ button.link {
   margin-top: 48px;
 }
 
+/* Starting a profile from a name, code, links or ticket in one box; see
+   profilestart.js. */
+.profile-start .row {
+  flex-wrap: nowrap;
+}
+
+.profile-start input {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-start button {
+  flex: none;
+}
+
+.profile-start .error {
+  margin: 0;
+}
+
+.profile-start-hint.error {
+  color: var(--pw-danger);
+}
+
+/* In place of the mods, for a game with no profiles yet. */
+#no-profile {
+  max-width: 520px;
+  margin: 48px auto;
+  padding: calc(var(--pw-gap) * 1.5);
+  background: var(--pw-surface);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  box-shadow: var(--pw-shadow-sm);
+}
+
+#no-profile h2,
+#no-profile p {
+  margin: 0;
+}
+
+#new-profile>.row>button {
+  flex: 1;
+}
+
+/* Asking for a profile, in a search result or under the link box, before a
+   mod can be added. */
+.profile-ask {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--pw-border);
+}
+
+.profile-ask>.row {
+  justify-content: space-between;
+}
+
 .mod-list,
 .result-grid,
 .plan-ops,

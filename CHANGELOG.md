@@ -38,6 +38,12 @@ dialog shows, so the heading has to match the version being released.
 - Deploying can be cancelled.
 - Game art from Steam, a faster settings page, and a snappier UI in places.
 - The update dialog shows what's new in the release.
+- A game with no profiles says so where its mods would be, with one box to
+  start one: type a name, or paste an r2modman code, a list of mod links or
+  a sync ticket, and the button says which it'll do. The sidebar's New
+  profile box works the same way.
+- The Add mods tab works before there's a profile, to look around first;
+  adding a mod then asks for a profile to add it to.
 
 ### Games
 

@@ -185,6 +185,9 @@ gameSearch.addEventListener("keydown", (e) => {
 export async function openGame(id, profile = null) {
   state.game = id;
   state.profile = null;
+  // a profile opening forgets these too, but there may not be one
+  state.search = null;
+  state.filters = {};
   selectTab("mods");
   const last = state.overview.lastProfiles[id];
   const ps = profilesOf(id);

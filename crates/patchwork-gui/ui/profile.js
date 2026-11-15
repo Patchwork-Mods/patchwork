@@ -8,13 +8,14 @@ import { refreshDetails } from "./details.js";
 import { loadConflicts } from "./conflicts.js";
 import { loadModConfigs } from "./config.js";
 import { modSearch } from "./toolbar.js";
-import { renderTabs } from "./browse.js";
+import { ADD_TAB, renderTabs, selectTab, sources } from "./browse.js";
 import { clearLink } from "./addlink.js";
 import { markUpdates } from "./deploy.js";
 import { renderPlay } from "./play.js";
 import { go } from "./nav.js";
 import { hasSetup, setupSummary } from "./setup.js";
 import { showGameVersions } from "./gameversions.js";
+import { profileStarter } from "./profilestart.js";
 
 /** Reloads everything, staying on whichever screen and profile is open. */
 export async function refresh() {
@@ -33,7 +34,10 @@ export function renderSidebar() {
   const game = gameInfo(state.game);
   const current = state.profile?.id;
   $("#game-title").textContent = game.name;
+  mountStarter("#new-profile-start", game.id, { placeholder: "Name, code or ticket" });
   const ps = profilesOf(game.id);
+  // with none yet, the Mods tab has the same box, bigger
+  $("#new-profile").hidden = !ps.length;
   $("#profiles").replaceChildren(
     ...ps.map((p) =>
       h(
@@ -75,23 +79,26 @@ export async function switchProfile(id) {
   await openProfile(id);
 }
 
-export async function openProfile(id) {
-  showProfile(await run("profile", { id }));
+export async function openProfile(id, options) {
+  showProfile(await run("profile", { id }), options);
 }
 
 /**
  * Shows a profile, as loaded or as returned by a command that changed it.
  * With `keepMods`, the mods on screen are left as they are, for a change
- * that's already showing on them.
+ * that's already showing on them. With `keepSearch`, the Add mods tab's
+ * search stays, for a profile made to add one of its mods to.
  */
-export function showProfile(profile, { keepMods = false } = {}) {
+export function showProfile(profile, { keepMods = false, keepSearch = false } = {}) {
   state.profile = profile;
   // The sidebar counts come from the overview, which commands that return
   // the changed profile (like adding a mod) don't reload.
   const listed = state.overview.profiles.find((p) => p.id === profile.id);
   if (listed) listed.mods = profile.mods.length;
-  state.search = null;
-  state.filters = {};
+  if (!keepSearch) {
+    state.search = null;
+    state.filters = {};
+  }
   renderSidebar();
   renderProfile({ keepMods });
   refreshDetails();
@@ -132,10 +139,14 @@ export function renderProfile({ keepMods = false } = {}) {
   $("#revert").hidden = !p?.hasChanges;
   $("#update").disabled = !p?.mods.length;
   markUpdates();
+  $("#no-profile").hidden = !!p;
   if (!p) {
     const game = gameInfo(state.game);
-    $("#profile-title").textContent = `No ${game.name} profiles yet`;
-    $("#profile-meta").textContent = "Create one in the sidebar to start adding mods.";
+    $("#profile-title").textContent = game.name;
+    $("#profile-meta").textContent = "No profile yet";
+    $("#no-profile-title").textContent = `No profiles for ${game.name} yet`;
+    mountStarter("#no-profile-start", game.id);
+    $("#no-profile-browse").hidden = !sources().length;
     $("#mods").replaceChildren();
     $("#hidden-mods").hidden = true;
     $("#dependencies").hidden = true;
@@ -178,14 +189,19 @@ function issueAction(p, i) {
   return h("button", { type: "button", class: "issue-action", title, onclick }, "It works");
 }
 
-$("#new-profile").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const name = new FormData(e.target).get("name");
-  const id = await run("create_profile", { game: state.game, name });
-  e.target.reset();
-  state.overview = await run("overview");
-  await go(() => openProfile(id));
-});
+/**
+ * Puts a profile starter for `game` in `selector`, unless one's there for it
+ * already, so re-rendering doesn't lose what's typed in it.
+ */
+function mountStarter(selector, game, options) {
+  const el = $(selector);
+  if (el.dataset.game === game) return;
+  el.dataset.game = game;
+  el.replaceChildren(profileStarter(game, options));
+}
+
+$("#no-profile-import").addEventListener("click", () => $("#import-profile").click());
+$("#no-profile-browse button").addEventListener("click", () => go(() => selectTab(ADD_TAB)));
 
 // Right-clicking a profile in the sidebar: rename, duplicate, export or
 // delete it. Delete asks again in a dialog before anything is deleted.

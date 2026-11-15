@@ -2,9 +2,10 @@
 // at once as you type, merging what they find, or adds the mod from a link
 // pasted into it (see addlink.js). The Mods tab's search box searches the
 // same sources (see sourcesearch.js), and "See all" there opens its search
-// here.
+// here. It works without a profile, to look around first; adding a mod
+// then asks for one (see askForProfile() in profilestart.js).
 
-import { invoke, run, sourceName, state, status } from "./state.js";
+import { gameInfo, invoke, run, sourceName, state, status } from "./state.js";
 import { $, h, ms, nextFrame } from "./dom.js";
 import { renderProfile } from "./profile.js";
 import { cardMain } from "./mods.js";
@@ -14,6 +15,7 @@ import { listOf, listTab, openList } from "./list.js";
 import { CONFIG_TAB, openConfig } from "./config.js";
 import { asLink } from "./addlink.js";
 import { sourcesChanged } from "./sourcesearch.js";
+import { askForProfile } from "./profilestart.js";
 
 /** The Add mods tab's key in state.tab. */
 export const ADD_TAB = "add";
@@ -24,11 +26,11 @@ const form = $("#search");
 /** The search waiting for the user to stop typing. */
 let typing;
 
-/** The sources the open profile's game can be searched on. */
-export const sources = () => state.profile?.searchSources ?? [];
+/** The sources the open game can be searched on. */
+export const sources = () => (state.game && gameInfo(state.game)?.searchSources) || [];
 
 /** The orders `source` can sort its results in. */
-const sortsOf = (source) => state.profile?.searchSorts?.[source] ?? [];
+const sortsOf = (source) => (state.game && gameInfo(state.game)?.searchSorts?.[source]) || [];
 
 // Sources can be unticked on the Add mods tab, to leave them out of
 // searches; that's remembered for each game, on this computer only.
@@ -41,7 +43,7 @@ let untickedGame = null;
 const untickedKey = (game) => `pw-unticked-sources:${game}`;
 
 function loadUnticked() {
-  const game = state.profile?.game ?? null;
+  const game = state.game;
   if (game === untickedGame) return;
   untickedGame = game;
   unticked = new Set();
@@ -177,26 +179,28 @@ function renderSorts() {
 /**
  * Replaces the tabs, staying on the open one if it's still there: Mods, one
  * for each of the game's ordered lists, Config if the game has config files,
- * then Add mods while there's a profile to add to.
+ * then Add mods, while there's a profile to add to or sources to look
+ * through.
  */
 export function renderTabs() {
   const p = state.profile;
   const lists = p?.lists ?? [];
   const config = !!p?.hasConfig;
+  const add = !!p || sources().length > 0;
   const tab = (key, label) =>
     h("button", { role: "tab", "data-tab": key, onclick: () => go(() => selectTab(key)) }, label);
   $("#tabs").replaceChildren(
     tab("mods", "Mods"),
     ...lists.map((l) => tab(listTab(l.id), l.title)),
     ...(config ? [tab(CONFIG_TAB, "Config")] : []),
-    ...(p ? [tab(ADD_TAB, "Add mods")] : []),
+    ...(add ? [tab(ADD_TAB, "Add mods")] : []),
   );
   const open = listOf(state.tab);
   const still = open
     ? lists.some((l) => l.id === open)
     : state.tab === CONFIG_TAB
       ? config
-      : state.tab === ADD_TAB && !!p;
+      : state.tab === ADD_TAB && add;
   selectTab(still ? state.tab : "mods");
 }
 
@@ -256,7 +260,7 @@ async function searchPart(source, text, sort) {
   try {
     const filter = await filterOf(source);
     const query = {
-      game: state.profile.game,
+      game: state.game,
       source,
       text,
       // one that can't sort this way sticks to its own order
@@ -281,13 +285,13 @@ async function searchPart(source, text, sort) {
 
 /**
  * Searches every one of `list` of sources at once for `text`, returning
- * what they found (see above), or null if another profile was opened
+ * what they found (see above), or null if another game was opened
  * meanwhile. A source that fails doesn't stop the others.
  */
 export async function searchAll(list, text, sort = null) {
-  const p = state.profile;
+  const game = state.game;
   const results = await Promise.all(list.map((s) => searchPart(s, text, sort)));
-  if (state.profile?.id !== p.id) return null;
+  if (state.game !== game) return null;
   const found = { text, sort, sources: list, parts: {}, items: [], loading: false };
   list.forEach((s, i) => (found.parts[s] = results[i]));
   found.items = merge(found);
@@ -309,9 +313,8 @@ let searchSeq = 0;
 
 /** Starts a new search of what's in the box, replacing the results. */
 async function search() {
-  const p = state.profile;
   const list = ticked();
-  if (!p || !list.length) return;
+  if (!state.game || !list.length) return;
   const seq = ++searchSeq;
   const sort = form.elements.sort.value || null;
   status(`Searching ${sourceNames(list)}…`);
@@ -403,7 +406,7 @@ function renderResults(found) {
 }
 
 const key = (item) => `${item.source}:${item.id}`;
-export const addedMods = () => new Set(state.profile.mods.map(key));
+export const addedMods = () => new Set((state.profile?.mods ?? []).map(key));
 
 /**
  * Whether one of the files of search result `item` is in `added`, like
@@ -421,7 +424,7 @@ export function resultCard(item, added, { labelled = false } = {}) {
   const isAdded = added.has(key(item));
   const card = h(
     "li",
-    { class: "result" },
+    { class: "result", "data-key": key(item) },
     cardMain(item),
     labelled && h("span", { class: "result-source" }, sourceName(item.source)),
     h(
@@ -460,6 +463,15 @@ async function addFile(item, modId) {
  */
 async function addResult(item, card, button) {
   button.disabled = true;
+  if (!state.profile) {
+    if (!(await askForProfile(card))) {
+      button.disabled = false;
+      return;
+    }
+    // Opening the new profile redrew the results, so carry on in the new card.
+    const fresh = $("#results").querySelector(`[data-key="${CSS.escape(key(item))}"] .add`);
+    if (fresh && fresh !== button) return fresh.click();
+  }
   status(`Looking up ${item.name}…`);
   const choices = await run("file_choices", {
     id: state.profile.id,
@@ -535,9 +547,10 @@ const categoryLists = new Map();
 
 /** The categories `source` can filter by, sorted by name. */
 function categoriesOf(source) {
-  const k = `${state.profile.game}:${source}`;
+  const game = state.game;
+  const k = `${game}:${source}`;
   if (!categoryLists.has(k)) {
-    const list = invoke("search_categories", { game: state.profile.game, source })
+    const list = invoke("search_categories", { game, source })
       .then((categories) => categories.sort((a, b) => a.name.localeCompare(b.name)))
       // a failed fetch is tried again next time
       .catch((e) => (categoryLists.delete(k), Promise.reject(e)));
@@ -549,16 +562,17 @@ function categoriesOf(source) {
 /** `source`'s filter, starting it from the profile's hidden tags if it's new. */
 async function filterOf(source) {
   const p = state.profile;
+  const game = state.game;
   if (state.filters[source]) return state.filters[source];
   let hide = [];
-  if (p.hiddenTags.length) {
+  if (p?.hiddenTags.length) {
     const hidden = p.hiddenTags.map((t) => t.toLowerCase());
     // not knowing the categories just means searching without hiding any
     const categories = await categoriesOf(source).catch(() => []);
     hide = categories.filter((c) => hidden.includes(c.name.toLowerCase())).map((c) => c.id);
   }
   // another search may have started it while this was waiting
-  if (state.profile === p) state.filters[source] ??= { only: [], hide };
+  if (state.profile === p && state.game === game) state.filters[source] ??= { only: [], hide };
   return state.filters[source] ?? { only: [], hide };
 }
 

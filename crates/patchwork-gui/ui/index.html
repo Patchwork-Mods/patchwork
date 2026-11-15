@@ -74,13 +74,16 @@
 				</button>
 			</div>
 			<nav id="profiles" aria-label="Profiles"></nav>
-			<form id="new-profile" class="stack">
+			<!-- A name, code, links or ticket in one box (#new-profile-start);
+			     see profilestart.js. -->
+			<div id="new-profile" class="stack">
 				<h2>New profile</h2>
-				<input name="name" placeholder="Name" required pattern="[A-Za-z0-9._\-]+">
-				<button type="submit">Create</button>
-				<button type="button" id="import-profile">Import…</button>
-				<button type="button" id="join-profile" title="Join a profile someone shared with you, with their ticket">Join…</button>
-			</form>
+				<div id="new-profile-start"></div>
+				<div class="row">
+					<button type="button" id="import-profile">Import…</button>
+					<button type="button" id="join-profile" title="Join a profile someone shared with you, with their ticket">Join…</button>
+				</div>
+			</div>
 		</aside>
 
 		<main id="main" hidden>
@@ -159,6 +162,20 @@
 					<button type="submit">Set</button>
 					<small id="game-path-found" class="muted hint"></small>
 				</form>
+				<!-- In place of the mods while the game has no profiles; see
+				     renderProfile() in profile.js and profilestart.js. -->
+				<section id="no-profile" class="stack" hidden>
+					<h2 id="no-profile-title"></h2>
+					<p class="muted">Name a new profile to start adding mods to it, or paste an r2modman code, a list of mod
+						links, or a sync ticket someone shared with you.</p>
+					<div id="no-profile-start"></div>
+					<p class="muted no-profile-more">
+						<button type="button" class="link" id="no-profile-import">Import a file</button>
+						<span id="no-profile-browse">
+							· <button type="button" class="link">Browse mods first</button>
+						</span>
+					</p>
+				</section>
 				<ul id="mod-notices"></ul>
 				<ul id="mod-problems" class="warnings"></ul>
 				<!-- One box for both searching this profile's mods and adding one

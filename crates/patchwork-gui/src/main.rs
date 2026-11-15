@@ -164,6 +164,11 @@ struct GameInfo {
     /// Something an `<img>` can load: the definition's URL, or a local
     /// image file inlined as a data URL, since the webview can't read paths.
     image: Option<String>,
+    /// The sources mods for it can be searched on, for the Add mods tab,
+    /// which works without a profile.
+    search_sources: Vec<String>,
+    /// The orders each of `search_sources` can sort its results in.
+    search_sorts: SearchSorts,
 }
 
 #[derive(Serialize)]
@@ -219,9 +224,6 @@ struct ProfileDetail {
     /// Whether the profile has changed since it was last deployed, so it
     /// can be reverted.
     has_changes: bool,
-    search_sources: Vec<String>,
-    /// The orders each of `search_sources` can sort its results in.
-    search_sorts: BTreeMap<String, Vec<SortBy>>,
     /// The ways the game can be started, for the Play button; none until
     /// it's known where it's installed.
     launch_options: Vec<LaunchOption>,
@@ -296,6 +298,24 @@ struct PlanSummary {
     warnings: Vec<String>,
 }
 
+/// The orders each search source can sort its results in, by source id.
+type SearchSorts = BTreeMap<String, Vec<SortBy>>;
+
+/// The sources `game`'s mods can be searched on, and the orders each sorts by.
+fn search_sources(pw: &Patchwork, game: &str) -> CmdResult<(Vec<String>, SearchSorts)> {
+    let sources: Vec<String> = pw
+        .search_sources(game)
+        .map_err(msg)?
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let sorts = sources
+        .iter()
+        .map(|s| Ok((s.clone(), pw.search_sorts(s).map_err(msg)?.to_vec())))
+        .collect::<CmdResult<_>>()?;
+    Ok((sources, sorts))
+}
+
 fn profile_ref(id: &str) -> CmdResult<ProfileRef> {
     id.parse().map_err(msg)
 }
@@ -311,6 +331,7 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
         .filter(|entry| !entry.value.hidden)
         .map(|entry| {
             let game = &entry.value;
+            let (search_sources, search_sorts) = search_sources(pw, &game.id)?;
             Ok(GameInfo {
                 id: game.id.clone(),
                 name: game.name.clone(),
@@ -323,6 +344,8 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
                     Some(image) => image_src(image),
                     None => game.detect.steam.first().map(|&app| steam_capsule(app)),
                 },
+                search_sources,
+                search_sorts,
             })
         })
         .collect::<CmdResult<_>>()?;
@@ -426,16 +449,6 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let game_files = state.files.len();
     let deploy_status = pw.deploy_status(&r).map_err(msg)?;
     let has_changes = pw.has_changes(&r).map_err(msg)?;
-    let search_sources: Vec<String> = pw
-        .search_sources(&loaded.game)
-        .map_err(msg)?
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    let search_sorts = search_sources
-        .iter()
-        .map(|s| Ok((s.clone(), pw.search_sorts(s).map_err(msg)?.to_vec())))
-        .collect::<CmdResult<_>>()?;
     let lock = pw.load_lock(&r).map_err(msg)?;
     let dependencies = lock
         .iter()
@@ -546,8 +559,6 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         game_files,
         deploy_status,
         has_changes,
-        search_sources,
-        search_sorts,
         launch_options,
         setup,
     })

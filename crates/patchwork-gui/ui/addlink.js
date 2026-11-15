@@ -15,6 +15,7 @@ import { renderProfile } from "./profile.js";
 import { refreshDetails } from "./details.js";
 import { boxChanged } from "./sourcesearch.js";
 import { browseChanged } from "./browse.js";
+import { askForProfile } from "./profilestart.js";
 
 function size(bytes) {
   if (bytes == null) return "";
@@ -97,11 +98,10 @@ function linkBox(form, onChange) {
 
   /** Says what Enter will do: add from where, for a link. */
   async function renderHint() {
-    const p = state.profile;
     const lookup = ++lookups;
     const link = asLink(input.value);
-    if (!p || !link) return showHint(null);
-    const source = await invokeQuietly("link_source", { game: p.game, link });
+    if (!state.game || !link) return showHint(null);
+    const source = await invokeQuietly("link_source", { game: state.game, link });
     if (lookup !== lookups) return;
     const from = source === "url" ? site(link) : source && sourceName(source);
     showHint(
@@ -198,9 +198,11 @@ function linkBox(form, onChange) {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const p = state.profile;
     const link = asLink(input.value);
-    if (!p || !link) return;
+    if (!link) return;
+    // Adding to a game with no profile yet asks for one first.
+    if (!state.profile && !(await askForProfile(form, { after: true }))) return;
+    const p = state.profile;
     submit.disabled = true;
     fileAdd.disabled = true;
     showError(null);

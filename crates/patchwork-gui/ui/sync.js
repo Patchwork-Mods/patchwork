@@ -279,19 +279,37 @@ joinForm.addEventListener("submit", async (e) => {
   const submit = $("#join-submit");
   submit.disabled = true;
   error.hidden = true;
-  status("Waiting for the other computer…");
   let joined;
   try {
-    joined = await invoke("sync_join", { ticket });
+    joined = await joinTicket(ticket);
   } catch (err) {
     error.textContent = String(err);
     error.hidden = false;
-    status("Couldn't join the profile", true);
     return;
   } finally {
     submit.disabled = false;
   }
   $("#join-dialog").close();
+  await showJoined(joined);
+});
+
+/**
+ * Joins what `ticket` was made for: a shared profile, or the user's other
+ * computers. Throws if it can't, for the caller to show; showJoined() then
+ * opens it.
+ */
+export async function joinTicket(ticket) {
+  status("Waiting for the other computer…");
+  try {
+    return await invoke("sync_join", { ticket });
+  } catch (err) {
+    status("Couldn't join the profile", true);
+    throw err;
+  }
+}
+
+/** Opens what joinTicket() joined, wherever it belongs. */
+export async function showJoined(joined) {
   if (joined.kind === "devices") {
     linked(joined);
     return;
@@ -304,7 +322,7 @@ joinForm.addEventListener("submit", async (e) => {
   if (warnings.length) status(warnings.join("; "), true);
   else status(`Joined ${profile.label}; deploy it to install its mods`);
   await offerDaemonAfterJoining(profile.label);
-});
+}
 
 // My computers, in Settings: linking this computer to the user's others, by
 // making a ticket here or pasting one from there. Its buttons act at once,
