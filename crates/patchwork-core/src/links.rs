@@ -660,7 +660,7 @@ fn unescape_html(s: &str) -> String {
 
 /// The file name in a `Content-Disposition` header, preferring the UTF-8
 /// `filename*` over the plain `filename`.
-fn disposition_file_name(header: &str) -> Option<String> {
+pub fn disposition_file_name(header: &str) -> Option<String> {
     let mut plain = None;
     for part in header.split(';').map(str::trim) {
         let Some((key, value)) = part.split_once('=') else {

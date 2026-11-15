@@ -46,6 +46,15 @@
 //!   is: 1.6.13 for Steam's (told apart by `FTL.amd64`'s size, as
 //!   ftlman does), 1.6.12 for GOG's and Humble's. The game's `data/FTL`
 //!   script, which Steam runs, is replaced with one that preloads it.
+//!
+//! ## Rolling back to 1.6.9
+//!
+//! On Windows, Hyperspace only works with FTL 1.6.9, and stores sell
+//! later versions. Hyperspace's rollback (`ROLLBACK_URL`) is a set of
+//! [`bps`] patches that turn each store's `FTLGame.exe` into 1.6.9. Added
+//! as a mod, the patch for the game's exe is applied to it, and the result
+//! deployed in its place, so it's the game's own again when the mod is
+//! taken out, and a game update is rolled back the next time it's deployed.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -54,8 +63,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use patchwork_core::deploy::{
-    BuildContext, DeployContext, Deployer, DesiredState, Dest, GameFiles, InstalledMod, Placement,
-    Src,
+    BuildContext, DeployContext, Deployer, DesiredState, Dest, GameFiles, InstalledMod, ModFile,
+    Placement, Src,
 };
 use patchwork_core::error::IoContext;
 use patchwork_core::event::Event;
@@ -64,6 +73,7 @@ use patchwork_core::hash::ContentHash;
 use patchwork_core::relpath::RelPath;
 use patchwork_core::{Error, Result};
 
+pub mod bps;
 pub mod patch;
 pub mod pkg;
 pub mod xml;
@@ -116,6 +126,22 @@ const LINUX_SCRIPT: &str = "data/FTL";
 /// The size of Steam's `FTL.amd64`, which is 1.6.13; GOG's and Humble's
 /// are 1.6.12.
 const STEAM_LINUX_SIZE: u64 = 72_443_660;
+
+/// Where Hyperspace's rollback patches can be downloaded as a mod.
+const ROLLBACK_URL: &str =
+    "https://github.com/FTL-Hyperspace/FTL-Version-Rollback/archive/refs/heads/main.zip";
+
+/// The size and CRC32 of each `FTLGame.exe` the rollback patches make,
+/// from the patches themselves: Steam's, GOG's, Epic's, EA's and Humble's
+/// 1.6.9, then Origin's and the Microsoft Store's.
+const ROLLED_BACK: [(u64, u32); 6] = [
+    (5_168_640, 0xb0d0_39f4),
+    (5_168_640, 0x413c_9ddd),
+    (5_168_640, 0xaef1_bef7),
+    (5_168_640, 0x99fb_6231),
+    (24_762_981, 0x7036_a765),
+    (125_087_845, 0x3770_2bf9),
+];
 
 /// The copy of the game a mod's own code (Hyperspace's) has to be for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +287,8 @@ impl Deployer for FtlDeployer {
         let mut files = Files::new(&base, index)?;
         let platform = Platform::of(&build.game);
         let mut preload = None;
+        let mut rollbacks = Vec::new();
+        let mut hyperspace = None;
         for m in mods {
             build.reporter.report(Event::Building {
                 step: m.name.clone(),
@@ -274,7 +302,20 @@ impl Deployer for FtlDeployer {
                 *w = format!("{}: {w}", m.name);
             }
             let code = code(m, platform, &mut desired, &mut preload);
-            if !code && !entries.iter().any(|(rel, _)| installed(rel)) {
+            let patches = rollback_patches(m);
+            if code
+                && platform == Some(Platform::Windows)
+                && m.files
+                    .iter()
+                    .any(|f| f.rel.file_name().eq_ignore_ascii_case("Hyperspace.dll"))
+            {
+                hyperspace = Some(m.name.clone());
+            }
+            let has_patches = !patches.is_empty();
+            if has_patches {
+                rollbacks.push((m.name.clone(), patches));
+            }
+            if !code && !has_patches && !entries.iter().any(|(rel, _)| installed(rel)) {
                 desired.warnings.push(format!(
                     "{} has no data/, audio/, fonts/ or img/ folder, so nothing from it is deployed",
                     m.name
@@ -294,6 +335,7 @@ impl Deployer for FtlDeployer {
         if let Some((so, mod_name)) = preload {
             self.preload(build, &so, mod_name, &mut desired)?;
         }
+        self.roll_back(build, platform, &rollbacks, hyperspace, &mut desired)?;
         Ok(desired)
     }
 
@@ -357,6 +399,109 @@ impl FtlDeployer {
         });
         Ok(())
     }
+}
+
+impl FtlDeployer {
+    /// Rolls the Windows game's exe back to 1.6.9 with the first of the
+    /// `rollbacks` patches (by mod, then by name) that's for it, or warns
+    /// that `hyperspace` (the mod with Hyperspace's DLLs) needs it to be.
+    fn roll_back(
+        &self,
+        build: &BuildContext<'_>,
+        platform: Option<Platform>,
+        rollbacks: &[(String, Vec<&ModFile>)],
+        hyperspace: Option<String>,
+        desired: &mut DesiredState,
+    ) -> Result<()> {
+        if rollbacks.is_empty() && hyperspace.is_none() {
+            return Ok(());
+        }
+        if platform != Some(Platform::Windows) {
+            for (mod_name, _) in rollbacks {
+                desired.warnings.push(format!(
+                    "{mod_name} rolls back the Windows game, but this copy of FTL is for {}, \
+                     so it isn't used",
+                    platform.map_or("another system", Platform::name)
+                ));
+            }
+            return Ok(());
+        }
+        let rel = RelPath::new(WINDOWS_EXE).unwrap();
+        let Some(path) = build.game.original(&rel) else {
+            return Ok(());
+        };
+        let exe = fs::read(&path).at(&path)?;
+        let (size, crc) = (exe.len() as u64, crc32fast::hash(&exe));
+        if ROLLED_BACK.contains(&(size, crc)) {
+            return Ok(());
+        }
+        for (mod_name, patches) in rollbacks {
+            let mut made = None;
+            for file in patches {
+                let bytes = fs::read(&file.src).at(&file.src)?;
+                let patch = match bps::Patch::parse(&bytes) {
+                    Ok(patch) => patch,
+                    Err(e) => {
+                        desired
+                            .warnings
+                            .push(format!("{mod_name}: {}: {e}", file.rel));
+                        continue;
+                    }
+                };
+                if patch.target_size == size && patch.target_crc == crc {
+                    // Already what this patch makes, if it's not in the
+                    // list above.
+                    return Ok(());
+                }
+                if made.is_none() && patch.applies_to(&exe) {
+                    build.reporter.report(Event::Building {
+                        step: format!("rolling {WINDOWS_EXE} back with {}", file.rel.file_name()),
+                    });
+                    made = Some(
+                        patch
+                            .apply(&exe)
+                            .map_err(|e| self.error(format!("{mod_name}: {}: {e}", file.rel)))?,
+                    );
+                }
+            }
+            if let Some(made) = made {
+                let out = build.out.join(WINDOWS_EXE);
+                fs::write(&out, made).at(&out)?;
+                desired.placements.push(Placement {
+                    dst: Dest::game(rel),
+                    src: Src::Built(RelPath::new(WINDOWS_EXE).unwrap()),
+                    mod_name: mod_name.clone(),
+                });
+                return Ok(());
+            }
+            desired.warnings.push(format!(
+                "{mod_name}: none of its patches is for this {WINDOWS_EXE}, so it wasn't \
+                 rolled back to FTL 1.6.9"
+            ));
+        }
+        if rollbacks.is_empty()
+            && let Some(hyperspace) = hyperspace
+        {
+            desired.warnings.push(format!(
+                "{hyperspace} needs FTL 1.6.9 on Windows, and this {WINDOWS_EXE} isn't it; \
+                 add the rollback as a mod from {ROLLBACK_URL} to deploy 1.6.9 in its place"
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// `m`'s BPS patches (which roll the game back), by name, if it has any
+/// outside the folders that go into the archive.
+fn rollback_patches(m: &InstalledMod) -> Vec<&ModFile> {
+    let mut patches: Vec<&ModFile> = m
+        .files
+        .iter()
+        .filter(|f| !installed(f.rel.as_str()))
+        .filter(|f| f.rel.file_name().to_ascii_lowercase().ends_with(".bps"))
+        .collect();
+    patches.sort_by(|a, b| a.rel.as_str().cmp(b.rel.as_str()));
+    patches
 }
 
 /// The path, size and modification time of the file at `path`.

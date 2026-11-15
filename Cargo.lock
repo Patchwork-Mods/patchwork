@@ -5908,6 +5908,7 @@ dependencies = [
 name = "patchwork-ftl"
 version = "0.3.0"
 dependencies = [
+ "crc32fast",
  "patchwork-core",
  "tempfile",
  "zip 8.6.0",

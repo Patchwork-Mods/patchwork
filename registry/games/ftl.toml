@@ -13,8 +13,11 @@ game_domain = "fasterthanlight"
 # Hyperspace and Multiverse are released on GitHub; these show on the Add
 # mods tab. Hyperspace has a zip for each system: Linux for Steam's or
 # GOG's Linux build, Windows for the Windows one (also under Proton), which
-# needs FTL 1.6.9. Multiverse needs Hyperspace, and its assets (which only
-# some releases have) under its data.
+# needs FTL 1.6.9: the deployer rolls FTLGame.exe back with Hyperspace's
+# rollback patches, added as a mod from
+# https://github.com/FTL-Hyperspace/FTL-Version-Rollback/archive/refs/heads/main.zip
+# (a branch zip, so the github source can't list it here). Multiverse needs
+# Hyperspace, and its assets (which only some releases have) under its data.
 [sources.github]
 mods = [
     { id = "FTL-Hyperspace/FTL-Hyperspace", name = "Hyperspace" },

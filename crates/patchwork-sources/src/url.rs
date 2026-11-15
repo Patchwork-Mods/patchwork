@@ -79,7 +79,7 @@ fn looks_like_not_mod(file_name: &str) -> bool {
 /// Starts downloading `url` (then stops) to check there's a file there, so
 /// a link to a web page, like a shared folder or a mod's page, is turned
 /// down when it's added rather than when it's deployed.
-async fn check_file(url: &str) -> Result<()> {
+async fn check_file(url: &str) -> Result<Option<String>> {
     let response = patchwork_core::http_get(url)
         .await
         .and_then(|r| r.error_for_status())
@@ -93,7 +93,12 @@ async fn check_file(url: &str) -> Result<()> {
              open it and copy the link to the file you want)"
         )));
     }
-    Ok(())
+    Ok(response
+        .headers()
+        .get(reqwest::header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(links::disposition_file_name)
+        .filter(|name| !stem(name).is_empty()))
 }
 
 /// A link on a file host. Its file is a [`ArtifactLocation::Source`] one,
@@ -166,12 +171,17 @@ impl Source for UrlSource {
             return resolve_hosted(hosted).await;
         }
         let artifact = ArtifactLocation::Url { url: id.to_owned() };
-        let file_name = artifact.file_name();
-        let name = stem(&file_name);
-        if name.is_empty() {
+        let mut file_name = artifact.file_name();
+        if stem(&file_name).is_empty() {
             return Err(error(format!("{id} doesn't end in a file name")));
         }
-        check_file(id).await?;
+        // The server's name for the file, which can say more than the
+        // link's (GitHub's `.../archive/refs/heads/main.zip` is
+        // `<repo>-main.zip`).
+        if let Some(named) = check_file(id).await? {
+            file_name = named;
+        }
+        let name = stem(&file_name);
         let format = format_of(&file_name);
         Ok(resolved(id.to_owned(), name.to_owned(), artifact, format))
     }

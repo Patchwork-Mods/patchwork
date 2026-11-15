@@ -307,6 +307,11 @@ fn parse_link(url: &str) -> Option<String> {
     if NOT_OWNERS.contains(owner) || !is_name(owner) || !is_name(repo) {
         return None;
     }
+    // A zip of the repo's code at a branch, tag or commit, rather than one
+    // of its releases: a download like any other, for the url source.
+    if rest.first() == Some(&"archive") {
+        return None;
+    }
     let fragment = url.split_once('#').map(|(_, f)| f);
     let pattern = match (rest, fragment.and_then(|f| f.strip_prefix(FILE_FRAGMENT))) {
         (_, Some(pattern)) if !pattern.is_empty() && !pattern.contains('/') => pattern.to_owned(),

@@ -412,6 +412,55 @@ fn element_helpers() {
     assert_eq!(e.attrs, [("a".to_owned(), "2".to_owned())]);
 }
 
+/// A patch made with Floating IPS (`flips --create --bps-delta`) from
+/// [`bps_source`] to [`bps_target`], which uses every kind of command.
+const BPS_PATCH: &[u8] = &[
+    0x42, 0x50, 0x53, 0x31, 0x38, 0x96, 0x2a, 0x97, 0x80, 0x4c, 0x8e, 0xb5, 0x4e, 0x45, 0x57, 0x20,
+    0x42, 0x59, 0x54, 0x45, 0x53, 0x20, 0x48, 0x45, 0x52, 0x45, 0x6e, 0x94, 0x38, 0x96, 0x7e, 0x97,
+    0x01, 0x98, 0x85, 0x61, 0x62, 0x37, 0x8b, 0x3c, 0x9e, 0x6e, 0x94, 0x08, 0x8d, 0x52, 0x0d, 0xd7,
+    0xe1, 0xc3, 0x21, 0x2c, 0xc2, 0x17, 0xd4, 0x3a, 0xb0,
+];
+
+fn bps_source() -> Vec<u8> {
+    (0..3000u64)
+        .map(|i| ((i * i * 7 + i * 13 + (i >> 3)) % 251) as u8)
+        .collect()
+}
+
+/// [`bps_source`] with bytes added, blocks moved and a run repeated.
+fn bps_target() -> Vec<u8> {
+    let s = bps_source();
+    let mut t = s[..500].to_vec();
+    t.extend_from_slice(b"NEW BYTES HERE");
+    t.extend_from_slice(&s[1500..2200]);
+    t.extend_from_slice(&s[600..1400]);
+    t.extend(b"ab".repeat(200));
+    t.extend_from_slice(&s[2300..]);
+    t
+}
+
+#[test]
+fn bps_patches_apply() {
+    let patch = bps::Patch::parse(BPS_PATCH).unwrap();
+    assert_eq!(patch.source_size, 3000);
+    assert!(patch.applies_to(&bps_source()));
+    assert!(!patch.applies_to(&bps_target()));
+    assert_eq!(patch.apply(&bps_source()).unwrap(), bps_target());
+    assert!(patch.made(&bps_target()));
+
+    let mut other = bps_source();
+    other[10] ^= 1;
+    assert_eq!(
+        patch.apply(&other).unwrap_err(),
+        "the patch isn't for this file"
+    );
+
+    let mut damaged = BPS_PATCH.to_vec();
+    damaged[20] ^= 1;
+    assert!(bps::Patch::parse(&damaged).unwrap_err().contains("damaged"));
+    assert!(bps::Patch::parse(b"PK\x03\x04 not a patch at all").is_err());
+}
+
 mod deploying {
     use patchwork_core::ext::testing::TestGame;
 
@@ -695,10 +744,109 @@ mod deploying {
             .game_file("FTLGame.exe", "exe")
             .mod_files("Hyperspace", hyperspace("Windows"));
         let plan = t.deploy().unwrap();
-        assert!(plan.warnings().is_empty(), "{:?}", plan.warnings());
         assert_eq!(
             plan.placed(),
             ["Hyperspace.dll", "data/ftl.dat", "xinput1_4.dll"]
+        );
+        // The exe isn't 1.6.9, and there's nothing to roll it back with.
+        assert_eq!(plan.warnings().len(), 1, "{:?}", plan.warnings());
+        assert!(
+            plan.warnings()[0].starts_with("Hyperspace needs FTL 1.6.9 on Windows")
+                && plan.warnings()[0].contains(ROLLBACK_URL),
+            "{:?}",
+            plan.warnings()
+        );
+    }
+
+    /// The rollback repo's zip, as unpacked, with `patch` as one of its
+    /// patches.
+    fn rollback(patch: &[u8]) -> Vec<(&'static str, Vec<u8>)> {
+        vec![
+            ("FTL-Version-Rollback-main/README.md", b"hi".to_vec()),
+            (
+                "FTL-Version-Rollback-main/rollback.bat",
+                b"@echo off".to_vec(),
+            ),
+            (
+                "FTL-Version-Rollback-main/patch/bpsapply.exe",
+                b"MZ".to_vec(),
+            ),
+            (
+                "FTL-Version-Rollback-main/patch/Steam-1.6.14.bps",
+                patch.to_vec(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_rollback_deploys_a_patched_exe_in_place_of_the_games() {
+        let t = game()
+            .game_file("FTLGame.exe", bps_source())
+            .mod_files("Hyperspace", hyperspace("Windows"))
+            .mod_files("Rollback", rollback(BPS_PATCH));
+        let plan = t.deploy().unwrap();
+        assert!(plan.warnings().is_empty(), "{:?}", plan.warnings());
+        assert_eq!(
+            plan.placed(),
+            [
+                "FTLGame.exe",
+                "Hyperspace.dll",
+                "data/ftl.dat",
+                "xinput1_4.dll"
+            ]
+        );
+        assert_eq!(plan.placed_by("FTLGame.exe"), Some("Rollback"));
+        assert_eq!(fs::read(t.path("FTLGame.exe")).unwrap(), bps_target());
+
+        // Deploying again finds the game's own exe in its backup.
+        t.deploy().unwrap();
+        assert_eq!(fs::read(t.path("FTLGame.exe")).unwrap(), bps_target());
+
+        // Taking it out puts the game's exe back.
+        t.set_enabled("Rollback", false).unwrap();
+        let plan = t.deploy().unwrap();
+        assert_eq!(fs::read(t.path("FTLGame.exe")).unwrap(), bps_source());
+        assert!(
+            plan.warnings()
+                .iter()
+                .any(|w| w.starts_with("Hyperspace needs FTL 1.6.9")),
+            "{:?}",
+            plan.warnings()
+        );
+    }
+
+    #[test]
+    fn rollbacks_that_dont_fit_are_warned_about() {
+        // An exe none of the patches is for.
+        let t = game()
+            .game_file("FTLGame.exe", "exe")
+            .mod_files("Rollback", rollback(BPS_PATCH));
+        let plan = t.deploy().unwrap();
+        assert!(!plan.places("FTLGame.exe"));
+        assert_eq!(
+            plan.warnings(),
+            [
+                "Rollback: none of its patches is for this FTLGame.exe, so it wasn't rolled back to FTL 1.6.9"
+            ]
+        );
+
+        // An exe the patch already made.
+        let t = game()
+            .game_file("FTLGame.exe", bps_target())
+            .mod_files("Rollback", rollback(BPS_PATCH));
+        let plan = t.deploy().unwrap();
+        assert!(!plan.places("FTLGame.exe"));
+        assert!(plan.warnings().is_empty(), "{:?}", plan.warnings());
+
+        // The Linux game.
+        let t = linux_game().mod_files("Rollback", rollback(BPS_PATCH));
+        let plan = t.deploy().unwrap();
+        assert_eq!(plan.placed(), ["data/ftl.dat"]);
+        assert_eq!(
+            plan.warnings(),
+            [
+                "Rollback rolls back the Windows game, but this copy of FTL is for Linux, so it isn't used"
+            ]
         );
     }
 

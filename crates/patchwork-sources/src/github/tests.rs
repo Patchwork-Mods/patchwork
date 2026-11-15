@@ -98,6 +98,10 @@ fn parses_links() {
             "https://github.com/someone/SomeMod/releases/tag/v1.2#file=SomeMod-*.zip",
             Some("someone/SomeMod/SomeMod-*.zip"),
         ),
+        (
+            "https://github.com/someone/SomeMod/archive/refs/heads/main.zip",
+            None,
+        ),
         ("https://github.com/someone", None),
         ("https://github.com/settings/profile", None),
         ("https://gitlab.com/someone/SomeMod", None),

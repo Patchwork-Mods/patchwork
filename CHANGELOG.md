@@ -43,3 +43,8 @@ dialog shows, so the heading has to match the version being released.
 
 - Hitman no longer warns about settings you've already changed.
 - Risk of Rain 2's GUI was updated, and settings were fixed for a few games.
+- FTL: Faster Than Light, with Slipstream mods, Hyperspace and Multiverse.
+  On Windows, add Hyperspace's rollback
+  (`https://github.com/FTL-Hyperspace/FTL-Version-Rollback/archive/refs/heads/main.zip`)
+  as a mod to turn the game into 1.6.9, which Hyperspace needs, while it's
+  deployed; taking it out puts your own version back.
