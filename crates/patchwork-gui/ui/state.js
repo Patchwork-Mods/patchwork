@@ -13,12 +13,10 @@ export const state = {
   /** The open tab: "mods", a list's (see listTab in list.js), "config" or
    * "add". */
   tab: "mods",
-  /** The source being searched on the Add mods tab, or null on other tabs. */
-  source: null,
   /** What the open list's tab is showing, from list in main.rs. */
   list: null,
-  /** Each source's last search, as `{ page, query, results }`. */
-  searches: {},
+  /** The Add mods tab's last search, from searchAll() in browse.js. */
+  search: null,
   /**
    * Each source's category filter, as `{ only, hide }` lists of category ids.
    * One that hasn't been set yet starts out hiding what the Mods tab hides.

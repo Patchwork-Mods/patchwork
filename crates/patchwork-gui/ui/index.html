@@ -284,14 +284,18 @@
 				</p>
 			</section>
 
-			<!-- Adding mods: from a pasted link (see addlink.js), or by searching
-			     one of the game's sources (see browse.js). -->
+			<!-- Adding mods: one box that searches every picked source at once,
+			     or adds the mod from a link pasted into it (see addlink.js and
+			     browse.js). -->
 			<section id="tab-browse" class="tab" hidden>
 				<form id="browse-link" class="link-form stack">
 					<div class="row">
-						<input class="link-url" name="link" type="text" inputmode="url" placeholder="Add mod link" aria-label="Link to a mod" title="A mod's page on GitHub, Nexus Mods, Thunderstore or Modrinth, or a link straight to a download" autocomplete="off" spellcheck="false">
-						<button type="submit" class="link-submit">Add</button>
+						<input id="browse-search" class="link-url" name="link" type="search" placeholder="Search mods or paste a link" aria-label="Search for mods, or add one from a link" title="Searches every source ticked below, or adds a mod from a link" autocomplete="off" spellcheck="false">
+						<!-- Only shown while the box holds a link. -->
+						<button type="submit" class="link-submit" hidden>Add</button>
 					</div>
+					<!-- Says where a link in the box adds the mod from. -->
+					<small class="link-hint muted" hidden></small>
 					<!-- When the link has several files, like a GitHub release, or is a
 					     shared folder (.link-folder opens a folder in it); see addlink.js. -->
 					<div class="link-files field" hidden>
@@ -303,10 +307,9 @@
 					<p class="link-error error" hidden></p>
 				</form>
 				<form id="search" class="row">
-					<!-- One button per source the game can be searched on, only when
+					<!-- A toggle per source the game can be searched on, only when
 					     there's more than one; see renderSourcePicker() in browse.js. -->
-					<div id="source-picker" class="segmented" role="group" aria-label="Source" hidden></div>
-					<input name="text" type="search" placeholder="Search mods">
+					<div id="source-picker" class="source-toggles row" role="group" aria-label="Sources to search" hidden></div>
 					<select name="sort">
 						<option value="">Default order</option>
 						<option value="relevance">Relevance</option>
@@ -315,13 +318,15 @@
 						<option value="newest">Newest</option>
 						<option value="rating">Rating</option>
 					</select>
-					<!-- Narrows the search down by the source's categories. Its rows
-               are filled in each time it opens; see renderSourceFilter(). -->
+					<!-- Narrows the search down by each source's categories. Its rows
+					     are filled in each time it opens; see renderSourceFilter(). -->
 					<details id="source-filter" class="menu">
 						<summary title="Only show, or hide, mods in some categories, like libraries">Filter</summary>
 						<div class="menu-items"></div>
 					</details>
 				</form>
+				<!-- Sources that couldn't be searched, with why. -->
+				<p id="search-errors" class="muted" hidden></p>
 				<ul id="results" class="result-grid"></ul>
 				<!-- Scrolling near this loads the next page; see showMore() in browse.js. -->
 				<p id="more" class="muted" hidden>Loading more…</p>

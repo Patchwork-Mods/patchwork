@@ -1,182 +1,99 @@
-// Searching one of the game's sources from the Mods tab's search box, for
-// mods that aren't in the profile yet. When the game has just one source,
-// it's searched as you type, after a pause; with more, only on Enter or the
-// button under the mods (#mods-more), since which to search is a choice
-// and each keystroke shouldn't hit several. The source is the one the Add
-// mods tab would open on, and what's found counts as that source's latest
-// search there (see searchFor() in browse.js), so "See more" carries on
-// from it. The hint under the box (.link-hint) says what Enter will do.
+// Searching the game's sources from the Mods tab's search box, for mods
+// that aren't in the profile yet. Every source ticked on the Add mods tab
+// is searched at once, as you type after a pause, and what they find shows
+// under the mods (#mods-more), merged, with "See all" opening the search on
+// the Add mods tab (see openSearch() in browse.js). A link in the box is
+// added instead (see addlink.js).
 
-import { invoke, sourceName, state, status } from "./state.js";
+import { sourceName, state, status } from "./state.js";
 import { $, h } from "./dom.js";
-import { modQuery, modSearch } from "./toolbar.js";
-import { asLink, site } from "./addlink.js";
-import { addedMods, lastSource, openSearch, resultCard, searchFor, sources } from "./browse.js";
+import { modQuery } from "./toolbar.js";
+import { addedMods, failures, openSearch, resultCard, searchAll, sourceNames, ticked } from "./browse.js";
 
-const hint = $("#mods-link .link-hint");
 const more = $("#mods-more");
 
 /**
- * The search of a source for what's in the box, once one's been asked for:
- * `{ text, source, loading, failed, search, previous }`, where `search` is
- * what it found. Null once the box says something else, except while
- * searching as you type, when it stays up until the next search starts,
- * and then shows as `previous` until that one's done.
+ * The search for what's in the box: `{ text, sources, loading, search,
+ * previous }`, where `search` is what was found (see searchAll()). Null
+ * while the box is empty or holds a link. What the last search found stays
+ * up, as `previous`, until the next one's done.
  */
 let found = null;
-
-/** Whether the source is searched as you type: when it's the only one. */
-const asYouType = () => sources().length === 1;
 
 /** The search waiting for the user to stop typing. */
 let typing;
 
-/** Counts link lookups, so one finishing late doesn't replace a newer hint. */
-let lookups = 0;
-
-/** Brings the hint and #mods-more up to date with what's in the box. */
+/** Brings #mods-more up to date with what's in the box; called by addlink.js. */
 export function boxChanged() {
   const text = modQuery();
-  const auto = asYouType() && !!text;
   clearTimeout(typing);
-  if (found && found.text !== text && !auto) found = null;
-  if (auto && found?.text !== text) {
-    typing = setTimeout(() => searchSource(lastSource(), { scroll: false }), 300);
-  }
-  renderHint().catch(() => {});
+  if (!text) found = null;
+  else if (!sameSearch()) typing = setTimeout(() => searchSources({ scroll: false }), 300);
   render();
 }
 
-function showHint(text) {
-  hint.textContent = text ?? "";
-  hint.hidden = !text;
+/** The sources to search changed, on the Add mods tab. */
+export function sourcesChanged() {
+  if (found && !sameSearch()) boxChanged();
 }
 
-async function renderHint() {
-  const p = state.profile;
-  const lookup = ++lookups;
-  const link = asLink(modSearch.value);
-  if (!p) return showHint(null);
-  if (!link) {
-    const source = lastSource();
-    const ask = modQuery() && source && !asYouType();
-    return showHint(ask ? `Search ${sourceName(source)} for more mods` : null);
-  }
-  const source = await invokeQuietly("link_source", { game: p.game, link });
-  if (lookup !== lookups) return;
-  const from = source === "url" ? site(link) : source && sourceName(source);
-  showHint(
-    source === null
-      ? "Not a link patchwork recognizes"
-      : from
-        ? `Add the mod from ${from}`
-        : "Add the mod from this link",
-  );
-}
-
-/** Like run(), without putting a failure in the status bar; null if it fails. */
-async function invokeQuietly(command, args) {
-  try {
-    return await invoke(command, args);
-  } catch {
-    return null;
-  }
-}
+/** Whether `found` is a search of what's in the box, of the ticked sources. */
+const sameSearch = () =>
+  !!found && found.text === modQuery() && found.sources.join() === ticked().join();
 
 /**
- * Searches `source` for what's in the box, showing what it finds under the
- * mods, and scrolling to it with `scroll`.
+ * Searches the ticked sources for what's in the box, showing what they find
+ * under the mods, and scrolling to it with `scroll`.
  */
-async function searchSource(source, { scroll = true } = {}) {
+async function searchSources({ scroll = true } = {}) {
   clearTimeout(typing);
   const text = modQuery();
-  if (!state.profile || !text || !source) return;
-  const name = sourceName(source);
-  // while typing, what the source last found stays up meanwhile
-  const previous = found?.source === source ? (found.search ?? found.previous) : null;
-  const mine = (found = { text, source, loading: true, failed: false, search: null, previous });
+  const list = ticked();
+  if (!state.profile || !text || !list.length) return;
+  const names = sourceNames(list);
+  // what was last found stays up meanwhile
+  const previous = found?.search ?? found?.previous ?? null;
+  const mine = (found = { text, sources: list, loading: true, search: null, previous });
   render();
-  status(`Searching ${name}…`);
-  let search;
-  try {
-    search = await searchFor(source, text);
-  } catch {
-    if (found !== mine) return;
-    mine.loading = false;
-    mine.failed = true;
-    render();
-    return;
-  }
+  status(`Searching ${names}…`);
+  const search = await searchAll(list, text);
   if (found !== mine) return;
   mine.loading = false;
   mine.search = search;
-  // null means another profile was opened, or the source searched again
+  // null means another profile was opened
   if (!search) found = null;
   render();
   if (!search) return;
-  status(`${search.total ?? search.items.length} mods on ${name}`);
+  const failed = failures(search);
+  if (failed.length === list.length) {
+    status(`Couldn't search ${names}: ${failed[0][1]}`, true);
+    return;
+  }
+  status(`${search.items.length} mods found on ${names}`);
   if (scroll) more.scrollIntoView({ block: "nearest" });
-}
-
-/** The source buttons, when there's more than one to search. */
-function sourcePicker(current) {
-  const list = sources();
-  if (list.length < 2) return null;
-  return h(
-    "div",
-    { class: "segmented", role: "group", "aria-label": "Source" },
-    list.map((s) =>
-      h(
-        "button",
-        {
-          type: "button",
-          "aria-pressed": String(s === current),
-          onclick: () => s !== current && searchSource(s),
-        },
-        sourceName(s),
-      ),
-    ),
-  );
 }
 
 function render() {
   const text = modQuery();
-  const source = found?.source ?? lastSource();
-  more.hidden = !state.profile || !text || !source;
+  const list = found?.sources ?? ticked();
+  more.hidden = !state.profile || !text || !list.length;
   if (more.hidden) return more.replaceChildren();
-  const name = sourceName(source);
-  if (!found && asYouType()) {
-    return more.replaceChildren(h("p", { class: "muted" }, `Searching ${name}…`));
-  }
-  if (!found) {
-    return more.replaceChildren(
-      h(
-        "button",
-        { type: "button", class: "mods-more-search", onclick: () => searchSource(source) },
-        `Search ${name} for “${text}”`,
-      ),
-    );
-  }
+  const names = sourceNames(list);
+  const search = found?.search ?? found?.previous;
   const head = (...rest) =>
-    h(
-      "div",
-      { class: "row mods-more-head" },
-      h("strong", {}, `From ${name}`),
-      sourcePicker(source),
-      ...rest,
-    );
-  const search = found.search ?? found.previous;
-  if (found.loading && !search) {
-    return more.replaceChildren(head(), h("p", { class: "muted" }, `Searching ${name}…`));
+    h("div", { class: "row mods-more-head" }, h("strong", {}, `From ${names}`), ...rest);
+  if (!search) {
+    return more.replaceChildren(head(), h("p", { class: "muted" }, `Searching ${names}…`));
   }
-  if (found.failed) {
+  const failed = failures(search);
+  if (failed.length === search.sources.length) {
     return more.replaceChildren(
       head(),
       h(
         "p",
         { class: "muted" },
-        `Couldn't search ${name}. `,
-        h("button", { type: "button", onclick: () => searchSource(source) }, "Try again"),
+        `Couldn't search ${names}. `,
+        h("button", { type: "button", onclick: () => searchSources() }, "Try again"),
       ),
     );
   }
@@ -187,6 +104,8 @@ function render() {
   const added = addedMods();
   const listed = new Set([...added, ...(state.profile.dependencies ?? []).map((d) => d.key)]);
   const items = search.items.filter((item) => !listed.has(`${item.source}:${item.id}`));
+  const labelled = search.sources.length > 1;
+  const anyMore = search.sources.some((s) => search.parts[s]?.hasMore);
   more.replaceChildren(
     head(
       h(
@@ -195,35 +114,33 @@ function render() {
           type: "button",
           class: "mods-more-all",
           title: "Open this search on the Add mods tab, to sort, filter and see every result",
-          onclick: () => openSearch(source, search),
+          onclick: () => openSearch(search),
         },
-        !search.hasMore
-          ? "Open in Add mods"
-          : search.total != null
-            ? `See all ${search.total} on Add mods`
-            : "See more on Add mods",
+        anyMore ? "See all on Add mods" : "Open in Add mods",
       ),
     ),
+    failed.length
+      ? h("p", { class: "muted" }, failed.map(([s]) => `Couldn't search ${sourceName(s)}.`).join(" "))
+      : null,
     items.length
       ? h(
           "ul",
           { class: "result-grid" },
-          items.map((item) => resultCard(item, added)),
+          items.map((item) => resultCard(item, added, { labelled })),
         )
       : h(
           "p",
           { class: "empty" },
           search.items.length
-            ? `You already have everything ${name} found for “${search.query.text}”.`
-            : `Nothing on ${name} matches “${search.query.text}”.`,
+            ? `You already have everything ${names} found for “${search.text}”.`
+            : `Nothing on ${names} matches “${search.text}”.`,
         ),
   );
 }
 
 // Enter in the box adds the mod for a link (see addlink.js), and otherwise
-// searches the source.
+// searches straight away.
 $("#mods-link").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (asLink(modSearch.value)) return;
-  searchSource(found?.source ?? lastSource());
+  if (modQuery()) searchSources();
 });

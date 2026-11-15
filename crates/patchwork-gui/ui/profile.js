@@ -90,7 +90,7 @@ export function showProfile(profile, { keepMods = false } = {}) {
   // the changed profile (like adding a mod) don't reload.
   const listed = state.overview.profiles.find((p) => p.id === profile.id);
   if (listed) listed.mods = profile.mods.length;
-  state.searches = {};
+  state.search = null;
   state.filters = {};
   renderSidebar();
   renderProfile({ keepMods });

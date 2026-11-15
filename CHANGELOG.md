@@ -14,8 +14,11 @@ dialog shows, so the heading has to match the version being released.
 - A link to a shared Google Drive folder lists what's in it to pick a file
   from, with its folders opening in place and files that don't look like
   mods (PDFs, pictures) dimmed.
-- The Mods tab's search box also takes links: paste one to add that mod, or
-  press Enter to search the game's sources.
+- One box for adding mods: the Add mods tab's search box searches every
+  source the game has at once as you type, with each result marked with its
+  source, and takes links too: paste one to add that mod. Untick a source
+  under the box to leave it out. The Mods tab's search box does the same,
+  showing what the sources found under your mods.
 - A mod's page shows which versions of other mods it needs, and its
   dependencies are in a hover tab in the list view.
 - Nexus mods with more than one main file (a plugin and its preloader, say)

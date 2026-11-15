@@ -126,9 +126,7 @@ document.addEventListener("keydown", (e) => {
       : !$("#tab-mods").hidden
         ? !$("#mods-link").hidden && modSearch
         : !$("#tab-browse").hidden
-          ? $("#search").hidden
-            ? $("#browse-link .link-url")
-            : $("#search").elements.text
+          ? $("#browse-search")
           : null;
   if (!box) return;
   e.preventDefault();

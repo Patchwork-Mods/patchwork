@@ -218,6 +218,8 @@ struct ProfileDetail {
     /// can be reverted.
     has_changes: bool,
     search_sources: Vec<String>,
+    /// The orders each of `search_sources` can sort its results in.
+    search_sorts: BTreeMap<String, Vec<SortBy>>,
     /// The ways the game can be started, for the Play button; none until
     /// it's known where it's installed.
     launch_options: Vec<LaunchOption>,
@@ -415,12 +417,16 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let game_files = state.files.len();
     let deploy_status = pw.deploy_status(&r).map_err(msg)?;
     let has_changes = pw.has_changes(&r).map_err(msg)?;
-    let search_sources = pw
+    let search_sources: Vec<String> = pw
         .search_sources(&loaded.game)
         .map_err(msg)?
         .into_iter()
         .map(str::to_owned)
         .collect();
+    let search_sorts = search_sources
+        .iter()
+        .map(|s| Ok((s.clone(), pw.search_sorts(s).map_err(msg)?.to_vec())))
+        .collect::<CmdResult<_>>()?;
     let lock = pw.load_lock(&r).map_err(msg)?;
     let dependencies = lock
         .iter()
@@ -532,6 +538,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         deploy_status,
         has_changes,
         search_sources,
+        search_sorts,
         launch_options,
         setup,
     })

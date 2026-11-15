@@ -1,18 +1,20 @@
-// Adding a mod from a link pasted into a link box, like `patchwork add
-// <link>`. There's one at the top of the Add mods tab (#browse-link), and the
-// Mods tab's search box (#mods-link) is one too while what's in it looks like
-// a link; each works on its own. The source that recognizes the link may have
+// Adding a mod from a link pasted into a search box, like `patchwork add
+// <link>`. The Add mods tab's box (#browse-link) and the Mods tab's
+// (#mods-link) both search, and add a mod instead while what's in them looks
+// like a link, which the hint under them (.link-hint) says where from; each
+// works on its own. The source that recognizes the link may have
 // several files to choose between, like a GitHub release's; they're listed
 // under the link, and the one picked is what later updates look for. A
 // shared folder's files are listed the same way, with its folders opening
 // in place to list theirs, and files that don't look like mods (a PDF, a
 // picture) dimmed.
 
-import { run, state, status } from "./state.js";
+import { invoke, run, sourceName, state, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { renderProfile } from "./profile.js";
 import { refreshDetails } from "./details.js";
 import { boxChanged } from "./sourcesearch.js";
+import { browseChanged } from "./browse.js";
 
 function size(bytes) {
   if (bytes == null) return "";
@@ -45,15 +47,25 @@ export function site(link) {
   }
 }
 
+/** Like invoke(), without putting a failure in the status bar; null if it fails. */
+async function invokeQuietly(command, args) {
+  try {
+    return await invoke(command, args);
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Makes `form` a link box, returning a function that empties it. With
- * `search`, its box is for searching too, and only adds a mod when what's
- * in it looks like a link, which is when its Add button shows; `onChange`
- * is called whenever what's in the box changes, including being emptied.
+ * Makes `form` a search box that adds a mod when what's in it looks like a
+ * link, which is when its Add button shows, returning a function that
+ * empties it. `onChange` is called whenever what's in the box changes,
+ * including being emptied.
  */
-function linkBox(form, { search = false, onChange = () => {} } = {}) {
+function linkBox(form, onChange) {
   const input = form.querySelector(".link-url");
   const submit = form.querySelector(".link-submit");
+  const hintEl = form.querySelector(".link-hint");
   const files = form.querySelector(".link-files");
   const fileList = form.querySelector(".link-file-list");
   const fileAdd = form.querySelector(".link-file-add");
@@ -75,10 +87,37 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
     fileAdd.disabled = true;
   }
 
-  /** Shows the Add button only for a link, in a search box. */
+  /** Counts link lookups, so one finishing late doesn't replace a newer hint. */
+  let lookups = 0;
+
+  function showHint(text) {
+    hintEl.textContent = text ?? "";
+    hintEl.hidden = !text;
+  }
+
+  /** Says what Enter will do: add from where, for a link. */
+  async function renderHint() {
+    const p = state.profile;
+    const lookup = ++lookups;
+    const link = asLink(input.value);
+    if (!p || !link) return showHint(null);
+    const source = await invokeQuietly("link_source", { game: p.game, link });
+    if (lookup !== lookups) return;
+    const from = source === "url" ? site(link) : source && sourceName(source);
+    showHint(
+      source === null
+        ? "Not a link patchwork recognizes"
+        : from
+          ? `Add the mod from ${from}`
+          : "Add the mod from this link",
+    );
+  }
+
+  /** Shows the Add button only for a link. */
   function showMode() {
-    if (search) submit.hidden = !asLink(input.value);
+    submit.hidden = !asLink(input.value);
     onChange();
+    renderHint().catch(() => {});
   }
 
   function clear() {
@@ -160,7 +199,7 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const p = state.profile;
-    const link = asLink(input.value) ?? (search ? "" : input.value.trim());
+    const link = asLink(input.value);
     if (!p || !link) return;
     submit.disabled = true;
     fileAdd.disabled = true;
@@ -210,8 +249,8 @@ function linkBox(form, { search = false, onChange = () => {} } = {}) {
 }
 
 const clears = [
-  linkBox($("#mods-link"), { search: true, onChange: () => boxChanged() }),
-  linkBox($("#browse-link")),
+  linkBox($("#mods-link"), () => boxChanged()),
+  linkBox($("#browse-link"), () => browseChanged()),
 ];
 
 /** Empties both link boxes, for another profile. */
