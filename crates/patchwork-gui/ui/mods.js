@@ -24,6 +24,7 @@ import { conflictMark } from "./conflicts.js";
 import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
 import { requirementsList, requirementsMark } from "./requirements.js";
 import { settingsButton } from "./config.js";
+import { showEditMod } from "./editmod.js";
 import { ADD_TAB, selectTab } from "./browse.js";
 import { go } from "./nav.js";
 
@@ -530,6 +531,7 @@ function rowDetails(m, item, onRemove) {
     h(
       "div",
       { class: "row-actions" },
+      editButton(m),
       urlButton(item.url, "Website"),
       urlButton(item.author_url, "Author's mods"),
       m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
@@ -682,9 +684,11 @@ function fileMark(item) {
  * opened, and which file of the mod it's for. Two mods showing the same
  * name with nothing to tell them apart (say their summaries were fetched
  * before they said which file) show their names in the profile instead,
- * which are never the same. */
+ * which are never the same, unless they've been given names of their own. */
 function modTitle(m, item) {
+  // a name the user gave it is what they want to see, whatever else is called that
   const shared =
+    !m.edits?.name &&
     !item.file &&
     m.summary &&
     (state.profile?.mods ?? []).some(
@@ -808,6 +812,20 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
   return card;
 }
 
+/** Opens the Edit dialog, to change how the mod is shown. */
+function editButton(m) {
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "edit-mod",
+      title: "Change its name, picture, description, tags or notes",
+      onclick: () => showEditMod(m),
+    },
+    "Edit",
+  );
+}
+
 /** What hangs below a card's sheet, brought up by raising it. */
 function cardMore(m, item, settings) {
   const urlButton = (url, text, title) =>
@@ -818,6 +836,7 @@ function cardMore(m, item, settings) {
     h(
       "div",
       { class: "card-actions" },
+      editButton(m),
       settings,
       m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
       h(

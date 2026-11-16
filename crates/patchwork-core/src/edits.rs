@@ -64,7 +64,7 @@ pub static MOD_FIELDS: &[ModField] = &[
     ModField {
         id: "name",
         label: "Name",
-        help: "What the mod is called here. The profile still knows it by its own name.",
+        help: "The display name of the mod",
         kind: FieldKind::Text,
         from_source: |s| Some(FieldValue::Text(s.name.clone())),
         apply: Some(|s, v| {
@@ -76,7 +76,7 @@ pub static MOD_FIELDS: &[ModField] = &[
     ModField {
         id: "picture",
         label: "Picture",
-        help: "A link to a picture, or a picture on this computer.",
+        help: "",
         kind: FieldKind::Picture,
         from_source: |s| s.icon_url.clone().map(FieldValue::Text),
         apply: Some(|s, v| {
@@ -114,7 +114,7 @@ pub static MOD_FIELDS: &[ModField] = &[
     ModField {
         id: "page",
         label: "Page",
-        help: "Where the mod's name links to.",
+        help: "Where the mod links to",
         kind: FieldKind::Link,
         from_source: |s| s.url.clone().map(FieldValue::Text),
         apply: Some(|s, v| {
@@ -126,7 +126,7 @@ pub static MOD_FIELDS: &[ModField] = &[
     ModField {
         id: "tags",
         label: "Tags",
-        help: "What the mod is sorted, filtered and hidden by.",
+        help: "",
         kind: FieldKind::List,
         from_source: |s| {
             (!s.categories.is_empty())

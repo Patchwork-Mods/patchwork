@@ -2671,6 +2671,89 @@ textarea {
   gap: 4px;
 }
 
+/* The Edit dialog, for how a mod is shown; see editmod.js. A field that's
+   been changed from what the mod's source says is marked, with a button to
+   put it back. */
+#edit-mod-dialog {
+  width: min(560px, 90vw);
+}
+
+#edit-mod-fields {
+  max-height: 60vh;
+  overflow-y: auto;
+  /* room for the boxes' focus rings */
+  padding: 2px;
+}
+
+.edit-mod-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.edit-mod-label label {
+  font-weight: 600;
+}
+
+.edit-mod-changed {
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--pw-accent);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+.edit-mod-label .edit-mod-reset {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.edit-mod-field textarea {
+  /* unlike the codes and links other boxes hold, this is writing */
+  font: inherit;
+  word-break: normal;
+}
+
+.edit-mod-picture {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.edit-mod-picture>.row {
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-mod-picture input {
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-mod-preview {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  background: var(--pw-bg);
+  font-size: 11px;
+  text-align: center;
+}
+
+.edit-mod-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#edit-mod-reset {
+  margin-right: auto;
+}
+
 /* A folder input with "Browse…" beside it. */
 .field .row input {
   flex: 1;

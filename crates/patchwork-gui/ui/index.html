@@ -900,6 +900,23 @@
 			</form>
 		</dialog>
 
+		<!-- How a mod is shown (its name, picture, description, ...), in place of
+		     what its source says; see editmod.js. The fields come from the backend. -->
+		<dialog id="edit-mod-dialog">
+			<form id="edit-mod-form" class="stack">
+				<h2 id="edit-mod-title"></h2>
+				<p class="hint muted">Changes are kept in the profile. Anything left as its source has it
+					follows the source when that changes.</p>
+				<div id="edit-mod-fields" class="stack"></div>
+				<p id="edit-mod-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" id="edit-mod-reset">Use the source's for all</button>
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" class="primary">Save</button>
+				</div>
+			</form>
+		</dialog>
+
 		<dialog id="revert-dialog">
 			<form method="dialog" class="stack">
 				<h2>Revert changes</h2>

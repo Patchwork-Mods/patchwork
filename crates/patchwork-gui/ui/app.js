@@ -28,6 +28,7 @@ import "./capture.js";
 import "./addlink.js";
 import "./sourcesearch.js";
 import "./wheel.js";
+import "./editmod.js";
 
 setModsView(modsView);
 refresh()

@@ -448,6 +448,14 @@ fn mod_fields(app: State<'_, App>, id: String, name: String) -> CmdResult<Vec<Fi
     app.pw.mod_fields(&profile_ref(&id)?, &name).map_err(msg)
 }
 
+/// A picture on this computer, as something the window can show, for the
+/// Edit dialog to preview one before it's saved. `None` if it can't be read
+/// or isn't a picture.
+#[tauri::command]
+fn picture_preview(path: String) -> Option<String> {
+    image_src(&path)
+}
+
 /// Changes fields of mod `name` by id; `null` goes back to what its source
 /// says, and fields left out stay as they are.
 #[tauri::command]
@@ -2212,6 +2220,7 @@ fn main() {
             set_enabled,
             set_priority,
             mod_fields,
+            picture_preview,
             set_mod_edits,
             remove_mod,
             revert_profile,
