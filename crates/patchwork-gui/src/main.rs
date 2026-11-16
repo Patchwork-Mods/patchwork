@@ -22,6 +22,7 @@ use patchwork_core::cancel::Cancel;
 use patchwork_core::compat::GameVersions;
 use patchwork_core::conflicts::ModConflicts;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, Dest, RootOrigin};
+use patchwork_core::edits::{self, FieldInfo, FieldValue};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter, Silent};
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
@@ -428,6 +429,40 @@ fn image_src(image: &str) -> Option<String> {
     ))
 }
 
+/// `summary`, as [`Patchwork::mod_summary`] gave it for `m`, made ready to
+/// show: a picture the user picked from this computer is read in, since the
+/// window can't load files itself.
+pub(crate) fn shown_summary(m: &ProfileMod, summary: Option<ModSummary>) -> Option<ModSummary> {
+    let mut summary = summary?;
+    let picked = edits::mod_field("picture").and_then(|f| m.edits.get(f));
+    if picked.is_some() {
+        summary.icon_url = summary.icon_url.as_deref().and_then(image_src);
+    }
+    Some(summary)
+}
+
+/// Everything about mod `name` that can be changed (see
+/// [`patchwork_core::edits`]), for its Edit dialog.
+#[tauri::command]
+fn mod_fields(app: State<'_, App>, id: String, name: String) -> CmdResult<Vec<FieldInfo>> {
+    app.pw.mod_fields(&profile_ref(&id)?, &name).map_err(msg)
+}
+
+/// Changes fields of mod `name` by id; `null` goes back to what its source
+/// says, and fields left out stay as they are.
+#[tauri::command]
+fn set_mod_edits(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    changes: BTreeMap<String, Option<FieldValue>>,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .set_mod_edits(&profile_ref(&id)?, &name, changes)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
 #[tauri::command]
 fn profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
     profile_detail(&app.pw, id)
@@ -506,7 +541,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
             let known = versioned
                 .then(|| pw.known_versions(&lookup, &m.source, &m.id))
                 .flatten();
-            let summary = pw.known_summary(&loaded.game, &m.source, &m.id);
+            let summary = shown_summary(&m, pw.mod_summary(&loaded.game, &m));
             let locked = lock.iter().flat_map(|l| &l.mods).find(|l| l.has_key(&key));
             let update = versioned
                 .then(|| pw.known_update(&lookup, &m, lock.as_ref()))
@@ -515,7 +550,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 update,
                 shown_id: pw.display_id(lock.as_ref(), &m),
                 versions: known.map(|k| k.versions),
-                summary: summary.and_then(|k| k.summary),
+                summary,
                 versioned,
                 locked: locked.and_then(|l| l.version.clone()),
                 source_game_versions: locked.and_then(|l| l.game_versions.clone()),
@@ -2176,6 +2211,8 @@ fn main() {
             check_source_settings,
             set_enabled,
             set_priority,
+            mod_fields,
+            set_mod_edits,
             remove_mod,
             revert_profile,
             profile_history,

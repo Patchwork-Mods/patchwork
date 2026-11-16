@@ -16,6 +16,7 @@ fn profile_mod(name: &str) -> ProfileMod {
         replaces: Vec::new(),
         seen: None,
         ignores: Vec::new(),
+        edits: Default::default(),
     }
 }
 

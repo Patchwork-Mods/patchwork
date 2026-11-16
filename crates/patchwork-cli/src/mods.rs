@@ -1,10 +1,12 @@
 //! Adding, finding and managing a profile's mods.
 
+use std::collections::BTreeMap;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use patchwork_core::Patchwork;
+use patchwork_core::edits::{self, FieldKind, FieldValue};
 use patchwork_core::lock::mod_key;
 use patchwork_core::order::{self, SortKey};
 use patchwork_core::profile::ProfileMod;
@@ -472,6 +474,61 @@ pub(crate) fn move_mod(
     let (profile, loaded) = selected(pw, explicit)?;
     let index = pw.move_mod(&profile, &name, &to.position())?;
     println!("moved {name} to {} of {}", index + 1, loaded.mods.len());
+    Ok(())
+}
+
+/// `patchwork edit`.
+pub(crate) fn edit(
+    pw: &Patchwork,
+    explicit: &Option<String>,
+    name: String,
+    set: Vec<String>,
+    reset: Vec<String>,
+) -> Result<()> {
+    let (profile, _) = selected(pw, explicit)?;
+    let mut changes = BTreeMap::new();
+    for field in reset {
+        changes.insert(field, None);
+    }
+    for change in set {
+        let (field, value) = change
+            .split_once('=')
+            .with_context(|| format!("`--set {change}` should be FIELD=VALUE"))?;
+        let value = match edits::mod_field(field).map(|f| f.kind) {
+            Some(FieldKind::List) => {
+                FieldValue::List(value.split(',').map(str::to_owned).collect())
+            }
+            _ => FieldValue::Text(value.to_owned()),
+        };
+        changes.insert(field.to_owned(), Some(value));
+    }
+    let changed = !changes.is_empty();
+    if changed {
+        pw.set_mod_edits(&profile, &name, changes)?;
+    }
+    let show = |v: &FieldValue| match v {
+        FieldValue::Text(t) => t.clone(),
+        FieldValue::List(items) => items.join(", "),
+    };
+    for f in pw.mod_fields(&profile, &name)? {
+        match (&f.edited, &f.source) {
+            (Some(edited), Some(source)) if edited != source => {
+                println!("{}: {}  (source: {})", f.id, show(edited), show(source));
+            }
+            (Some(edited), _) => println!("{}: {}  (changed)", f.id, show(edited)),
+            (None, Some(source)) => println!("{}: {}", f.id, show(source)),
+            // with nothing to show, only listing what can be set
+            (None, None) if !changed => println!("{}: -", f.id),
+            (None, None) => {}
+        }
+    }
+    if !changed {
+        let ids: Vec<_> = edits::MOD_FIELDS.iter().map(|f| f.id).collect();
+        println!(
+            "\nchange one with --set FIELD=VALUE; fields: {}",
+            ids.join(", ")
+        );
+    }
     Ok(())
 }
 

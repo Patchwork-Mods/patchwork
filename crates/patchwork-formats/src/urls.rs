@@ -109,6 +109,7 @@ impl ProfileFormat for UrlList {
                 replaces: Vec::new(),
                 seen: None,
                 ignores: Vec::new(),
+                edits: Default::default(),
             });
         }
         if mods.is_empty() {

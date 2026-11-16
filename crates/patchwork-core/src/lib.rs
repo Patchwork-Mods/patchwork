@@ -23,6 +23,7 @@ pub mod compat;
 pub mod config;
 pub mod conflicts;
 pub mod deploy;
+pub mod edits;
 pub mod environment;
 pub mod error;
 pub mod event;

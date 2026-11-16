@@ -9,6 +9,7 @@ use crate::Error;
 use crate::compat::GameVersions;
 use crate::config::Edits;
 use crate::deploy::Dest;
+use crate::edits::ModEdits;
 use crate::ext::ExtTables;
 use crate::list::ListEntry;
 
@@ -209,6 +210,10 @@ pub struct ProfileMod {
     /// got them some other way or don't want them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<String>,
+    /// What the user has changed about how the mod is shown, like its name
+    /// or picture. See [`crate::edits`].
+    #[serde(default, skip_serializing_if = "ModEdits::is_empty")]
+    pub edits: ModEdits,
 }
 
 fn is_zero(n: &i32) -> bool {
@@ -237,6 +242,8 @@ struct ProfileModFile {
     replaces: Vec<String>,
     #[serde(default)]
     ignores: Vec<String>,
+    #[serde(default)]
+    edits: ModEdits,
     /// Schema 2's FOMOD picks.
     #[serde(default)]
     fomod: Option<toml::Value>,
@@ -267,6 +274,7 @@ impl From<ProfileModFile> for ProfileMod {
             ext,
             replaces: file.replaces,
             ignores: file.ignores,
+            edits: file.edits,
         }
     }
 }

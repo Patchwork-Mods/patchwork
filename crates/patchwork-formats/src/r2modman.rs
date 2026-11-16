@@ -332,6 +332,7 @@ fn from_r2z(format_id: &str, ctx: &FormatContext<'_>, input: &[u8]) -> Result<Sh
                 replaces: Vec::new(),
                 seen: None,
                 ignores: Vec::new(),
+                edits: Default::default(),
             }
         })
         .collect();

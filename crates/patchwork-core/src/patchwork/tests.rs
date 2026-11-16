@@ -593,6 +593,7 @@ async fn a_pinned_mod_is_told_only_about_versions_not_yet_seen() {
         ext: Default::default(),
         replaces: Vec::new(),
         ignores: Vec::new(),
+        edits: Default::default(),
     });
     pw.save_profile(&profile, &loaded).unwrap();
     let lookup = pw.lookup(&loaded).unwrap();
@@ -1131,6 +1132,7 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         replaces: Vec::new(),
         seen: None,
         ignores: Vec::new(),
+        edits: Default::default(),
     });
     loaded.hidden_tags = vec!["library".to_owned()];
     pw.save_profile(&profile, &loaded).unwrap();
@@ -1182,6 +1184,7 @@ fn priorities_change_the_load_order_but_not_the_list() {
             replaces: Vec::new(),
             seen: None,
             ignores: Vec::new(),
+            edits: Default::default(),
         });
     }
     pw.save_profile(&profile, &loaded).unwrap();
@@ -1342,6 +1345,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         replaces: Vec::new(),
         seen: None,
         ignores: Vec::new(),
+        edits: Default::default(),
     };
     let locked = |path: &Path, hash| LockedMod {
         name: path.file_stem().unwrap().to_string_lossy().into_owned(),

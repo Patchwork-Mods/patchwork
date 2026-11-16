@@ -150,6 +150,7 @@ impl Details {
                 let result = pw.summary(&job.game, &job.source, &job.id).await;
                 self.outdated.lock().unwrap().remove(&id.1);
                 result.map(|summary| {
+                    let summary = shown_summary(pw, job, summary);
                     let _ = handle.emit(
                         "patchwork://details",
                         DetailsEvent::Summary {
@@ -167,6 +168,21 @@ impl Details {
             self.failed.lock().unwrap().insert(id);
         }
         result.map_err(msg)
+    }
+}
+
+/// `summary`, just fetched for `job`'s mod, with the user's changes to the
+/// mod on top (see [`crate::shown_summary`]), as the profile is now. A
+/// dependency's is left as it is.
+fn shown_summary(pw: &Patchwork, job: &Job, summary: Option<ModSummary>) -> Option<ModSummary> {
+    let loaded = pw.load_profile(&job.profile).ok();
+    let m = loaded
+        .iter()
+        .flat_map(|p| &p.mods)
+        .find(|m| mod_key(&m.source, &m.id) == job.key);
+    match m {
+        Some(m) => crate::shown_summary(m, m.edits.apply(m, summary)),
+        None => summary,
     }
 }
 

@@ -18,6 +18,7 @@ use crate::deploy::{
     DesiredState, Folders, GameFiles, InstalledMod, Os, Resolved, ResolvedRoots, RootId, RootSetup,
     Roots,
 };
+use crate::edits::{FieldInfo, FieldValue};
 use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
@@ -941,6 +942,7 @@ impl Patchwork {
             replaces: Vec::new(),
             seen: None,
             ignores: Vec::new(),
+            edits: Default::default(),
         };
         loaded.mods.push(added.clone());
         self.save_profile(profile, &loaded)?;
@@ -1235,6 +1237,7 @@ impl Patchwork {
                         }
                     },
                 };
+                let summary = m.edits.apply(m, summary);
                 let facts = facts.entry(mod_key(&m.source, &m.id)).or_default();
                 if let Some(summary) = summary {
                     facts.tags = summary.categories.into_iter().map(|c| c.name).collect();
@@ -1248,17 +1251,14 @@ impl Patchwork {
 
     /// The profile's mods matching `query` (see [`matching::rank`]), best
     /// first, each with its place in the load order. Nothing is fetched:
-    /// mods are found by their [`Patchwork::known_summary`] if they have
+    /// mods are found by their [`Patchwork::mod_summary`] if they have
     /// one, and otherwise just by name.
     pub fn find_mods(&self, profile: &ProfileRef, query: &str) -> Result<Vec<(usize, ProfileMod)>> {
         let loaded = self.load_profile(profile)?;
         let summaries: Vec<Option<ModSummary>> = loaded
             .mods
             .iter()
-            .map(|m| {
-                self.known_summary(&loaded.game, &m.source, &m.id)
-                    .and_then(|k| k.summary)
-            })
+            .map(|m| self.mod_summary(&loaded.game, m))
             .collect();
         let texts: Vec<ModText> = loaded
             .mods
@@ -1419,6 +1419,53 @@ impl Patchwork {
             .ok()
             .flatten()
             .filter(|k| k.id == id)
+    }
+
+    /// What to show for one of a profile's mods: its
+    /// [`Patchwork::known_summary`] with the user's [`ProfileMod::edits`]
+    /// on top. `None` if there's nothing to show beyond its name.
+    pub fn mod_summary(&self, game: &str, m: &ProfileMod) -> Option<ModSummary> {
+        let known = self
+            .known_summary(game, &m.source, &m.id)
+            .and_then(|k| k.summary);
+        m.edits.apply(m, known)
+    }
+
+    /// Each of [`crate::edits::MOD_FIELDS`] for mod `name`, with what its source
+    /// says and what the user's changed it to, for an editor.
+    pub fn mod_fields(&self, profile: &ProfileRef, name: &str) -> Result<Vec<FieldInfo>> {
+        let loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let m = loaded
+            .mods
+            .iter()
+            .find(|m| m.name == name)
+            .ok_or_else(|| no_such_mod(&label, name))?;
+        let known = self
+            .known_summary(&loaded.game, &m.source, &m.id)
+            .and_then(|k| k.summary);
+        Ok(m.edits.fields(m, known.as_ref()))
+    }
+
+    /// Changes fields of mod `name` (see [`crate::edits::MOD_FIELDS`]) by id; a
+    /// field given `None` goes back to what the mod's source says. Fields
+    /// not given are left as they are. Nothing is saved if any of them
+    /// can't be changed like that.
+    pub fn set_mod_edits(
+        &self,
+        profile: &ProfileRef,
+        name: &str,
+        changes: BTreeMap<String, Option<FieldValue>>,
+    ) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let m = loaded
+            .find_mut(name)
+            .ok_or_else(|| no_such_mod(&label, name))?;
+        for (id, value) in changes {
+            m.edits.set(&id, value)?;
+        }
+        self.save_profile(profile, &loaded)
     }
 
     fn known_summary_file(&self, game: &str, source: &str, id: &str) -> PathBuf {

@@ -135,6 +135,19 @@ enum Command {
         #[arg(allow_negative_numbers = true)]
         priority: Option<i32>,
     },
+    /// Show or change how a mod is shown: its name, picture, description,
+    /// author, page, tags and notes, in place of what its source says.
+    /// With no options, lists each with its source's value and any change.
+    Edit {
+        name: String,
+        /// Change a field, like `--set name="Better Name"`. Tags are
+        /// separated by commas.
+        #[arg(long, value_name = "FIELD=VALUE")]
+        set: Vec<String>,
+        /// Go back to what the mod's source says for a field.
+        #[arg(long, value_name = "FIELD")]
+        reset: Vec<String>,
+    },
     /// List the dependencies the profile's mods brought in, and which mods
     /// need each. Only locked mods count.
     #[command(alias = "dependencies")]
@@ -366,6 +379,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Ignore(args) => deps::ignore(&pw, &cli.profile, args)?,
         Command::Replace(args) => deps::replace(&pw, &cli.profile, args).await?,
         Command::Priority { name, priority } => mods::priority(&pw, &cli.profile, name, priority)?,
+        Command::Edit { name, set, reset } => mods::edit(&pw, &cli.profile, name, set, reset)?,
         Command::Order { list, action } => deploy::order(&pw, &cli.profile, list, action)?,
         Command::Action { id, dry_run } => deploy::action(&pw, &cli.profile, id, dry_run).await?,
         Command::Conflicts { name } => deps::conflicts(&pw, &cli.profile, name)?,
