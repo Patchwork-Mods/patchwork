@@ -193,12 +193,26 @@ button.danger {
   border-color: transparent;
 }
 
-input:focus-visible,
+/*
+ * Focus styling is for finding your place by keyboard. After a click, focus
+ * that moves by itself (a dialog opening on its first button, a menu on its
+ * first item) still counts as :focus-visible to the webview, so every rule
+ * for something other than a text field only applies while the last thing
+ * pressed was a key, not the pointer: app.js sets data-pointer on :root.
+ * The :where() keeps the rules' specificity as it was.
+ */
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]):focus-visible,
 select:focus-visible,
 textarea:focus-visible,
-button:focus-visible {
+:where(:root:not([data-pointer])) :is(input, button):focus-visible {
   outline: 2px solid var(--pw-focus);
   outline-offset: 1px;
+}
+
+/* and the webview's own ring, on things without a rule of their own */
+:where(:root[data-pointer]
+    :focus-visible:not(textarea, select, input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]))) {
+  outline: none;
 }
 
 /* Revert: just its icon, sized to sit level with Update and Deploy. */
@@ -439,9 +453,9 @@ button.link {
 }
 
 .game-grid li:hover .edit-game,
-.game-grid .edit-game:focus-visible,
+:where(:root:not([data-pointer])) .game-grid .edit-game:focus-visible,
 .game-grid li:hover .favorite,
-.game-grid .favorite:focus-visible,
+:where(:root:not([data-pointer])) .game-grid .favorite:focus-visible,
 .game-grid .favorite[aria-pressed="true"] {
   opacity: 1;
 }
@@ -765,7 +779,7 @@ button.link {
   border-color: var(--pw-accent);
 }
 
-.menu summary:focus-visible {
+:where(:root:not([data-pointer])) .menu summary:focus-visible {
   outline: 2px solid var(--pw-focus);
   outline-offset: 1px;
 }
@@ -800,7 +814,7 @@ button.link {
 }
 
 .menu-items button:hover,
-.menu-items button:focus-visible {
+:where(:root:not([data-pointer])) .menu-items button:focus-visible {
   background: var(--pw-hover);
   outline: none;
 }
@@ -912,7 +926,7 @@ dialog button.danger-text {
 }
 
 .menu-items .category .toggle:hover,
-.menu-items .category .toggle:focus-visible {
+:where(:root:not([data-pointer])) .menu-items .category .toggle:focus-visible {
   border-color: var(--pw-border);
   background: var(--pw-surface);
 }
@@ -1621,9 +1635,9 @@ select.mod-version {
 }
 
 .tags-mark:hover,
-.tags-mark:focus-visible,
+:where(:root:not([data-pointer])) .tags-mark:focus-visible,
 .ties-mark:hover,
-.ties-mark:focus-visible {
+:where(:root:not([data-pointer])) .ties-mark:focus-visible {
   color: var(--pw-text);
 }
 
@@ -1744,7 +1758,7 @@ select.mod-version {
   background: var(--pw-accent);
 }
 
-.mod-priority:focus-visible {
+:where(:root:not([data-pointer])) .mod-priority:focus-visible {
   outline: 2px solid var(--pw-focus);
   outline-offset: 1px;
 }
@@ -1860,7 +1874,7 @@ select.mod-version {
   transform: translateX(14px);
 }
 
-.switch input:focus-visible {
+:where(:root:not([data-pointer])) .switch input:focus-visible {
   outline-offset: 2px;
 }
 
@@ -1962,7 +1976,7 @@ span.mod-version {
 }
 
 .result:hover .remove,
-.result .remove:focus-visible {
+:where(:root:not([data-pointer])) .result .remove:focus-visible {
   opacity: 1;
 }
 
@@ -2035,7 +2049,7 @@ span.mod-version {
 }
 
 .result:hover .drag-handle,
-.result .drag-handle:focus-visible,
+:where(:root:not([data-pointer])) .result .drag-handle:focus-visible,
 .result.dragging .drag-handle {
   opacity: 1;
 }
@@ -2117,13 +2131,13 @@ body.dragging-mod .drag-handle {
 }
 
 .mod-card:hover .card-sheet,
-.mod-card:has(:focus-visible) .card-sheet {
+:where(:root:not([data-pointer])) .mod-card:has(:focus-visible) .card-sheet {
   transform: translateY(calc(-1 * var(--raise, 0px)));
   box-shadow: 0 -6px 16px color-mix(in srgb, var(--pw-shadow-color) 18%, transparent);
 }
 
 .mod-card:hover .card-sheet::before,
-.mod-card:has(:focus-visible) .card-sheet::before {
+:where(:root:not([data-pointer])) .mod-card:has(:focus-visible) .card-sheet::before {
   opacity: 1;
 }
 
@@ -2395,7 +2409,7 @@ dialog::backdrop {
 }
 
 .config-file:not(.missing):hover,
-.config-file:has(.config-open:focus-visible) {
+:where(:root:not([data-pointer])) .config-file:has(.config-open:focus-visible) {
   background: var(--pw-surface);
 }
 
@@ -3215,7 +3229,7 @@ legend {
 }
 
 .settings-menu button:hover,
-.settings-menu button:focus-visible {
+:where(:root:not([data-pointer])) .settings-menu button:focus-visible {
   border-color: var(--pw-border);
 }
 
