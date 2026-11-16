@@ -3814,3 +3814,93 @@ async fn soft_dependencies_are_shown_not_installed() {
             .is_empty()
     );
 }
+
+#[test]
+fn game_edits_go_in_the_users_file_over_the_definition() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    let game = "lethal-company";
+    let before = pw.registry().game(game).unwrap().clone();
+    let text = |s: &str| Some(FieldValue::Text(s.to_owned()));
+
+    let fields = pw.game_fields(game).unwrap();
+    let name = fields.iter().find(|f| f.id == "name").unwrap();
+    assert_eq!(name.source, text(&before.value.name));
+    assert_eq!(name.edited, None);
+
+    pw.set_game_edits(
+        game,
+        BTreeMap::from([
+            ("name".to_owned(), text("LC")),
+            ("color".to_owned(), text("#ff0000")),
+        ]),
+    )
+    .unwrap();
+    let after = pw.registry().game(game).unwrap().clone();
+    assert_eq!(after.value.name, "LC");
+    assert_eq!(after.value.accent.unwrap().as_str(), "#ff0000");
+    assert_eq!(after.overlays, [crate::registry::Origin::User]);
+    // only how it's shown changed, so nothing needs deploying again
+    assert_eq!(after.hash, before.hash);
+    let fields = pw.game_fields(game).unwrap();
+    let name = fields.iter().find(|f| f.id == "name").unwrap();
+    assert_eq!(name.source, text(&before.value.name));
+    assert_eq!(name.edited, text("LC"));
+
+    // a bad value saves nothing
+    let bad = pw.set_game_edits(
+        game,
+        BTreeMap::from([("name".to_owned(), None), ("color".to_owned(), text("red"))]),
+    );
+    assert!(bad.is_err());
+    assert_eq!(pw.registry().game(game).unwrap().value.name, "LC");
+    assert!(
+        pw.set_game_edits(game, BTreeMap::from([("nope".to_owned(), None)]))
+            .is_err()
+    );
+
+    // put back, the file goes
+    pw.set_game_edits(
+        game,
+        BTreeMap::from([("name".to_owned(), None), ("color".to_owned(), None)]),
+    )
+    .unwrap();
+    let file = pw
+        .paths()
+        .user_registry()
+        .join(format!("games/{game}.toml"));
+    assert!(!file.exists());
+    let reverted = pw.registry().game(game).unwrap().clone();
+    assert_eq!(reverted.value.name, before.value.name);
+    assert!(reverted.overlays.is_empty());
+}
+
+#[test]
+fn added_games_keep_their_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+
+    let fields = pw.game_fields("my-game").unwrap();
+    assert!(fields.iter().all(|f| f.source.is_none()));
+    let err = pw
+        .set_game_edits("my-game", BTreeMap::from([("name".to_owned(), None)]))
+        .unwrap_err();
+    assert!(err.to_string().contains("name"), "{err}");
+
+    pw.set_game_edits(
+        "my-game",
+        BTreeMap::from([("name".to_owned(), Some(FieldValue::Text("Renamed".into())))]),
+    )
+    .unwrap();
+    let entry = pw.registry().game("my-game").unwrap().clone();
+    assert_eq!(entry.value.name, "Renamed");
+    // still the whole definition
+    assert_eq!(entry.value.deployer.kind, "none");
+}

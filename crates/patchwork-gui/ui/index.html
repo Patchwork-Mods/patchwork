@@ -435,23 +435,29 @@
 			</form>
 		</dialog>
 
-		<!-- This machine's settings for a game, sent as a GameInstall (see
-         patchwork-core); see games.js. -->
+		<!-- A game's settings, in tabs. General is this machine's settings for
+         it, sent as a GameInstall (see patchwork-core; games.js).
+         Appearance is how it's shown: its name, picture and color (see
+         editgame.js) and its theme (see theme.js). -->
 		<dialog id="game-settings-dialog">
 			<form id="game-settings-form" method="dialog" class="stack">
 				<h2 id="game-settings-title">Game settings</h2>
-				<div class="field">
+				<div id="game-settings-tabs" class="tabs" role="tablist">
+					<button type="button" role="tab" data-tab="general" aria-selected="true">General</button>
+					<button type="button" role="tab" data-tab="appearance">Appearance</button>
+				</div>
+				<div class="field" data-panel="general">
 					<label for="game-settings-path">Install folder</label>
 					<div class="row">
-						<input id="game-settings-path" name="path" required placeholder="/path/to/game" autocomplete="off">
+						<input id="game-settings-path" name="path" placeholder="/path/to/game" autocomplete="off">
 						<button type="button" data-browse="path">Browse…</button>
 					</div>
 					<small class="muted">Undeploy first to move a game that has mods deployed.</small>
 				</div>
-				<p id="game-settings-env" class="muted" hidden></p>
+				<p id="game-settings-env" class="muted" data-panel="general" hidden></p>
 				<!-- Filled in from what the game's deployer takes; see
              settingField() in settings.js. -->
-				<fieldset class="stack">
+				<fieldset class="stack" data-panel="general">
 					<legend>Deploying</legend>
 					<label class="field">
 						<span>Put files in the game folder by</span>
@@ -467,7 +473,7 @@
 				</fieldset>
 				<!-- Filled in from the ways to start the game and what can run it;
              see games.js. -->
-				<fieldset id="game-settings-launching" class="stack" hidden>
+				<fieldset id="game-settings-launching" class="stack" data-panel="general" hidden>
 					<legend>Launching</legend>
 					<label id="game-settings-launch" class="field" hidden>
 						<span>Start</span>
@@ -482,7 +488,7 @@
 					<div id="game-settings-runner-fields" class="stack"></div>
 				</fieldset>
 				<!-- Filled in from the game's other roots; see games.js. -->
-				<fieldset id="game-settings-roots" class="stack" hidden>
+				<fieldset id="game-settings-roots" class="stack" data-panel="general" hidden>
 					<legend>Other folders</legend>
 					<small class="muted">
 						Folders outside the game's own that patchwork puts a few files in. Leave them empty to use
@@ -498,16 +504,16 @@
 					</div>
 					<div id="game-settings-root-list" class="stack"></div>
 				</fieldset>
-				<fieldset class="stack">
-					<legend>Appearance</legend>
+				<div id="game-settings-appearance" class="stack" data-panel="appearance">
+					<!-- Filled in from the backend's game_fields; see editgame.js. -->
+					<div id="game-appearance-fields" class="stack"></div>
 					<label class="field">
 						<span>Theme</span>
 						<!-- Filled in by renderGameTheme() in theme.js. -->
 						<select id="game-settings-theme"></select>
-						<small id="game-settings-theme-note" class="muted"></small>
 					</label>
-				</fieldset>
-				<p class="muted hint">
+				</div>
+				<p class="muted hint" data-panel="general">
 					Accounts for sources like Nexus Mods are in
 					<button type="button" id="game-settings-app" class="link">Settings</button>.
 				</p>
@@ -628,7 +634,7 @@
 							<option value="off">Off</option>
 						</select>
 						<small class="muted">While a game is open, its own theme takes the place of yours when it has one, or
-							its colour is used for yours. A game's settings can pick another theme for it.</small>
+							its color is used for yours. A game's settings can pick another theme for it.</small>
 					</div>
 					<p id="appearance-problems" class="error" hidden></p>
 				</fieldset>
@@ -910,7 +916,7 @@
 				<div id="edit-mod-fields" class="stack"></div>
 				<p id="edit-mod-error" class="error" hidden></p>
 				<div class="row end">
-					<button type="button" id="edit-mod-reset">Use the source's for all</button>
+					<button type="button" id="edit-mod-reset" title="Go back to what the mod's source says for everything">Reset all</button>
 					<button type="button" value="cancel" formnovalidate>Cancel</button>
 					<button type="submit" class="primary">Save</button>
 				</div>

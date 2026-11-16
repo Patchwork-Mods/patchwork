@@ -2,11 +2,11 @@
 // in main.rs; this puts its CSS in the <style> elements in index.html, each
 // in its own cascade layer so a theme beats the built-in look whatever its
 // selectors are, and user.css (in no layer) beats everything. The open
-// game's accent colour goes between the picked theme and the game's own.
+// game's accent color goes between the picked theme and the game's own.
 // The mode goes on <html> as data-mode="light|dark" for CSS to target.
 //
 // Settings → Appearance has the theme picker: one button per theme for
-// every game, each drawn in that theme's colours, which shows the theme on
+// every game, each drawn in that theme's colors, which shows the theme on
 // the whole window while hovered or focused. A game's settings pick a
 // theme for just that game.
 //
@@ -66,7 +66,7 @@ function paint(theme) {
   $("#theme-builtin").textContent =
     "@layer pw-builtin, pw-theme, pw-accent, pw-game;\n" + layer("pw-builtin", theme.builtin);
   $("#theme-global").textContent = layer("pw-theme", theme.global?.css);
-  // Checked to be a hex colour by patchwork, so safe to put in CSS.
+  // Checked to be a hex color by patchwork, so safe to put in CSS.
   const accent = theme.accent;
   $("#theme-accent").textContent = accent
     ? layer("pw-accent", `:root { --pw-accent: ${accent.color}; --pw-accent-text: ${accent.text}; }`)
@@ -216,7 +216,7 @@ function rootVars(css, mode) {
   return vars;
 }
 
-/** A small drawing of the app in `theme`'s colours (null: the built-in
+/** A small drawing of the app in `theme`'s colors (null: the built-in
  *  look), in the mode it would show in. */
 function sample(theme) {
   const mode = modeFor(prefs.mode, theme?.modes ?? []);
@@ -374,8 +374,6 @@ gameThemesSelect.addEventListener("change", () =>
 
 const gameThemeSelect = $("#game-settings-theme");
 let gameThemeFor = null;
-/** What each of the game's Theme options does, by value. */
-let gameThemeNotes = {};
 
 /** Fills in the game settings' Theme for `game`. */
 export async function renderGameTheme(game) {
@@ -397,24 +395,16 @@ export async function renderGameTheme(game) {
       ? `${usual} with ${gameTheme.name}`
       : gameTheme.name
     : automatic.accent
-      ? `${usual} in the game's colour`
+      ? `${usual} in the game's color`
       : usual;
-  gameThemeNotes = {
-    "": "Follows Game themes in Settings → Appearance: the game's own theme when it has one, otherwise its colour on your usual theme.",
-    none: `Your usual theme (now ${usual}), changing when you change it, without this game's ${gameTheme ? "theme" : "colour"}.`,
-    default: "Patchwork's own look while this game is open, whatever your usual theme is.",
-  };
-  for (const t of own) gameThemeNotes[t.id] = "This game theme, even when Game themes is turned off in Settings → Appearance.";
-  for (const t of others) gameThemeNotes[t.id] = `${t.name} while this game is open, whatever your usual theme is.`;
-
   const option = (t) => h("option", { value: t.id }, t.name);
   const set = prefs.games?.[game] ?? "";
-  const known = Object.hasOwn(gameThemeNotes, set);
+  const known = set === "" || set === "none" || set === "default" || list.themes.some((t) => t.id === set);
   // Leaving the game's look out only differs from Automatic when there's some.
   const showNone = gameTheme || automatic.accent || set === "none";
   gameThemeSelect.replaceChildren(
     h("option", { value: "" }, `Automatic: ${automaticShows}`),
-    showNone ? h("option", { value: "none" }, `${usual} (your usual theme), without the game's ${gameTheme ? "theme" : "colour"}`) : null,
+    showNone ? h("option", { value: "none" }, `${usual} (your usual theme), without the game's ${gameTheme ? "theme" : "color"}`) : null,
     own.length ? h("optgroup", { label: "This game's themes" }, ...own.map(option)) : null,
     h(
       "optgroup",
@@ -425,16 +415,9 @@ export async function renderGameTheme(game) {
     known ? null : h("option", { value: set }, `${set} (missing)`),
   );
   gameThemeSelect.value = set;
-  describeGameTheme();
-}
-
-function describeGameTheme() {
-  $("#game-settings-theme-note").textContent =
-    (Object.hasOwn(gameThemeNotes, gameThemeSelect.value) && gameThemeNotes[gameThemeSelect.value]) || "There's no theme with this name any more.";
 }
 
 gameThemeSelect.addEventListener("change", async () => {
-  describeGameTheme();
   const preview = await invoke("theme", { game: gameThemeFor, pick: gameThemeSelect.value });
   if (gameThemeSelect.closest("dialog").open) paint(preview);
 });

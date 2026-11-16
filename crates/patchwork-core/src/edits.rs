@@ -33,6 +33,8 @@ pub enum FieldKind {
     Link,
     /// A list of short names, like tags.
     List,
+    /// A color, as `#rrggbb` or `#rgb`.
+    Color,
 }
 
 /// A value of a [`ModField`].
@@ -174,7 +176,15 @@ impl ModField {
     /// field, or `None` if that leaves it empty, which means the source's
     /// value is used.
     pub fn check(&self, value: FieldValue) -> Result<Option<FieldValue>> {
-        let value = match (self.kind, value) {
+        self.kind.check(self.id, value)
+    }
+}
+
+impl FieldKind {
+    /// `value` tidied up (trimmed, blank list items dropped) if it suits
+    /// field `id` of this kind, or `None` if that leaves it empty.
+    pub fn check(self, id: &str, value: FieldValue) -> Result<Option<FieldValue>> {
+        let value = match (self, value) {
             (FieldKind::List, FieldValue::List(items)) => {
                 let mut tidy: Vec<String> = Vec::new();
                 for item in items {
@@ -186,10 +196,19 @@ impl ModField {
                 (!tidy.is_empty()).then_some(FieldValue::List(tidy))
             }
             (FieldKind::List, FieldValue::Text(_)) => {
-                return Err(Error::invalid(format!("`{}` takes a list", self.id)));
+                return Err(Error::invalid(format!("`{id}` takes a list")));
             }
             (_, FieldValue::List(_)) => {
-                return Err(Error::invalid(format!("`{}` takes text", self.id)));
+                return Err(Error::invalid(format!("`{id}` takes text")));
+            }
+            (FieldKind::Color, FieldValue::Text(text)) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    return Ok(None);
+                }
+                let color = crate::game::Accent::try_from(text.to_owned())
+                    .map_err(|e| Error::invalid(format!("`{id}`: {e}")))?;
+                Some(FieldValue::Text(color.as_str().to_owned()))
             }
             (kind, FieldValue::Text(text)) => {
                 // long text keeps its leading indents and blank lines
@@ -199,7 +218,7 @@ impl ModField {
                     _ => text.trim(),
                 };
                 if kind != FieldKind::LongText && text.contains('\n') {
-                    return Err(Error::invalid(format!("`{}` takes one line", self.id)));
+                    return Err(Error::invalid(format!("`{id}` takes one line")));
                 }
                 (!text.is_empty()).then(|| FieldValue::Text(text.to_owned()))
             }
@@ -324,6 +343,8 @@ fn bare_summary(m: &ProfileMod) -> ModSummary {
         categories: Vec::new(),
     }
 }
+
+pub mod game;
 
 #[cfg(test)]
 mod tests;

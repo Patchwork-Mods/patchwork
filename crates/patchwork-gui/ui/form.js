@@ -8,6 +8,7 @@
 // to pick, or of fields to set.
 
 import { $, h } from "./dom.js";
+import { colorPicker } from "./colorpick.js";
 import { run, state, status } from "./state.js";
 import { showProfile } from "./profile.js";
 import { refreshList } from "./list.js";
@@ -324,12 +325,11 @@ function fieldControl(field, set, key) {
     case "color": {
       const rgb = String(value).slice(0, 7);
       const alpha = String(value).slice(7) || "ff";
-      const picker = h("input", {
-        type: "color",
-        value: rgb,
+      const picker = colorPicker({
         "data-field": key,
         onchange: (e) => set(field.alpha ? e.target.value + alpha : e.target.value),
       });
+      picker.value = rgb;
       if (!field.alpha) return picker;
       const opacity = h("input", {
         type: "range",

@@ -77,6 +77,9 @@ pub struct Registry {
     games: BTreeMap<String, Entry<GameDef>>,
     /// Each game's merged TOML, which the next overlay is merged into.
     game_tables: BTreeMap<String, toml::Table>,
+    /// The merged TOML of games the user's layer overlays, as it was
+    /// before that, so what the user changed can be told from the rest.
+    before_user: BTreeMap<String, toml::Table>,
     data: BTreeMap<(String, String), Entry<toml::Table>>,
     /// The file hosts in `hosts`, ready to use.
     links: Links,
@@ -245,6 +248,10 @@ impl Registry {
 
         let (merged, origin, overlays) = match self.games.get(id) {
             Some(base) => {
+                if origin == Origin::User {
+                    self.before_user
+                        .insert(id.to_owned(), self.game_tables[id].clone());
+                }
                 let mut merged = self.game_tables[id].clone();
                 merge(&mut merged, table);
                 let mut overlays = base.overlays.clone();
@@ -278,6 +285,36 @@ impl Registry {
 
     pub fn games(&self) -> impl Iterator<Item = &Entry<GameDef>> {
         self.games.values()
+    }
+
+    /// Game `id`'s TOML as every layer but the user's has it: what the
+    /// user's own file for it is changing. `None` if only the user's
+    /// layer defines it (or nothing does).
+    pub fn game_before_user(&self, id: &str) -> Option<&toml::Table> {
+        if let Some(table) = self.before_user.get(id) {
+            return Some(table);
+        }
+        let entry = self.games.get(id)?;
+        (entry.origin != Origin::User).then(|| &self.game_tables[id])
+    }
+
+    /// Checks that `overlay`, as the user's file for game `id` at `path`,
+    /// would leave it a game patchwork can use.
+    pub fn check_user_game(&self, id: &str, mut overlay: toml::Table, path: &Path) -> Result<()> {
+        resolve_image(&mut overlay, path);
+        upgrade_game(&mut overlay);
+        let merged = match self.game_before_user(id) {
+            Some(base) => {
+                let mut merged = base.clone();
+                merge(&mut merged, overlay);
+                merged
+            }
+            None => overlay,
+        };
+        let _: GameDef = toml::Value::Table(merged)
+            .try_into()
+            .map_err(|e| Error::parse(path, e))?;
+        Ok(())
     }
 
     /// Adds an entry as a built-in one, without any files.

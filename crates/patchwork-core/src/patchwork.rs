@@ -18,6 +18,7 @@ use crate::deploy::{
     DesiredState, Folders, GameFiles, InstalledMod, Os, Resolved, ResolvedRoots, RootId, RootSetup,
     Roots,
 };
+use crate::edits::game::{UserGameFile, game_field};
 use crate::edits::{FieldInfo, FieldValue};
 use crate::environment::GameEnv;
 use crate::error::IoContext;
@@ -798,6 +799,49 @@ impl Patchwork {
             .join("games")
             .join(format!("{}.toml", def.id));
         fsutil::write_toml(&path, &def)?;
+        self.reload_registry()
+    }
+
+    /// Each of game `game`'s [`crate::edits::game::GAME_FIELDS`], with
+    /// what its definition says and what the user's own file for it
+    /// changes that to. Fields of a game only the user's file defines (one
+    /// they added) have nothing from a definition.
+    pub fn game_fields(&self, game: &str) -> Result<Vec<FieldInfo>> {
+        let registry = self.registry();
+        registry.game(game)?;
+        let file = UserGameFile::load(&self.paths, game)?;
+        Ok(file.fields(registry.game_before_user(game)))
+    }
+
+    /// Changes fields of game `game` by id, in the user's own file for it
+    /// (`<config>/games/<id>.toml`), and reloads the registry; a field
+    /// given `None` goes back to what its definition says. Fields not
+    /// given, and anything else in the file, are left as they are. Nothing
+    /// is saved if any of them can't be changed like that.
+    pub fn set_game_edits(
+        &self,
+        game: &str,
+        changes: BTreeMap<String, Option<FieldValue>>,
+    ) -> Result<()> {
+        let registry = self.registry();
+        registry.game(game)?;
+        let defined = registry.game_before_user(game).is_some();
+        let mut file = UserGameFile::load(&self.paths, game)?;
+        for (id, value) in changes {
+            let field = game_field(&id)
+                .ok_or_else(|| Error::invalid(format!("games have no field `{id}` to change")))?;
+            let value = value
+                .map(|v| field.kind.check(field.id, v))
+                .transpose()?
+                .flatten();
+            if value.is_none() && !defined && field.key == "name" {
+                return Err(Error::invalid("the game needs a name"));
+            }
+            file.set(field, value);
+        }
+        registry.check_user_game(game, file.table()?, file.path())?;
+        drop(registry);
+        file.save()?;
         self.reload_registry()
     }
 

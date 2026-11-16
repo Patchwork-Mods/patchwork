@@ -6,10 +6,11 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use patchwork_core::Patchwork;
 use patchwork_core::deploy::{DeployTarget, RootId, RootOrigin};
+use patchwork_core::edits::game::{GAME_FIELDS, game_field};
 use patchwork_core::launch::{self};
 use patchwork_core::locate::Locator;
 
-use crate::common::{game_install, print_setting};
+use crate::common::{field_changes, game_install, print_fields, print_setting};
 
 #[derive(Subcommand)]
 pub(crate) enum GameCommand {
@@ -47,10 +48,31 @@ pub(crate) enum GameCommand {
     },
     /// Go back to what the game's definition says for a setting.
     Unset { id: String, key: String },
+    /// Change how a game is shown: its name, picture or color. Changes go
+    /// in your own file for it, `<config>/games/<id>.toml`. With no
+    /// changes, lists what can be changed.
+    Edit {
+        id: String,
+        /// Change a field, as FIELD=VALUE.
+        #[arg(long, value_name = "FIELD=VALUE")]
+        set: Vec<String>,
+        /// Go back to what the game's definition says for a field.
+        #[arg(long, value_name = "FIELD")]
+        reset: Vec<String>,
+    },
 }
 
 pub(crate) fn run(pw: &Patchwork, command: GameCommand) -> Result<()> {
     match command {
+        GameCommand::Edit { id, set, reset } => {
+            let changes = field_changes(set, reset, |f| game_field(f).map(|f| f.kind))?;
+            let changed = !changes.is_empty();
+            if changed {
+                pw.set_game_edits(&id, changes)?;
+            }
+            let ids: Vec<_> = GAME_FIELDS.iter().map(|f| f.id).collect();
+            print_fields(&pw.game_fields(&id)?, changed, &ids);
+        }
         GameCommand::List => {
             for entry in pw.registry().games() {
                 let game = &entry.value;

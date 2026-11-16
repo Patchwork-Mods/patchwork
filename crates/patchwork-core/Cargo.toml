@@ -28,6 +28,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 toml.workspace = true
+toml_edit.workspace = true
 unicode-normalization.workspace = true
 unrar-ng.workspace = true
 uuid.workspace = true

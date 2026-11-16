@@ -441,11 +441,87 @@ pub(crate) fn shown_summary(m: &ProfileMod, summary: Option<ModSummary>) -> Opti
     Some(summary)
 }
 
+/// Whether the system's color picker can be used. On Linux the webview's
+/// is GTK's color chooser, which aborts the whole app when GTK's settings
+/// schema for it isn't installed (as on NixOS without a wrapper), so this
+/// looks for the schema where GLib does; the page uses its own picker
+/// without it.
+#[tauri::command]
+fn native_color_picker() -> bool {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        const SCHEMA: &[u8] = b"org.gtk.Settings.ColorChooser";
+        let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+        let mut dirs: Vec<std::path::PathBuf> = var("GSETTINGS_SCHEMA_DIR")
+            .map(|v| std::env::split_paths(&v).collect())
+            .unwrap_or_default();
+        let data_home = var("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| var("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")));
+        let data_dirs =
+            var("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        dirs.extend(
+            data_home
+                .into_iter()
+                .chain(std::env::split_paths(&data_dirs))
+                .map(|d| d.join("glib-2.0/schemas")),
+        );
+        dirs.iter().any(|d| {
+            std::fs::read(d.join("gschemas.compiled"))
+                .is_ok_and(|bytes| bytes.windows(SCHEMA.len()).any(|w| w == SCHEMA))
+        })
+    }
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    true
+}
+
 /// Everything about mod `name` that can be changed (see
 /// [`patchwork_core::edits`]), for its Edit dialog.
 #[tauri::command]
 fn mod_fields(app: State<'_, App>, id: String, name: String) -> CmdResult<Vec<FieldInfo>> {
     app.pw.mod_fields(&profile_ref(&id)?, &name).map_err(msg)
+}
+
+/// What a game's Edit dialog shows: everything about it that can be
+/// changed (see [`patchwork_core::edits::game`]).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameFields {
+    fields: Vec<FieldInfo>,
+    /// Whether the user added the game themselves, so there's no definition
+    /// for its fields to go back to.
+    added: bool,
+}
+
+#[tauri::command]
+fn game_fields(app: State<'_, App>, game: String) -> CmdResult<GameFields> {
+    let mut fields = app.pw.game_fields(&game).map_err(msg)?;
+    let registry = app.pw.registry();
+    let added = registry.game_before_user(&game).is_none();
+    // what the game picker shows when the definition has no picture
+    let steam = registry
+        .game_before_user(&game)
+        .and_then(|_| registry.game(&game).ok())
+        .and_then(|e| e.value.detect.steam.first().copied());
+    if let Some(app_id) = steam
+        && let Some(picture) = fields
+            .iter_mut()
+            .find(|f| f.kind == patchwork_core::edits::FieldKind::Picture && f.source.is_none())
+    {
+        picture.source = Some(FieldValue::Text(steam_capsule(app_id)));
+    }
+    Ok(GameFields { fields, added })
+}
+
+/// Changes fields of game `game` by id, in the user's own file for it;
+/// `null` goes back to what its definition says.
+#[tauri::command]
+fn set_game_edits(
+    app: State<'_, App>,
+    game: String,
+    changes: BTreeMap<String, Option<FieldValue>>,
+) -> CmdResult<()> {
+    app.pw.set_game_edits(&game, changes).map_err(msg)
 }
 
 /// A picture on this computer, as something the window can show, for the
@@ -2194,6 +2270,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            native_color_picker,
             overview,
             profile,
             create_game,
@@ -2220,6 +2297,8 @@ fn main() {
             set_enabled,
             set_priority,
             mod_fields,
+            game_fields,
+            set_game_edits,
             picture_preview,
             set_mod_edits,
             remove_mod,

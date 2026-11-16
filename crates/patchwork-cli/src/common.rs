@@ -1,7 +1,10 @@
 //! Helpers that most commands share: the selected profile, game installs, and
 //! arguments used by more than one command.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, bail};
+use patchwork_core::edits::{FieldInfo, FieldKind, FieldValue};
 use patchwork_core::issue::Severity;
 use patchwork_core::order::Position;
 use patchwork_core::profile::{Profile, ProfileRef};
@@ -85,4 +88,58 @@ pub(crate) fn selected(pw: &Patchwork, explicit: &Option<String>) -> Result<(Pro
     };
     let loaded = pw.load_profile(&profile)?;
     Ok((profile, loaded))
+}
+
+/// What `--set FIELD=VALUE` and `--reset FIELD` say to change, for
+/// `patchwork edit` and `patchwork game edit`; `kind` gives a field's kind
+/// by id, so lists can be split at commas.
+pub(crate) fn field_changes(
+    set: Vec<String>,
+    reset: Vec<String>,
+    kind: impl Fn(&str) -> Option<FieldKind>,
+) -> Result<BTreeMap<String, Option<FieldValue>>> {
+    let mut changes = BTreeMap::new();
+    for field in reset {
+        changes.insert(field, None);
+    }
+    for change in set {
+        let (field, value) = change
+            .split_once('=')
+            .with_context(|| format!("`--set {change}` should be FIELD=VALUE"))?;
+        let value = match kind(field) {
+            Some(FieldKind::List) => {
+                FieldValue::List(value.split(',').map(str::to_owned).collect())
+            }
+            _ => FieldValue::Text(value.to_owned()),
+        };
+        changes.insert(field.to_owned(), Some(value));
+    }
+    Ok(changes)
+}
+
+/// Prints editable fields as they are, saying which have been changed. With
+/// nothing `changed`, also says how to change them, which `ids` can be.
+pub(crate) fn print_fields(fields: &[FieldInfo], changed: bool, ids: &[&str]) {
+    let show = |v: &FieldValue| match v {
+        FieldValue::Text(t) => t.clone(),
+        FieldValue::List(items) => items.join(", "),
+    };
+    for f in fields {
+        match (&f.edited, &f.source) {
+            (Some(edited), Some(source)) if edited != source => {
+                println!("{}: {}  (source: {})", f.id, show(edited), show(source));
+            }
+            (Some(edited), _) => println!("{}: {}  (changed)", f.id, show(edited)),
+            (None, Some(source)) => println!("{}: {}", f.id, show(source)),
+            // with nothing to show, only listing what can be set
+            (None, None) if !changed => println!("{}: -", f.id),
+            (None, None) => {}
+        }
+    }
+    if !changed {
+        println!(
+            "\nchange one with --set FIELD=VALUE; fields: {}",
+            ids.join(", ")
+        );
+    }
 }

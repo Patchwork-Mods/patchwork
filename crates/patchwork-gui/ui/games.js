@@ -7,6 +7,7 @@ import { selectTab } from "./browse.js";
 import { go } from "./nav.js";
 import { openSettings, readSetting, settingField } from "./settings.js";
 import { applyTheme, renderGameTheme, saveGameTheme } from "./theme.js";
+import { renderGameAppearance, saveGameAppearance } from "./editgame.js";
 
 function showScreen(screen) {
   document.body.dataset.screen = screen;
@@ -78,6 +79,7 @@ function gameCard(g) {
     "li",
     {},
     favoriteButton(g),
+    editButton(g),
     h(
       "button",
       { class: "game-card", "data-game": g.id, onclick: () => go(() => openGame(g.id)) },
@@ -114,6 +116,29 @@ function favoriteButton(g) {
       "aria-label": label,
       "aria-pressed": String(on),
       onclick: () => setFavorite(g, !on),
+    },
+    svg,
+  );
+}
+
+/** The pencil in a card's other corner, which opens the game's settings on Appearance. */
+function editButton(g) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of ["M12 20h9", "M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"]) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "edit-game",
+      title: "Change its name, picture or color",
+      "aria-label": `Change how ${g.name} looks`,
+      onclick: () => openGameSettings(g.id, "appearance"),
     },
     svg,
   );
@@ -295,9 +320,10 @@ document.addEventListener("click", (e) => {
   if (button) pickFolder(button.form.elements[button.dataset.browse]);
 });
 
-// Game settings, sent back to set_game_settings as a GameInstall (see
-// patchwork-core): the folder, how files are linked, the deployer's
-// settings, how it's started, and where the game's other folders are.
+// Game settings. General is sent back to set_game_settings as a
+// GameInstall (see patchwork-core): the folder, how files are linked, the
+// deployer's settings, how it's started, and where the game's other
+// folders are. Appearance is editgame.js's and theme.js's.
 
 const settingsForm = $("#game-settings-form");
 /** The deployer's settings as last shown. */
@@ -309,6 +335,23 @@ let rootSettings = [];
 let runnerChoices = null;
 /** The game's settings as last shown, for what the form doesn't show. */
 let shownInstall = {};
+/** The game the dialog is about, which needn't be the open one. */
+let settingsGame = null;
+
+/** Shows one of the dialog's tabs: "general" or "appearance". */
+function selectGameSettingsTab(key) {
+  for (const tab of document.querySelectorAll("#game-settings-tabs [role=tab]")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
+  }
+  for (const panel of settingsForm.querySelectorAll("[data-panel]")) {
+    // panels with nothing to show (like Launching, for some games) stay hidden
+    panel.classList.toggle("other-tab", panel.dataset.panel !== key);
+  }
+}
+
+for (const tab of document.querySelectorAll("#game-settings-tabs [role=tab]")) {
+  tab.addEventListener("click", () => selectGameSettingsTab(tab.dataset.tab));
+}
 
 /**
  * The runner's settings under names of their own, since runners can share keys
@@ -395,12 +438,23 @@ function rootField(root, set) {
   );
 }
 
-$("#game-settings").addEventListener("click", async () => {
-  const game = gameInfo(state.game);
-  const [settings, env] = await Promise.all([
-    run("game_settings", { game: game.id }),
-    run("game_env", { game: game.id }),
-  ]);
+$("#game-settings").addEventListener("click", () => openGameSettings(state.game, "general"));
+
+/** Opens game `id`'s settings on `tab` (see selectGameSettingsTab). */
+async function openGameSettings(id, tab) {
+  const game = gameInfo(id);
+  let settings, env;
+  try {
+    [settings, env] = await Promise.all([
+      invoke("game_settings", { game: game.id }),
+      invoke("game_env", { game: game.id }),
+      renderGameAppearance(game.id),
+    ]);
+  } catch (err) {
+    status(String(err), true);
+    return;
+  }
+  settingsGame = game.id;
   settingsForm.reset();
   settingsForm.elements.path.value = settings.install?.path ?? "";
   const link = settingsForm.elements.link;
@@ -427,8 +481,9 @@ $("#game-settings").addEventListener("click", async () => {
   $("#game-settings-env").textContent = env?.summary ? `Installed: ${env.summary}` : "";
   $("#game-settings-env").hidden = !env?.summary;
   $("#game-settings-error").hidden = true;
+  selectGameSettingsTab(tab);
   $("#game-settings-dialog").showModal();
-});
+}
 
 settingsForm.querySelector("[value=cancel]").addEventListener("click", () => {
   $("#game-settings-dialog").close();
@@ -462,8 +517,18 @@ settingsForm.addEventListener("submit", async (e) => {
     if (Object.keys(set).length) runners[runner.id] = set;
     else delete runners[runner.id];
   }
+  const path = settingsForm.elements.path.value.trim();
+  // a game that isn't set up can still have its appearance changed
+  const setUp = path || shownInstall.path;
+  if (!path && setUp) {
+    selectGameSettingsTab("general");
+    $("#game-settings-error").textContent = "The install folder can't be empty.";
+    $("#game-settings-error").hidden = false;
+    settingsForm.elements.path.focus();
+    return;
+  }
   const settings = {
-    path: settingsForm.elements.path.value,
+    path,
     link: settingsForm.elements.link.value || null,
     deployer,
     roots,
@@ -475,8 +540,11 @@ settingsForm.addEventListener("submit", async (e) => {
   const submit = settingsForm.querySelector("[type=submit]");
   submit.disabled = true;
   try {
-    await invoke("set_game_settings", { game: state.game, settings });
+    if (setUp) await invoke("set_game_settings", { game: settingsGame, settings });
+    const appearanceChanged = await saveGameAppearance();
     await saveGameTheme();
+    // the name shows in the picker and sidebar, the color in the theme
+    if (appearanceChanged && state.game === settingsGame) await applyTheme(settingsGame);
   } catch (err) {
     $("#game-settings-error").textContent = String(err);
     $("#game-settings-error").hidden = false;
@@ -486,5 +554,5 @@ settingsForm.addEventListener("submit", async (e) => {
   }
   $("#game-settings-dialog").close();
   await refresh();
-  status(`Saved ${gameInfo(state.game).name} settings`);
+  status(`Saved ${gameInfo(settingsGame)?.name ?? settingsGame} settings`);
 });

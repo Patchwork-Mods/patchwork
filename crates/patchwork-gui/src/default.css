@@ -411,6 +411,35 @@ button.link {
   stroke-linejoin: round;
 }
 
+.game-grid .edit-game {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+  opacity: 0;
+}
+
+.game-grid .edit-game svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.game-grid li:hover .edit-game,
+.game-grid .edit-game:focus-visible,
 .game-grid li:hover .favorite,
 .game-grid .favorite:focus-visible,
 .game-grid .favorite[aria-pressed="true"] {
@@ -2685,17 +2714,20 @@ textarea {
   padding: 2px;
 }
 
-.edit-mod-label {
+.edit-mod-label,
+.game-appearance-label {
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
 
-.edit-mod-label label {
+.edit-mod-label label,
+.game-appearance-label label {
   font-weight: 600;
 }
 
-.edit-mod-changed {
+.edit-mod-changed,
+.game-appearance-changed {
   padding: 0 6px;
   font-size: 11px;
   color: var(--pw-accent);
@@ -2703,34 +2735,40 @@ textarea {
   border-radius: 999px;
 }
 
-.edit-mod-label .edit-mod-reset {
+.edit-mod-label .edit-mod-reset,
+.game-appearance-label .game-appearance-reset {
   margin-left: auto;
   font-size: 12px;
 }
 
-.edit-mod-field textarea {
+.edit-mod-field textarea,
+.game-appearance-field textarea {
   /* unlike the codes and links other boxes hold, this is writing */
   font: inherit;
   word-break: normal;
 }
 
-.edit-mod-picture {
+.edit-mod-picture,
+.game-appearance-picture {
   display: flex;
   gap: 12px;
   align-items: center;
 }
 
-.edit-mod-picture>.row {
+.edit-mod-picture>.row,
+.game-appearance-picture>.row {
   flex: 1;
   min-width: 0;
 }
 
-.edit-mod-picture input {
+.edit-mod-picture input,
+.game-appearance-picture input {
   flex: 1;
   min-width: 0;
 }
 
-.edit-mod-preview {
+.edit-mod-preview,
+.game-appearance-preview {
   flex: none;
   width: 64px;
   height: 64px;
@@ -2744,7 +2782,8 @@ textarea {
   text-align: center;
 }
 
-.edit-mod-preview img {
+.edit-mod-preview img,
+.game-appearance-preview img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -2752,6 +2791,134 @@ textarea {
 
 #edit-mod-reset {
   margin-right: auto;
+}
+
+/* A color field: whether to set one, the picker and its code. */
+.game-appearance-color {
+  align-items: center;
+}
+
+.game-appearance-color-own {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The color picker of colorpick.js: a swatch, and its popover. */
+.color-pick {
+  flex: none;
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: pointer;
+}
+
+.color-pick::before {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: calc(var(--pw-radius) / 2);
+  background: var(--pick);
+}
+
+.color-pick:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.color-pick-native {
+  position: absolute;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.color-pick-popover {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 220px;
+  padding: 8px;
+  background: var(--pw-surface);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius);
+  box-shadow: var(--pw-shadow-lg);
+}
+
+.color-pick-area {
+  position: relative;
+  height: 140px;
+  border-radius: calc(var(--pw-radius) / 2);
+  background: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, var(--hue));
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.color-pick-dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.5);
+  pointer-events: none;
+}
+
+.color-pick-hue {
+  width: 100%;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+
+.color-pick-hue::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.5);
+}
+
+.color-pick-presets {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.color-pick-preset {
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--pw-border);
+}
+
+.field .row input.game-appearance-color-code {
+  flex: none;
+  width: 9ch;
+  font-family: ui-monospace, monospace;
+}
+
+/* The game settings' tabs; see games.js. A panel of the other tab is
+   hidden with a class, since some hide themselves when they've nothing
+   to show. */
+#game-settings-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--pw-border);
+}
+
+#game-settings-form .other-tab {
+  display: none;
 }
 
 /* A folder input with "Browse…" beside it. */
