@@ -14,7 +14,8 @@
         "height": 720,
         "minWidth": 640,
         "minHeight": 400,
-        "zoomHotkeysEnabled": true
+        "zoomHotkeysEnabled": true,
+        "visible": false
       }
     ],
     "security": {

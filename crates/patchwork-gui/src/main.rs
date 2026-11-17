@@ -446,6 +446,18 @@ pub(crate) fn shown_summary(m: &ProfileMod, summary: Option<ModSummary>) -> Opti
 /// schema for it isn't installed (as on NixOS without a wrapper), so this
 /// looks for the schema where GLib does; the page uses its own picker
 /// without it.
+/// Shows the window, which starts hidden so that it doesn't show blank and
+/// unstyled while the page loads. The page calls this once its first screen
+/// is drawn; see app.js.
+#[tauri::command]
+fn ready(window: tauri::WebviewWindow) {
+    let _ = window.show();
+}
+
+/// How long to wait for the page to say it's [`ready`] before showing the
+/// window anyway, so a page that fails to start still shows something.
+const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 #[tauri::command]
 fn native_color_picker() -> bool {
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -2264,12 +2276,20 @@ fn main() {
                 eprintln!("couldn't register for nxm:// links: {e}");
             }
             cli::refresh_copy(&app.state::<App>());
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(READY_TIMEOUT);
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.show();
+                }
+            });
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            ready,
             native_color_picker,
             overview,
             profile,

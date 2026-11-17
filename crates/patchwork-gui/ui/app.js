@@ -9,6 +9,7 @@
 import { modsView, setModsView } from "./mods.js";
 import { refresh } from "./profile.js";
 import { showMissed } from "./daemon.js";
+import { invoke } from "./state.js";
 // these only wire up their parts of the page
 import "./games.js";
 import "./browse.js";
@@ -46,7 +47,21 @@ addEventListener(
 );
 
 setModsView(modsView);
-refresh()
+
+// The window starts hidden (see tauri.conf.json) and is shown once the
+// first screen has its theme and content and has been drawn, rather than
+// blank and unstyled while that loads. Shown even if loading failed, so the
+// error can be seen. A hidden window may not draw frames at all, hence the
+// timer as well as waiting for the next frame.
+const drawn = () =>
+  new Promise((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(done));
+    setTimeout(done, 50);
+  });
+const shown = refresh()
   .catch(() => {})
-  .then(showMissed)
+  .then(drawn)
+  .then(() => invoke("ready"))
   .catch(() => {});
+
+shown.then(showMissed).catch(() => {});
