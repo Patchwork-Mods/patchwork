@@ -1,0 +1,20 @@
+[package]
+name = "patchwork-drg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+patchwork-core.workspace = true
+include_dir = "0.7.4"
+# The same sources as mint's, all MIT or MIT/Apache. uasset_utils names
+# unreal_asset by this branch, so it has to be named the same way here
+# for both to use one copy; Cargo.lock pins the commits.
+repak = { git = "https://github.com/trumank/repak", rev = "96410d664ac46c87cf451a3c5bad38d8cf42dda5", default-features = false, features = ["compression"] }
+uasset_utils = { git = "https://github.com/trumank/uasset_utils", rev = "4977261489849335e9fe7f30a2d698bd4f3fd20c" }
+unreal_asset = { git = "https://github.com/trumank/unrealmodding", branch = "patches" }
+
+[dev-dependencies]
+patchwork-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true

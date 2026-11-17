@@ -696,6 +696,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitvec"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddcec3d12c579d40898fe0a9a358a803c23e9c52ca3c425707f81c9436211837"
+dependencies = [
+ "funty",
+ "radium",
+ "tap",
+ "wyz",
+]
+
+[[package]]
 name = "blake3"
 version = "1.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1038,6 +1050,12 @@ dependencies = [
  "crypto-common 0.1.7",
  "inout",
 ]
+
+[[package]]
+name = "cityhasher"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ceab37c9e94f42414cccae77e930232c517f1bb190947018cffb0ab41fc40992"
 
 [[package]]
 name = "clap"
@@ -2015,6 +2033,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum_dispatch"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
+dependencies = [
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2320,6 +2350,12 @@ name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
+
+[[package]]
+name = "funty"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "futures"
@@ -3563,6 +3599,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a46645bbd70538861a90d0f26c31537cdf1e44aae99a794fb75a664b70951bc"
 
 [[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3697,12 +3752,12 @@ dependencies = [
  "portmapper",
  "rand 0.10.3",
  "reqwest",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "rustls-pki-types",
  "serde",
  "smallvec 1.16.2",
- "strum",
+ "strum 0.28.0",
  "time",
  "tokio",
  "tokio-stream",
@@ -3789,7 +3844,7 @@ dependencies = [
  "rand 0.10.3",
  "rustls",
  "simple-dns",
- "strum",
+ "strum 0.28.0",
  "tokio",
  "tracing",
  "url",
@@ -3818,7 +3873,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "noq",
- "num_enum",
+ "num_enum 0.7.6",
  "postcard",
  "rand 0.10.3",
  "redb 3.1.3",
@@ -3826,7 +3881,7 @@ dependencies = [
  "self_cell",
  "serde",
  "serde-error",
- "strum",
+ "strum 0.28.0",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -3926,7 +3981,7 @@ dependencies = [
  "n0-future",
  "noq",
  "noq-proto",
- "num_enum",
+ "num_enum 0.7.6",
  "percent-encoding",
  "pin-project",
  "postcard",
@@ -3936,7 +3991,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_bytes",
- "strum",
+ "strum 0.28.0",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -4754,7 +4809,7 @@ dependencies = [
  "ndk-context",
  "rand 0.10.3",
  "reqwest",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "simple-dns",
  "system-configuration 0.8.0",
@@ -4820,6 +4875,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "naive-cityhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fce7b49e1e6d8aa67232ef1c4c936c0af58756eb2db6f65c40bacb39035e7f42"
+
+[[package]]
 name = "nalgebra"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4860,7 +4921,7 @@ dependencies = [
  "jni-sys 0.3.1",
  "log",
  "ndk-sys",
- "num_enum",
+ "num_enum 0.7.6",
  "raw-window-handle",
  "thiserror 1.0.69",
 ]
@@ -5125,7 +5186,7 @@ dependencies = [
  "noq-proto",
  "noq-udp",
  "pin-project-lite",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "socket2",
  "thiserror 2.0.21",
@@ -5152,7 +5213,7 @@ dependencies = [
  "rand 0.10.3",
  "rand_pcg",
  "ring",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -5294,12 +5355,33 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a015b430d3c108a207fd776d2e2196aaf8b1cf8cf93253e3a097ff3085076a1"
+dependencies = [
+ "num_enum_derive 0.6.1",
+]
+
+[[package]]
+name = "num_enum"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
 dependencies = [
- "num_enum_derive",
+ "num_enum_derive 0.7.6",
  "rustversion",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96667db765a921f7b295ffee8b60472b686a51d4f21c2ee4ffdb94c7013b65a6"
+dependencies = [
+ "proc-macro-crate 1.3.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -5682,6 +5764,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "ordered-float"
+version = "3.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1e1c390732d15f1d48471625cd92d154e66db2c56645e29a9cd26f4699f72dc"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "ordered-multimap"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5820,6 +5911,7 @@ dependencies = [
  "patchwork-bethesda",
  "patchwork-core",
  "patchwork-deployers",
+ "patchwork-drg",
  "patchwork-formats",
  "patchwork-ftl",
  "patchwork-helldivers",
@@ -5884,6 +5976,18 @@ dependencies = [
  "patchwork-core",
  "serde",
  "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "patchwork-drg"
+version = "0.3.0"
+dependencies = [
+ "include_dir",
+ "patchwork-core",
+ "repak",
+ "tempfile",
+ "uasset_utils",
+ "unreal_asset",
 ]
 
 [[package]]
@@ -6271,7 +6375,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "netwatch",
- "num_enum",
+ "num_enum 0.7.6",
  "rand 0.10.3",
  "serde",
  "smallvec 1.16.2",
@@ -6524,7 +6628,7 @@ dependencies = [
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "socket2",
  "thiserror 2.0.21",
@@ -6546,7 +6650,7 @@ dependencies = [
  "rand 0.10.3",
  "rand_pcg",
  "ring",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "rustls-pki-types",
  "slab",
@@ -6590,6 +6694,12 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "radium"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
@@ -6858,6 +6968,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "repak"
+version = "0.2.1"
+source = "git+https://github.com/trumank/repak?rev=96410d664ac46c87cf451a3c5bad38d8cf42dda5#96410d664ac46c87cf451a3c5bad38d8cf42dda5"
+dependencies = [
+ "byteorder",
+ "flate2",
+ "sha1",
+ "strum 0.24.1",
+ "thiserror 1.0.69",
+ "zstd",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6982,6 +7105,12 @@ dependencies = [
  "ordered-multimap",
  "trim-in-place",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc-hash"
@@ -7278,7 +7407,7 @@ dependencies = [
  "phf",
  "phf_codegen",
  "precomputed-hash",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "servo_arc",
  "smallvec 1.16.2",
 ]
@@ -7956,11 +8085,33 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "063e6045c0e62079840579a7e47a355ae92f60eb74daaf156fb1e84ba164e63f"
+dependencies = [
+ "strum_macros 0.24.3",
+]
+
+[[package]]
+name = "strum"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.28.0",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.24.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e385be0d24f186b4ce2f9982191e7101bb737312ad61c1f2f984f34bcf85d59"
+dependencies = [
+ "heck 0.4.1",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -8162,6 +8313,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "tap"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tar"
@@ -9022,6 +9179,12 @@ dependencies = [
 
 [[package]]
 name = "typed-path"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6069e2cc1d241fd4ff5fa067e8882996fcfce20986d078696e05abccbcf27b43"
+
+[[package]]
+name = "typed-path"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
@@ -9037,6 +9200,20 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "uasset_utils"
+version = "0.1.0"
+source = "git+https://github.com/trumank/uasset_utils?rev=4977261489849335e9fe7f30a2d698bd4f3fd20c#4977261489849335e9fe7f30a2d698bd4f3fd20c"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "cityhasher",
+ "indexmap 2.14.2",
+ "typed-path 0.8.0",
+ "unicase",
+ "unreal_asset",
+]
 
 [[package]]
 name = "ucd-trie"
@@ -9128,6 +9305,123 @@ dependencies = [
 ]
 
 [[package]]
+name = "unreal_asset"
+version = "0.1.16"
+source = "git+https://github.com/trumank/unrealmodding?branch=patches#77475d83712a629a1e89a84eac4a3378ee5e21d4"
+dependencies = [
+ "byteorder",
+ "unreal_asset_base",
+ "unreal_asset_exports",
+ "unreal_asset_kismet",
+ "unreal_asset_proc_macro",
+ "unreal_asset_properties",
+ "unreal_asset_registry",
+ "unreal_helpers",
+]
+
+[[package]]
+name = "unreal_asset_base"
+version = "0.1.16"
+source = "git+https://github.com/trumank/unrealmodding?branch=patches#77475d83712a629a1e89a84eac4a3378ee5e21d4"
+dependencies = [
+ "bitflags 2.13.2",
+ "bitvec",
+ "byteorder",
+ "enum_dispatch",
+ "lazy_static",
+ "naive-cityhash",
+ "num_enum 0.6.1",
+ "ordered-float",
+ "rustc-hash 1.1.0",
+ "slab",
+ "thiserror 1.0.69",
+ "unreal_asset_proc_macro",
+ "unreal_helpers",
+]
+
+[[package]]
+name = "unreal_asset_exports"
+version = "0.1.16"
+source = "git+https://github.com/trumank/unrealmodding?branch=patches#77475d83712a629a1e89a84eac4a3378ee5e21d4"
+dependencies = [
+ "bitvec",
+ "byteorder",
+ "enum_dispatch",
+ "num_enum 0.6.1",
+ "ordered-float",
+ "unreal_asset_base",
+ "unreal_asset_kismet",
+ "unreal_asset_proc_macro",
+ "unreal_asset_properties",
+ "unreal_helpers",
+]
+
+[[package]]
+name = "unreal_asset_kismet"
+version = "0.1.16"
+source = "git+https://github.com/trumank/unrealmodding?branch=patches#77475d83712a629a1e89a84eac4a3378ee5e21d4"
+dependencies = [
+ "byteorder",
+ "enum_dispatch",
+ "num_enum 0.6.1",
+ "ordered-float",
+ "unreal_asset_base",
+ "unreal_asset_proc_macro",
+]
+
+[[package]]
+name = "unreal_asset_proc_macro"
+version = "0.1.16"
+source = "git+https://github.com/trumank/unrealmodding?branch=patches#77475d83712a629a1e89a84eac4a3378ee5e21d4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "unreal_asset_properties"
+version = "0.1.16"
+source = "git+https://github.com/trumank/unrealmodding?branch=patches#77475d83712a629a1e89a84eac4a3378ee5e21d4"
+dependencies = [
+ "bitvec",
+ "byteorder",
+ "enum_dispatch",
+ "num_enum 0.6.1",
+ "ordered-float",
+ "unreal_asset_base",
+ "unreal_asset_proc_macro",
+ "unreal_helpers",
+]
+
+[[package]]
+name = "unreal_asset_registry"
+version = "0.1.16"
+source = "git+https://github.com/trumank/unrealmodding?branch=patches#77475d83712a629a1e89a84eac4a3378ee5e21d4"
+dependencies = [
+ "bitvec",
+ "byteorder",
+ "lazy_static",
+ "num_enum 0.6.1",
+ "unreal_asset_base",
+ "unreal_asset_exports",
+ "unreal_asset_properties",
+ "unreal_helpers",
+]
+
+[[package]]
+name = "unreal_helpers"
+version = "0.1.16"
+source = "git+https://github.com/trumank/unrealmodding?branch=patches#77475d83712a629a1e89a84eac4a3378ee5e21d4"
+dependencies = [
+ "bitvec",
+ "byteorder",
+ "lazy_static",
+ "regex",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "unsafe-libyaml-norway"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9141,7 +9435,7 @@ checksum = "501a7adf1a4bd9951501e5c66621e972ef8874d787628b7f90e64f936ef7ec0a"
 dependencies = [
  "mutants",
  "proc-macro2",
- "rustc-hash",
+ "rustc-hash 2.1.3",
 ]
 
 [[package]]
@@ -10201,6 +10495,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wyz"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
+dependencies = [
+ "tap",
+]
+
+[[package]]
 name = "x11"
 version = "2.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10550,7 +10853,7 @@ dependencies = [
  "flate2",
  "indexmap 2.14.2",
  "memchr",
- "typed-path",
+ "typed-path 0.12.3",
  "zopfli",
 ]
 
@@ -10576,6 +10879,35 @@ dependencies = [
  "crc32fast",
  "log",
  "simd-adler32",
+]
+
+[[package]]
+name = "zstd"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a27595e173641171fc74a1232b7b1c7a7cb6e18222c11e9dfb9888fa424c53c"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "6.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee98ffd0b48ee95e6c5168188e44a54550b1564d9d530ee21d5f0eaed1069581"
+dependencies = [
+ "libc",
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.1.3+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f729a06d0257428fd9d997ac8db7e1407bd0262ab016b085b36bc52957c0052d"
+dependencies = [
+ "cc",
+ "pkg-config",
 ]
 
 [[package]]

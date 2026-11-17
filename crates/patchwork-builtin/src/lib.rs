@@ -4,8 +4,8 @@
 //! The ones that aren't about any game are here, gathering up the sources,
 //! deployers and formats from the crates those live in. Games' own are in
 //! a crate each, behind a feature of the same name (all on by default):
-//! `bethesda` ([`Bethesda`], [`Fomod`] and [`Loot`]), `ftl` ([`Ftl`]),
-//! `helldivers` ([`Helldivers`]) and `smf` ([`Smf`]). The ids
+//! `bethesda` ([`Bethesda`], [`Fomod`] and [`Loot`]), `drg` ([`Drg`]),
+//! `ftl` ([`Ftl`]), `helldivers` ([`Helldivers`]) and `smf` ([`Smf`]). The ids
 //! can't change once released, since game definitions and profiles name
 //! them.
 
@@ -22,6 +22,8 @@ pub use plain::{IniConfig, JsonConfig, TomlConfig};
 
 #[cfg(feature = "bethesda")]
 pub use patchwork_bethesda::{Bethesda, Fomod, Loot};
+#[cfg(feature = "drg")]
+pub use patchwork_drg::Drg;
 #[cfg(feature = "ftl")]
 pub use patchwork_ftl::Ftl;
 #[cfg(feature = "helldivers")]
@@ -41,6 +43,8 @@ pub fn register(builder: Builder) -> Builder {
         .extension(BepInEx);
     #[cfg(feature = "bethesda")]
     let builder = builder.extension(Bethesda).extension(Fomod).extension(Loot);
+    #[cfg(feature = "drg")]
+    let builder = builder.extension(Drg);
     #[cfg(feature = "ftl")]
     let builder = builder.extension(Ftl);
     #[cfg(feature = "helldivers")]

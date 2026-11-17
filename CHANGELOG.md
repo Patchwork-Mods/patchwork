@@ -54,3 +54,9 @@ dialog shows, so the heading has to match the version being released.
   (`https://github.com/FTL-Hyperspace/FTL-Version-Rollback/archive/refs/heads/main.zip`)
   as a mod to turn the game into 1.6.9, which Hyperspace needs, while it's
   deployed; taking it out puts your own version back.
+- Deep Rock Galactic, with .pak mods from mod.io, links or files. Like mint,
+  deploying packs them all into one `mods_P.pak` that starts them itself,
+  without the game's own mod.io integration. mint's in-game mod list and
+  server-list labels aren't there yet.
+- mod.io takes an OAuth access token as well as an API key, for games like
+  Deep Rock Galactic that only let signed-in players download.

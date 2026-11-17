@@ -1,0 +1,23 @@
+schema = 1
+id = "deep-rock-galactic"
+name = "Deep Rock Galactic"
+description = "Takes .pak mods, from mod.io (with a mod.io access token in Settings) or as files and links. Like mint, deploying packs every mod into one mods_P.pak that starts them itself, so the in-game mod browser isn't needed: turn off mods subscribed to there, or they load as well."
+# The built pak is the size of every mod together, often hundreds of
+# megabytes, so it's linked rather than copied into the game folder
+# (falling back to a copy across drives).
+link = "hardlink"
+
+# mint downloads DRG's mods with an OAuth access token, which suggests
+# only signed-in players can (not yet checked against mod.io); the source
+# says so if that's the case and only an API key is set.
+[sources.modio]
+game = "drg"
+id = 2475
+
+[deployer]
+kind = "drg"
+
+[detect]
+steam = [548430]
+folder = "Deep Rock Galactic"
+exe = ["FSD.exe"]

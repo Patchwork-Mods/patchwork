@@ -6,8 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-default = ["bethesda", "ftl", "helldivers", "smf"]
+default = ["bethesda", "drg", "ftl", "helldivers", "smf"]
 bethesda = ["dep:patchwork-bethesda"]
+drg = ["dep:patchwork-drg"]
 ftl = ["dep:patchwork-ftl"]
 helldivers = ["dep:patchwork-helldivers"]
 smf = ["dep:patchwork-smf"]
@@ -18,6 +19,7 @@ patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
 patchwork-formats.workspace = true
 patchwork-bethesda = { workspace = true, optional = true }
+patchwork-drg = { workspace = true, optional = true }
 patchwork-ftl = { workspace = true, optional = true }
 patchwork-helldivers = { workspace = true, optional = true }
 patchwork-smf = { workspace = true, optional = true }

@@ -16,6 +16,7 @@ patchwork-builtin = { path = "crates/patchwork-builtin" }
 patchwork-core = { path = "crates/patchwork-core" }
 patchwork-sources = { path = "crates/patchwork-sources" }
 patchwork-deployers = { path = "crates/patchwork-deployers" }
+patchwork-drg = { path = "crates/patchwork-drg" }
 patchwork-formats = { path = "crates/patchwork-formats" }
 patchwork-ftl = { path = "crates/patchwork-ftl" }
 patchwork-helldivers = { path = "crates/patchwork-helldivers" }

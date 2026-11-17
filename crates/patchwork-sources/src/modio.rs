@@ -8,10 +8,12 @@
 //! be blank; files without one go by their numeric file id.
 //!
 //! Every request needs a read-only API key from https://mod.io/me/access,
-//! the `api_key` setting (or `MODIO_API_KEY`). Games choose whether apps
-//! other than their own may use mod.io for them, and some only let signed-in
-//! players download, which an API key can't do; both are reported as errors
-//! naming the game.
+//! the `api_key` setting (or `MODIO_API_KEY`), or an OAuth access token
+//! made on the same page, the `access_token` setting (or
+//! `MODIO_ACCESS_TOKEN`). Games choose whether apps other than their own may
+//! use mod.io for them, and some (Deep Rock Galactic) only let signed-in
+//! players download, which needs the token: it signs requests in as the
+//! user who made it. When both are set, the token is used.
 //!
 //! ```toml
 //! [sources.modio]
@@ -56,6 +58,15 @@ const API_KEY: SettingSpec = SettingSpec::new("api_key", "API key", SettingKind:
     .help("mod.io answers nothing without one. Make a read-only key under API Access.")
     .link("https://mod.io/me/access")
     .env("MODIO_API_KEY");
+
+const ACCESS_TOKEN: SettingSpec =
+    SettingSpec::new("access_token", "Access token", SettingKind::Secret)
+        .help(
+            "Needed instead of an API key for games that only let signed-in players download, \
+             like Deep Rock Galactic. Make a read-only OAuth token under API Access.",
+        )
+        .link("https://mod.io/me/access")
+        .env("MODIO_ACCESS_TOKEN");
 
 pub struct ModIo;
 
@@ -185,16 +196,30 @@ fn config(ctx: &SourceContext<'_>) -> Result<Config> {
         .map_err(|e| error(format!("bad [sources.modio] for {}: {e}", ctx.game.id)))
 }
 
-/// The user's API key, if they've set one.
-fn api_key(settings: Option<&toml::Table>) -> Option<&str> {
-    settings?
-        .get(API_KEY.key)?
-        .as_str()
-        .filter(|k| !k.trim().is_empty())
+/// How requests are signed: with an API key, or as a user with their OAuth
+/// access token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Credentials<'a> {
+    Key(&'a str),
+    Token(&'a str),
 }
 
-fn need_api_key<'a>(ctx: &SourceContext<'a>) -> Result<&'a str> {
-    api_key(ctx.settings).ok_or_else(|| {
+/// What the user has set to sign requests with, the token first.
+fn credentials(settings: Option<&toml::Table>) -> Option<Credentials<'_>> {
+    let setting = |spec: &SettingSpec| {
+        settings?
+            .get(spec.key)?
+            .as_str()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+    };
+    setting(&ACCESS_TOKEN)
+        .map(Credentials::Token)
+        .or_else(|| setting(&API_KEY).map(Credentials::Key))
+}
+
+fn need_credentials<'a>(ctx: &SourceContext<'a>) -> Result<Credentials<'a>> {
+    credentials(ctx.settings).ok_or_else(|| {
         error(
             "mod.io needs an API key; add one in Settings, or with `patchwork config set modio.api_key <key>` (make a read-only one at https://mod.io/me/access)",
         )
@@ -204,7 +229,7 @@ fn need_api_key<'a>(ctx: &SourceContext<'a>) -> Result<&'a str> {
 /// What a request needs: where the game's API is, and how to sign it.
 struct Api<'a> {
     base: String,
-    key: &'a str,
+    credentials: Credentials<'a>,
     platform: String,
     game: Arc<Game>,
 }
@@ -214,8 +239,8 @@ impl<'a> Api<'a> {
     /// use it.
     async fn new(ctx: &SourceContext<'a>) -> Result<Api<'a>> {
         let config = config(ctx)?;
-        let key = need_api_key(ctx)?;
-        let game = game(&config, key).await?;
+        let credentials = need_credentials(ctx)?;
+        let game = game(&config, credentials).await?;
         if game.api_access_options & ACCESS_OPEN == 0 {
             return Err(error(format!(
                 "{} doesn't let apps other than its own get its mods from mod.io",
@@ -224,7 +249,7 @@ impl<'a> Api<'a> {
         }
         Ok(Api {
             base: game_api(game.id),
-            key,
+            credentials,
             platform: config.platform,
             game,
         })
@@ -233,7 +258,7 @@ impl<'a> Api<'a> {
     async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, String)]) -> Result<T> {
         get_json(
             &format!("{}{path}", self.base),
-            self.key,
+            self.credentials,
             &self.platform,
             params,
         )
@@ -305,7 +330,7 @@ fn game_api(id: u64) -> String {
 }
 
 /// The game `config` names, which is only asked about once.
-async fn game(config: &Config, key: &str) -> Result<Arc<Game>> {
+async fn game(config: &Config, credentials: Credentials<'_>) -> Result<Arc<Game>> {
     static KNOWN: LazyLock<Mutex<HashMap<String, Arc<Game>>>> = LazyLock::new(Mutex::default);
     let cache_key = format!("{}#{:?}", config.game, config.id);
     if let Some(known) = KNOWN.lock().unwrap().get(&cache_key) {
@@ -314,7 +339,7 @@ async fn game(config: &Config, key: &str) -> Result<Arc<Game>> {
     let game: Game = match config.id {
         Some(id) => get_json(
             &format!("{}/games/{id}", game_api(id)),
-            key,
+            credentials,
             &config.platform,
             &[],
         )
@@ -323,7 +348,7 @@ async fn game(config: &Config, key: &str) -> Result<Arc<Game>> {
         None => {
             let found: List<Game> = get_json(
                 &format!("{GLOBAL_API}/games"),
-                key,
+                credentials,
                 &config.platform,
                 &[("name_id", config.game.clone())],
             )
@@ -488,21 +513,27 @@ impl Source for ModIo {
     }
 
     fn settings(&self) -> &[SettingSpec] {
-        &[API_KEY]
+        &[API_KEY, ACCESS_TOKEN]
     }
 
     async fn check_settings(&self, settings: Option<&toml::Table>) -> Result<Option<String>> {
-        let Some(key) = api_key(settings) else {
+        let Some(credentials) = credentials(settings) else {
             return Ok(None);
         };
         let _: List<Game> = get_json(
             &format!("{GLOBAL_API}/games"),
-            key,
+            credentials,
             &default_platform(),
             &[("_limit", "1".to_owned())],
         )
         .await?;
-        Ok(Some("mod.io accepts this API key".to_owned()))
+        Ok(Some(
+            match credentials {
+                Credentials::Key(_) => "mod.io accepts this API key",
+                Credentials::Token(_) => "mod.io accepts this access token",
+            }
+            .to_owned(),
+        ))
     }
 
     async fn resolve(
@@ -512,10 +543,20 @@ impl Source for ModIo {
         version: Option<&str>,
     ) -> Result<ResolvedMod> {
         let api = Api::new(ctx).await?;
-        if api.game.api_access_options & (ACCESS_AUTHORISED_DOWNLOADS | ACCESS_PAID_DOWNLOADS) != 0
+        let access = api.game.api_access_options;
+        if access & ACCESS_PAID_DOWNLOADS != 0 {
+            return Err(error(format!(
+                "{} only lets players who've paid download its mods, which patchwork can't do yet",
+                api.game.name
+            )));
+        }
+        if access & ACCESS_AUTHORISED_DOWNLOADS != 0
+            && !matches!(api.credentials, Credentials::Token(_))
         {
             return Err(error(format!(
-                "{} only lets signed-in players download its mods, which patchwork can't do yet",
+                "{} only lets signed-in players download its mods; add a mod.io access token in \
+                 Settings, or with `patchwork config set modio.access_token <token>` (make a \
+                 read-only OAuth token at https://mod.io/me/access)",
                 api.game.name
             )));
         }
@@ -682,36 +723,44 @@ impl Source for ModIo {
     }
 }
 
-/// GETs `url` and reads its JSON. The API key goes in the query, so it's
-/// kept out of errors, which name the URL.
+/// GETs `url` and reads its JSON. An API key goes in the query, and a token
+/// in a header; either way it's kept out of errors, which name the URL.
 async fn get_json<T: DeserializeOwned>(
     url: &str,
-    key: &str,
+    credentials: Credentials<'_>,
     platform: &str,
     params: &[(&str, String)],
 ) -> Result<T> {
     let shown =
         reqwest::Url::parse_with_params(url, params).map_err(|e| error(format!("bad url: {e}")))?;
     let mut signed = shown.clone();
-    signed.query_pairs_mut().append_pair("api_key", key);
+    if let Credentials::Key(key) = credentials {
+        signed.query_pairs_mut().append_pair("api_key", key);
+    }
     let shown = String::from(shown);
     let reqwest_error = |result: reqwest::Error| patchwork_core::Error::Reqwest {
         url: shown.clone(),
         result: result.without_url(),
     };
-    let response = patchwork_core::http()
+    let mut request = patchwork_core::http()
         .get(signed)
-        .header("X-Modio-Platform", platform)
-        .send()
-        .await
-        .map_err(reqwest_error)?;
+        .header("X-Modio-Platform", platform);
+    if let Credentials::Token(token) = credentials {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.map_err(reqwest_error)?;
     match response.status() {
         reqwest::StatusCode::UNAUTHORIZED => {
-            return Err(error("mod.io doesn't accept this API key"));
+            return Err(error(match credentials {
+                Credentials::Key(_) => "mod.io doesn't accept this API key",
+                Credentials::Token(_) => {
+                    "mod.io doesn't accept this access token; it may have expired or been revoked"
+                }
+            }));
         }
         reqwest::StatusCode::TOO_MANY_REQUESTS => {
             return Err(error(
-                "mod.io says this API key has made too many requests; try again in a minute",
+                "mod.io says too many requests have been made with these credentials; try again in a minute",
             ));
         }
         _ => {}

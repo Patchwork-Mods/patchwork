@@ -244,3 +244,12 @@ async fn games_without_it_say_so() {
         .unwrap_err();
     assert!(err.to_string().contains("isn't on mod.io"), "{err}");
 }
+
+#[test]
+fn a_token_is_used_over_a_key() {
+    let both = toml::toml! { api_key = "key"  access_token = " token " };
+    assert_eq!(credentials(Some(&both)), Some(Credentials::Token("token")));
+    let key = toml::toml! { api_key = "key"  access_token = "" };
+    assert_eq!(credentials(Some(&key)), Some(Credentials::Key("key")));
+    assert_eq!(credentials(None), None);
+}
