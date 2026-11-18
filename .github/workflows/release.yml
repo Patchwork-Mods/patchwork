@@ -211,6 +211,15 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
+      # Hand-added: the license notices (target/licenses/) that both the CLI
+      # archives and the app bundles carry; see packaging/licenses.sh.
+      - name: Install cargo-about
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.0
+      - name: Write the license notices
+        shell: bash
+        run: packaging/licenses.sh
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot

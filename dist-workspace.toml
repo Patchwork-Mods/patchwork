@@ -18,6 +18,9 @@ install-path = "CARGO_HOME"
 precise-builds = true
 # Whether to install an updater program
 install-updater = false
+# License notices for the archives: release.yml writes target/licenses/ with
+# packaging/licenses.sh before building. dist adds LICENSE itself.
+include = ["target/licenses"]
 # Caches each target's dependencies in the build jobs.
 cache-builds = true
 # Releases are started by hand from main, not by pushing a tag, so their runs

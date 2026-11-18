@@ -34,6 +34,11 @@
     ],
     "category": "Utility",
     "shortDescription": "A universal mod manager",
+    "longDescription": "A mod manager for 300+ games and every major mod site, with endless customizability and modpacks that sync between friends.",
+    "publisher": "Patchwork",
+    "copyright": "Copyright (c) 2026 Michael Golden",
+    "license": "MIT AND LGPL-3.0-only",
+    "homepage": "https://github.com/patchwork-mods/patchwork",
     "macOS": {
       "signingIdentity": "-",
       "minimumSystemVersion": "10.15"

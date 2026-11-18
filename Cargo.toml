@@ -9,6 +9,8 @@ version = "0.3.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
+repository = "https://github.com/patchwork-mods/patchwork"
+homepage = "https://github.com/patchwork-mods/patchwork"
 
 [workspace.dependencies]
 patchwork-bethesda = { path = "crates/patchwork-bethesda" }

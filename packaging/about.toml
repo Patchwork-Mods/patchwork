@@ -1,0 +1,28 @@
+# cargo-about: the third-party license notices that ship with release builds
+# (THIRD-PARTY-LICENSES.txt, from about.hbs; see licenses.sh).
+#
+# Keep in step with [licenses] in deny.toml, which is what decides which
+# licenses we may use: a license missing here only leaves that crate out of
+# the notices, with a warning.
+accepted = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-3.0-only",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "bzip2-1.0.6",
+]
+ignore-build-dependencies = false
+ignore-dev-dependencies = true

@@ -1,0 +1,23 @@
+Third-party software in Patchwork
+=================================
+
+Patchwork is MIT licensed (see LICENSE). Release builds also contain the
+software below, under the licenses that follow. quickentity-rs is LGPL-3.0;
+its source, as built, is in vendor/quickentity-rs of Patchwork's source code.
+
+{{#each overview}}
+- {{{name}}} ({{count}}): {{{id}}}
+{{/each}}
+
+{{#each licenses}}
+--------------------------------------------------------------------------------
+{{{name}}} ({{{id}}})
+
+Used by:
+{{#each used_by}}
+- {{{crate.name}}} {{crate.version}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

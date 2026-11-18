@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-repository = "https://github.com/patchwork-mods/patchwork"
+repository.workspace = true
+homepage.workspace = true
+description = "Patchwork, a universal mod manager: the command-line interface"
 
 [[bin]]
 name = "patchwork"

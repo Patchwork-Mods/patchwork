@@ -53,3 +53,26 @@ LaunchAgent or `Run` key) runs patchwork by the path it was started with, so
 a link like `/opt/homebrew/bin/patchwork` or `~/.nix-profile/bin/patchwork`
 survives updates. If the entry still names a copy that has since been
 removed, the next run of the app or CLI points it at itself.
+
+## Licenses
+
+patchwork is MIT, but builds with the Hitman extension (the `smf` feature,
+on by default) statically link the vendored quickentity-rs, which is
+LGPL-3.0-only. So a default build's license is `MIT AND LGPL-3.0-only`.
+
+Ship these with the binaries:
+
+- `LICENSE` (patchwork's own)
+- `target/licenses/`, written by `packaging/licenses.sh` (needs
+  [cargo-about](https://github.com/EmbarkStudios/cargo-about)):
+  `THIRD-PARTY-LICENSES.txt` with every Rust dependency's license, and the
+  LGPL-3.0 and GPL-3.0 texts.
+
+Our release archives and app bundles already contain all of them, in a
+`licenses` folder.
+
+## Nix
+
+The flake has the app and CLI as `packages.default`
+(`packaging/nix/package.nix`): `nix run github:patchwork-mods/patchwork`.
+It builds with `PATCHWORK_PACKAGE_MANAGER=Nix`.

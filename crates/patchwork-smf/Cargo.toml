@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "HITMAN World of Assassination support for Patchwork: deploys Simple Mod Framework mods"
 
 [dependencies]
 patchwork-core.workspace = true

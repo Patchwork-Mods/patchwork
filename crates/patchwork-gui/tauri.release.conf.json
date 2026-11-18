@@ -2,6 +2,10 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "externalBin": ["binaries/patchwork"],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "../../LICENSE": "licenses/LICENSE",
+      "../../target/licenses/*": "licenses/"
+    }
   }
 }

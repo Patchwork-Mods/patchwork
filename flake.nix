@@ -49,6 +49,15 @@
           );
       };
 
+      packages = forEachSupportedSystem (
+        { pkgs, ... }:
+        rec {
+          # The app and CLI; see packaging/nix/package.nix.
+          patchwork = pkgs.callPackage ./packaging/nix/package.nix { };
+          default = patchwork;
+        }
+      );
+
       devShells = forEachSupportedSystem (
         { pkgs, system }:
         {
