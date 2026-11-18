@@ -44,6 +44,11 @@ dialog shows, so the heading has to match the version being released.
   profile box works the same way.
 - The Add mods tab works before there's a profile, to look around first;
   adding a mod then asks for a profile to add it to.
+- The background daemon (Settings → Background) does more than sync: it
+  also checks for mod updates every 6 hours while Patchwork is closed, so
+  update marks are ready when you open it. Each thing it does can be
+  turned on or off there, or with `patchwork daemon enable`/`disable`;
+  `patchwork daemon every updates 2h` changes how often it checks.
 
 ### Games
 

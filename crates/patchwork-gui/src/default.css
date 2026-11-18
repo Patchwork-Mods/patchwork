@@ -3176,6 +3176,53 @@ legend {
   margin: 0;
 }
 
+/* The Background tab in Settings: its paragraphs sit by the tab's own
+   gaps, ruled off around whether it's installed. */
+#daemon p {
+  margin: 0;
+}
+
+#daemon hr {
+  width: 100%;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--pw-border);
+}
+
+/* The daemon's tasks: a checkbox each, with its name right after it. */
+.daemon-tasks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.daemon-tasks label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.daemon-tasks input {
+  flex: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* A section's title with a rule running from it to the right edge. */
+.section-rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.section-rule::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--pw-border);
+}
+
 /* What the sync daemon's done lately, newest first. */
 .daemon-activity {
   margin: 0;
@@ -3351,4 +3398,13 @@ legend {
 .theme-choice-name .badge {
   margin-left: auto;
   font-weight: 400;
+}
+
+.computers-about {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.computers-about li+li {
+  margin-top: 4px;
 }

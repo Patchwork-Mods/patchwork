@@ -14,6 +14,7 @@ license = "MIT"
 patchwork-bethesda = { path = "crates/patchwork-bethesda" }
 patchwork-builtin = { path = "crates/patchwork-builtin" }
 patchwork-core = { path = "crates/patchwork-core" }
+patchwork-daemon = { path = "crates/patchwork-daemon" }
 patchwork-sources = { path = "crates/patchwork-sources" }
 patchwork-deployers = { path = "crates/patchwork-deployers" }
 patchwork-drg = { path = "crates/patchwork-drg" }

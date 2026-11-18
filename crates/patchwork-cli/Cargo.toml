@@ -14,6 +14,7 @@ path = "src/main.rs"
 patchwork-core.workspace = true
 patchwork-builtin.workspace = true
 patchwork-sync.workspace = true
+patchwork-daemon.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 jiff.workspace = true

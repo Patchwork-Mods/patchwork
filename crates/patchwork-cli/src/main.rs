@@ -279,8 +279,8 @@ enum Command {
         #[command(subcommand)]
         command: Option<SyncCommand>,
     },
-    /// The sync daemon, which keeps synced profiles in step in the
-    /// background while neither the app nor the CLI is running.
+    /// The daemon, which does things in the background while neither the
+    /// app nor the CLI is running, such as keeping synced profiles in step.
     #[command(subcommand)]
     Daemon(DaemonCommand),
     /// Update patchwork to the newest release.
@@ -347,7 +347,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     // the daemon has patchwork open while it runs, so it steps aside until
     // this is done
-    let _paused = patchwork_sync::daemon::pause(&paths.sync())?;
+    let _paused = patchwork_daemon::pause(&paths)?;
     let pw = open(paths, Printer)?;
     for problem in &pw.registry().problems {
         eprintln!("warning: skipped registry entry: {problem}");

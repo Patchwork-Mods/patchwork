@@ -24,6 +24,7 @@ notify.workspace = true
 patchwork-core.workspace = true
 patchwork-builtin.workspace = true
 patchwork-sync.workspace = true
+patchwork-daemon.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true
 serde_json.workspace = true

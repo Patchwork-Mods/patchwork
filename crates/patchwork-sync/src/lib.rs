@@ -65,7 +65,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
-pub mod daemon;
 pub mod files;
 pub mod moves;
 pub mod names;

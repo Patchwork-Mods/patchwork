@@ -119,6 +119,17 @@ impl Paths {
         self.data.join("sync")
     }
 
+    /// The background daemon's own files: where it can be reached, its
+    /// log, and what its tasks last did.
+    pub fn daemon(&self) -> PathBuf {
+        self.data.join("daemon")
+    }
+
+    /// Settings for the background daemon's tasks, such as which are on.
+    pub fn daemon_settings(&self) -> PathBuf {
+        self.config.join("daemon.toml")
+    }
+
     pub fn game_installs(&self) -> PathBuf {
         self.data.join("games")
     }

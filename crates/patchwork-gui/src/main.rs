@@ -2211,7 +2211,7 @@ fn main() {
         // SAFETY: nothing else is running yet to read the environment
         unsafe { std::env::set_var("GIO_MODULE_DIR", dir) };
     }
-    if std::env::args().any(|a| a == daemon::FLAG) {
+    if std::env::args().any(|a| a == daemon::FLAG || a == daemon::OLD_FLAG) {
         if let Err(e) = daemon::run(|paths| open(paths, Silent)) {
             eprintln!("error: {e:#}");
             std::process::exit(1);
@@ -2377,6 +2377,8 @@ fn main() {
             daemon::daemon_install,
             daemon::daemon_restart,
             daemon::daemon_uninstall,
+            daemon::daemon_tasks,
+            daemon::daemon_set_task,
             cli::install_cli,
             sync::sync_status,
             sync::sync_share,

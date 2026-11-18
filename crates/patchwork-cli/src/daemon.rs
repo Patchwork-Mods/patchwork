@@ -1,10 +1,10 @@
-//! `patchwork daemon`: the background sync daemon.
+//! `patchwork daemon`: the background daemon and its tasks.
 
 use anyhow::Result;
 use clap::Subcommand;
 use patchwork_core::event::Silent;
 use patchwork_core::paths::Paths;
-use patchwork_sync::daemon::{self, service};
+use patchwork_daemon::{self as daemon, DaemonSettings, service, settings};
 
 use crate::open;
 
@@ -21,13 +21,21 @@ pub(crate) enum DaemonCommand {
     Start,
     /// Stop the daemon until it's next started.
     Stop,
+    /// List the daemon's tasks, and whether each is on.
+    Tasks,
+    /// Turn one of the daemon's tasks on.
+    Enable { task: String },
+    /// Turn one of the daemon's tasks off.
+    Disable { task: String },
+    /// Say how long a periodic task leaves between runs, such as `6h`, or
+    /// with `default` go back to its own schedule.
+    Every { task: String, every: String },
     /// Run the daemon here until it's stopped. This is what `install` has
     /// the system run.
     Run,
 }
 
 pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
-    let dir = paths.sync();
     let program = || service::Program::current(&["daemon", "run"]);
     match command {
         DaemonCommand::Status => {
@@ -37,16 +45,16 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
                     println!("not installed: `patchwork daemon install` starts it when you log in")
                 }
             }
-            let Some(status) = daemon::status(&dir)? else {
+            let Some(status) = daemon::status(&paths)? else {
                 println!("not running");
                 return Ok(());
             };
             let state = match status.state {
                 daemon::State::Starting => "starting",
-                daemon::State::Syncing => "syncing",
+                daemon::State::Running => "running tasks",
                 daemon::State::Paused => "paused while patchwork is open elsewhere",
                 daemon::State::Waiting => "waiting for patchwork to close elsewhere",
-                daemon::State::Idle => "idle: nothing is synced on this computer",
+                daemon::State::Idle => "idle: no task has anything to do for now",
             };
             println!(
                 "running (pid {}, patchwork {}, since {}): {state}",
@@ -57,6 +65,9 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
                     "it's a different version from this one; `patchwork daemon stop` then `start` restarts it"
                 );
             }
+            for task in &status.tasks {
+                println!("  {}: {}", task.id, task_state(task));
+            }
             for activity in status.activity.iter().rev().take(10).rev() {
                 let mark = if activity.error { " error:" } else { "" };
                 println!("  {}{mark} {}", activity.at, activity.message);
@@ -64,20 +75,21 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
             println!("log: {}", status.log.display());
         }
         DaemonCommand::Install => {
-            daemon::install(&dir, &program()?)?;
+            daemon::install(&paths, &program()?)?;
             println!(
-                "installed; the daemon syncs in the background whenever you're logged in \
-                 and neither the app nor the CLI is running"
+                "installed; the daemon runs its tasks in the background whenever you're \
+                 logged in and neither the app nor the CLI is running (`patchwork daemon tasks` \
+                 lists them)"
             );
         }
         DaemonCommand::Uninstall => {
-            daemon::uninstall(&dir)?;
+            daemon::uninstall(&paths)?;
             println!(
                 "uninstalled; profiles only sync while the app or `patchwork sync run` is running"
             );
         }
         DaemonCommand::Start => {
-            if daemon::status(&dir)?.is_some() {
+            if daemon::status(&paths)?.is_some() {
                 println!("already running");
             } else {
                 service::start(&program()?)?;
@@ -85,10 +97,43 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
             }
         }
         DaemonCommand::Stop => {
-            if daemon::stop(&dir)? {
+            if daemon::stop(&paths)? {
                 println!("stopped");
             } else {
                 println!("not running");
+            }
+        }
+        DaemonCommand::Tasks => {
+            let settings = DaemonSettings::load(&paths)?;
+            for task in daemon::tasks() {
+                let own = settings.task(task.id());
+                let on = own.enabled.unwrap_or_else(|| task.default_enabled());
+                let every = own
+                    .every
+                    .map(|e| format!(", every {e}"))
+                    .unwrap_or_default();
+                println!(
+                    "{} ({}{every}): {}",
+                    task.id(),
+                    if on { "on" } else { "off" },
+                    task.description()
+                );
+            }
+        }
+        DaemonCommand::Enable { task } => {
+            settings::set_enabled(&paths, known_task(&task)?, true)?;
+            println!("{task} is on");
+        }
+        DaemonCommand::Disable { task } => {
+            settings::set_enabled(&paths, known_task(&task)?, false)?;
+            println!("{task} is off");
+        }
+        DaemonCommand::Every { task, every } => {
+            let every = (every != "default").then_some(every.as_str());
+            settings::set_every(&paths, known_task(&task)?, every)?;
+            match every {
+                Some(every) => println!("{task} runs every {every}"),
+                None => println!("{task} runs on its own schedule"),
             }
         }
         DaemonCommand::Run => {
@@ -96,12 +141,37 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
             hide_console();
             let opening = paths.clone();
             tokio::select! {
-                result = daemon::serve(&dir, || open(opening.clone(), Silent)) => result?,
+                result = daemon::serve(&paths, daemon::tasks(), || open(opening.clone(), Silent)) => result?,
                 _ = tokio::signal::ctrl_c() => {}
             }
         }
     }
     Ok(())
+}
+
+/// `task` if the daemon has a task by that name.
+fn known_task(task: &str) -> Result<&str> {
+    if daemon::tasks().iter().any(|t| t.id() == task) {
+        Ok(task)
+    } else {
+        let all: Vec<_> = daemon::tasks().iter().map(|t| t.id()).collect();
+        anyhow::bail!(
+            "there's no daemon task `{task}`; there's {}",
+            all.join(", ")
+        )
+    }
+}
+
+fn task_state(task: &daemon::TaskStatus) -> String {
+    if !task.enabled {
+        "off".to_owned()
+    } else if task.running {
+        "running".to_owned()
+    } else if let Some(next) = task.next {
+        format!("next at {next}")
+    } else {
+        "waiting for something to do".to_owned()
+    }
 }
 
 /// Lets go of the console window a login item's given, so the daemon

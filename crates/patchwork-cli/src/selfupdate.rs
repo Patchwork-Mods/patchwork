@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use patchwork_core::paths::Paths;
 use patchwork_core::update;
-use patchwork_sync::daemon::{self, service};
+use patchwork_daemon::{self as daemon, service};
 
 /// What dist calls this app: the package name, not the binary's.
 const DIST_APP: &str = "patchwork-cli";
@@ -43,9 +43,9 @@ pub(crate) async fn self_update(check: bool) -> Result<()> {
     let installed = update::install(DIST_APP, true).await;
     if stopped {
         match service::start(&program) {
-            Ok(()) => println!("restarted the sync daemon"),
+            Ok(()) => println!("restarted the daemon"),
             Err(e) => eprintln!(
-                "warning: couldn't restart the sync daemon ({e:#}); `patchwork daemon start` starts it"
+                "warning: couldn't restart the daemon ({e:#}); `patchwork daemon start` starts it"
             ),
         }
     }
@@ -56,15 +56,14 @@ pub(crate) async fn self_update(check: bool) -> Result<()> {
     Ok(())
 }
 
-/// Stops the sync daemon if it's running from this program, so it can be
+/// Stops the daemon if it's running from this program, so it can be
 /// updated. True if it was. A daemon the app runs is left to the app, which
 /// restarts it when it's updated.
 fn stop_own_daemon() -> bool {
     let Ok(paths) = Paths::from_env() else {
         return false;
     };
-    let dir = paths.sync();
-    let Ok(Some(status)) = daemon::status(&dir) else {
+    let Ok(Some(status)) = daemon::status(&paths) else {
         return false;
     };
     let ours = std::env::current_exe().and_then(|e| e.canonicalize()).ok();
@@ -72,10 +71,10 @@ fn stop_own_daemon() -> bool {
     if ours.is_none() || ours != theirs {
         return false;
     }
-    match daemon::stop(&dir) {
+    match daemon::stop(&paths) {
         Ok(stopped) => stopped,
         Err(e) => {
-            eprintln!("warning: couldn't stop the sync daemon to update it: {e:#}");
+            eprintln!("warning: couldn't stop the daemon to update it: {e:#}");
             false
         }
     }

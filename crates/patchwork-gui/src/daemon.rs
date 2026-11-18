@@ -1,4 +1,4 @@
-//! The sync daemon (see `patchwork_sync::daemon`), from the app's side. The
+//! The daemon (see `patchwork_daemon`), from the app's side. The
 //! app is the daemon too, when started with [`FLAG`], so it needs no console
 //! window on Windows and runs from wherever the app is (even an AppImage).
 //! While the app's open, the daemon's paused and the app syncs itself.
@@ -9,14 +9,18 @@ use jiff::Timestamp;
 use patchwork_core::Patchwork;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::ProfileRef;
-use patchwork_sync::daemon::{self, Paused, Status, service};
+use patchwork_daemon::{self as daemon, DaemonSettings, Paused, Status, service};
 use serde::Serialize;
 use tauri::State;
 
 use crate::{App, CmdResult, msg};
 
 /// Runs the app as the daemon, rather than opening a window.
-pub const FLAG: &str = "--sync-daemon";
+pub const FLAG: &str = "--daemon";
+
+/// What [`FLAG`] was when the daemon only synced, which logins set up
+/// then still start it with.
+pub const OLD_FLAG: &str = "--sync-daemon";
 
 /// How many times the app tries to pause a daemon it's just started, a
 /// tenth of a second apart.
@@ -39,8 +43,9 @@ fn program() -> anyhow::Result<service::Program> {
 /// Runs the daemon until it's stopped, opening patchwork with `open`.
 pub fn run(open: impl Fn(Paths) -> patchwork_core::Result<Patchwork>) -> anyhow::Result<()> {
     let paths = Paths::from_env()?;
-    let dir = paths.sync();
-    tauri::async_runtime::block_on(daemon::serve(&dir, || open(paths.clone())))
+    tauri::async_runtime::block_on(daemon::serve(&paths, daemon::tasks(), || {
+        open(paths.clone())
+    }))
 }
 
 /// Pauses the daemon so the app can open patchwork, and, if it's installed
@@ -48,9 +53,8 @@ pub fn run(open: impl Fn(Paths) -> patchwork_core::Result<Patchwork>) -> anyhow:
 /// Windows) or is an older version, starts it, to take over once the app's
 /// closed.
 pub fn pause_for_app(paths: &Paths) -> Option<Paused> {
-    let dir = paths.sync();
-    let status = daemon::status(&dir).unwrap_or_else(|e| {
-        eprintln!("couldn't reach the sync daemon: {e:#}");
+    let status = daemon::status(paths).unwrap_or_else(|e| {
+        eprintln!("couldn't reach the daemon: {e:#}");
         None
     });
     let installed = service::installed().ok().flatten().is_some();
@@ -59,21 +63,21 @@ pub fn pause_for_app(paths: &Paths) -> Option<Paused> {
         .is_some_and(|s| s.version == env!("CARGO_PKG_VERSION"));
     if installed && !current {
         if status.is_some() {
-            let _ = daemon::stop(&dir);
+            let _ = daemon::stop(paths);
         }
         // it waits for the app to close before syncing
         match program() {
             Ok(program) => {
                 if let Err(e) = service::start(&program) {
-                    eprintln!("couldn't start the sync daemon: {e:#}");
+                    eprintln!("couldn't start the daemon: {e:#}");
                 }
             }
-            Err(e) => eprintln!("couldn't start the sync daemon: {e:#}"),
+            Err(e) => eprintln!("couldn't start the daemon: {e:#}"),
         }
         return None;
     }
-    daemon::pause(&dir).unwrap_or_else(|e| {
-        eprintln!("couldn't pause the sync daemon: {e:#}");
+    daemon::pause(paths).unwrap_or_else(|e| {
+        eprintln!("couldn't pause the daemon: {e:#}");
         None
     })
 }
@@ -90,11 +94,11 @@ pub struct DaemonStatus {
 
 #[tauri::command]
 pub async fn daemon_status(app: State<'_, App>) -> CmdResult<DaemonStatus> {
-    let dir = app.pw.paths().sync();
+    let paths = app.pw.paths().clone();
     tauri::async_runtime::spawn_blocking(move || {
         Ok(DaemonStatus {
             installed: service::installed().map_err(msg)?,
-            running: daemon::status(&dir).map_err(msg)?,
+            running: daemon::status(&paths).map_err(msg)?,
             version: env!("CARGO_PKG_VERSION"),
         })
     })
@@ -106,11 +110,11 @@ pub async fn daemon_status(app: State<'_, App>) -> CmdResult<DaemonStatus> {
 /// one paused while the app's open.
 #[tauri::command]
 pub async fn daemon_install(app: State<'_, App>) -> CmdResult<()> {
-    let dir = app.pw.paths().sync();
+    let paths = app.pw.paths().clone();
     app.daemon.0.lock().unwrap().take();
     let paused = tauri::async_runtime::spawn_blocking(move || {
-        daemon::install(&dir, &program().map_err(msg)?).map_err(msg)?;
-        Ok::<_, String>(pause_new(&dir))
+        daemon::install(&paths, &program().map_err(msg)?).map_err(msg)?;
+        Ok::<_, String>(pause_new(&paths))
     })
     .await
     .map_err(msg)??;
@@ -121,12 +125,12 @@ pub async fn daemon_install(app: State<'_, App>) -> CmdResult<()> {
 /// Stops the daemon, and starts it again from this version of the app.
 #[tauri::command]
 pub async fn daemon_restart(app: State<'_, App>) -> CmdResult<()> {
-    let dir = app.pw.paths().sync();
+    let paths = app.pw.paths().clone();
     app.daemon.0.lock().unwrap().take();
     let paused = tauri::async_runtime::spawn_blocking(move || {
-        daemon::stop(&dir).map_err(msg)?;
+        daemon::stop(&paths).map_err(msg)?;
         service::start(&program().map_err(msg)?).map_err(msg)?;
-        Ok::<_, String>(pause_new(&dir))
+        Ok::<_, String>(pause_new(&paths))
     })
     .await
     .map_err(msg)??;
@@ -136,11 +140,52 @@ pub async fn daemon_restart(app: State<'_, App>) -> CmdResult<()> {
 
 #[tauri::command]
 pub async fn daemon_uninstall(app: State<'_, App>) -> CmdResult<()> {
-    let dir = app.pw.paths().sync();
+    let paths = app.pw.paths().clone();
     app.daemon.0.lock().unwrap().take();
-    tauri::async_runtime::spawn_blocking(move || daemon::uninstall(&dir).map_err(msg))
+    tauri::async_runtime::spawn_blocking(move || daemon::uninstall(&paths).map_err(msg))
         .await
         .map_err(msg)?
+}
+
+/// One of the daemon's tasks, for turning on and off.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonTask {
+    id: &'static str,
+    description: &'static str,
+    enabled: bool,
+    /// How long it leaves between runs, if `daemon.toml` says.
+    every: Option<String>,
+}
+
+#[tauri::command]
+pub fn daemon_tasks(app: State<'_, App>) -> CmdResult<Vec<DaemonTask>> {
+    let settings = DaemonSettings::load(app.pw.paths()).map_err(msg)?;
+    Ok(daemon::tasks()
+        .iter()
+        .map(|task| {
+            let own = settings.task(task.id());
+            DaemonTask {
+                id: task.id(),
+                description: task.description(),
+                enabled: own.enabled.unwrap_or_else(|| task.default_enabled()),
+                every: own.every,
+            }
+        })
+        .collect())
+}
+
+/// Turns one of the daemon's tasks on or off. The daemon's paused while
+/// the app's open, and picks it up once it isn't.
+#[tauri::command]
+pub fn daemon_set_task(app: State<'_, App>, id: String, enabled: bool) -> CmdResult<()> {
+    if !daemon::tasks().iter().any(|t| t.id() == id) {
+        return Err(format!("there's no daemon task `{id}`"));
+    }
+    let paths = app.pw.paths();
+    let mut settings = DaemonSettings::load(paths).map_err(msg)?;
+    settings.tasks.entry(id).or_default().enabled = Some(enabled);
+    settings.save(paths).map_err(msg)
 }
 
 /// What the daemon did to a profile while the app was closed.
@@ -162,7 +207,7 @@ pub struct Missed {
 #[tauri::command]
 pub fn daemon_missed(app: State<'_, App>) -> CmdResult<Vec<Missed>> {
     let mut missed: Vec<Missed> = Vec::new();
-    for m in daemon::take_missed(&app.pw.paths().sync()).map_err(msg)? {
+    for m in daemon::sync::take_missed(app.pw.paths()).map_err(msg)? {
         let profile = ProfileRef { uuid: m.profile };
         // removed since, so there's nothing to show
         let Ok(loaded) = app.pw.load_profile(&profile) else {
@@ -198,9 +243,9 @@ pub fn daemon_missed(app: State<'_, App>) -> CmdResult<Vec<Missed>> {
 }
 
 /// Pauses a daemon that's only just been started, once it's listening.
-fn pause_new(dir: &std::path::Path) -> Option<Paused> {
+fn pause_new(paths: &Paths) -> Option<Paused> {
     for _ in 0..PAUSE_TRIES {
-        if let Ok(Some(paused)) = daemon::pause(dir) {
+        if let Ok(Some(paused)) = daemon::pause(paths) {
             return Some(paused);
         }
         std::thread::sleep(std::time::Duration::from_millis(100));

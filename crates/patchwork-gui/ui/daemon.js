@@ -1,8 +1,9 @@
-// The sync daemon, which keeps synced profiles in step while Patchwork is
-// closed (see daemon.rs): the Background sync tab in Settings, for
-// installing it and seeing how it's doing; offering it once something's
-// shared or linked; and showing what it changed while Patchwork was closed.
-// While Patchwork's open the daemon is paused, and Patchwork syncs itself.
+// The daemon, which does Patchwork's background tasks (such as keeping
+// synced profiles in step) while Patchwork is closed (see daemon.rs): the
+// Background tab in Settings, for installing it, turning its tasks on and
+// off, and seeing how it's doing; offering it once something's shared or
+// linked; and showing what it synced while Patchwork was closed. While
+// Patchwork's open the daemon is paused, and Patchwork does these itself.
 
 import { invoke, run, state, status } from "./state.js";
 import { $, ago, h } from "./dom.js";
@@ -19,14 +20,69 @@ const SHOWN = 15;
 /** What each of the daemon's states means, for someone looking from the app. */
 const STATES = {
   starting: "It's starting.",
-  syncing: "It's keeping your profiles in step.",
+  running: "It's busy with what's below.",
   paused: "It's paused while Patchwork is open, and picks up again once it's closed.",
-  waiting: "It's waiting for Patchwork to close before it syncs.",
-  idle: "Nothing is synced on this computer yet, so it has nothing to do. Share a profile or link your computers first.",
+  waiting: "It's waiting for Patchwork to close.",
+  idle: "It has nothing to do for now.",
 };
 
 export async function renderDaemon() {
-  show(await run("daemon_status"));
+  const [daemon, tasks] = await Promise.all([run("daemon_status"), run("daemon_tasks")]);
+  show(daemon);
+  showTasks(tasks, daemon.running?.tasks ?? []);
+}
+
+/**
+ * A checkbox for each of the daemon's tasks, with when it next runs if it's
+ * running. Rows already shown are updated in place, so refreshing doesn't
+ * take focus from a checkbox or flip one that's being changed.
+ */
+function showTasks(tasks, running) {
+  const list = $("#daemon-tasks");
+  const shown = [...list.children];
+  const same = shown.length === tasks.length && tasks.every((t, i) => shown[i].dataset.task === t.id);
+  if (!same) {
+    list.replaceChildren(
+      ...tasks.map((task) =>
+        h(
+          "label",
+          { "data-task": task.id },
+          h("input", {
+            type: "checkbox",
+            name: `daemon-task-${task.id}`,
+            onchange: (e) => setTask(task.id, e.target),
+          }),
+          h("span", {}, task.description),
+          h("small", { class: "muted" }),
+        ),
+      ),
+    );
+  }
+  for (const [i, task] of tasks.entries()) {
+    const row = list.children[i];
+    const input = row.querySelector("input");
+    if (!input.disabled) input.checked = task.enabled;
+    const now = running.find((t) => t.id === task.id);
+    let note = "";
+    if (now?.running) note = "running now";
+    else if (now?.enabled && now.next) note = `next ${new Date(now.next).toLocaleString()}`;
+    row.querySelector("small").textContent = note;
+  }
+}
+
+async function setTask(id, input) {
+  input.disabled = true;
+  try {
+    await invoke("daemon_set_task", { id, enabled: input.checked });
+    status(input.checked ? "Turned on; it starts once Patchwork is closed" : "Turned off");
+  } catch (err) {
+    input.checked = !input.checked;
+    $("#daemon-error").textContent = String(err);
+    $("#daemon-error").hidden = false;
+    status("Couldn't change that", true);
+  } finally {
+    input.disabled = false;
+  }
 }
 
 function show({ installed, running, version }) {
@@ -107,7 +163,31 @@ $("#daemon-restart").addEventListener("click", () =>
 $("#daemon-uninstall").addEventListener("click", () =>
   act("daemon_uninstall", "Stopping…", "Stopped background sync", "Couldn't stop background sync"),
 );
-$("#daemon-refresh").addEventListener("click", () => renderDaemon().catch(() => {}));
+
+/** How often the Background tab refreshes itself while it's showing. */
+const REFRESH_MS = 3000;
+
+// Keeps the Background tab current while it's open, rather than having a
+// Refresh button. Skipped while a button's busy, since act() refreshes
+// once it's done.
+setInterval(() => {
+  const panel = $("#daemon");
+  if (panel.hidden || !panel.closest("dialog")?.open) return;
+  if ([...panel.querySelectorAll("button")].some((b) => b.disabled)) return;
+  Promise.all([invoke("daemon_status"), invoke("daemon_tasks")])
+    .then(([daemon, tasks]) => {
+      const error = $("#daemon-error");
+      const shownError = !error.hidden && error.textContent;
+      show(daemon);
+      showTasks(tasks, daemon.running?.tasks ?? []);
+      // keep showing what last went wrong
+      if (shownError) {
+        error.textContent = shownError;
+        error.hidden = false;
+      }
+    })
+    .catch(() => {});
+}, REFRESH_MS);
 
 // Offering background sync, where something's just been shared or linked.
 
@@ -138,8 +218,8 @@ export async function offerDaemon(slot, after = () => {}) {
   const text = h(
     "p",
     {},
-    "Patchwork only syncs while it's open. Background sync keeps this in step, and lets others join, " +
-      "after you close it too, whenever you're logged in.",
+    "Patchwork only syncs while it's open. With background sync, changes still go back and forth, " +
+      "and others can still join, after you close it, whenever you're logged in.",
   );
   const error = h("p", { class: "error", hidden: true });
   const later = h("button", { type: "button" }, "Not now");

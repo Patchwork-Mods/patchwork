@@ -5930,6 +5930,7 @@ dependencies = [
  "jiff",
  "patchwork-builtin",
  "patchwork-core",
+ "patchwork-daemon",
  "patchwork-sync",
  "tempfile",
  "tokio",
@@ -5966,6 +5967,24 @@ dependencies = [
  "walkdir",
  "windows-registry",
  "zip 8.6.0",
+]
+
+[[package]]
+name = "patchwork-daemon"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "futures-util",
+ "jiff",
+ "patchwork-core",
+ "patchwork-sync",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml 1.1.6+spec-1.1.0",
+ "uuid",
 ]
 
 [[package]]
@@ -6031,6 +6050,7 @@ dependencies = [
  "notify",
  "patchwork-builtin",
  "patchwork-core",
+ "patchwork-daemon",
  "patchwork-sync",
  "pulldown-cmark",
  "serde",
@@ -6094,7 +6114,6 @@ name = "patchwork-sync"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "directories",
  "futures-util",
  "iroh",
  "iroh-blobs",
