@@ -53,6 +53,12 @@ pub fn run(open: impl Fn(Paths) -> patchwork_core::Result<Patchwork>) -> anyhow:
 /// Windows) or is an older version, starts it, to take over once the app's
 /// closed.
 pub fn pause_for_app(paths: &Paths) -> Option<Paused> {
+    // a package manager may have moved the app since the daemon was set up
+    // to start at login
+    match program().map(|p| daemon::refresh(paths, &p)) {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) | Err(e) => eprintln!("couldn't update the daemon's login entry: {e:#}"),
+    }
     let status = daemon::status(paths).unwrap_or_else(|e| {
         eprintln!("couldn't reach the daemon: {e:#}");
         None

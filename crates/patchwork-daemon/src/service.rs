@@ -22,11 +22,16 @@ pub struct Program {
 
 impl Program {
     /// This program, run with `args`. An AppImage is run from the AppImage
-    /// itself, since where it's mounted changes each time.
+    /// itself, since where it's mounted changes each time. Otherwise it's
+    /// run by the path it was started with, if that leads to it through a
+    /// link or a wrapper (see [`invoked_as`]).
     pub fn current(args: &[&str]) -> Result<Self> {
         let exe = match std::env::var_os("APPIMAGE") {
             Some(appimage) => PathBuf::from(appimage),
-            None => std::env::current_exe().context("finding this program")?,
+            None => {
+                let exe = std::env::current_exe().context("finding this program")?;
+                invoked_as(&exe).unwrap_or(exe)
+            }
         };
         let env = ["PATCHWORK_HOME", "PATCHWORK_REGISTRY_PATH"]
             .into_iter()
@@ -62,6 +67,39 @@ impl Program {
         std::thread::spawn(move || child.wait());
         Ok(())
     }
+}
+
+/// The path this program was started by, when it isn't `exe` but leads to
+/// it: a link into a versioned directory (`/opt/homebrew/bin/patchwork` to
+/// `Cellar/patchwork/<version>/...`, `~/.nix-profile/bin/patchwork` to
+/// `/nix/store/...`), or a wrapper beside it (Nix's `patchwork` beside
+/// `.patchwork-wrapped`). Unlike `exe`, which the system reports with the
+/// links followed, it stays put when a package manager updates patchwork,
+/// so a login entry made with it keeps working.
+#[cfg(unix)]
+fn invoked_as(exe: &Path) -> Option<PathBuf> {
+    let arg0 = PathBuf::from(std::env::args_os().next()?);
+    let path = if arg0.components().count() > 1 {
+        std::env::current_dir().ok()?.join(&arg0)
+    } else {
+        let search = std::env::var_os("PATH")?;
+        std::env::split_paths(&search)
+            .map(|dir| dir.join(&arg0))
+            .find(|p| p.is_file())?
+    };
+    // without any `.` in it
+    let path: PathBuf = path.components().collect();
+    if !path.is_absolute() || path == exe {
+        return None;
+    }
+    let real = path.canonicalize().ok()?;
+    let exe = exe.canonicalize().ok()?;
+    (real == exe || real.parent() == exe.parent()).then_some(path)
+}
+
+#[cfg(not(unix))]
+fn invoked_as(_: &Path) -> Option<PathBuf> {
+    None
 }
 
 /// A command that doesn't flash up a console window on Windows.

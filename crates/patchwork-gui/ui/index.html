@@ -997,6 +997,14 @@
 					This copy wasn't installed by Patchwork's installer, so it can't update itself. Update it
 					the way you installed it, or download the new version.
 				</p>
+				<div id="self-update-managed" class="stack" hidden>
+					<p id="self-update-managed-text" class="hint"></p>
+					<div id="self-update-command-row" class="row">
+						<input id="self-update-command" type="text" readonly
+							aria-label="The command that updates Patchwork">
+						<button type="button" id="self-update-copy">Copy</button>
+					</div>
+				</div>
 				<div id="self-update-progress" class="stack" hidden>
 					<progress id="self-update-bar"></progress>
 					<p id="self-update-progress-text" class="hint"></p>

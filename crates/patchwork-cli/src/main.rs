@@ -341,6 +341,13 @@ async fn run(cli: Cli) -> Result<()> {
         return self_update(check).await;
     }
     let paths = Paths::from_env()?;
+    // a package manager may have moved this program since the daemon was
+    // set up to start at login
+    if let Ok(program) = patchwork_daemon::service::Program::current(&["daemon", "run"])
+        && let Err(e) = patchwork_daemon::refresh(&paths, &program)
+    {
+        eprintln!("warning: couldn't update the daemon's login entry: {e:#}");
+    }
     let command = match cli.command {
         Command::Daemon(command) => return daemon::run(paths, command).await,
         command => command,

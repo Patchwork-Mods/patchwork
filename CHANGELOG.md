@@ -53,6 +53,14 @@ dialog shows, so the heading has to match the version being released.
   and one for all of them along the top of the status bar. Themes can
   restyle them with `--pw-progress`, `--pw-progress-track` and
   `--pw-progress-height` (a height of `100%` fills the row from behind).
+- A copy installed by a package manager leaves updating to it: Check for
+  updates says where to update it (with the command to copy, if the package
+  gives one) instead of offering to install or download the new version,
+  and the app doesn't check by itself when it opens. Packagers say so with
+  `PATCHWORK_PACKAGE_MANAGER` at build time or a `packaging.toml`; see
+  `docs/packaging.md`.
+- The background daemon keeps starting at login after a package manager
+  moves Patchwork somewhere new (Homebrew and Nix do on every update).
 
 ### Games
 

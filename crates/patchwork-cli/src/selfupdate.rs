@@ -16,6 +16,18 @@ pub(crate) async fn self_update(check: bool) -> Result<()> {
         return Ok(());
     };
     println!("patchwork {latest} is available (you have {current})");
+    if let Some(managed) = &found.managed {
+        // It can take a while for a release to reach a package's repository.
+        let how = format!(
+            "{}; it may take a little while to get there",
+            managed.how_to_update()
+        );
+        if check {
+            println!("{how}");
+            return Ok(());
+        }
+        bail!(how);
+    }
     if !found.installable {
         let how = format!(
             "this copy wasn't installed by patchwork's installer, so update it the way you \

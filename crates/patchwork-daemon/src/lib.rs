@@ -733,12 +733,117 @@ pub fn stop(paths: &Paths) -> Result<bool> {
 /// running, and starts it.
 pub fn install(paths: &Paths, program: &service::Program) -> Result<()> {
     stop(paths)?;
-    service::install(program)
+    service::install(program)?;
+    let record = installed_record(paths);
+    if let Err(e) = Installed::of(program).write(&record) {
+        // only matters to [`refresh`]
+        eprintln!("couldn't write {}: {e:#}", record.display());
+    }
+    Ok(())
 }
 
 /// Stops the daemon, and stops it starting when the user logs in.
 pub fn uninstall(paths: &Paths) -> Result<()> {
     service::uninstall()?;
+    let _ = fs::remove_file(installed_record(paths));
     stop(paths)?;
     Ok(())
+}
+
+/// What [`install`] had the system run, to tell later whether that's gone.
+fn installed_record(paths: &Paths) -> PathBuf {
+    paths.daemon().join("installed.json")
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct Installed {
+    exe: PathBuf,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+}
+
+impl Installed {
+    fn of(program: &service::Program) -> Self {
+        Self {
+            exe: program.exe.clone(),
+            args: program.args.clone(),
+            env: program
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned()))
+                .collect(),
+        }
+    }
+
+    fn read(path: &Path) -> Option<Self> {
+        serde_json::from_slice(&fs::read(path).ok()?).ok()
+    }
+
+    fn write(&self, path: &Path) -> Result<()> {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        Ok(())
+    }
+
+    /// Whether `now` should replace this: it's the same frontend run the
+    /// same way, and the program this names is gone, as it is once a
+    /// package manager has updated patchwork into a new directory and
+    /// cleaned up the old one.
+    fn replaced_by(&self, now: &Self) -> bool {
+        self.args == now.args && self.env == now.env && self.exe != now.exe && !self.exe.exists()
+    }
+}
+
+/// Points the login entry [`install`] made at `program` if it still names
+/// a copy of `program` that's gone, restarting the daemon from it. True if
+/// it did. Cheap enough to call each time a frontend starts.
+pub fn refresh(paths: &Paths, program: &service::Program) -> Result<bool> {
+    let Some(before) = Installed::read(&installed_record(paths)) else {
+        return Ok(false);
+    };
+    if !before.replaced_by(&Installed::of(program)) || service::installed()?.is_none() {
+        return Ok(false);
+    }
+    install(paths, program)?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_login_entry_follows_its_program_when_that_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("0.3.0/patchwork");
+        let new = dir.path().join("0.4.0/patchwork");
+        fs::create_dir_all(new.parent().unwrap()).unwrap();
+        fs::write(&new, "").unwrap();
+        let entry = |exe: &Path, args: &[&str]| Installed {
+            exe: exe.to_owned(),
+            args: args.iter().map(|&a| a.to_owned()).collect(),
+            env: Vec::new(),
+        };
+        let now = entry(&new, &["daemon", "run"]);
+        // gone, and the same frontend: follow it
+        assert!(entry(&old, &["daemon", "run"]).replaced_by(&now));
+        // the app's, not the CLI's
+        assert!(!entry(&old, &["--daemon"]).replaced_by(&now));
+        // still there, so maybe another copy someone wants kept
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        fs::write(&old, "").unwrap();
+        assert!(!entry(&old, &["daemon", "run"]).replaced_by(&now));
+        // a different PATCHWORK_HOME's
+        let mut other = entry(&dir.path().join("gone"), &["daemon", "run"]);
+        other
+            .env
+            .push(("PATCHWORK_HOME".to_owned(), "/scratch".to_owned()));
+        assert!(!other.replaced_by(&now));
+
+        let record = dir.path().join("daemon/installed.json");
+        now.write(&record).unwrap();
+        assert_eq!(Installed::read(&record), Some(now));
+    }
 }

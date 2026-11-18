@@ -2399,6 +2399,7 @@ fn main() {
             selfupdate::check_for_update,
             selfupdate::install_update,
             selfupdate::cancel_update,
+            selfupdate::update_check_automatic,
             cli::cli_status,
             daemon::daemon_status,
             daemon::daemon_missed,

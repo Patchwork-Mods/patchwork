@@ -40,6 +40,7 @@ pub mod lock;
 pub mod matching;
 pub mod options;
 pub mod order;
+pub mod packaging;
 pub mod paths;
 pub mod profile;
 pub mod registry;

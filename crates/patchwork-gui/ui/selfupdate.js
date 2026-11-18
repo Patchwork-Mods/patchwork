@@ -3,7 +3,7 @@
 // install_update and cancel_update in selfupdate.rs.
 
 import { invoke, status } from "./state.js";
-import { $, openExternal } from "./dom.js";
+import { $, copyText, openExternal } from "./dom.js";
 import { renderEntries } from "./changelog.js";
 
 const { Channel } = window.__TAURI__.core;
@@ -64,12 +64,25 @@ button.addEventListener("click", async () => {
   const notes = $("#self-update-notes");
   notes.replaceChildren(...(found.notesHtml ? renderEntries([{ html: found.notesHtml }]) : []));
   notes.hidden = !found.notesHtml;
-  $("#self-update-manual").hidden = found.installable;
-  $("#self-update-download").hidden = found.installable;
+  // A package manager's copy is updated there, not from the download page,
+  // which would leave a second copy beside it.
+  const managed = found.managed;
+  $("#self-update-managed").hidden = !managed;
+  if (managed) {
+    $("#self-update-managed-text").textContent =
+      `Patchwork was installed with ${managed.manager}, so update it there. ` +
+      `New versions can take a little while to reach it.`;
+    $("#self-update-command-row").hidden = !managed.updateCommand;
+    $("#self-update-command").value = managed.updateCommand ?? "";
+  }
+  $("#self-update-manual").hidden = found.installable || !!managed;
+  $("#self-update-download").hidden = found.installable || !!managed;
   error.hidden = true;
   resetDialog();
   dialog.showModal();
 });
+
+$("#self-update-copy").addEventListener("click", () => copyText($("#self-update-command")));
 
 $("#self-update-download").addEventListener("click", () => {
   openExternal(found.releasesUrl);
@@ -146,4 +159,8 @@ stop.addEventListener("click", () => {
 });
 
 // Quietly, so being offline at startup doesn't greet people with an error.
-check().catch(() => {});
+// Not at all for a copy a package manager looks after, unless its package
+// asks: its package usually arrives later than the release.
+invoke("update_check_automatic")
+  .then((automatic) => automatic && check())
+  .catch(() => {});

@@ -1,10 +1,13 @@
 //! Updating the app itself, with Tauri's updater: it reads `latest.json` from
 //! the newest GitHub release (made by `.github/workflows/release.yml`, with notes from `CHANGELOG.md`)
-//! and installs the bundle that matches how this copy was installed.
+//! and installs the bundle that matches how this copy was installed. A copy a
+//! package manager looks after ([`packaging`]) is only told about new
+//! releases, and only when asked: its package manager updates it.
 
 use std::sync::Mutex;
 
 use futures_util::future::{AbortHandle, abortable};
+use patchwork_core::packaging::{self, Packaging};
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::utils::config::BundleType;
@@ -29,6 +32,13 @@ pub fn installed_from() -> Option<BundleType> {
             .then_some(BundleType::App),
         other => Some(other),
     }
+}
+
+/// Whether this copy can replace itself: it came from one of our bundles,
+/// and no package manager has said it looks after it (a repackaged bundle
+/// still says it's ours).
+fn can_update_itself() -> bool {
+    installed_from().is_some() && packaging::packaging().is_none()
 }
 
 /// What's running that an update mustn't cut off by restarting the app:
@@ -104,6 +114,8 @@ pub struct UpdateInfo {
     notes_html: Option<String>,
     /// Whether [`install_update`] can replace this copy.
     installable: bool,
+    /// The package manager that looks after this copy, if one does.
+    managed: Option<&'static Packaging>,
     releases_url: &'static str,
 }
 
@@ -120,9 +132,18 @@ pub async fn check_for_update(handle: AppHandle) -> CmdResult<UpdateInfo> {
             .filter(|notes| !notes.trim().is_empty())
             .map(crate::changelog::render_markdown),
         latest: update.map(|u| u.version),
-        installable: installed_from().is_some(),
+        installable: can_update_itself(),
+        managed: packaging::packaging(),
         releases_url: RELEASES_URL,
     })
+}
+
+/// Whether the app may look for a new release by itself when it starts.
+/// Not when a package manager looks after it, unless the package says so:
+/// a package usually arrives some time after the release.
+#[tauri::command]
+pub fn update_check_automatic() -> bool {
+    packaging::packaging().is_none_or(|p| p.check_automatically)
 }
 
 /// How an update's going, sent to `install_update`'s channel.
@@ -154,6 +175,9 @@ pub async fn install_update(
     app: State<'_, App>,
     progress: Channel<UpdateProgress>,
 ) -> CmdResult<UpdateOutcome> {
+    if let Some(managed) = packaging::packaging() {
+        return Err(managed.how_to_update());
+    }
     if installed_from().is_none() {
         return Err(
             "this copy of patchwork wasn't installed from one of its installers; \

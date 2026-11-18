@@ -2490,6 +2490,13 @@ dialog::backdrop {
   overflow-y: auto;
 }
 
+/* The command that updates a copy a package manager looks after. */
+#self-update-command {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+}
+
 .changelog .error {
   color: var(--pw-danger);
 }

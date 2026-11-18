@@ -5,11 +5,13 @@
 //! from somewhere else (the Patchwork app, Nix, `cargo install`, a dev build),
 //! so it can still be told about new releases but replacing it is left to
 //! whatever installed it. The app updates itself, and the CLI it carries,
-//! with Tauri's updater instead.
+//! with Tauri's updater instead. A copy a package manager looks after
+//! ([`packaging`]) never replaces itself, receipt or not.
 
 use axoupdater::{AxoUpdater, AxoupdateError, ReleaseSource, ReleaseSourceType};
 use serde::Serialize;
 
+use crate::packaging::{self, Packaging};
 use crate::{Error, Result};
 
 const OWNER: &str = "patchwork-mods";
@@ -32,12 +34,15 @@ pub struct UpdateCheck {
     pub available: bool,
     /// Whether [`install`] can replace this copy.
     pub installable: bool,
+    /// The package manager that looks after this copy, if one does.
+    pub managed: Option<Packaging>,
 }
 
 /// What dist calls an app is its package's name, e.g. `patchwork-cli`.
 fn updater(app: &str) -> Result<(AxoUpdater, bool)> {
     let mut updater = AxoUpdater::new_for(app);
-    let installable = updater.load_receipt().is_ok()
+    let installable = packaging::packaging().is_none()
+        && updater.load_receipt().is_ok()
         && updater
             .check_receipt_is_for_this_executable()
             .unwrap_or(false);
@@ -71,6 +76,7 @@ pub async fn check(app: &str) -> Result<UpdateCheck> {
         available: latest.as_ref().is_some_and(|l| *l > current),
         latest: latest.map(|v| v.to_string()),
         installable,
+        managed: packaging::packaging().cloned(),
     })
 }
 
@@ -79,6 +85,9 @@ pub async fn check(app: &str) -> Result<UpdateCheck> {
 /// passes the installer's own output through to this process's.
 pub async fn install(app: &str, show_output: bool) -> Result<Option<String>> {
     let (mut updater, installable) = updater(app)?;
+    if let Some(managed) = packaging::packaging() {
+        return Err(Error::SelfUpdate(managed.how_to_update()));
+    }
     if !installable {
         return Err(Error::SelfUpdate(format!(
             "this copy of patchwork ({CURRENT}) wasn't installed by its installer; \
