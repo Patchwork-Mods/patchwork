@@ -2210,7 +2210,7 @@ impl Patchwork {
                 Some(path) => self.store.ingest_path(&path, format),
                 None => Err(local::not_here(name)),
             },
-            ArtifactLocation::Url { url } => self.fetch_url(url, format).await,
+            ArtifactLocation::Url { url } => self.fetch_url(url, name, format).await,
             ArtifactLocation::Source { file, .. } => {
                 let file = SourceFile {
                     game: game.to_owned(),
@@ -2233,7 +2233,7 @@ impl Patchwork {
                 };
                 match self.source(source)?.download(&ctx, id, &file.file).await? {
                     Download::Url(url) => {
-                        let hash = self.fetch_url(&url, format).await?;
+                        let hash = self.fetch_url(&url, name, format).await?;
                         self.remember_source_file(&file, hash)?;
                         Ok(hash)
                     }
@@ -2249,7 +2249,13 @@ impl Patchwork {
         }
     }
 
-    async fn fetch_url(&self, url: &str, format: ArtifactFormat) -> Result<ContentHash> {
+    /// Downloads `url` into the store, reporting its progress as `name`'s.
+    async fn fetch_url(
+        &self,
+        url: &str,
+        name: &str,
+        format: ArtifactFormat,
+    ) -> Result<ContentHash> {
         if format == ArtifactFormat::Dir {
             return Err(Error::invalid(format!(
                 "{url} can't be downloaded as a directory"
@@ -2264,7 +2270,11 @@ impl Patchwork {
             .tempfile_in(&dir)
             .at(&dir)?
             .into_temp_path();
-        download(url, &tmp).await?;
+        let downloaded = download(url, &tmp, name, &*self.reporter).await;
+        self.reporter.report(Event::Downloaded {
+            name: name.to_owned(),
+        });
+        downloaded?;
         self.store.ingest_path(&tmp, format)
     }
 
@@ -2311,7 +2321,10 @@ impl Patchwork {
                     id: handoff.id,
                     file: handoff.file,
                 };
-                let hash = self.fetch_url(&handoff.url, ArtifactFormat::File).await?;
+                let name = format!("{source_id}:{}", file.id);
+                let hash = self
+                    .fetch_url(&handoff.url, &name, ArtifactFormat::File)
+                    .await?;
                 self.remember_source_file(&file, hash)?;
                 return Ok(Some(file));
             }
@@ -3103,8 +3116,11 @@ impl Patchwork {
     }
 }
 
-/// Streams `url` into the file at `dest`.
-async fn download(url: &str, dest: &Path) -> Result<()> {
+/// How often [`download`] reports its progress, at most.
+const PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Streams `url` into the file at `dest`, reporting its progress as `name`'s.
+async fn download(url: &str, dest: &Path, name: &str, reporter: &dyn Reporter) -> Result<()> {
     let reqwest_error = |result| Error::Reqwest {
         url: url.to_owned(),
         result,
@@ -3125,9 +3141,26 @@ async fn download(url: &str, dest: &Path) -> Result<()> {
         fs::create_dir_all(dir).at(dir)?;
     }
     let mut file = fs::File::create(dest).at(dest)?;
+    let total = response.content_length();
+    let progress = |downloaded| {
+        reporter.report(Event::Downloading {
+            name: name.to_owned(),
+            downloaded,
+            total,
+        });
+    };
+    let mut downloaded = 0;
+    progress(downloaded);
+    let mut last = std::time::Instant::now();
     while let Some(chunk) = response.chunk().await.map_err(reqwest_error)? {
         file.write_all(&chunk).at(dest)?;
+        downloaded += chunk.len() as u64;
+        if last.elapsed() >= PROGRESS_EVERY {
+            last = std::time::Instant::now();
+            progress(downloaded);
+        }
     }
+    progress(downloaded);
     Ok(())
 }
 

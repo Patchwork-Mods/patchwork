@@ -49,6 +49,10 @@ dialog shows, so the heading has to match the version being released.
   update marks are ready when you open it. Each thing it does can be
   turned on or off there, or with `patchwork daemon enable`/`disable`;
   `patchwork daemon every updates 2h` changes how often it checks.
+- Downloads show their progress: a thin bar along each mod's row or card,
+  and one for all of them along the top of the status bar. Themes can
+  restyle them with `--pw-progress`, `--pw-progress-track` and
+  `--pw-progress-height` (a height of `100%` fills the row from behind).
 
 ### Games
 

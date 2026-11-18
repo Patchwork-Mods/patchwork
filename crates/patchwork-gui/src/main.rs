@@ -93,6 +93,16 @@ impl Reporter for Emit {
         let event = match event {
             Event::Resolving { name } => UiEvent::Resolving { name },
             Event::Fetching { name } => UiEvent::Fetching { name },
+            Event::Downloading {
+                name,
+                downloaded,
+                total,
+            } => UiEvent::Downloading {
+                name,
+                downloaded,
+                total,
+            },
+            Event::Downloaded { name } => UiEvent::Downloaded { name },
             Event::Building { step } => UiEvent::Building { step },
             Event::Applying(op) => UiEvent::Applying(op.into()),
             Event::Warning(message) => UiEvent::Warning { message },
@@ -106,12 +116,30 @@ impl Reporter for Emit {
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum UiEvent {
-    Resolving { name: String },
-    Fetching { name: String },
-    Building { step: String },
+    Resolving {
+        name: String,
+    },
+    Fetching {
+        name: String,
+    },
+    Downloading {
+        name: String,
+        downloaded: u64,
+        total: Option<u64>,
+    },
+    Downloaded {
+        name: String,
+    },
+    Building {
+        step: String,
+    },
     Applying(UiOp),
-    Warning { message: String },
-    Notice { message: String },
+    Warning {
+        message: String,
+    },
+    Notice {
+        message: String,
+    },
 }
 
 #[derive(Clone, Serialize)]

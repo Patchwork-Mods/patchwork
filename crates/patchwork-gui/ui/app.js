@@ -20,6 +20,7 @@ import "./deploy.js";
 import "./history.js";
 import "./play.js";
 import "./downloads.js";
+import "./progress.js";
 import "./selfupdate.js";
 import "./cli.js";
 import "./settings.js";

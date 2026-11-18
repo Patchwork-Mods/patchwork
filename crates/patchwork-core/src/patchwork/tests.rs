@@ -82,10 +82,32 @@ fn serve_once(status: &'static str, body: &'static [u8]) -> String {
 async fn downloads_to_a_file() {
     let tmp = tempfile::tempdir().unwrap();
     let dest = tmp.path().join("downloads/download.tmp");
-    download(&serve_once("200 OK", b"zip bytes"), &dest)
+    let progress = Progress::default();
+    download(&serve_once("200 OK", b"zip bytes"), &dest, "Mod", &progress)
         .await
         .unwrap();
     assert_eq!(fs::read(&dest).unwrap(), b"zip bytes");
+    let seen = progress.0.lock().unwrap();
+    // it starts at nothing and ends with all of it, sized from the response
+    assert_eq!(seen.first(), Some(&("Mod".to_owned(), 0, Some(9))));
+    assert_eq!(seen.last(), Some(&("Mod".to_owned(), 9, Some(9))));
+}
+
+/// Keeps the download progress it's given.
+#[derive(Default)]
+struct Progress(std::sync::Mutex<Vec<(String, u64, Option<u64>)>>);
+
+impl crate::event::Reporter for Progress {
+    fn report(&self, event: Event) {
+        if let Event::Downloading {
+            name,
+            downloaded,
+            total,
+        } = event
+        {
+            self.0.lock().unwrap().push((name, downloaded, total));
+        }
+    }
 }
 
 #[tokio::test]
@@ -96,7 +118,7 @@ async fn web_pages_fail_the_download() {
         "200 OK\r\nContent-Type: text/html; charset=utf-8",
         b"<html>a folder</html>",
     );
-    let err = download(&page, &dest).await.unwrap_err();
+    let err = download(&page, &dest, "Mod", &Silent).await.unwrap_err();
     assert!(err.to_string().contains("web page"), "{err}");
     assert!(!dest.exists());
 }
@@ -105,7 +127,7 @@ async fn web_pages_fail_the_download() {
 async fn http_errors_fail_the_download() {
     let tmp = tempfile::tempdir().unwrap();
     let dest = tmp.path().join("download.tmp");
-    let err = download(&serve_once("404 Not Found", b""), &dest)
+    let err = download(&serve_once("404 Not Found", b""), &dest, "Mod", &Silent)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("404"), "{err}");

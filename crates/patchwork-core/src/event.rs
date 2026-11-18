@@ -10,6 +10,18 @@ pub enum Event {
     Fetching {
         name: String,
     },
+    /// How far a download for `name` has got, sent every so often while it
+    /// runs (and once at its start and end). `total` is `None` when the
+    /// server doesn't say how big it is.
+    Downloading {
+        name: String,
+        downloaded: u64,
+        total: Option<u64>,
+    },
+    /// A download for `name` stopped, whether it finished or failed.
+    Downloaded {
+        name: String,
+    },
     Building {
         step: String,
     },

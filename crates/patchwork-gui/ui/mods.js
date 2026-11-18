@@ -1202,6 +1202,7 @@ function dependencyRow(d) {
     {
       class: ["mod-row dependency-row", d.replacedBy && "replaced", !d.inUse && "disabled"].filter(Boolean).join(" "),
       "data-key": d.key,
+      "data-name": d.name,
     },
     head,
     ...actions,

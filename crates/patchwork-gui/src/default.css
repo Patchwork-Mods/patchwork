@@ -53,6 +53,13 @@
   /* How much of an added mod's picture still shows while its card's sheet
      is raised. */
   --pw-card-peek: 40px;
+
+  /* Download progress (see "Download progress" below): the bar's colour,
+     what's behind it, and how tall it is. A height of 100% with a faint
+     colour fills a mod's row from behind instead of underlining it. */
+  --pw-progress: var(--pw-accent);
+  --pw-progress-track: color-mix(in srgb, var(--pw-accent) 15%, transparent);
+  --pw-progress-height: 2px;
 }
 
 :root[data-mode="dark"] {
@@ -2290,6 +2297,7 @@ body.mod-settings-shown .mod-row .mod-settings[hidden] {
 /* Status bar */
 
 #statusbar {
+  position: relative;
   grid-area: status;
   display: flex;
   align-items: center;
@@ -3407,4 +3415,86 @@ legend {
 
 .computers-about li+li {
   margin-top: 4px;
+}
+
+/* Download progress (see progress.js). A mod's row or card gets .downloading
+   while its file downloads, plus .indeterminate when its size isn't known,
+   and --pw-download-progress from 0 to 1. #download-progress is all of them
+   together, along the top of the status bar, with the same variable and
+   classes. The bars are pseudo-elements so they can't push anything around:
+   ::before is the track and ::after the bar. */
+.mod-row.downloading {
+  position: relative;
+}
+
+:is(.mod-row, .mod-card).downloading::before,
+:is(.mod-row, .mod-card).downloading::after,
+#download-progress::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  z-index: 1;
+  height: var(--pw-progress-height);
+  pointer-events: none;
+}
+
+:is(.mod-row, .mod-card).downloading::before {
+  right: 0;
+  background: var(--pw-progress-track);
+}
+
+:is(.mod-row, .mod-card).downloading::after,
+#download-progress::after {
+  width: calc(var(--pw-download-progress, 0) * 100%);
+  background: var(--pw-progress);
+  transition: width 0.15s linear;
+}
+
+#download-progress {
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: var(--pw-progress-height);
+  background: var(--pw-progress-track);
+  pointer-events: none;
+}
+
+#download-progress[hidden] {
+  display: none;
+}
+
+/* No size to go by, so a piece of bar sweeps across instead. */
+:is(.mod-row, .mod-card).indeterminate::after,
+#download-progress.indeterminate::after {
+  width: 100%;
+  background: linear-gradient(90deg, transparent, var(--pw-progress), transparent) no-repeat;
+  background-size: 30% 100%;
+  animation: pw-download-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes pw-download-sweep {
+  from {
+    background-position: -45% 0;
+  }
+
+  to {
+    background-position: 145% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  :is(.mod-row, .mod-card).downloading::after,
+  #download-progress::after {
+    transition: none;
+  }
+
+  :is(.mod-row, .mod-card).indeterminate::after,
+  #download-progress.indeterminate::after {
+    background: var(--pw-progress);
+    opacity: 0.5;
+    animation: none;
+  }
 }
