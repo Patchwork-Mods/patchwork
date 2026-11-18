@@ -147,6 +147,15 @@ pub async fn daemon_uninstall(app: State<'_, App>) -> CmdResult<()> {
         .map_err(msg)?
 }
 
+/// Whether the daemon's on at all, and its tasks.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonTasks {
+    /// Off means it runs none of them, whatever each says.
+    enabled: bool,
+    tasks: Vec<DaemonTask>,
+}
+
 /// One of the daemon's tasks, for turning on and off.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -159,9 +168,9 @@ pub struct DaemonTask {
 }
 
 #[tauri::command]
-pub fn daemon_tasks(app: State<'_, App>) -> CmdResult<Vec<DaemonTask>> {
+pub fn daemon_tasks(app: State<'_, App>) -> CmdResult<DaemonTasks> {
     let settings = DaemonSettings::load(app.pw.paths()).map_err(msg)?;
-    Ok(daemon::tasks()
+    let tasks = daemon::tasks()
         .iter()
         .map(|task| {
             let own = settings.task(task.id());
@@ -172,7 +181,21 @@ pub fn daemon_tasks(app: State<'_, App>) -> CmdResult<Vec<DaemonTask>> {
                 every: own.every,
             }
         })
-        .collect())
+        .collect();
+    Ok(DaemonTasks {
+        enabled: settings.on(),
+        tasks,
+    })
+}
+
+/// Turns the whole daemon on or off; its tasks keep their own settings.
+/// Like [`daemon_set_task`], it takes effect once the app's closed.
+#[tauri::command]
+pub fn daemon_set_enabled(app: State<'_, App>, enabled: bool) -> CmdResult<()> {
+    let paths = app.pw.paths();
+    let mut settings = DaemonSettings::load(paths).map_err(msg)?;
+    settings.enabled = Some(enabled);
+    settings.save(paths).map_err(msg)
 }
 
 /// Turns one of the daemon's tasks on or off. The daemon's paused while

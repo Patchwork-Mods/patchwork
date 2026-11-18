@@ -27,18 +27,23 @@ const STATES = {
 };
 
 export async function renderDaemon() {
-  const [daemon, tasks] = await Promise.all([run("daemon_status"), run("daemon_tasks")]);
+  const [daemon, settings] = await Promise.all([run("daemon_status"), run("daemon_tasks")]);
   show(daemon);
-  showTasks(tasks, daemon.running?.tasks ?? []);
+  showTasks(settings, daemon.running?.tasks ?? []);
 }
 
 /**
  * A checkbox for each of the daemon's tasks, with when it next runs if it's
  * running. Rows already shown are updated in place, so refreshing doesn't
- * take focus from a checkbox or flip one that's being changed.
+ * take focus from a checkbox or flip one that's being changed. While the
+ * whole daemon's off they're greyed out, and keep their own settings.
  */
-function showTasks(tasks, running) {
+function showTasks({ enabled, tasks }, running) {
+  const master = $("#daemon-enabled");
+  if (!master.disabled) master.checked = enabled;
+  const on = master.checked;
   const list = $("#daemon-tasks");
+  list.classList.toggle("off", !on);
   const shown = [...list.children];
   const same = shown.length === tasks.length && tasks.every((t, i) => shown[i].dataset.task === t.id);
   if (!same) {
@@ -61,17 +66,19 @@ function showTasks(tasks, running) {
   for (const [i, task] of tasks.entries()) {
     const row = list.children[i];
     const input = row.querySelector("input");
-    if (!input.disabled) input.checked = task.enabled;
+    if (!input.dataset.busy) input.checked = task.enabled;
+    input.disabled = !on || !!input.dataset.busy;
     const now = running.find((t) => t.id === task.id);
     let note = "";
-    if (now?.running) note = "running now";
-    else if (now?.enabled && now.next) note = `next ${new Date(now.next).toLocaleString()}`;
+    if (on && now?.running) note = "running now";
+    else if (on && now?.enabled && now.next) note = `next ${new Date(now.next).toLocaleString()}`;
     row.querySelector("small").textContent = note;
   }
 }
 
 async function setTask(id, input) {
   input.disabled = true;
+  input.dataset.busy = "1";
   try {
     await invoke("daemon_set_task", { id, enabled: input.checked });
     status(input.checked ? "Turned on; it starts once Patchwork is closed" : "Turned off");
@@ -81,9 +88,30 @@ async function setTask(id, input) {
     $("#daemon-error").hidden = false;
     status("Couldn't change that", true);
   } finally {
-    input.disabled = false;
+    delete input.dataset.busy;
+    input.disabled = !$("#daemon-enabled").checked;
   }
 }
+
+$("#daemon-enabled").addEventListener("change", async (e) => {
+  const input = e.target;
+  const list = $("#daemon-tasks");
+  const tasks = () => list.querySelectorAll("input");
+  input.disabled = true;
+  try {
+    await invoke("daemon_set_enabled", { enabled: input.checked });
+    status(input.checked ? "Turned on; it starts once Patchwork is closed" : "Turned off; it won't do anything in the background");
+  } catch (err) {
+    input.checked = !input.checked;
+    $("#daemon-error").textContent = String(err);
+    $("#daemon-error").hidden = false;
+    status("Couldn't change that", true);
+  } finally {
+    input.disabled = false;
+    list.classList.toggle("off", !input.checked);
+    for (const t of tasks()) t.disabled = !input.checked || !!t.dataset.busy;
+  }
+});
 
 function show({ installed, running, version }) {
   const lines = [];
@@ -175,11 +203,11 @@ setInterval(() => {
   if (panel.hidden || !panel.closest("dialog")?.open) return;
   if ([...panel.querySelectorAll("button")].some((b) => b.disabled)) return;
   Promise.all([invoke("daemon_status"), invoke("daemon_tasks")])
-    .then(([daemon, tasks]) => {
+    .then(([daemon, settings]) => {
       const error = $("#daemon-error");
       const shownError = !error.hidden && error.textContent;
       show(daemon);
-      showTasks(tasks, daemon.running?.tasks ?? []);
+      showTasks(settings, daemon.running?.tasks ?? []);
       // keep showing what last went wrong
       if (shownError) {
         error.textContent = shownError;

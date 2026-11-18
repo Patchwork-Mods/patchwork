@@ -392,7 +392,7 @@ fn entries<'a>(
     for task in tasks {
         let task = task.as_ref();
         let own = settings.task(task.id());
-        let enabled = own.enabled.unwrap_or_else(|| task.default_enabled());
+        let enabled = settings.on() && own.enabled.unwrap_or_else(|| task.default_enabled());
         shared.set_task(task, enabled, false, None);
         if !enabled {
             continue;

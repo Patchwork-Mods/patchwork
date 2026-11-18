@@ -3211,10 +3211,27 @@ legend {
   gap: 8px;
 }
 
-.daemon-tasks input {
+.daemon-tasks input,
+.daemon-enabled input {
   flex: none;
   margin: 0;
   padding: 0;
+}
+
+.daemon-enabled {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+/* The tasks, greyed out while the whole daemon's turned off. */
+.daemon-tasks {
+  padding-left: 24px;
+}
+
+.daemon-tasks.off {
+  opacity: 0.5;
 }
 
 /* A section's title with a rule running from it to the right edge. */

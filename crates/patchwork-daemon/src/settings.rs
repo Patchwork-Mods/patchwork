@@ -2,6 +2,8 @@
 //! kept in `<config>/daemon.toml`:
 //!
 //! ```toml
+//! enabled = true
+//!
 //! [tasks.sync]
 //! enabled = true
 //!
@@ -10,7 +12,8 @@
 //! every = "6h"
 //! ```
 //!
-//! Anything left out is up to the task (see [`crate::Task::default_enabled`]).
+//! `enabled = false` turns the whole daemon off: it runs none of its tasks,
+//! whatever theirs say. Anything else left out is up to the task (see [`crate::Task::default_enabled`]).
 //! The daemon reads this each time it picks up again after being paused,
 //! so changing it and then pausing the daemon (as [`set_enabled`] does)
 //! is enough for it to take effect.
@@ -26,6 +29,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DaemonSettings {
+    /// Whether the daemon does anything at all (on unless it says not).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tasks: BTreeMap<String, TaskSettings>,
 }
@@ -77,6 +83,21 @@ impl DaemonSettings {
     pub fn task(&self, id: &str) -> TaskSettings {
         self.tasks.get(id).cloned().unwrap_or_default()
     }
+
+    /// Whether the daemon's on at all (see [`DaemonSettings::enabled`]).
+    pub fn on(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+}
+
+/// Turns the whole daemon on or off, and has a running daemon pick that up.
+/// Its tasks keep their own settings for when it's back on.
+pub fn set_on(paths: &Paths, on: bool) -> Result<()> {
+    let mut settings = DaemonSettings::load(paths)?;
+    settings.enabled = Some(on);
+    settings.save(paths)?;
+    drop(crate::pause(paths)?);
+    Ok(())
 }
 
 /// Turns task `id` on or off, and has a running daemon pick that up.
@@ -110,6 +131,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let paths = Paths::rooted(tmp.path());
         assert!(DaemonSettings::load(&paths).unwrap().tasks.is_empty());
+        assert!(DaemonSettings::load(&paths).unwrap().on());
         set_enabled(&paths, "sync", false).unwrap();
         set_every(&paths, "updates", Some("6h")).unwrap();
         let settings = DaemonSettings::load(&paths).unwrap();
@@ -120,5 +142,9 @@ mod tests {
         );
         assert!(set_every(&paths, "updates", Some("soon")).is_err());
         assert_eq!(settings.task("nothing").enabled, None);
+        set_on(&paths, false).unwrap();
+        let settings = DaemonSettings::load(&paths).unwrap();
+        assert!(!settings.on());
+        assert_eq!(settings.task("sync").enabled, Some(false));
     }
 }

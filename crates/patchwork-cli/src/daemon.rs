@@ -23,6 +23,11 @@ pub(crate) enum DaemonCommand {
     Stop,
     /// List the daemon's tasks, and whether each is on.
     Tasks,
+    /// Turn the daemon on, so it runs whichever of its tasks are on.
+    On,
+    /// Turn the daemon off, so it runs none of its tasks; each keeps its
+    /// own setting for when it's back on.
+    Off,
     /// Turn one of the daemon's tasks on.
     Enable { task: String },
     /// Turn one of the daemon's tasks off.
@@ -105,6 +110,9 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
         }
         DaemonCommand::Tasks => {
             let settings = DaemonSettings::load(&paths)?;
+            if !settings.on() {
+                println!("the daemon is off (`patchwork daemon on`), so none of these run");
+            }
             for task in daemon::tasks() {
                 let own = settings.task(task.id());
                 let on = own.enabled.unwrap_or_else(|| task.default_enabled());
@@ -119,6 +127,14 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
                     task.description()
                 );
             }
+        }
+        DaemonCommand::On => {
+            settings::set_on(&paths, true)?;
+            println!("the daemon is on");
+        }
+        DaemonCommand::Off => {
+            settings::set_on(&paths, false)?;
+            println!("the daemon is off; none of its tasks run until `patchwork daemon on`");
         }
         DaemonCommand::Enable { task } => {
             settings::set_enabled(&paths, known_task(&task)?, true)?;

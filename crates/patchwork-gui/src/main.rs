@@ -2407,6 +2407,7 @@ fn main() {
             daemon::daemon_uninstall,
             daemon::daemon_tasks,
             daemon::daemon_set_task,
+            daemon::daemon_set_enabled,
             cli::install_cli,
             sync::sync_status,
             sync::sync_share,
