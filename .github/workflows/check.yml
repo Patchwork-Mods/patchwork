@@ -1,6 +1,7 @@
 # Checks every pull request and every release (release.yml calls this before
-# publishing): formatting, clippy, the tests, the UI's JavaScript, and that the
-# workspace still builds with the rust-version in Cargo.toml. Pushes to main
+# publishing): formatting, clippy, the tests, the UI's JavaScript, that the
+# workspace still builds with the rust-version in Cargo.toml, and the
+# dependencies' licenses, sources and security advisories (deny.toml). Pushes to main
 # aren't checked; run it by hand from Actions -> Check to check one.
 #
 # Tests run on Linux only. macOS and Windows get a `cargo check`, which
@@ -16,6 +17,11 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      releasing:
+        description: Check the dependencies as shipped, with nothing left out
+        type: boolean
+        default: false
 
 concurrency:
   group: check-${{ github.ref }}
@@ -125,3 +131,26 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --locked
+
+  deps:
+    name: dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      # The Hitman (smf) and DRG extensions use three git crates with no
+      # license yet, which we can't ship. Pull requests leave them out so
+      # everything else stays checked; a release doesn't, so it fails until
+      # they're licensed or out of the release build. See deny.toml.
+      - name: cargo deny check
+        env:
+          UNLICENSED: glacier-bin1 hitman-commons uasset_utils
+        run: |
+          args=()
+          if [ "${{ inputs.releasing }}" != "true" ]; then
+            for crate in $UNLICENSED; do args+=(--exclude "$crate"); done
+          fi
+          cargo deny "${args[@]}" check

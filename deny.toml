@@ -1,0 +1,78 @@
+# cargo-deny: what patchwork's dependencies may be licensed under, and where
+# they may come from. CI runs `cargo deny check` (check.yml, "deps" job).
+#
+# patchwork is MIT and ships as binaries, so every dependency has to be one we
+# may redistribute in a binary. Ask before allowing a copyleft license here
+
+[graph]
+all-features = true
+
+[advisories]
+# Unmaintained crates are reported but don't fail the check: most come in
+# through Tauri's GTK stack, which we can't swap out.
+unmaintained = "none"
+ignore = [
+    # zstd-safe 6, through repak 0.2 (patchwork-drg): uninitialized memory
+    # when streaming decompression of a legacy zstd frame fails. DRG is UE4,
+    # whose paks are zlib or Oodle, never zstd. Upstream repak has moved to
+    # zstd 0.13; drop this when we bump repak's rev (and re-check the pak
+    # build against the game).
+    { id = "RUSTSEC-2026-0403", reason = "repak 0.2's zstd; DRG paks never use zstd" },
+]
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0", # webpki-roots' Mozilla CA list
+    "ISC",
+    "MIT",
+    "MIT-0",
+    # File-level copyleft: fine in a binary as long as the notices ship and
+    # changes to those files stay MPL. Used by Tauri's CSS parser, attohttpc
+    # and option-ext.
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "bzip2-1.0.6",
+]
+exceptions = [
+    # Vendored for the SMF deployer (crates/vendor/quickentity-rs). LGPL in a
+    # statically linked binary: the license file has to ship, and the whole
+    # source being public is what lets users relink. Packaging metadata says
+    # "MIT AND LGPL-3.0-only" for builds with the smf feature.
+    { crate = "quickentity-rs", allow = ["LGPL-3.0-only"] },
+    # Its proc-macro, from the same repository; build time only.
+    { crate = "auto_context", allow = ["LGPL-3.0-only"] },
+]
+
+[licenses.private]
+# Check our own publish = false crates too: quickentity-rs is one.
+ignore = false
+
+[bans]
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+    # These three have no license yet, so `cargo deny check licenses` fails on
+    # them. check.yml leaves them out of pull request checks (UNLICENSED there)
+    # but not out of a release's, so a release that ships them fails. Remove
+    # them from that list once upstream adds a license.
+    "https://github.com/atampy25/glacier-bin1",
+    "https://github.com/atampy25/glacier-commons",
+    "https://github.com/trumank/uasset_utils",
+    # Licensed (MIT/Apache), used by the DRG pak builder.
+    "https://github.com/trumank/repak",
+    "https://github.com/trumank/unrealmodding",
+]

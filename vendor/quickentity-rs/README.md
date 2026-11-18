@@ -13,5 +13,7 @@ with these changes:
   `find_ok` extension method.
 - `auto_context/src/lib.rs`: `proc_macro::quote!` (unstable) is replaced by
   building the tokens by hand, and `Span::start().line()` by `Span::line()`.
+- `auto_context/Cargo.toml`: `license` added, the repository's LGPL-3.0, so
+  cargo-deny can see it.
 
 Licensed under the LGPL-3.0; see `COPYING` and `COPYING.LESSER`.

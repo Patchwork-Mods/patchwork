@@ -138,7 +138,8 @@ impl ProfileFormat for Archive {
         };
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).map_err(|e| error(e.to_string()))?;
-            let Some(rest) = entry.name().strip_prefix(FILES) else {
+            let entry_name = entry.name().map_err(|e| error(e.to_string()))?.into_owned();
+            let Some(rest) = entry_name.strip_prefix(FILES) else {
                 continue;
             };
             if entry.is_dir() {
@@ -147,11 +148,11 @@ impl ProfileFormat for Archive {
             let rel = RelPath::new(rest).map_err(|e| error(format!("bad entry: {e}")))?;
             let mut parts = rel.as_str().splitn(3, '/');
             let (Some(hash), Some(name)) = (parts.next(), parts.next()) else {
-                return Err(error(format!("bad entry: {}", entry.name())));
+                return Err(error(format!("bad entry: {entry_name}")));
             };
             let hash: ContentHash = hash
                 .parse()
-                .map_err(|_| error(format!("bad entry: {}", entry.name())))?;
+                .map_err(|_| error(format!("bad entry: {entry_name}")))?;
             shared.bundled.entry(hash).or_insert_with(|| Bundled {
                 path: ctx.scratch.join(hash.to_string()).join(name),
                 name: name.to_owned(),

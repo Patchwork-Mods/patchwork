@@ -102,7 +102,8 @@ fn zip(archive: &Path, dest: &Path) -> Result<()> {
         if entry.is_dir() {
             continue;
         }
-        let target = target(archive, dest, entry.name())?;
+        let name = entry.name().map_err(bad)?;
+        let target = target(archive, dest, &name)?;
         write_entry(archive, entry, &target)?;
     }
     Ok(())

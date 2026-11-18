@@ -302,7 +302,10 @@ fn from_r2z(format_id: &str, ctx: &FormatContext<'_>, input: &[u8]) -> Result<Sh
 
     let configs = zip
         .file_names()
-        .filter(|name| *name != MANIFEST && !name.ends_with('/'))
+        .filter(|name| {
+            name.as_deref()
+                .is_ok_and(|name| name != MANIFEST && !name.ends_with('/'))
+        })
         .count();
     if configs > 0 {
         ctx.warn(format!(
