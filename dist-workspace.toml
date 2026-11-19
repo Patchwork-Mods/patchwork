@@ -11,6 +11,11 @@ ci = "github"
 installers = ["shell", "powershell"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Release builds leave out the games whose extensions use unlicensed crates;
+# see the `release` feature in crates/patchwork-cli/Cargo.toml. release.yml
+# builds the app with the same features.
+default-features = false
+features = ["release"]
 # Path that installers should place binaries in
 install-path = "CARGO_HOME"
 # Build only the CLI, not the whole workspace: the GUI needs system libraries

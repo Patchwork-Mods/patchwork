@@ -142,15 +142,20 @@ jobs:
         with:
           tool: cargo-deny
       # The Hitman (smf) and DRG extensions use three git crates with no
-      # license yet, which we can't ship. Pull requests leave them out so
-      # everything else stays checked; a release doesn't, so it fails until
-      # they're licensed or out of the release build. See deny.toml.
+      # license yet, which we can't ship. Pull requests check everything but
+      # those; a release checks each frontend as it ships, with its `release`
+      # features, which leave those extensions out. See deny.toml.
       - name: cargo deny check
         env:
           UNLICENSED: glacier-bin1 hitman-commons uasset_utils
         run: |
-          args=()
-          if [ "${{ inputs.releasing }}" != "true" ]; then
+          if [ "${{ inputs.releasing }}" = "true" ]; then
+            for frontend in cli gui; do
+              cargo deny --manifest-path "crates/patchwork-$frontend/Cargo.toml" \
+                --no-default-features --features release check
+            done
+          else
+            args=(--all-features)
             for crate in $UNLICENSED; do args+=(--exclude "$crate"); done
+            cargo deny "${args[@]}" check
           fi
-          cargo deny "${args[@]}" check

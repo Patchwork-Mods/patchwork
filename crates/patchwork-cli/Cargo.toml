@@ -12,6 +12,19 @@ description = "Patchwork, a universal mod manager: the command-line interface"
 name = "patchwork"
 path = "src/main.rs"
 
+[features]
+# The games' extensions, all on by default. Release builds use `release`
+# instead (dist-workspace.toml, release.yml, packaging/licenses.sh): it leaves
+# out Hitman (smf) and Deep Rock Galactic (drg), which depend on git crates
+# with no license yet (see deny.toml). Their games drop out of the game list.
+default = ["bethesda", "drg", "ftl", "helldivers", "smf"]
+release = ["bethesda", "ftl", "helldivers"]
+bethesda = ["patchwork-builtin/bethesda"]
+drg = ["patchwork-builtin/drg"]
+ftl = ["patchwork-builtin/ftl"]
+helldivers = ["patchwork-builtin/helldivers"]
+smf = ["patchwork-builtin/smf"]
+
 [dependencies]
 patchwork-core.workspace = true
 patchwork-builtin.workspace = true

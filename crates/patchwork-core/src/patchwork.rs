@@ -331,7 +331,7 @@ impl Builder {
             )));
         }
         let lock = StateLock::acquire(&self.paths.lock_file())?;
-        let registry = Registry::load(&self.paths)?;
+        let registry = load_registry(&self.paths, &registered.deployers)?;
         let settings = Settings::load(&self.paths, &source_specs(&registered.sources))?;
         for problem in &settings.problems {
             self.reporter.report(Event::Warning(problem.clone()));
@@ -434,7 +434,7 @@ impl Patchwork {
     /// Loads the registry again, picking up definitions added or changed on
     /// disk since patchwork was opened.
     pub fn reload_registry(&self) -> Result<()> {
-        let registry = Registry::load(&self.paths)?;
+        let registry = load_registry(&self.paths, &self.deployers)?;
         *self.registry.write().unwrap() = Arc::new(registry);
         // a game's sources may be set up differently now
         self.categories.lock().unwrap().clear();
@@ -3200,6 +3200,18 @@ fn deploy_order<'a>(loaded: &Profile, lock: &'a Lockfile) -> Vec<&'a LockedMod> 
 }
 
 /// The settings each source takes, by id.
+/// Loads the registry without the games whose deployer this build doesn't
+/// have, like Hitman when patchwork is built without the `smf` extension:
+/// they couldn't be deployed, so they aren't offered.
+fn load_registry(
+    paths: &Paths,
+    deployers: &BTreeMap<String, Arc<dyn Deployer>>,
+) -> Result<Registry> {
+    let mut registry = Registry::load(paths)?;
+    registry.retain_games(|game| deployers.contains_key(&game.deployer.kind));
+    Ok(registry)
+}
+
 fn source_specs(sources: &BTreeMap<String, Arc<dyn Source>>) -> BTreeMap<&str, &[SettingSpec]> {
     sources
         .iter()

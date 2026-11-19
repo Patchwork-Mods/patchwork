@@ -60,6 +60,13 @@ patchwork is MIT, but builds with the Hitman extension (the `smf` feature,
 on by default) statically link the vendored quickentity-rs, which is
 LGPL-3.0-only. So a default build's license is `MIT AND LGPL-3.0-only`.
 
+For now, don't ship a default build: the Hitman (`smf`) and Deep Rock
+Galactic (`drg`) extensions use git crates whose authors haven't given them
+a license yet (see `deny.toml`). Build the CLI and app with
+`--no-default-features --features release`, as our own releases do; that
+leaves those two games out (and quickentity-rs with them, so the license is
+plain `MIT`).
+
 Ship these with the binaries:
 
 - `LICENSE` (patchwork's own)

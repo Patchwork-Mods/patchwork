@@ -17,6 +17,17 @@ dist = false
 name = "patchwork-gui"
 path = "src/main.rs"
 
+[features]
+# The games' extensions; `release` is what release builds use. Keep in step
+# with patchwork-cli, which says why.
+default = ["bethesda", "drg", "ftl", "helldivers", "smf"]
+release = ["bethesda", "ftl", "helldivers"]
+bethesda = ["patchwork-builtin/bethesda"]
+drg = ["patchwork-builtin/drg"]
+ftl = ["patchwork-builtin/ftl"]
+helldivers = ["patchwork-builtin/helldivers"]
+smf = ["patchwork-builtin/smf"]
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true

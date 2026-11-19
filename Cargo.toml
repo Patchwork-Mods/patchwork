@@ -14,7 +14,8 @@ homepage = "https://github.com/patchwork-mods/patchwork"
 
 [workspace.dependencies]
 patchwork-bethesda = { path = "crates/patchwork-bethesda" }
-patchwork-builtin = { path = "crates/patchwork-builtin" }
+# Frontends pick the games through their own features (see patchwork-cli).
+patchwork-builtin = { path = "crates/patchwork-builtin", default-features = false }
 patchwork-core = { path = "crates/patchwork-core" }
 patchwork-daemon = { path = "crates/patchwork-daemon" }
 patchwork-sources = { path = "crates/patchwork-sources" }

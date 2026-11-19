@@ -145,6 +145,39 @@ impl Deployer for NoDeployer {
     }
 }
 
+/// Stands in for patchwork-deployers' `rules`, which builtin games like
+/// Lethal Company use: without a deployer of their kind, they're left out of
+/// the registry.
+struct FakeRules;
+
+impl Deployer for FakeRules {
+    fn kind(&self) -> &str {
+        "rules"
+    }
+
+    fn plan(&self, _: &DeployContext<'_>, _: &[InstalledMod]) -> Result<deploy::DesiredState> {
+        Ok(Default::default())
+    }
+}
+
+#[test]
+fn games_whose_deployer_is_missing_are_left_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let without = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    assert!(without.registry().game("lethal-company").is_err());
+    drop(without);
+    let with = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(FakeRules)
+        .open()
+        .unwrap();
+    assert!(with.registry().game("lethal-company").is_ok());
+    with.reload_registry().unwrap();
+    assert!(with.registry().game("lethal-company").is_ok());
+}
+
 fn new_game(id: &str, kind: &str) -> GameDef {
     GameDef {
         schema: 0,
@@ -177,6 +210,7 @@ fn added_games_are_saved_and_usable_straight_away() {
     let tmp = tempfile::tempdir().unwrap();
     let pw = Patchwork::builder(Paths::rooted(tmp.path()))
         .deployer(NoDeployer)
+        .deployer(FakeRules)
         .open()
         .unwrap();
 
@@ -3842,6 +3876,7 @@ fn game_edits_go_in_the_users_file_over_the_definition() {
     let tmp = tempfile::tempdir().unwrap();
     let pw = Patchwork::builder(Paths::rooted(tmp.path()))
         .deployer(NoDeployer)
+        .deployer(FakeRules)
         .open()
         .unwrap();
     let game = "lethal-company";

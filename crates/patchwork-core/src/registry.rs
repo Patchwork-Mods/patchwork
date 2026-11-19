@@ -287,6 +287,21 @@ impl Registry {
         self.games.values()
     }
 
+    /// Drops the games `keep` says no to, as if they weren't defined.
+    pub(crate) fn retain_games(&mut self, mut keep: impl FnMut(&GameDef) -> bool) {
+        let dropped: Vec<String> = self
+            .games
+            .values()
+            .filter(|e| !keep(&e.value))
+            .map(|e| e.value.id.clone())
+            .collect();
+        for id in dropped {
+            self.games.remove(&id);
+            self.game_tables.remove(&id);
+            self.before_user.remove(&id);
+        }
+    }
+
     /// Game `id`'s TOML as every layer but the user's has it: what the
     /// user's own file for it is changing. `None` if only the user's
     /// layer defines it (or nothing does).

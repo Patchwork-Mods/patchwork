@@ -5,7 +5,8 @@
 # edits, each marked "Hand-added":
 #
 # * build-local-artifacts also bundles the Patchwork app with Tauri, in the
-#   same job as the CLI it carries and with the same profile, so the two share
+#   same job as the CLI it carries and with the same profile and features (the
+#   `release` feature, as dist-workspace.toml sets), so the two share
 #   their compiled dependencies instead of each runner compiling them. Its
 #   bundles go up as gui-bundle-*, which announce adds to the release.
 # * gui-updater writes the latest.json the app's updater reads, and announce
@@ -316,12 +317,12 @@ jobs:
           # Bundles from an earlier version could come back with the cache.
           rm -rf "../../target/$TARGET"/*/bundle
           if [[ "$RUNNER_OS" != Linux ]]; then
-            tauri build --target "$TARGET" --config tauri.release.conf.json -- --profile dist
+            tauri build --target "$TARGET" --config tauri.release.conf.json -- --profile dist --no-default-features --features release
             exit 0
           fi
           version=$(jq -r '.releases[0].app_version' <<< "$PLAN")
           if [[ $version != *-* ]]; then
-            tauri build --target "$TARGET" --config tauri.release.conf.json -- --profile dist
+            tauri build --target "$TARGET" --config tauri.release.conf.json -- --profile dist --no-default-features --features release
             exit 0
           fi
           # RPM versions can't have a '-', so a prerelease like 0.1.0-alpha.1
@@ -332,7 +333,7 @@ jobs:
           # default release of 1, as semver does. Only the package's version
           # changes: the app inside still reports the real one.
           pre=${version#*-}
-          tauri build --target "$TARGET" --config tauri.release.conf.json --bundles appimage,deb -- --profile dist
+          tauri build --target "$TARGET" --config tauri.release.conf.json --bundles appimage,deb -- --profile dist --no-default-features --features release
           # `tauri bundle` has no way to pick a profile: it only looks under
           # release, and bundles there.
           mkdir -p "../../target/$TARGET/release"

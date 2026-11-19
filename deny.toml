@@ -5,7 +5,9 @@
 # may redistribute in a binary. Ask before allowing a copyleft license here
 
 [graph]
-all-features = true
+# No `all-features = true` here: check.yml passes --all-features for pull
+# requests, and checks a release as it ships, with each frontend's `release`
+# features, which leave out the extensions that use unlicensed crates.
 
 [advisories]
 # Unmaintained crates are reported but don't fail the check: most come in
@@ -66,9 +68,11 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
     # These three have no license yet, so `cargo deny check licenses` fails on
-    # them. check.yml leaves them out of pull request checks (UNLICENSED there)
-    # but not out of a release's, so a release that ships them fails. Remove
-    # them from that list once upstream adds a license.
+    # them. check.yml leaves them out of pull request checks (UNLICENSED there),
+    # and release builds leave out the Hitman (smf) and DRG extensions that use
+    # them (the `release` feature of patchwork-cli and patchwork-gui). Once
+    # upstream adds a license, remove them from that list and put the games
+    # back in `release`.
     "https://github.com/atampy25/glacier-bin1",
     "https://github.com/atampy25/glacier-commons",
     "https://github.com/trumank/uasset_utils",

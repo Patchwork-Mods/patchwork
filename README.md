@@ -15,8 +15,10 @@ modpacks that sync between friends</p>
 
 - An extensive library of games, including:
   - Almost all thunderstore games
-  - Hitman 3,
   - Helldivers 2
+  - FTL: Faster Than Light, with Hyperspace and Multiverse
+  - Hitman 3 and Deep Rock Galactic when built from source (currently
+  left out due to licensing restrictions)
 - And some games which are supported but currently untested:
   - Skyrim (Special Edition and VR), Enderal, Fallout 4 (and VR), Starfield,
     Oblivion, Fallout 3 and Fallout: New Vegas.
