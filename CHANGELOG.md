@@ -8,7 +8,9 @@ dialog shows, so the heading has to match the version being released.
 - Added Hollow Knight and ModLinks support
 
 ### Themes
+
 Added new themes for the following:
+- Hollow Knight:
 - Hollow Knight: Silksong
 
 ## 0.3.0

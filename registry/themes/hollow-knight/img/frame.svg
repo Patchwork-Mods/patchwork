@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="120" height="120" viewBox="0 0 120 120">
+  <!-- A box's corners for border-image (slice 40): a small horned point,
+       like the tips of a vessel's mask, with two arms that fade out along the
+       edges and a hook curling back inside each. The edges between the
+       corners are left empty. -->
+  <defs>
+    <linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="7" y1="0" x2="40" y2="0">
+      <stop offset="0" stop-color="#e6ebf2" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#e6ebf2" stop-opacity="0"/>
+    </linearGradient>
+    <g id="arm" fill="none" stroke-linecap="round">
+      <path d="M7 3.5 H40" stroke="url(#fade)" stroke-width="1.1"/>
+      <path d="M11 3.5 C14 3.5 16 5.5 15.5 8 C15.2 9.4 13.6 9.6 13.2 8.4" stroke="#e6ebf2" stroke-opacity="0.6" stroke-width="0.8"/>
+    </g>
+    <g id="corner">
+      <use xlink:href="#arm"/>
+      <use xlink:href="#arm" transform="matrix(0 1 1 0 0 0)"/>
+      <!-- A point with a notch, like two horns meeting. -->
+      <path d="M0.5 0.5 L7 2.6 L4.3 3.5 L3.5 4.3 L2.6 7 Z" fill="#e6ebf2"/>
+    </g>
+  </defs>
+  <use xlink:href="#corner"/>
+  <use xlink:href="#corner" transform="matrix(-1 0 0 1 120 0)"/>
+  <use xlink:href="#corner" transform="matrix(1 0 0 -1 0 120)"/>
+  <use xlink:href="#corner" transform="matrix(-1 0 0 -1 120 120)"/>
+</svg>

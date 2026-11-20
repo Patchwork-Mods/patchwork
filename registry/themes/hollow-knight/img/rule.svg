@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="12" viewBox="0 0 240 12">
+  <!-- Under a heading: two horns curving up from a point, then a line that
+       thins and fades out. -->
+  <defs>
+    <linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="14" y1="0" x2="240" y2="0">
+      <stop offset="0" stop-color="#e6ebf2" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#e6ebf2" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <path d="M6 11 C3 9 1.5 6 1 1.5 C3 4.5 4.8 6.5 6 7.2 C7.2 6.5 9 4.5 11 1.5 C10.5 6 9 9 6 11 Z" fill="#e6ebf2"/>
+  <path d="M14 6.4 L240 7 L14 7.6 Z" fill="url(#fade)"/>
+</svg>

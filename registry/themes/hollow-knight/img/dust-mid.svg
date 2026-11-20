@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1300" viewBox="0 0 760 1300">
+  <!-- Dust for the Hollow Knight theme, generated; tiled and moved slowly up. -->
+  <defs><radialGradient id="d"><stop offset="0" stop-color="#e6ecf4" stop-opacity="1"/><stop offset="0.35" stop-color="#c3cede" stop-opacity="0.75"/><stop offset="1" stop-color="#8597b4" stop-opacity="0"/></radialGradient></defs>
+  <circle cx="727.0" cy="581.4" r="4.1" fill="url(#d)" opacity="0.90"/>
+  <circle cx="725.8" cy="474.0" r="3.0" fill="url(#d)" opacity="0.67"/>
+  <circle cx="149.5" cy="265.7" r="3.6" fill="url(#d)" opacity="0.87"/>
+  <circle cx="638.7" cy="623.3" r="3.6" fill="url(#d)" opacity="0.84"/>
+  <circle cx="64.4" cy="858.8" r="4.1" fill="url(#d)" opacity="0.83"/>
+  <circle cx="570.1" cy="621.4" r="2.9" fill="url(#d)" opacity="0.84"/>
+  <circle cx="252.7" cy="1041.1" r="4.2" fill="url(#d)" opacity="0.72"/>
+  <circle cx="305.1" cy="1230.8" r="3.8" fill="url(#d)" opacity="0.65"/>
+  <circle cx="96.5" cy="196.5" r="4.0" fill="url(#d)" opacity="0.84"/>
+  <circle cx="111.1" cy="1074.5" r="4.2" fill="url(#d)" opacity="0.80"/>
+  <circle cx="266.3" cy="713.3" r="2.8" fill="url(#d)" opacity="0.60"/>
+  <circle cx="737.9" cy="844.6" r="3.4" fill="url(#d)" opacity="0.88"/>
+  <circle cx="329.7" cy="1133.3" r="3.9" fill="url(#d)" opacity="0.66"/>
+  <circle cx="191.4" cy="380.9" r="3.0" fill="url(#d)" opacity="0.78"/>
+  <circle cx="197.1" cy="544.7" r="2.8" fill="url(#d)" opacity="0.87"/>
+  <circle cx="268.9" cy="595.6" r="3.5" fill="url(#d)" opacity="0.87"/>
+  <circle cx="319.7" cy="1193.0" r="3.4" fill="url(#d)" opacity="0.76"/>
+  <circle cx="397.9" cy="24.3" r="3.3" fill="url(#d)" opacity="0.65"/>
+  <circle cx="3.0" cy="1038.9" r="2.9" fill="url(#d)" opacity="0.74"/>
+  <circle cx="551.1" cy="723.4" r="3.1" fill="url(#d)" opacity="0.76"/>
+</svg>

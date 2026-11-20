@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1100" viewBox="0 0 640 1100">
+  <!-- Dust for the Hollow Knight theme, generated; tiled and moved slowly up. -->
+  <defs><radialGradient id="d"><stop offset="0" stop-color="#eef2f8" stop-opacity="1"/><stop offset="0.45" stop-color="#c8d2e2" stop-opacity="0.9"/><stop offset="1" stop-color="#8fa0bc" stop-opacity="0"/></radialGradient></defs>
+  <circle cx="207.3" cy="165.9" r="1.7" fill="url(#d)" opacity="0.48"/>
+  <circle cx="343.0" cy="402.3" r="1.1" fill="url(#d)" opacity="0.65"/>
+  <circle cx="24.0" cy="477.0" r="1.1" fill="url(#d)" opacity="0.49"/>
+  <circle cx="271.7" cy="909.5" r="1.1" fill="url(#d)" opacity="0.54"/>
+  <circle cx="401.6" cy="1042.5" r="1.6" fill="url(#d)" opacity="0.61"/>
+  <circle cx="624.8" cy="51.2" r="1.9" fill="url(#d)" opacity="0.57"/>
+  <circle cx="92.3" cy="129.6" r="1.3" fill="url(#d)" opacity="0.78"/>
+  <circle cx="115.7" cy="639.8" r="1.6" fill="url(#d)" opacity="0.60"/>
+  <circle cx="350.6" cy="69.1" r="1.1" fill="url(#d)" opacity="0.53"/>
+  <circle cx="435.5" cy="470.4" r="1.3" fill="url(#d)" opacity="0.68"/>
+  <circle cx="290.0" cy="329.7" r="1.8" fill="url(#d)" opacity="0.73"/>
+  <circle cx="156.2" cy="631.9" r="1.5" fill="url(#d)" opacity="0.80"/>
+  <circle cx="466.8" cy="316.7" r="2.0" fill="url(#d)" opacity="0.50"/>
+  <circle cx="267.6" cy="832.9" r="1.2" fill="url(#d)" opacity="0.65"/>
+  <circle cx="25.1" cy="735.0" r="1.8" fill="url(#d)" opacity="0.68"/>
+  <circle cx="560.3" cy="345.1" r="1.7" fill="url(#d)" opacity="0.69"/>
+  <circle cx="371.1" cy="501.8" r="1.8" fill="url(#d)" opacity="0.83"/>
+  <circle cx="303.4" cy="730.6" r="1.1" fill="url(#d)" opacity="0.73"/>
+  <circle cx="414.2" cy="1092.4" r="1.8" fill="url(#d)" opacity="0.56"/>
+  <circle cx="246.9" cy="735.5" r="1.0" fill="url(#d)" opacity="0.63"/>
+  <circle cx="107.6" cy="128.8" r="1.1" fill="url(#d)" opacity="0.76"/>
+  <circle cx="82.8" cy="272.4" r="1.4" fill="url(#d)" opacity="0.80"/>
+  <circle cx="51.6" cy="494.1" r="1.5" fill="url(#d)" opacity="0.80"/>
+  <circle cx="524.3" cy="950.4" r="1.3" fill="url(#d)" opacity="0.62"/>
+  <circle cx="229.6" cy="972.6" r="2.0" fill="url(#d)" opacity="0.51"/>
+  <circle cx="112.8" cy="255.2" r="1.2" fill="url(#d)" opacity="0.64"/>
+  <circle cx="377.0" cy="289.0" r="1.0" fill="url(#d)" opacity="0.62"/>
+  <circle cx="236.3" cy="623.0" r="2.0" fill="url(#d)" opacity="0.73"/>
+  <circle cx="329.9" cy="679.4" r="1.7" fill="url(#d)" opacity="0.47"/>
+  <circle cx="575.7" cy="858.0" r="1.9" fill="url(#d)" opacity="0.77"/>
+  <circle cx="251.1" cy="438.9" r="1.1" fill="url(#d)" opacity="0.70"/>
+  <circle cx="39.8" cy="74.1" r="1.2" fill="url(#d)" opacity="0.51"/>
+  <circle cx="217.6" cy="57.8" r="1.0" fill="url(#d)" opacity="0.51"/>
+  <circle cx="64.9" cy="400.0" r="1.0" fill="url(#d)" opacity="0.80"/>
+  <circle cx="393.0" cy="163.4" r="1.3" fill="url(#d)" opacity="0.59"/>
+  <circle cx="233.1" cy="135.1" r="1.8" fill="url(#d)" opacity="0.85"/>
+  <circle cx="298.2" cy="532.2" r="1.1" fill="url(#d)" opacity="0.49"/>
+  <circle cx="219.3" cy="291.2" r="1.8" fill="url(#d)" opacity="0.51"/>
+  <circle cx="14.8" cy="1046.1" r="1.5" fill="url(#d)" opacity="0.51"/>
+  <circle cx="347.6" cy="29.7" r="1.5" fill="url(#d)" opacity="0.84"/>
+  <circle cx="552.5" cy="765.8" r="1.3" fill="url(#d)" opacity="0.60"/>
+  <circle cx="106.9" cy="849.1" r="1.5" fill="url(#d)" opacity="0.76"/>
+  <circle cx="211.0" cy="245.3" r="1.8" fill="url(#d)" opacity="0.84"/>
+  <circle cx="545.7" cy="886.7" r="1.8" fill="url(#d)" opacity="0.75"/>
+  <circle cx="145.1" cy="569.4" r="1.4" fill="url(#d)" opacity="0.46"/>
+  <circle cx="17.9" cy="307.4" r="1.3" fill="url(#d)" opacity="0.73"/>
+</svg>

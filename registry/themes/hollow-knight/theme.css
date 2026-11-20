@@ -1,0 +1,463 @@
+/*
+ * @theme
+ * name = "Hollow Knight"
+ * game = "hollow-knight"
+ * modes = ["dark"]
+ *
+ * The Silksong theme's sibling, in Hallownest's colours: plain white text in
+ * a serif over deep blue-black, as in the game's menus. Nothing is boxed in
+ * with hard lines: what needs an outline gets pale horned corners whose
+ * arms fade out along the edges, and dividers are lines that thin away.
+ * The chosen tab, profile or option is underlined and a little larger.
+ * Smaller text is lighter than the main text. The main actions are a
+ * muted steel blue. Behind it all is the title screen's cold light in the
+ * middle of the dark, with dust drifting slowly up through it.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --hk-pale: #e6ebf2; /* the ornaments */
+  --hk-line: rgb(230 235 242 / 0.22); /* a divider at its strongest */
+  --hk-blue: #3f5c8a;
+  --hk-wash: rgb(255 255 255 / 0.05); /* behind a button */
+  --hk-wash-hover: rgb(255 255 255 / 0.1);
+  --hk-panel: rgb(9 12 20 / 0.94); /* dialogs and menus */
+  /* A line along the top that fades out at both ends. */
+  --hk-divider: linear-gradient(90deg, transparent, var(--hk-line) 25% 75%, transparent);
+  /* The underline under what's chosen. */
+  --hk-underline: linear-gradient(90deg, transparent, #fff 18% 82%, transparent);
+
+  /* The game's own fonts if they're installed (Perpetua comes with
+     Microsoft Office), otherwise the nearest of some common serifs. */
+  --pw-font: "Perpetua", "EB Garamond", "Cormorant Garamond", "Palatino Linotype", Palatino,
+    "Book Antiqua", Georgia, serif;
+  --hk-title-font: "Trajan Pro", "Trajan Pro 3", "Cinzel", var(--pw-font);
+  --pw-radius: 2px;
+
+  --pw-bg: #04060c;
+  --pw-surface: #111725;
+  --pw-sidebar: #03050a;
+  --pw-text: #ffffff;
+  --pw-muted: rgb(255 255 255 / 0.6);
+  --pw-border: rgb(255 255 255 / 0.12);
+  --pw-accent: var(--hk-blue);
+  --pw-accent-text: #ffffff;
+  --pw-danger: #e8737a;
+  --pw-danger-text: #ffffff;
+  --pw-warning: #e0c58a;
+  --pw-link: #ffffff;
+  --pw-focus: #ffffff;
+  --pw-hover: var(--hk-wash);
+  --pw-selection: rgb(255 255 255 / 0.25);
+  --pw-backdrop: rgb(0 0 0 / 0.7);
+  --pw-progress: #ffffff;
+  --pw-progress-track: rgb(255 255 255 / 0.12);
+}
+
+/* ---- The title screen behind everything ---- */
+
+/* Back to front: the glow (our own gradients, fitted to the colours of the
+   game's title screen), then three layers of dust, far to near, then the
+   app's panels. The glow fills the window from the middle, cutting off what
+   doesn't fit at the sides. user.css can put a picture of its own behind
+   the dust with :root { --hk-art: url("https://...") }. The far motes are
+   small, sharp and slow; the near ones big, soft and quicker. Each layer is
+   a tile that rises one tile's height per loop, so the loop doesn't show,
+   and sways gently side to side on its own clock. They hold still while
+   the window is in the background (app.js sets data-inactive on :root),
+   for anyone who asks their system for less motion, and user.css can stop
+   them with :root { --hk-dust: paused; }. */
+:root {
+  --hk-art: none;
+  --hk-dust: running;
+  background: var(--pw-bg);
+}
+
+body {
+  font-size: 15px;
+  background: none;
+  isolation: isolate;
+}
+
+:root::before,
+:root::after,
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  pointer-events: none;
+}
+
+:root::before {
+  inset: 0;
+  z-index: -2;
+  background:
+    var(--hk-art) center / cover no-repeat,
+    url("img/glow.svg") center / cover no-repeat,
+    var(--pw-bg);
+}
+
+/* A tile taller than the window, and a little wider for the sway. */
+:root::after,
+body::before,
+body::after {
+  --hk-sway: 24px;
+  top: 0;
+  left: calc(-1 * var(--hk-sway));
+  width: calc(100% + 2 * var(--hk-sway));
+  height: calc(100% + var(--hk-h));
+  z-index: -1;
+  background-size: var(--hk-w) var(--hk-h);
+  background-repeat: repeat;
+  animation:
+    hk-rise linear infinite,
+    hk-sway ease-in-out infinite alternate;
+  animation-play-state: var(--hk-dust);
+  will-change: transform, translate;
+}
+
+:root::after {
+  --hk-w: 640px;
+  --hk-h: 1100px;
+  --hk-sway: 10px;
+  background-image: url("img/dust-far.svg");
+  animation-duration: 140s, 11s;
+}
+
+body::before {
+  --hk-w: 760px;
+  --hk-h: 1300px;
+  --hk-sway: 18px;
+  background-image: url("img/dust-mid.svg");
+  background-position: 210px 380px;
+  animation-duration: 80s, 15s;
+}
+
+body::after {
+  --hk-w: 900px;
+  --hk-h: 1500px;
+  --hk-sway: 30px;
+  background-image: url("img/dust-near.svg");
+  background-position: 470px 820px;
+  animation-duration: 45s, 19s;
+}
+
+@keyframes hk-rise {
+  to {
+    transform: translateY(calc(-1 * var(--hk-h)));
+  }
+}
+
+@keyframes hk-sway {
+  from {
+    translate: calc(-1 * var(--hk-sway)) 0;
+  }
+  to {
+    translate: var(--hk-sway) 0;
+  }
+}
+
+/* Held still while the window is in the background, so the GPU can rest. */
+:root[data-inactive]::after,
+:root[data-inactive] body::before,
+:root[data-inactive] body::after {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root::after,
+  body::before,
+  body::after {
+    animation: none;
+  }
+}
+
+/* ---- Type ---- */
+
+h1,
+h2,
+h3,
+legend,
+.brand {
+  font-family: var(--hk-title-font);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+/* Smaller things are lighter than the main text. */
+.muted,
+small,
+label,
+legend,
+.tag,
+.badge,
+#statusbar,
+.segmented button,
+.menu-items .muted,
+.card-footer {
+  font-weight: 300;
+}
+
+/* ---- Edges: lines that fade out rather than hard borders ---- */
+
+#sidebar {
+  background:
+    linear-gradient(transparent, var(--hk-line) 30% 70%, transparent) right / 1px 100% no-repeat,
+    rgb(0 0 0 / 0.35);
+  border-right: none;
+}
+
+#statusbar {
+  background: var(--hk-divider) top / 100% 1px no-repeat, rgb(0 0 0 / 0.45);
+  border-top: none;
+}
+
+#profile-header {
+  background: var(--hk-divider) bottom / 100% 1px no-repeat;
+  border-bottom: none;
+}
+
+hr {
+  border: none;
+  height: 1px;
+  background: var(--hk-divider);
+}
+
+fieldset {
+  border: none;
+  background: var(--hk-divider) top / 100% 1px no-repeat;
+}
+
+/* Boxes that need an outline get the ornamented corners, drawn just
+   outside them. */
+dialog,
+.mod-list,
+.menu-items,
+.settings-menu {
+  border: 1px solid transparent;
+  border-image: url("img/frame.svg") 40 / 40px / 4px;
+  border-radius: 0;
+}
+
+dialog {
+  background: var(--hk-panel);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 0.8);
+  padding: 22px 26px;
+}
+
+dialog h2:first-child,
+dialog form > h2:first-child {
+  padding-bottom: 12px;
+  background: url("img/rule.svg") left bottom / 240px 10px no-repeat;
+}
+
+.menu-items,
+.settings-menu {
+  background: var(--hk-panel);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.7);
+}
+
+/* ---- Buttons: a faint wash, no outline ---- */
+
+/* Every button that draws a box; the ones the built-in look leaves bare
+   (icons, links, rows in menus) stay bare. */
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ),
+.menu summary {
+  background: var(--hk-wash);
+  border-color: transparent;
+  transition: background 0.12s;
+}
+
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ):hover:not(:disabled),
+.menu summary:hover,
+.menu[open] > summary {
+  background: var(--hk-wash-hover);
+}
+
+button.primary,
+#deploy.primary + .menu > summary {
+  background: var(--hk-blue);
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled),
+#deploy.primary + .menu > summary:hover {
+  background: #4f6f9f;
+}
+
+button.danger {
+  background: #7a2630;
+  color: #fff;
+}
+
+button.danger:hover:not(:disabled) {
+  background: #93303b;
+}
+
+.menu-items button:hover,
+.menu-items button:focus-visible,
+.menu-items label:hover,
+.menu-items label:focus-within,
+.settings-menu button:hover,
+.settings-menu button:focus-visible {
+  background: var(--hk-wash-hover);
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+.menu summary:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: 2px;
+}
+
+/* ---- Fields: dark wells ---- */
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea {
+  background: rgb(0 0 0 / 0.4);
+  border-color: rgb(255 255 255 / 0.1);
+}
+
+/* Colour only, so the built-in look's arrow stays. */
+select {
+  background-color: rgb(0 0 0 / 0.4);
+  border-color: rgb(255 255 255 / 0.1);
+}
+
+.card-footer select.mod-version {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+/* ---- What's chosen: underlined and a little larger ---- */
+
+.tabs button,
+#profiles button,
+.segmented button {
+  position: relative;
+  transition: transform 0.15s;
+}
+
+.tabs button[aria-selected="true"],
+#profiles button[aria-current="true"],
+.segmented button[aria-pressed="true"] {
+  background: none;
+  box-shadow: none;
+  font-weight: inherit;
+  transform: scale(1.08);
+}
+
+.segmented button[aria-pressed="true"] {
+  font-weight: 400;
+}
+
+/* Profiles grow from their left edge, so they stay lined up. */
+#profiles button[aria-current="true"] {
+  transform-origin: left center;
+}
+
+.tabs button[aria-selected="true"]::after,
+#profiles button[aria-current="true"]::after,
+.segmented button[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 1px;
+  height: 1px;
+  background: var(--hk-underline);
+  pointer-events: none;
+}
+
+.tabs button:hover,
+#profiles button:hover {
+  background: var(--hk-wash);
+}
+
+.tabs button[aria-selected="true"]:hover,
+#profiles button[aria-current="true"]:hover {
+  background: none;
+}
+
+#settings-tabs {
+  border-bottom: none;
+}
+
+/* ---- Mods ---- */
+
+.mod-list {
+  background: rgb(0 0 0 / 0.45);
+  padding: 6px 10px;
+}
+
+.mod-row + .mod-row {
+  border-top: none;
+  background: var(--hk-divider) top / 100% 1px no-repeat;
+}
+
+.mod-row:hover {
+  background-color: var(--hk-wash);
+}
+
+.mod-row.expanded {
+  background-color: rgb(255 255 255 / 0.035);
+}
+
+.mod-list > li.dragging {
+  background: var(--pw-surface);
+}
+
+.result {
+  background: rgb(255 255 255 / 0.03);
+  border-color: transparent;
+}
+
+.result:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+
+.card-sheet {
+  background: rgb(9 12 20 / 0.96);
+}
+
+.tag,
+.badge {
+  border-color: rgb(255 255 255 / 0.18);
+  color: var(--pw-muted);
+}
+
+.mod-priority.set {
+  color: #fff;
+  border-color: rgb(255 255 255 / 0.35);
+}
