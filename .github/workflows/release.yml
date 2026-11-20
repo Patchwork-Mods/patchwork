@@ -14,6 +14,8 @@
 #   in it.
 # * The `only` input builds just some targets on a dry run, to debug one
 #   platform without paying for all of them.
+# * announce writes the release body with packaging/release-notes.sh: the
+#   app's downloads first, dist's CLI instructions folded under <details>.
 # * Caches are only saved from main, and builds time out.
 # * check runs check.yml alongside a real release's builds, and host waits for
 #   it, so nothing is published unless it passes.
@@ -618,10 +620,13 @@ jobs:
         env:
           PRERELEASE_FLAG: "${{ fromJson(needs.host.outputs.val).announcement_is_prerelease && '--prerelease' || '' }}"
           ANNOUNCEMENT_TITLE: "${{ fromJson(needs.host.outputs.val).announcement_title }}"
-          ANNOUNCEMENT_BODY: "${{ fromJson(needs.host.outputs.val).announcement_github_body }}"
+          # Hand-added: our own body, with the app's downloads first and
+          # dist's CLI instructions folded away; see packaging/release-notes.sh.
+          MANIFEST: ${{ needs.host.outputs.val }}
           RELEASE_COMMIT: "${{ github.sha }}"
         run: |
           # Write and read notes from a file to avoid quoting breaking things
-          echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
+          packaging/release-notes.sh artifacts "${{ needs.plan.outputs.tag }}" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/notes.txt"
+          cat "$RUNNER_TEMP/notes.txt"
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
