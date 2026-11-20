@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="900" viewBox="0 0 360 900">
+  <!-- Sparks for the Silksong theme, generated; tiled and moved up and right. -->
+  <defs>
+    <radialGradient id="s"><stop offset="0" stop-color="#c9beb4"/><stop offset="0.4" stop-color="#9a8b80"/><stop offset="1" stop-color="#6e635d" stop-opacity="0"/></radialGradient>
+  </defs>
+  <g transform="translate(135.9 541.4) rotate(28)" opacity="0.32"><ellipse rx="2.5" ry="3.1" fill="url(#s)"/></g>
+  <g transform="translate(97.9 215.9) rotate(40)" opacity="0.44"><ellipse rx="1.9" ry="2.7" fill="url(#s)"/></g>
+  <g transform="translate(226.6 144.2) rotate(28)" opacity="0.56"><ellipse rx="3.4" ry="4.2" fill="url(#s)"/></g>
+  <g transform="translate(237.8 67.5) rotate(32)" opacity="0.48"><ellipse rx="2.7" ry="3.6" fill="url(#s)"/></g>
+  <g transform="translate(303.9 426.0) rotate(31)" opacity="0.56"><ellipse rx="3.2" ry="3.2" fill="url(#s)"/></g>
+  <g transform="translate(144.7 713.6) rotate(22)" opacity="0.58"><ellipse rx="2.7" ry="4.0" fill="url(#s)"/></g>
+  <g transform="translate(58.1 202.4) rotate(39)" opacity="0.43"><ellipse rx="4.1" ry="4.3" fill="url(#s)"/></g>
+  <g transform="translate(182.4 349.9) rotate(19)" opacity="0.48"><ellipse rx="3.3" ry="3.8" fill="url(#s)"/></g>
+  <g transform="translate(241.3 826.2) rotate(35)" opacity="0.60"><ellipse rx="2.6" ry="3.8" fill="url(#s)"/></g>
+  <g transform="translate(301.3 857.2) rotate(37)" opacity="0.47"><ellipse rx="3.6" ry="3.9" fill="url(#s)"/></g>
+  <g transform="translate(291.4 514.4) rotate(17)" opacity="0.32"><ellipse rx="3.6" ry="4.0" fill="url(#s)"/></g>
+  <g transform="translate(42.1 713.0) rotate(21)" opacity="0.35"><ellipse rx="2.8" ry="4.2" fill="url(#s)"/></g>
+  <g transform="translate(306.4 49.3) rotate(28)" opacity="0.31"><ellipse rx="2.3" ry="3.2" fill="url(#s)"/></g>
+  <g transform="translate(308.0 871.1) rotate(24)" opacity="0.60"><ellipse rx="3.4" ry="4.0" fill="url(#s)"/></g>
+  <g transform="translate(213.8 38.1) rotate(14)" opacity="0.42"><ellipse rx="3.1" ry="3.3" fill="url(#s)"/></g>
+  <g transform="translate(25.9 772.5) rotate(18)" opacity="0.59"><ellipse rx="3.5" ry="3.8" fill="url(#s)"/></g>
+  <g transform="translate(166.7 467.6) rotate(29)" opacity="0.48"><ellipse rx="3.6" ry="4.3" fill="url(#s)"/></g>
+  <g transform="translate(328.6 456.2) rotate(22)" opacity="0.52"><ellipse rx="2.8" ry="3.7" fill="url(#s)"/></g>
+  <g transform="translate(342.2 468.6) rotate(26)" opacity="0.30"><ellipse rx="2.7" ry="3.1" fill="url(#s)"/></g>
+  <g transform="translate(17.7 551.7) rotate(28)" opacity="0.32"><ellipse rx="2.7" ry="3.4" fill="url(#s)"/></g>
+  <g transform="translate(240.4 320.8) rotate(31)" opacity="0.52"><ellipse rx="3.1" ry="3.8" fill="url(#s)"/></g>
+  <g transform="translate(240.0 858.2) rotate(16)" opacity="0.44"><ellipse rx="2.7" ry="2.7" fill="url(#s)"/></g>
+</svg>

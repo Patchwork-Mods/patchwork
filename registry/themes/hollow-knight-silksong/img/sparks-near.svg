@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="1250" viewBox="0 0 500 1250">
+  <!-- Sparks for the Silksong theme, generated; tiled and moved up and right. -->
+  <defs>
+    <radialGradient id="s"><stop offset="0" stop-color="#fff3c8"/><stop offset="0.4" stop-color="#ff9a3a"/><stop offset="1" stop-color="#e2461c" stop-opacity="0"/></radialGradient>
+  </defs>
+  <g transform="translate(318.5 110.2) rotate(25)" opacity="0.81"><ellipse rx="5.1" ry="14.2" fill="url(#s)" opacity="0.3"/><ellipse rx="1.9" ry="9.5" fill="url(#s)"/></g>
+  <g transform="translate(37.4 544.7) rotate(10)" opacity="0.73"><ellipse rx="3.7" ry="12.2" fill="url(#s)" opacity="0.3"/><ellipse rx="1.4" ry="8.1" fill="url(#s)"/></g>
+  <g transform="translate(80.0 292.3) rotate(28)" opacity="0.98"><ellipse rx="4.0" ry="15.0" fill="url(#s)" opacity="0.3"/><ellipse rx="1.5" ry="10.0" fill="url(#s)"/></g>
+  <g transform="translate(463.7 81.4) rotate(35)" opacity="0.79"><ellipse rx="5.1" ry="16.2" fill="url(#s)" opacity="0.3"/><ellipse rx="2.0" ry="10.8" fill="url(#s)"/></g>
+  <g transform="translate(162.3 1006.8) rotate(14)" opacity="0.87"><ellipse rx="4.6" ry="12.8" fill="url(#s)" opacity="0.3"/><ellipse rx="1.8" ry="8.6" fill="url(#s)"/></g>
+  <g transform="translate(271.4 101.4) rotate(10)" opacity="0.76"><ellipse rx="5.3" ry="16.7" fill="url(#s)" opacity="0.3"/><ellipse rx="2.0" ry="11.1" fill="url(#s)"/></g>
+  <g transform="translate(167.0 727.4) rotate(23)" opacity="0.79"><ellipse rx="5.3" ry="17.0" fill="url(#s)" opacity="0.3"/><ellipse rx="2.0" ry="11.3" fill="url(#s)"/></g>
+  <g transform="translate(136.3 713.9) rotate(25)" opacity="0.96"><ellipse rx="5.0" ry="17.9" fill="url(#s)" opacity="0.3"/><ellipse rx="1.9" ry="11.9" fill="url(#s)"/></g>
+</svg>

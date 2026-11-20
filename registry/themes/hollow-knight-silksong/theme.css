@@ -1,0 +1,447 @@
+/*
+ * @theme
+ * name = "Hollow Knight: Silksong"
+ * game = "hollow-knight-silksong"
+ * modes = ["dark"]
+ *
+ * Plain white text in a serif on near-black, as in the game's menus. Nothing
+ * is boxed in with hard lines: what needs an outline gets ornamented
+ * corners whose short arms fade out along the edges, and dividers are lines
+ * that thin away. The chosen tab, profile or option is underlined and a
+ * little larger rather than coloured. Smaller text, like settings and notes,
+ * is lighter than the main text. Silksong's red is kept for the main
+ * actions. Behind it all is the title screen's red glow rising from below,
+ * with sparks drifting up through it.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --sk-ivory: #ece7dc; /* the ornaments */
+  --sk-line: rgb(236 231 220 / 0.22); /* a divider at its strongest */
+  --sk-red: #a8303a;
+  --sk-wash: rgb(255 255 255 / 0.05); /* behind a button */
+  --sk-wash-hover: rgb(255 255 255 / 0.1);
+  --sk-panel: rgb(14 12 13 / 0.94); /* dialogs and menus */
+  /* A line along the top that fades out at both ends. */
+  --sk-divider: linear-gradient(90deg, transparent, var(--sk-line) 25% 75%, transparent);
+  /* The underline under what's chosen. */
+  --sk-underline: linear-gradient(90deg, transparent, #fff 18% 82%, transparent);
+
+  /* The game's own fonts if they're installed (Perpetua comes with
+     Microsoft Office), otherwise the nearest of some common serifs. */
+  --pw-font: "Perpetua", "EB Garamond", "Cormorant Garamond", "Palatino Linotype", Palatino,
+    "Book Antiqua", Georgia, serif;
+  --sk-title-font: "Trajan Pro", "Trajan Pro 3", "Cinzel", var(--pw-font);
+  --pw-radius: 2px;
+
+  --pw-bg: #0b0a0b;
+  --pw-surface: #171516;
+  --pw-sidebar: #070607;
+  --pw-text: #ffffff;
+  --pw-muted: rgb(255 255 255 / 0.6);
+  --pw-border: rgb(255 255 255 / 0.12);
+  --pw-accent: var(--sk-red);
+  --pw-accent-text: #ffffff;
+  --pw-danger: #e8737a;
+  --pw-danger-text: #ffffff;
+  --pw-warning: #e0c58a;
+  --pw-link: #ffffff;
+  --pw-focus: #ffffff;
+  --pw-hover: var(--sk-wash);
+  --pw-selection: rgb(255 255 255 / 0.25);
+  --pw-backdrop: rgb(0 0 0 / 0.7);
+  --pw-progress: #ffffff;
+  --pw-progress-track: rgb(255 255 255 / 0.12);
+}
+
+/* ---- The title screen behind everything ---- */
+
+/* Back to front: the glow (our own gradients, fitted to the colours of
+   the game's title screen), then three layers of sparks, far to near, then
+   the app's panels. The glow fills the window from the middle, cutting off
+   what doesn't fit at the sides. user.css can put a picture of its own
+   behind the sparks with :root { --sk-art: url("https://...") }. The far sparks are small, grey and slow; the near ones long,
+   orange and fast. Each layer is a tile that drifts up and to the right, a
+   tile's width and height per loop, so the loop doesn't show. They hold
+   still while the window is in the background (app.js sets data-inactive
+   on :root), for anyone who asks their system for less motion, and user.css can
+   stop them with :root { --sk-sparks: paused; }. */
+:root {
+  --sk-art: none;
+  --sk-sparks: running;
+  background: var(--pw-bg);
+}
+
+body {
+  font-size: 15px;
+  background: none;
+  isolation: isolate;
+}
+
+:root::before,
+:root::after,
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  pointer-events: none;
+}
+
+:root::before {
+  inset: 0;
+  z-index: -2;
+  background:
+    var(--sk-art) center / cover no-repeat,
+    url("img/glow.svg") center / cover no-repeat,
+    var(--pw-bg);
+}
+
+/* A tile bigger than the window each way, starting a tile to the left. */
+:root::after,
+body::before,
+body::after {
+  top: 0;
+  left: calc(-1 * var(--sk-w));
+  width: calc(100% + var(--sk-w));
+  height: calc(100% + var(--sk-h));
+  z-index: -1;
+  background-size: var(--sk-w) var(--sk-h);
+  background-repeat: repeat;
+  animation: sk-rise linear infinite;
+  animation-play-state: var(--sk-sparks);
+  will-change: transform;
+}
+
+:root::after {
+  --sk-w: 360px;
+  --sk-h: 900px;
+  background-image: url("img/sparks-far.svg");
+  animation-duration: 45s;
+}
+
+body::before {
+  --sk-w: 400px;
+  --sk-h: 1000px;
+  background-image: url("img/sparks-mid.svg");
+  background-position: 130px 310px;
+  animation-duration: 20s;
+}
+
+body::after {
+  --sk-w: 500px;
+  --sk-h: 1250px;
+  background-image: url("img/sparks-near.svg");
+  background-position: 260px 640px;
+  animation-duration: 8s;
+}
+
+@keyframes sk-rise {
+  to {
+    transform: translate(var(--sk-w), calc(-1 * var(--sk-h)));
+  }
+}
+
+/* Held still while the window is in the background, so the GPU can rest. */
+:root[data-inactive]::after,
+:root[data-inactive] body::before,
+:root[data-inactive] body::after {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root::after,
+  body::before,
+  body::after {
+    animation: none;
+  }
+}
+
+/* ---- Type ---- */
+
+h1,
+h2,
+h3,
+legend,
+.brand {
+  font-family: var(--sk-title-font);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+/* Smaller things are lighter than the main text. */
+.muted,
+small,
+label,
+legend,
+.tag,
+.badge,
+#statusbar,
+.segmented button,
+.menu-items .muted,
+.card-footer {
+  font-weight: 300;
+}
+
+/* ---- Edges: lines that fade out rather than hard borders ---- */
+
+#sidebar {
+  background:
+    linear-gradient(transparent, var(--sk-line) 30% 70%, transparent) right / 1px 100% no-repeat,
+    rgb(0 0 0 / 0.35);
+  border-right: none;
+}
+
+#statusbar {
+  background: var(--sk-divider) top / 100% 1px no-repeat, rgb(0 0 0 / 0.45);
+  border-top: none;
+}
+
+#profile-header {
+  background: var(--sk-divider) bottom / 100% 1px no-repeat;
+  border-bottom: none;
+}
+
+hr {
+  border: none;
+  height: 1px;
+  background: var(--sk-divider);
+}
+
+fieldset {
+  border: none;
+  background: var(--sk-divider) top / 100% 1px no-repeat;
+}
+
+/* Boxes that need an outline get the ornamented corners, drawn just
+   outside them. */
+dialog,
+.mod-list,
+.menu-items,
+.settings-menu {
+  border: 1px solid transparent;
+  border-image: url("img/frame.svg") 40 / 40px / 4px;
+  border-radius: 0;
+}
+
+dialog {
+  background: var(--sk-panel);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 0.8);
+  padding: 22px 26px;
+}
+
+dialog h2:first-child,
+dialog form > h2:first-child {
+  padding-bottom: 12px;
+  background: url("img/rule.svg") left bottom / 240px 10px no-repeat;
+}
+
+.menu-items,
+.settings-menu {
+  background: var(--sk-panel);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.7);
+}
+
+/* ---- Buttons: a faint wash, no outline ---- */
+
+/* Every button that draws a box; the ones the built-in look leaves bare
+   (icons, links, rows in menus) stay bare. */
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ),
+.menu summary {
+  background: var(--sk-wash);
+  border-color: transparent;
+  transition: background 0.12s;
+}
+
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ):hover:not(:disabled),
+.menu summary:hover,
+.menu[open] > summary {
+  background: var(--sk-wash-hover);
+}
+
+button.primary,
+#deploy.primary + .menu > summary {
+  background: var(--sk-red);
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled),
+#deploy.primary + .menu > summary:hover {
+  background: #bf3a45;
+}
+
+button.danger {
+  background: #7d1f27;
+  color: #fff;
+}
+
+button.danger:hover:not(:disabled) {
+  background: #962630;
+}
+
+.menu-items button:hover,
+.menu-items button:focus-visible,
+.menu-items label:hover,
+.menu-items label:focus-within,
+.settings-menu button:hover,
+.settings-menu button:focus-visible {
+  background: var(--sk-wash-hover);
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+.menu summary:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: 2px;
+}
+
+/* ---- Fields: dark wells ---- */
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea {
+  background: rgb(0 0 0 / 0.4);
+  border-color: rgb(255 255 255 / 0.1);
+}
+
+/* Colour only, so the built-in look's arrow stays. */
+select {
+  background-color: rgb(0 0 0 / 0.4);
+  border-color: rgb(255 255 255 / 0.1);
+}
+
+.card-footer select.mod-version {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+/* ---- What's chosen: underlined and a little larger ---- */
+
+.tabs button,
+#profiles button,
+.segmented button {
+  position: relative;
+  transition: transform 0.15s;
+}
+
+.tabs button[aria-selected="true"],
+#profiles button[aria-current="true"],
+.segmented button[aria-pressed="true"] {
+  background: none;
+  box-shadow: none;
+  font-weight: inherit;
+  transform: scale(1.08);
+}
+
+.segmented button[aria-pressed="true"] {
+  font-weight: 400;
+}
+
+/* Profiles grow from their left edge, so they stay lined up. */
+#profiles button[aria-current="true"] {
+  transform-origin: left center;
+}
+
+.tabs button[aria-selected="true"]::after,
+#profiles button[aria-current="true"]::after,
+.segmented button[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 1px;
+  height: 1px;
+  background: var(--sk-underline);
+  pointer-events: none;
+}
+
+.tabs button:hover,
+#profiles button:hover {
+  background: var(--sk-wash);
+}
+
+.tabs button[aria-selected="true"]:hover,
+#profiles button[aria-current="true"]:hover {
+  background: none;
+}
+
+#settings-tabs {
+  border-bottom: none;
+}
+
+/* ---- Mods ---- */
+
+.mod-list {
+  background: rgb(0 0 0 / 0.45);
+  padding: 6px 10px;
+}
+
+.mod-row + .mod-row {
+  border-top: none;
+  background: var(--sk-divider) top / 100% 1px no-repeat;
+}
+
+.mod-row:hover {
+  background-color: var(--sk-wash);
+}
+
+.mod-row.expanded {
+  background-color: rgb(255 255 255 / 0.035);
+}
+
+.mod-list > li.dragging {
+  background: var(--pw-surface);
+}
+
+.result {
+  background: rgb(255 255 255 / 0.03);
+  border-color: transparent;
+}
+
+.result:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+
+.card-sheet {
+  background: rgb(14 12 13 / 0.96);
+}
+
+.tag,
+.badge {
+  border-color: rgb(255 255 255 / 0.18);
+  color: var(--pw-muted);
+}
+
+.mod-priority.set {
+  color: #fff;
+  border-color: rgb(255 255 255 / 0.35);
+}

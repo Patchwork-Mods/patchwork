@@ -47,6 +47,16 @@ addEventListener(
   true,
 );
 
+// Whether the window is in the background (not focused, or hidden), so
+// themes can stop anything that moves, which otherwise keeps the GPU busy
+// redrawing a window nobody is looking at.
+const syncInactive = () =>
+  root.toggleAttribute("data-inactive", document.hidden || !document.hasFocus());
+addEventListener("focus", syncInactive);
+addEventListener("blur", syncInactive);
+document.addEventListener("visibilitychange", syncInactive);
+syncInactive();
+
 setModsView(modsView);
 
 // The window starts hidden (see tauri.conf.json) and is shown once the
