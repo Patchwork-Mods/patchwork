@@ -36,6 +36,9 @@
 //! A theme can also be a folder, `<id>/theme.css`, with the pictures and
 //! fonts it uses beside it, which its CSS links to with relative `url()`s
 //! (see [`crate::theme_files`]).
+//!
+//! A header can also offer settings, as `[[option]]` tables, which the app
+//! shows in its Appearance settings (see [`crate::theme_options`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -44,6 +47,7 @@ use patchwork_core::game::Accent;
 use serde::{Deserialize, Serialize};
 
 use crate::theme_files::{self, Folder};
+use crate::theme_options::{self, OptionValue, ThemeOption};
 
 /// The themes that come with patchwork, by id.
 const BUILTIN: &[(&str, &str)] = &[
@@ -100,6 +104,13 @@ pub struct ThemeInfo {
     /// taking its place.
     pub layer: bool,
     pub origin: ThemeOrigin,
+    /// Settings it offers.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<ThemeOption>,
+    /// The values of `options`, as picked in `gui.toml` or their defaults;
+    /// filled in by [`Catalog::set_values`].
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub values: BTreeMap<String, OptionValue>,
     /// Sent so the picker can preview it and show its colours.
     pub css: String,
 }
@@ -115,6 +126,9 @@ struct Header {
     modes: Vec<Mode>,
     #[serde(default)]
     layer: bool,
+    /// `[[option]]` tables.
+    #[serde(default)]
+    option: Vec<ThemeOption>,
 }
 
 /// The TOML and the paragraph after it from a CSS file's `@theme` comment,
@@ -151,13 +165,27 @@ fn header_text(css: &str) -> Option<(String, Option<String>)> {
             .take_while(|l| !l.is_empty())
             .copied()
             .collect();
-        let paragraph: Vec<&str> = body
-            .skip_while(|l| l.is_empty())
-            .take_while(|l| !l.is_empty())
-            .copied()
-            .collect();
+        let mut body = body.skip_while(|l| l.is_empty()).peekable();
+        // The paragraph, unless what comes next is more TOML.
+        let paragraph: Vec<&str> = if body.peek().is_some_and(|l| l.starts_with('[')) {
+            Vec::new()
+        } else {
+            body.by_ref()
+                .take_while(|l| !l.is_empty())
+                .copied()
+                .collect()
+        };
         let paragraph = (!paragraph.is_empty()).then(|| paragraph.join(" "));
-        return Some((toml.join("\n"), paragraph));
+        // Tables after it, like `[[option]]`, are TOML too.
+        let mut toml = toml.join("\n");
+        let mut rest = body.skip_while(|l| l.is_empty()).peekable();
+        if rest.peek().is_some_and(|l| l.starts_with('[')) {
+            for line in rest {
+                toml.push('\n');
+                toml.push_str(line);
+            }
+        }
+        return Some((toml, paragraph));
     }
     None
 }
@@ -211,6 +239,7 @@ fn parse(
     let (header, paragraph) = match header_text(&css) {
         Some((toml, paragraph)) => {
             let header: Header = toml::from_str(&toml).map_err(|e| e.message().to_owned())?;
+            theme_options::check(&header.option)?;
             (header, paragraph)
         }
         None => (
@@ -229,6 +258,8 @@ fn parse(
         modes: header.modes,
         layer: header.layer,
         origin,
+        options: header.option,
+        values: BTreeMap::new(),
         css,
     })
 }
@@ -321,6 +352,13 @@ impl Catalog {
         let mut catalog = Catalog::new(files, games);
         catalog.problems.extend(problems);
         catalog
+    }
+
+    /// Fills in each theme's option values from `prefs`.
+    pub fn set_values(&mut self, prefs: &ThemePrefs) {
+        for theme in self.themes.values_mut() {
+            theme.values = theme_options::values(&theme.options, prefs.options.get(&theme.id));
+        }
     }
 
     /// The themes to use, picked theme first, with `prefs` and `game` open.
@@ -480,6 +518,14 @@ pub struct ThemePrefs {
     /// here follows `game_themes`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub games: BTreeMap<String, String>,
+    /// Themes' options as picked, by theme id then option id (see
+    /// [`crate::theme_options`]).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, toml::Table>,
+    /// Stop what moves, as if the system asked for less motion: themes see
+    /// `data-motion="reduced"` on `:root` either way.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reduce_motion: bool,
     /// Keys this version doesn't know, kept when saving.
     #[serde(flatten)]
     pub rest: toml::Table,
@@ -557,6 +603,15 @@ mod tests {
     fn registry_game_themes() {
         let catalog = Catalog::new(Vec::new(), &no_games);
         let ror2 = &catalog.themes["risk-of-rain-2"];
+        for id in ["hollow-knight", "hollow-knight-silksong"] {
+            let ids: Vec<&str> = catalog.themes[id]
+                .options
+                .iter()
+                .map(|o| o.id.as_str())
+                .collect();
+            assert_eq!(ids.len(), 3, "{id}: {ids:?}");
+            assert!(ids.contains(&"glow"), "{id}: {ids:?}");
+        }
         assert_eq!(ror2.game.as_deref(), Some("risk-of-rain-2"));
         assert_eq!(ror2.name, "Risk of Rain 2");
         assert_eq!(ror2.origin, ThemeOrigin::Builtin);
@@ -626,6 +681,38 @@ mod tests {
         let (toml, para) = header_text(css).unwrap();
         assert_eq!(toml, "name = \"A\"\ngame = \"x\"\nlayer = true");
         assert_eq!(para.as_deref(), Some("Line one line two."));
+    }
+
+    #[test]
+    fn options_after_the_paragraph() {
+        let css = "/*\n * @theme\n * name = \"Dusk\"\n *\n * Dark and quiet.\n * Very.\n *\n \
+                   * [[option]]\n * id = \"dust\"\n * label = \"Dust\"\n * type = \"toggle\"\n *\n \
+                   * [[option]]\n * id = \"glow\"\n * label = \"Glow\"\n * type = \"range\"\n \
+                   * var = \"--glow\"\n * min = 0\n * max = 1\n * default = 1\n */";
+        let mut c = catalog(&[("dusk", css)]);
+        assert!(c.problems.is_empty(), "{:?}", c.problems);
+        let dusk = &c.themes["dusk"];
+        assert_eq!(dusk.description.as_deref(), Some("Dark and quiet. Very."));
+        let ids: Vec<&str> = dusk.options.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(ids, ["dust", "glow"]);
+
+        let mut prefs = ThemePrefs::default();
+        let saved: toml::Table = toml::from_str("dust = false").unwrap();
+        prefs.options.insert("dusk".into(), saved);
+        c.set_values(&prefs);
+        let values = &c.themes["dusk"].values;
+        assert_eq!(values["dust"], OptionValue::Bool(false));
+        assert_eq!(values["glow"], OptionValue::Number(1.0));
+
+        // Options straight after the TOML, with no paragraph.
+        let css = "/* @theme\nname = \"Dusk\"\n\n[[option]]\nid = \"dust\"\nlabel = \"Dust\"\ntype = \"toggle\" */";
+        let c = catalog(&[("dusk", css)]);
+        assert!(c.problems.is_empty(), "{:?}", c.problems);
+        assert_eq!(c.themes["dusk"].description, None);
+        assert_eq!(c.themes["dusk"].options.len(), 1);
+
+        let bad = "/* @theme\nname = \"Dusk\"\n\n[[option]]\nid = \"Dust\"\nlabel = \"Dust\"\ntype = \"toggle\" */";
+        assert_eq!(catalog(&[("dusk", bad)]).problems.len(), 1);
     }
 
     #[test]

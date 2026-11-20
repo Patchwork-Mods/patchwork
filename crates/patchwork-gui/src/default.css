@@ -155,6 +155,14 @@ textarea {
   padding: 5px 10px;
 }
 
+/* Sliders aren't boxes: the padding would keep the knob from reaching
+   the ends. */
+input[type="range"] {
+  padding: 0;
+  border: none;
+  background: none;
+}
+
 /* Drop-downs: the webview draws its own grey box (ignoring the colours
    above) unless appearance is off, so the arrow is drawn here, in the text
    colour. A theme that colours them should set background-color rather
@@ -2224,12 +2232,10 @@ body.dragging-mod .mod-card .card-sheet {
   background: var(--pw-surface);
 }
 
-@media (prefers-reduced-motion: reduce) {
-
-  .card-sheet,
-  .card-sheet::before {
-    transition: none;
-  }
+/* data-motion="reduced": "Reduce motion" in Settings, or the system
+   asking for less (see theme.js). */
+:root[data-motion="reduced"] :is(.card-sheet, .card-sheet::before) {
+  transition: none;
 }
 
 /* A mod's settings: its config files (see config.js). A cog on a list row,
@@ -3320,6 +3326,22 @@ legend {
    small drawing of the app in that theme's colours: the theme's --pw-*
    variables are set on .theme-sample itself, so everything inside it uses
    them rather than the theme in use. */
+/* A theme's options, under the picker and in a game's settings (see
+   theme.js). */
+.theme-option .row input[type="range"] {
+  flex: 1;
+}
+
+.theme-option output {
+  min-width: 4ch;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.theme-options-reset {
+  align-self: flex-start;
+}
+
 #theme-picker {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -3508,17 +3530,12 @@ legend {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+[data-motion="reduced"] :is(:is(.mod-row, .mod-card).downloading::after, #download-progress::after) {
+  transition: none;
+}
 
-  :is(.mod-row, .mod-card).downloading::after,
-  #download-progress::after {
-    transition: none;
-  }
-
-  :is(.mod-row, .mod-card).indeterminate::after,
-  #download-progress.indeterminate::after {
-    background: var(--pw-progress);
-    opacity: 0.5;
-    animation: none;
-  }
+[data-motion="reduced"] :is(:is(.mod-row, .mod-card).indeterminate::after, #download-progress.indeterminate::after) {
+  background: var(--pw-progress);
+  opacity: 0.5;
+  animation: none;
 }

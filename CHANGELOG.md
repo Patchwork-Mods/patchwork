@@ -6,6 +6,7 @@ dialog shows, so the heading has to match the version being released.
 ## 0.3.1
 
 - Added Hollow Knight and ModLinks support
+- Added ability for themes to declare options
 
 ### Themes
 

@@ -515,6 +515,8 @@
 						<!-- Filled in by renderGameTheme() in theme.js. -->
 						<select id="game-settings-theme"></select>
 					</label>
+					<!-- The picked theme's options, if it has any; see theme.js. -->
+					<div id="game-theme-options" class="stack" hidden></div>
 				</div>
 				<p class="muted hint" data-panel="general">
 					Accounts for sources like Nexus Mods are in
@@ -627,6 +629,8 @@
 						<small id="theme-picker-description" class="muted"></small>
 						<small id="theme-picker-note" class="muted" hidden></small>
 					</div>
+					<!-- The options of the themes in use, if they have any; see theme.js. -->
+					<div id="theme-options" class="stack" hidden></div>
 					<div class="field">
 						<label for="appearance-mode">Mode</label>
 						<select id="appearance-mode">
@@ -635,6 +639,12 @@
 							<option value="dark">Dark</option>
 						</select>
 						<small id="appearance-mode-note" class="muted" hidden></small>
+					</div>
+					<div class="field">
+						<label class="row"><input type="checkbox" id="appearance-reduce-motion">
+							<span>Reduce motion</span></label>
+						<small class="muted">Stops themes' moving backgrounds and the app's animations. Always on when your
+							system asks for less motion.</small>
 					</div>
 					<div class="field">
 						<label for="appearance-game-themes">Game themes</label>

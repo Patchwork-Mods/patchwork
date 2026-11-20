@@ -10,13 +10,22 @@
 // the whole window while hovered or focused. A game's settings pick a
 // theme for just that game.
 //
+// A theme can offer options ([[option]] in its header, see
+// theme_options.rs), shown under the picker for the themes in use and in a
+// game's settings for its theme. Each sets a CSS variable in a layer just
+// after its theme's, and toggles and choices set data-opt-<id> on <html>.
+// "Reduce motion", or the system asking for less, sets data-motion="reduced"
+// on <html> for themes to stop what moves.
+//
 // main.rs watches the themes folders and says when a file in them changes,
 // and the themes are applied again, so a theme shows as it's saved.
 
 import { invoke, listen, run, status } from "./state.js";
 import { $, h } from "./dom.js";
+import { colorPicker, fullHex } from "./colorpick.js";
 
 const systemDark = matchMedia("(prefers-color-scheme: dark)");
+const systemReduced = matchMedia("(prefers-reduced-motion: reduce)");
 
 /** The last theme() answer, for working the mode out again and for putting
  *  things back after a preview. */
@@ -56,22 +65,84 @@ async function fetchTheme(key) {
   if (theme.problems.length) status(theme.problems.join("; "), true);
 }
 
+/** An option's value in `theme`: as picked, or its default. */
+function valueOf(theme, option) {
+  const value = theme.values?.[option.id];
+  if (value !== undefined) return value;
+  if (option.type === "choice") return option.default ?? option.choices[0].value;
+  return option.default;
+}
+
+/** What an option puts in its CSS variable, with `value` picked. */
+function optionCss(option, value) {
+  switch (option.type) {
+    case "toggle":
+      return value ? option.on : option.off;
+    case "choice": {
+      const choice = option.choices.find((c) => c.value === value);
+      return choice && (choice.css ?? choice.value);
+    }
+    case "color":
+      return value;
+    case "range":
+      return `${value}${option.unit ?? ""}`;
+  }
+}
+
+/** `theme`'s options as CSS variables on :root, in layer `name`. The
+ *  values were checked by theme_options.rs, or come from our own controls. */
+function optionsLayer(name, theme) {
+  const decls = (theme?.options ?? [])
+    .filter((o) => o.var)
+    .map((o) => [o.var, optionCss(o, valueOf(theme, o))])
+    .filter(([, css]) => css != null)
+    .map(([name, css]) => `  ${name}: ${css};\n`)
+    .join("");
+  return decls ? `\n@layer ${name} {\n:root {\n${decls}}\n}` : "";
+}
+
+/** data-opt-<id> on <html> for each toggle and choice of `themes`. */
+function optionAttrs(themes) {
+  const root = document.documentElement;
+  for (const { name } of [...root.attributes]) {
+    if (name.startsWith("data-opt-")) root.removeAttribute(name);
+  }
+  for (const theme of themes) {
+    for (const option of theme?.options ?? []) {
+      const value = valueOf(theme, option);
+      if (option.type === "toggle") root.setAttribute(`data-opt-${option.id}`, value ? "on" : "off");
+      if (option.type === "choice") root.setAttribute(`data-opt-${option.id}`, value);
+    }
+  }
+}
+
+function applyMotion(theme = current) {
+  const reduced = systemReduced.matches || !!theme?.reduce_motion;
+  document.documentElement.dataset.motion = reduced ? "reduced" : "full";
+}
+systemReduced.addEventListener("change", () => applyMotion());
+
 /** Puts `theme` (a theme() answer, or a preview made from one) on the page. */
 function paint(theme) {
   applyMode(theme);
+  applyMotion(theme);
   // Which themes are in use, for user.css to target with [data-theme=...].
   const root = document.documentElement;
   root.dataset.theme = theme.global?.id ?? "";
   root.dataset.gameTheme = theme.game?.id ?? "";
+  optionAttrs([theme.global, theme.game]);
   $("#theme-builtin").textContent =
-    "@layer pw-builtin, pw-theme, pw-accent, pw-game;\n" + layer("pw-builtin", theme.builtin);
-  $("#theme-global").textContent = layer("pw-theme", theme.global?.css);
+    "@layer pw-builtin, pw-theme, pw-theme-options, pw-accent, pw-game, pw-game-options;\n" +
+    layer("pw-builtin", theme.builtin);
+  $("#theme-global").textContent =
+    layer("pw-theme", theme.global?.css) + optionsLayer("pw-theme-options", theme.global);
   // Checked to be a hex color by patchwork, so safe to put in CSS.
   const accent = theme.accent;
   $("#theme-accent").textContent = accent
     ? layer("pw-accent", `:root { --pw-accent: ${accent.color}; --pw-accent-text: ${accent.text}; }`)
     : "";
-  $("#theme-game").textContent = layer("pw-game", theme.game?.css);
+  $("#theme-game").textContent =
+    layer("pw-game", theme.game?.css) + optionsLayer("pw-game-options", theme.game);
   $("#theme-user").textContent = theme.user ?? "";
 }
 
@@ -168,12 +239,111 @@ async function refresh() {
   renderModeNote();
 }
 
+// Theme options' controls.
+
+/** A range's value as shown beside it. */
+const rangeText = (option, value) => `${Number(value.toFixed(2))}${option.unit ?? ""}`;
+
+/** How far along a slider is, 0 to 1, as --pw-range on it, so a theme can
+ *  draw the line before the knob differently from the line after it. */
+const rangeAt = (option, value) => `--pw-range: ${(value - option.min) / (option.max - option.min)}`;
+
+/** A control for each of `theme`'s options. `set(option, value, done)` is
+ *  called as one changes; `done` is false while a slider or color is still
+ *  being moved. */
+function optionControls(theme, set) {
+  return theme.options.map((option) => {
+    const value = valueOf(theme, option);
+    const hint = option.description ? h("small", { class: "muted" }, option.description) : null;
+    const attrs = { "data-option": option.id };
+    switch (option.type) {
+      case "toggle":
+        return h(
+          "div",
+          { class: "field theme-option" },
+          h(
+            "label",
+            { class: "row" },
+            h("input", { ...attrs, type: "checkbox", checked: value, onchange: (e) => set(option, e.target.checked, true) }),
+            h("span", {}, option.label),
+          ),
+          hint,
+        );
+      case "choice":
+        return h(
+          "label",
+          { class: "field theme-option" },
+          h("span", {}, option.label),
+          h(
+            "select",
+            { ...attrs, onchange: (e) => set(option, e.target.value, true) },
+            ...option.choices.map((c) => h("option", { value: c.value, selected: c.value === value }, c.label)),
+          ),
+          hint,
+        );
+      case "color": {
+        const picker = colorPicker({
+          ...attrs,
+          "aria-label": option.label,
+          oninput: (e) => set(option, e.target.value, false),
+          onchange: (e) => set(option, e.target.value, true),
+        });
+        picker.value = fullHex(value) ?? "#808080";
+        return h("div", { class: "field theme-option" }, h("span", {}, option.label), h("div", { class: "row" }, picker), hint);
+      }
+      case "range": {
+        const output = h("output", {}, rangeText(option, value));
+        const input = h("input", {
+          ...attrs,
+          type: "range",
+          min: option.min,
+          max: option.max,
+          step: option.step ?? "any",
+          value,
+          style: rangeAt(option, value),
+          oninput: (e) => {
+            e.target.setAttribute("style", rangeAt(option, Number(e.target.value)));
+            output.textContent = rangeText(option, Number(e.target.value));
+            set(option, Number(e.target.value), false);
+          },
+          onchange: (e) => set(option, Number(e.target.value), true),
+        });
+        return h("label", { class: "field theme-option" }, h("span", {}, option.label), h("span", { class: "row" }, input, output), hint);
+      }
+      default:
+        return null;
+    }
+  });
+}
+
+/** `theme`'s options under its name, with a button that puts them back to
+ *  the theme's own, shown when `changed`. */
+function optionsGroup(theme, changed, set, reset) {
+  const resetButton = h(
+    "button",
+    { type: "button", class: "link theme-options-reset", hidden: !changed, onclick: reset },
+    "Back to the theme's defaults",
+  );
+  return h(
+    "div",
+    { class: "theme-options stack", "data-theme-id": theme.id },
+    h("div", { class: "section-rule" }, `${theme.name} options`),
+    ...optionControls(theme, (option, value, done) => {
+      set(option, value, done);
+      if (done) resetButton.hidden = false;
+    }),
+    resetButton,
+  );
+}
+
 // Settings → Appearance.
 
 const appearance = $("#appearance");
 const picker = $("#theme-picker");
 const modeSelect = $("#appearance-mode");
 const gameThemesSelect = $("#appearance-game-themes");
+const reduceMotion = $("#appearance-reduce-motion");
+const themeOptions = $("#theme-options");
 /** gui.toml's [theme] table as last read, sent back with changes. */
 let prefs = null;
 /** The themes for every game, from theme_list. */
@@ -192,8 +362,10 @@ export async function renderAppearance() {
   builtinCss = current?.builtin ?? "";
   modeSelect.value = prefs.mode;
   gameThemesSelect.value = prefs.game_themes;
+  reduceMotion.checked = !!prefs.reduce_motion;
   renderPicker();
   renderModeNote();
+  renderThemeOptions();
   const problems = $("#appearance-problems");
   problems.textContent = list.problems.join("; ");
   problems.hidden = !list.problems.length;
@@ -303,6 +475,7 @@ async function pick(theme) {
   previewing = undefined;
   await savePrefs({ theme: theme?.id ?? null });
   renderPicker();
+  renderThemeOptions();
   quiet = true;
   picker.querySelector("[aria-checked=true]")?.focus({ focusVisible: false });
   quiet = false;
@@ -340,6 +513,42 @@ picker.addEventListener("keydown", (e) => {
 });
 appearance.closest("dialog").addEventListener("close", endPreview);
 
+/** The options of the themes in use, which are saved as they change. */
+function renderThemeOptions() {
+  const inUse = [current?.global, current?.game].filter((t) => t?.options?.length);
+  themeOptions.replaceChildren(
+    ...inUse.map((theme) =>
+      optionsGroup(
+        theme,
+        Object.keys(prefs.options?.[theme.id] ?? {}).length > 0,
+        (option, value, done) => setOption(theme.id, option, value, done),
+        () => resetOptions(theme.id).catch(() => {}),
+      ),
+    ),
+  );
+  themeOptions.hidden = !inUse.length;
+}
+
+function setOption(themeId, option, value, done) {
+  // `current` is replaced each time something is saved, so the theme is
+  // looked up again rather than kept.
+  const theme = [current?.global, current?.game].find((t) => t?.id === themeId);
+  if (!theme) return;
+  theme.values = { ...theme.values, [option.id]: value };
+  paint(previewing === undefined ? current : previewFor(previewing));
+  if (!done) return;
+  const options = { ...prefs.options };
+  options[themeId] = { ...options[themeId], [option.id]: value };
+  savePrefs({ options }).catch(() => {});
+}
+
+async function resetOptions(themeId) {
+  const options = { ...prefs.options };
+  delete options[themeId];
+  await savePrefs({ options });
+  renderThemeOptions();
+}
+
 /** Says so when the themes in use only have one mode. */
 function renderModeNote() {
   const note = $("#appearance-mode-note");
@@ -364,16 +573,28 @@ modeSelect.addEventListener("change", () =>
 );
 gameThemesSelect.addEventListener("change", () =>
   savePrefs({ game_themes: gameThemesSelect.value })
-    .then(renderPicker)
+    .then(() => {
+      renderPicker();
+      renderThemeOptions();
+    })
     .catch(() => {}),
 );
+reduceMotion.addEventListener("change", () => savePrefs({ reduce_motion: reduceMotion.checked }).catch(() => {}));
 
 // A game's settings: the theme for just that game, a value of gui.toml's
 // [theme.games] ("" for Automatic). Picking one shows it straight away;
 // it's saved with the rest of the game's settings.
 
 const gameThemeSelect = $("#game-settings-theme");
+const gameThemeOptions = $("#game-theme-options");
 let gameThemeFor = null;
+/** Options changed in the open game's settings and not saved yet, by
+ *  theme id then option id. */
+let gameEdits = {};
+/** Themes whose options were put back to their defaults there. */
+let gameResets = new Set();
+/** theme() for the game with the Theme picked there, with `gameEdits`. */
+let gamePreview = null;
 
 /** Fills in the game settings' Theme for `game`. */
 export async function renderGameTheme(game) {
@@ -415,19 +636,59 @@ export async function renderGameTheme(game) {
     known ? null : h("option", { value: set }, `${set} (missing)`),
   );
   gameThemeSelect.value = set;
+  gameEdits = {};
+  gameResets = new Set();
+  await showGameOptions();
 }
 
-gameThemeSelect.addEventListener("change", async () => {
-  const preview = await invoke("theme", { game: gameThemeFor, pick: gameThemeSelect.value });
-  if (gameThemeSelect.closest("dialog").open) paint(preview);
-});
+/** Shows the options of the theme picked in a game's settings: its own
+ *  theme, or a theme for every game picked for just this game. With
+ *  `show`, paints it on the window too. */
+async function showGameOptions(show = false) {
+  const pick = gameThemeSelect.value;
+  const preview = await invoke("theme", { game: gameThemeFor, pick });
+  if (gameThemeSelect.value !== pick) return;
+  for (const theme of [preview.global, preview.game]) {
+    if (!theme) continue;
+    if (gameResets.has(theme.id)) theme.values = {};
+    theme.values = { ...theme.values, ...gameEdits[theme.id] };
+  }
+  gamePreview = preview;
+  const own = [preview.game, preview.global?.id === pick ? preview.global : null].filter((t) => t?.options?.length);
+  gameThemeOptions.replaceChildren(
+    ...own.map((theme) =>
+      optionsGroup(
+        theme,
+        gameEdits[theme.id] || (!gameResets.has(theme.id) && Object.keys(prefs.options?.[theme.id] ?? {}).length > 0),
+        (option, value) => {
+          theme.values = { ...theme.values, [option.id]: value };
+          gameEdits[theme.id] = { ...gameEdits[theme.id], [option.id]: value };
+          paint(gamePreview);
+        },
+        () => {
+          gameResets.add(theme.id);
+          delete gameEdits[theme.id];
+          showGameOptions(true).catch(() => {});
+        },
+      ),
+    ),
+  );
+  gameThemeOptions.hidden = !own.length;
+  if (show && gameThemeSelect.closest("dialog").open) paint(preview);
+}
+
+gameThemeSelect.addEventListener("change", () => showGameOptions(true).catch(() => {}));
 
 /** Saves the game settings' Theme. */
 export async function saveGameTheme() {
   const games = { ...prefs.games };
   if (gameThemeSelect.value) games[gameThemeFor] = gameThemeSelect.value;
   else delete games[gameThemeFor];
-  await savePrefs({ games });
+  // Options belong to a theme, wherever it's used.
+  const options = { ...prefs.options };
+  for (const id of gameResets) delete options[id];
+  for (const [id, edits] of Object.entries(gameEdits)) options[id] = { ...options[id], ...edits };
+  await savePrefs({ games, options });
 }
 
 // Back to the theme in use, after a preview that wasn't saved.

@@ -12,6 +12,34 @@
  * is lighter than the main text. Silksong's red is kept for the main
  * actions. Behind it all is the title screen's red glow rising from below,
  * with sparks drifting up through it.
+ *
+ * [[option]]
+ * id = "sparks"
+ * label = "Sparks"
+ * type = "choice"
+ * var = "--sk-sparks"
+ * choices = [
+ *   { value = "moving", label = "Moving", css = "running" },
+ *   { value = "still", label = "Still", css = "paused" },
+ *   { value = "hidden", label = "Hidden", css = "paused" },
+ * ]
+ *
+ * [[option]]
+ * id = "glow"
+ * label = "Glow"
+ * type = "range"
+ * var = "--sk-glow"
+ * min = 0
+ * max = 100
+ * step = 5
+ * default = 100
+ *
+ * [[option]]
+ * id = "main-color"
+ * label = "Main color"
+ * type = "color"
+ * var = "--sk-red"
+ * default = "#a8303a"
  */
 
 :root {
@@ -65,11 +93,12 @@
    orange and fast. Each layer is a tile that drifts up and to the right, a
    tile's width and height per loop, so the loop doesn't show. They hold
    still while the window is in the background (app.js sets data-inactive
-   on :root), for anyone who asks their system for less motion, and user.css can
-   stop them with :root { --sk-sparks: paused; }. */
+   on :root), when Reduce motion is on in Settings (or the system asks for
+   less), and the theme's options can stop or hide them. */
 :root {
   --sk-art: none;
   --sk-sparks: running;
+  --sk-glow: 100; /* out of 100 */
   background: var(--pw-bg);
 }
 
@@ -95,6 +124,7 @@ body::after {
     var(--sk-art) center / cover no-repeat,
     url("img/glow.svg") center / cover no-repeat,
     var(--pw-bg);
+  opacity: calc(var(--sk-glow) / 100);
 }
 
 /* A tile bigger than the window each way, starting a tile to the left. */
@@ -149,12 +179,18 @@ body::after {
   animation-play-state: paused;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root::after,
-  body::before,
-  body::after {
-    animation: none;
-  }
+/* "Reduce motion" in Settings, or the system asking for less. */
+:root[data-motion="reduced"]::after,
+:root[data-motion="reduced"] body::before,
+:root[data-motion="reduced"] body::after {
+  animation: none;
+}
+
+/* Sparks: Hidden, in the theme's options. */
+:root[data-opt-sparks="hidden"]::after,
+:root[data-opt-sparks="hidden"] body::before,
+:root[data-opt-sparks="hidden"] body::after {
+  display: none;
 }
 
 /* ---- Type ---- */
@@ -331,6 +367,41 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 textarea {
   background: rgb(0 0 0 / 0.4);
   border-color: rgb(255 255 255 / 0.1);
+}
+
+/* Sliders as in the game's options: a thin white line, grey after the
+   knob, which is a small triangle above it pointing down. The knob's
+   middle only goes as far as half its width from each end, so the line is
+   a knob's width shorter than the slider, and ends where the knob stops.
+   theme.js sets --pw-range (0 to 1) on the sliders it makes; others are
+   all white. The colour picker's rainbow is left alone. */
+input[type="range"]:not(.color-pick-hue) {
+  --sk-knob: 11px;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  cursor: pointer;
+}
+
+input[type="range"]:not(.color-pick-hue)::-webkit-slider-runnable-track {
+  --sk-at: calc(100% * var(--pw-range, 1));
+  height: 1px;
+  background: linear-gradient(90deg, #fff var(--sk-at), rgb(255 255 255 / 0.3) var(--sk-at)) center /
+    calc(100% - var(--sk-knob)) 100% no-repeat;
+}
+
+input[type="range"]:not(.color-pick-hue)::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0;
+  height: 0;
+  /* Down from the top of the line, a pixel clear of it. */
+  margin-top: -9px;
+  border: none;
+  border-left: calc(var(--sk-knob) / 2) solid transparent;
+  border-right: calc(var(--sk-knob) / 2) solid transparent;
+  border-top: 8px solid #fff;
+  background: none;
 }
 
 /* Colour only, so the built-in look's arrow stays. */

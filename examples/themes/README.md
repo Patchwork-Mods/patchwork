@@ -32,6 +32,82 @@ theme = "sorbet"
 game_themes = "on"   # or "off"
 ```
 
+## Options
+
+A theme can offer settings that show in **Settings → Appearance** (for the
+themes in use) and in a game's settings (for its theme), so its look can be
+changed without touching files. Each is an `[[option]]` table in the
+`@theme` comment, after the paragraph:
+
+```css
+/*
+ * @theme
+ * name = "Hollow Knight: Silksong"
+ * game = "hollow-knight-silksong"
+ *
+ * A paragraph saying what it looks like.
+ *
+ * [[option]]
+ * id = "sparks"
+ * label = "Sparks"
+ * type = "choice"
+ * var = "--sk-sparks"
+ * choices = [
+ *   { value = "moving", label = "Moving", css = "running" },
+ *   { value = "still", label = "Still", css = "paused" },
+ *   { value = "hidden", label = "Hidden", css = "paused" },
+ * ]
+ *
+ * [[option]]
+ * id = "glow"
+ * label = "Glow"
+ * description = "How bright the light behind everything is."
+ * type = "range"
+ * var = "--sk-glow"
+ * min = 0
+ * max = 100
+ * default = 100
+ */
+```
+
+An option sets the CSS variable `var` on `:root`, over what the theme sets
+there, so the theme uses it with `var(--sk-glow)` and sets the default
+itself too. The types:
+
+| `type` | Keys | The variable gets |
+| --- | --- | --- |
+| `toggle` | `default` (true or false), `on`, `off` | `on` or `off` |
+| `choice` | `choices` (`value`, `label`, optional `css`), `default` (a `value`; the first if left out) | the choice's `css`, or its `value` |
+| `color` | `default` (`"#rrggbb"`) | the color |
+| `range` | `min`, `max`, `default`, optional `step` and `unit` | the number with the unit after it |
+
+A variable can't turn a rule on or off, so toggles and choices also set
+`data-opt-<id>` on `:root`, to `on`/`off` or the choice's `value`:
+
+```css
+:root[data-opt-sparks="hidden"] body::before {
+  display: none;
+}
+```
+
+A range shows its number beside it, with the `unit` after it. Leave the
+unit out to show just the number, and work it out in the CSS instead, like
+`opacity: calc(var(--sk-glow) / 100)`. Each slider has `--pw-range` on it,
+from 0 to 1, so a theme can draw the line before the knob differently from
+the line after it (the Silksong theme does).
+
+Ids are lower-case letters, digits and dashes. Only variables set on
+`:root` itself can be changed this way: one the theme sets again on another
+element keeps that value there. What's picked is kept in `<config>/gui.toml`
+under `[theme.options.<theme id>]`, and `user.css` still goes on top.
+
+## Motion
+
+Anything that moves should stop under `:root[data-motion="reduced"]`,
+which is set when **Reduce motion** is on in **Settings → Appearance** or
+the system asks for less motion, and pause under `:root[data-inactive]`,
+set while the window is in the background.
+
 ## Pictures and fonts
 
 A theme that needs files of its own is a folder instead of one file:

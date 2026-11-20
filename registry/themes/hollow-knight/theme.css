@@ -12,6 +12,34 @@
  * Smaller text is lighter than the main text. The main actions are a
  * muted steel blue. Behind it all is the title screen's cold light in the
  * middle of the dark, with dust drifting slowly up through it.
+ *
+ * [[option]]
+ * id = "dust"
+ * label = "Dust"
+ * type = "choice"
+ * var = "--hk-dust"
+ * choices = [
+ *   { value = "moving", label = "Moving", css = "running" },
+ *   { value = "still", label = "Still", css = "paused" },
+ *   { value = "hidden", label = "Hidden", css = "paused" },
+ * ]
+ *
+ * [[option]]
+ * id = "glow"
+ * label = "Glow"
+ * type = "range"
+ * var = "--hk-glow"
+ * min = 0
+ * max = 100
+ * step = 5
+ * default = 100
+ *
+ * [[option]]
+ * id = "main-color"
+ * label = "Main color"
+ * type = "color"
+ * var = "--hk-blue"
+ * default = "#3f5c8a"
  */
 
 :root {
@@ -66,11 +94,12 @@
    a tile that rises one tile's height per loop, so the loop doesn't show,
    and sways gently side to side on its own clock. They hold still while
    the window is in the background (app.js sets data-inactive on :root),
-   for anyone who asks their system for less motion, and user.css can stop
-   them with :root { --hk-dust: paused; }. */
+   when Reduce motion is on in Settings (or the system asks for
+   less), and the theme's options can stop or hide them. */
 :root {
   --hk-art: none;
   --hk-dust: running;
+  --hk-glow: 100; /* out of 100 */
   background: var(--pw-bg);
 }
 
@@ -96,6 +125,7 @@ body::after {
     var(--hk-art) center / cover no-repeat,
     url("img/glow.svg") center / cover no-repeat,
     var(--pw-bg);
+  opacity: calc(var(--hk-glow) / 100);
 }
 
 /* A tile taller than the window, and a little wider for the sway. */
@@ -165,12 +195,18 @@ body::after {
   animation-play-state: paused;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root::after,
-  body::before,
-  body::after {
-    animation: none;
-  }
+/* "Reduce motion" in Settings, or the system asking for less. */
+:root[data-motion="reduced"]::after,
+:root[data-motion="reduced"] body::before,
+:root[data-motion="reduced"] body::after {
+  animation: none;
+}
+
+/* Dust: Hidden, in the theme's options. */
+:root[data-opt-dust="hidden"]::after,
+:root[data-opt-dust="hidden"] body::before,
+:root[data-opt-dust="hidden"] body::after {
+  display: none;
 }
 
 /* ---- Type ---- */
@@ -347,6 +383,41 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 textarea {
   background: rgb(0 0 0 / 0.4);
   border-color: rgb(255 255 255 / 0.1);
+}
+
+/* Sliders as in the game's options: a thin white line, grey after the
+   knob, which is a small triangle above it pointing down. The knob's
+   middle only goes as far as half its width from each end, so the line is
+   a knob's width shorter than the slider, and ends where the knob stops.
+   theme.js sets --pw-range (0 to 1) on the sliders it makes; others are
+   all white. The colour picker's rainbow is left alone. */
+input[type="range"]:not(.color-pick-hue) {
+  --hk-knob: 11px;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  cursor: pointer;
+}
+
+input[type="range"]:not(.color-pick-hue)::-webkit-slider-runnable-track {
+  --hk-at: calc(100% * var(--pw-range, 1));
+  height: 1px;
+  background: linear-gradient(90deg, #fff var(--hk-at), rgb(255 255 255 / 0.3) var(--hk-at)) center /
+    calc(100% - var(--hk-knob)) 100% no-repeat;
+}
+
+input[type="range"]:not(.color-pick-hue)::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0;
+  height: 0;
+  /* Down from the top of the line, a pixel clear of it. */
+  margin-top: -9px;
+  border: none;
+  border-left: calc(var(--hk-knob) / 2) solid transparent;
+  border-right: calc(var(--hk-knob) / 2) solid transparent;
+  border-top: 8px solid #fff;
+  background: none;
 }
 
 /* Colour only, so the built-in look's arrow stays. */

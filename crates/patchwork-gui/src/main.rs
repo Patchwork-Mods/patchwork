@@ -10,6 +10,7 @@ mod selfupdate;
 mod setup;
 mod sync;
 mod theme_files;
+mod theme_options;
 mod theme_watch;
 mod themes;
 
@@ -2036,6 +2037,8 @@ struct Theme {
     user: Option<String>,
     /// Light, dark or as the system is.
     mode: themes::ModePref,
+    /// Whether to stop what moves whatever the system says.
+    reduce_motion: bool,
     /// The modes the themes in use have looks for; empty for either.
     modes: Vec<themes::Mode>,
     /// Themes or preferences that couldn't be read.
@@ -2050,6 +2053,9 @@ struct AppliedTheme {
     /// For the picker's preview, which works out the modes again.
     modes: Vec<themes::Mode>,
     layer: bool,
+    /// Its settings and their values, which theme.js turns into CSS.
+    options: Vec<theme_options::ThemeOption>,
+    values: std::collections::BTreeMap<String, theme_options::OptionValue>,
 }
 
 /// The themes there are, and the preferences that pick between them.
@@ -2090,7 +2096,7 @@ fn load_themes(app: &App) -> (themes::Catalog, themes::ThemePrefs, Vec<String>) 
     }
     let registry = app.pw.registry();
     let dirs = theme_dirs(app.pw.paths());
-    let catalog = themes::Catalog::load(&dirs, &|id| registry.game(id).is_ok());
+    let mut catalog = themes::Catalog::load(&dirs, &|id| registry.game(id).is_ok());
     let prefs = match themes::GuiPrefs::load(config) {
         Ok(p) => p.theme,
         Err(e) => {
@@ -2098,6 +2104,7 @@ fn load_themes(app: &App) -> (themes::Catalog, themes::ThemePrefs, Vec<String>) 
             themes::ThemePrefs::default()
         }
     };
+    catalog.set_values(&prefs);
     (catalog, prefs, problems)
 }
 
@@ -2128,6 +2135,8 @@ fn theme(app: State<'_, App>, game: Option<String>, pick: Option<String>) -> The
         css: t.css.clone(),
         modes: t.modes.clone(),
         layer: t.layer,
+        options: t.options.clone(),
+        values: t.values.clone(),
     };
     let path = app.pw.paths().config.join("themes").join("user.css");
     let user = match std::fs::read_to_string(&path) {
@@ -2141,6 +2150,7 @@ fn theme(app: State<'_, App>, game: Option<String>, pick: Option<String>) -> The
     Theme {
         builtin: BUILTIN_CSS,
         mode: prefs.mode,
+        reduce_motion: prefs.reduce_motion,
         modes: resolved.modes(),
         global: resolved.global.map(applied),
         game: resolved.game.map(applied),
