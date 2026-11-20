@@ -9,6 +9,7 @@ mod links;
 mod selfupdate;
 mod setup;
 mod sync;
+mod theme_files;
 mod theme_watch;
 mod themes;
 
@@ -2263,6 +2264,18 @@ fn main() {
         // link to this one and exits before doing anything else
         .plugin(single_instance.build())
         .plugin(tauri_plugin_deep_link::init())
+        // the pictures in theme folders
+        .register_uri_scheme_protocol(theme_files::SCHEME, |ctx, request| {
+            let dirs: Vec<_> = ctx
+                .app_handle()
+                .try_state::<App>()
+                .map(|app| theme_dirs(app.pw.paths()))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, dir)| dir)
+                .collect();
+            theme_files::respond(&dirs, request.uri().path())
+        })
         .setup(|app| {
             let paths = Paths::from_env()?;
             // the daemon has patchwork open while it runs, so it steps aside

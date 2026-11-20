@@ -11,10 +11,11 @@ compiled into patchwork: `build.rs` in `patchwork-core` picks up every
   a page about a file (see below).
 - `runners/<id>.toml`: ways to start games that are just a command to fill
   in (see below).
-- `themes/<id>.css`: games' own themes for the app, each with
+- `themes/<id>.css`, or `themes/<id>/theme.css` for a theme with pictures or
+  fonts beside it: games' own themes for the app, each with
   `game = "<id>"` in its `@theme` comment (see
   [examples/themes](../examples/themes/README.md)). `build.rs` in
-  `patchwork-gui` builds these in.
+  `patchwork-gui` builds these in, folders' files included.
 
 While you work on definitions, set `PATCHWORK_REGISTRY_PATH` to this
 directory so they're loaded at runtime without rebuilding:

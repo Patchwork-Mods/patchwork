@@ -32,6 +32,38 @@ theme = "sorbet"
 game_themes = "on"   # or "off"
 ```
 
+## Pictures and fonts
+
+A theme that needs files of its own is a folder instead of one file:
+`<id>/theme.css`, with the files beside it, which the CSS links to with
+relative URLs:
+
+```
+themes/
+  my-theme/
+    theme.css
+    fonts/cinzel.woff2
+    img/frame-corner.svg
+```
+
+```css
+@font-face {
+  font-family: "Cinzel";
+  src: url("fonts/cinzel.woff2") format("woff2");
+}
+#main {
+  background: url("img/frame-corner.svg") top left no-repeat;
+}
+```
+
+Only `url()` is followed (not `image-set()` with bare strings, nor
+`@import`), and only inside the folder. Fonts (`.woff2`, `.woff`, `.ttf`,
+`.otf`) are put into the CSS as it loads, so keep them small, and only use
+fonts whose licence lets them be passed on, such as the SIL Open Font
+Licence. Changing any file in the folder shows straight away, like the CSS.
+Pictures from the web work too, as `url("https://...")`; fonts from the web
+don't.
+
 For a look in both modes, put the dark one under `:root[data-mode="dark"]`
 (as `sorbet.css` does) rather than a `prefers-color-scheme` media query, so
 it follows the mode picked in **Settings → Appearance**. Themes load in

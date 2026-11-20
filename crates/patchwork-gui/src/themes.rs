@@ -23,7 +23,7 @@
 //! Last of all comes `user.css`, the user's own changes on top of whatever
 //! theme is in use.
 //!
-//! Themes come built in, from registries, or from `<config>/themes/*.css`.
+//! Themes come built in, from registries, or from `<config>/themes/`.
 //! The themes for every game that come with patchwork are in this crate's
 //! `themes/`; games' own come with the built-in registry, in
 //! `registry/themes/`, and an installed registry or a
@@ -32,12 +32,18 @@
 //! file with the same name as an earlier one takes its place. A file without
 //! a header is named after the file, and one named after a game
 //! (`<game>.css`) is that game's theme.
+//!
+//! A theme can also be a folder, `<id>/theme.css`, with the pictures and
+//! fonts it uses beside it, which its CSS links to with relative `url()`s
+//! (see [`crate::theme_files`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use patchwork_core::game::Accent;
 use serde::{Deserialize, Serialize};
+
+use crate::theme_files::{self, Folder};
 
 /// The themes that come with patchwork, by id.
 const BUILTIN: &[(&str, &str)] = &[
@@ -46,7 +52,8 @@ const BUILTIN: &[(&str, &str)] = &[
     ("sorbet", include_str!("../themes/sorbet.css")),
 ];
 
-// The games' themes in the built-in registry, as `REGISTRY`.
+// The games' themes in the built-in registry, as `REGISTRY`, and the
+// files in the ones that are folders, as `REGISTRY_FILES`.
 include!(concat!(env!("OUT_DIR"), "/registry_themes.rs"));
 
 /// Files in the themes folder that aren't themes, or whose names mean
@@ -165,6 +172,24 @@ pub fn theme_id(path: &Path) -> Option<&str> {
     (!RESERVED.contains(&id)).then_some(id)
 }
 
+/// The id of the theme folder at `path`, or `None` if it isn't one: no
+/// `theme.css` in it, or one of the [`RESERVED`] names.
+fn folder_id(path: &Path) -> Option<&str> {
+    let id = path.file_name()?.to_str()?;
+    let ok =
+        !id.starts_with('.') && !RESERVED.contains(&id) && path.join(theme_files::CSS).is_file();
+    ok.then_some(id)
+}
+
+/// A theme's CSS, before it's read.
+struct ThemeFile {
+    id: String,
+    css: String,
+    origin: ThemeOrigin,
+    /// Where its files are, if it's a folder.
+    folder: Option<Folder>,
+}
+
 /// Makes a name out of a file name: `night-owl` → `Night owl`.
 fn name_from_id(id: &str) -> String {
     let words = id.replace(['-', '_'], " ");
@@ -218,15 +243,30 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// The built-in themes, then `files` (id, CSS and where it's from) on
-    /// top, in order.
-    fn new(files: Vec<(String, String, ThemeOrigin)>, games: &dyn Fn(&str) -> bool) -> Self {
+    /// The built-in themes, then `files` on top, in order.
+    fn new(files: Vec<ThemeFile>, games: &dyn Fn(&str) -> bool) -> Self {
         let mut catalog = Catalog::default();
         let builtin = BUILTIN
             .iter()
-            .chain(REGISTRY)
-            .map(|&(id, css)| (id.to_owned(), css.to_owned(), ThemeOrigin::Builtin));
-        for (id, css, origin) in builtin.chain(files) {
+            .map(|&(id, css)| (id, css, false))
+            .chain(REGISTRY.iter().copied())
+            .map(|(id, css, folder)| ThemeFile {
+                id: id.to_owned(),
+                css: css.to_owned(),
+                origin: ThemeOrigin::Builtin,
+                folder: folder.then_some(Folder::Builtin),
+            });
+        for file in builtin.chain(files) {
+            let ThemeFile {
+                id,
+                css,
+                origin,
+                folder,
+            } = file;
+            let css = match &folder {
+                Some(folder) => theme_files::link(&css, &id, folder),
+                None => css,
+            };
             match parse(&id, css, origin, games) {
                 Ok(theme) => {
                     catalog.themes.insert(id, theme);
@@ -237,11 +277,12 @@ impl Catalog {
         catalog
     }
 
-    /// The built-in themes, then the ones in `dirs`, in order.
+    /// The built-in themes, then the ones in `dirs`, in order. A theme
+    /// folder's files are served by the index of its directory in `dirs`.
     pub fn load(dirs: &[(ThemeOrigin, PathBuf)], games: &dyn Fn(&str) -> bool) -> Self {
         let mut files = Vec::new();
         let mut problems = Vec::new();
-        for (origin, dir) in dirs {
+        for (layer, (origin, dir)) in dirs.iter().enumerate() {
             let entries = match std::fs::read_dir(dir) {
                 Ok(entries) => entries,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -253,12 +294,27 @@ impl Catalog {
             let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
             paths.sort();
             for path in paths {
-                let Some(id) = theme_id(&path) else {
+                let (id, file, folder) = if let Some(id) = theme_id(&path) {
+                    (id, path.clone(), None)
+                } else if path.is_dir()
+                    && let Some(id) = folder_id(&path)
+                {
+                    let folder = Folder::Dir {
+                        layer,
+                        dir: path.clone(),
+                    };
+                    (id, path.join(theme_files::CSS), Some(folder))
+                } else {
                     continue;
                 };
-                match std::fs::read_to_string(&path) {
-                    Ok(css) => files.push((id.to_owned(), css, *origin)),
-                    Err(e) => problems.push(format!("couldn't read {}: {e}", path.display())),
+                match std::fs::read_to_string(&file) {
+                    Ok(css) => files.push(ThemeFile {
+                        id: id.to_owned(),
+                        css,
+                        origin: *origin,
+                        folder,
+                    }),
+                    Err(e) => problems.push(format!("couldn't read {}: {e}", file.display())),
                 }
             }
         }
@@ -466,7 +522,12 @@ mod tests {
     fn catalog(files: &[(&str, &str)]) -> Catalog {
         let files = files
             .iter()
-            .map(|(id, css)| (id.to_string(), css.to_string(), ThemeOrigin::User))
+            .map(|(id, css)| ThemeFile {
+                id: id.to_string(),
+                css: css.to_string(),
+                origin: ThemeOrigin::User,
+                folder: None,
+            })
             .collect();
         Catalog::new(files, &|g| g == "ror2" || g == "valheim")
     }
@@ -499,7 +560,7 @@ mod tests {
         assert_eq!(ror2.game.as_deref(), Some("risk-of-rain-2"));
         assert_eq!(ror2.name, "Risk of Rain 2");
         assert_eq!(ror2.origin, ThemeOrigin::Builtin);
-        for (id, css) in REGISTRY {
+        for (id, css, _) in REGISTRY {
             let Some((toml, _)) = header_text(css) else {
                 panic!("registry/themes/{id}.css has no @theme comment");
             };
@@ -530,6 +591,14 @@ mod tests {
         std::fs::write(user.join("mine.css"), header("User")).unwrap();
         std::fs::write(user.join("user.css"), header("Not a theme")).unwrap();
         std::fs::write(user.join("notes.txt"), "").unwrap();
+        std::fs::create_dir_all(user.join("folder/img")).unwrap();
+        std::fs::create_dir_all(user.join("not-a-theme")).unwrap();
+        std::fs::write(
+            user.join("folder/theme.css"),
+            format!("{}\nbody{{background:url(img/a.png)}}", header("Folder")),
+        )
+        .unwrap();
+        std::fs::write(user.join("folder/img/a.png"), "").unwrap();
         let dirs = [
             (ThemeOrigin::Registry, registry),
             (ThemeOrigin::User, user),
@@ -541,6 +610,14 @@ mod tests {
         assert_eq!(c.themes["mine"].origin, ThemeOrigin::User);
         assert_eq!(c.themes["theirs"].origin, ThemeOrigin::Registry);
         assert!(!c.themes.contains_key("user") && !c.themes.contains_key("notes"));
+        assert!(!c.themes.contains_key("not-a-theme"));
+        let folder = &c.themes["folder"];
+        assert_eq!(folder.name, "Folder");
+        assert!(
+            folder.css.contains("/1/folder/img/a.png?v="),
+            "{}",
+            folder.css
+        );
     }
 
     #[test]
