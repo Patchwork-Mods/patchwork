@@ -5,75 +5,42 @@ dialog shows, so the heading has to match the version being released.
 
 ## 0.3.0
 
+This is a big update, mostly focused on cleaning up the ui a bit and expanding
+functionality. Many small gui improvements, such as a theme selector, support
+for steam's game art, and a progress bar for downloads
+
 ### Mods
 
-- Links to files on Dropbox, Google Drive, MediaFire and ModDB can be added
-  like any other download link, for every game. ModDB only lets browsers
-  download, so it asks you to download the file and hand it over. More
-  hosts can be added as registry data (`hosts/`).
-- A link to a shared Google Drive folder lists what's in it to pick a file
-  from, with its folders opening in place and files that don't look like
-  mods (PDFs, pictures) dimmed.
-- One box for adding mods: the Add mods tab's search box searches every
-  source the game has at once as you type, with each result marked with its
-  source, and takes links too: paste one to add that mod. Untick a source
-  under the box to leave it out. The Mods tab's search box does the same,
-  showing what the sources found under your mods.
-- A mod's page shows which versions of other mods it needs, and its
-  dependencies are in a hover tab in the list view.
-- Nexus mods with more than one main file (a plugin and its preloader, say)
-  ask which to add, and each can be added as a mod of its own. A link to one
-  file on a mod's Files tab adds that file.
-- A pinned mod's newer version is a quiet note instead of an update button,
-  and goes away once dismissed (or when you pin) until an even newer one is
-  out.
-- Priority is set from a chip and popover instead of a number field.
-- Lots of small improvements to the mod page.
+- Added support for downloading from Dropbox, Google Drive, MediaFire and ModDB
+- Dramatically expanded the mod search bar functionality to allow for adding mods
+  too
+- Mods are now smarter about what versions of dependencies they need
+- Nexus mods with multiple main files ask which to add
+- Reduced annoyance of a pinned mod's update notice
 
 ### App
 
-- Remembers which profile you had selected for each game.
-- Themes: a theme selector, a few example themes, and more `--pw-*` CSS
-  variables to style.
-- Deploying can be cancelled.
-- Game art from Steam, a faster settings page, and a snappier UI in places.
-- The update dialog shows what's new in the release.
-- A game with no profiles says so where its mods would be, with one box to
-  start one: type a name, or paste an r2modman code, a list of mod links or
-  a sync ticket, and the button says which it'll do. The sidebar's New
-  profile box works the same way.
+- The update dialog shows what's new in the release
+- Lots of usability improvements to the mod page
+- A few places, such as the settings page, load faster and act snappier
+- Added a theme selector to the GUI, and a few 
+- Default game art pulls from Steam if possible
+- Improved UI for games without profiles
 - The Add mods tab works before there's a profile, to look around first;
   adding a mod then asks for a profile to add it to.
-- The background daemon (Settings → Background) does more than sync: it
-  also checks for mod updates every 6 hours while Patchwork is closed, so
-  update marks are ready when you open it. Each thing it does can be
-  turned on or off there, or with `patchwork daemon enable`/`disable`;
-  `patchwork daemon every updates 2h` changes how often it checks.
-- Downloads show their progress: a thin bar along each mod's row or card,
-  and one for all of them along the top of the status bar. Themes can
-  restyle them with `--pw-progress`, `--pw-progress-track` and
-  `--pw-progress-height` (a height of `100%` fills the row from behind).
-- A copy installed by a package manager leaves updating to it: Check for
-  updates says where to update it (with the command to copy, if the package
-  gives one) instead of offering to install or download the new version,
-  and the app doesn't check by itself when it opens. Packagers say so with
-  `PATCHWORK_PACKAGE_MANAGER` at build time or a `packaging.toml`; see
-  `docs/packaging.md`.
+- Added checking for updates to the background daemon
+- Added progress bar for downloads
+- Patchwork doesn't self-update if it was installed via package manager
 - The background daemon keeps starting at login after a package manager
   moves Patchwork somewhere new (Homebrew and Nix do on every update).
 
 ### Games
 
-- Risk of Rain 2's GUI was updated, and settings were fixed for a few games.
+- Fixed settings for a few games
+- Gave Risk of Rain 2 a custom GUI to match it's in-game UI
 - FTL: Faster Than Light, with Slipstream mods, Hyperspace and Multiverse.
-  On Windows, add Hyperspace's rollback
-  (`https://github.com/FTL-Hyperspace/FTL-Version-Rollback/archive/refs/heads/main.zip`)
-  as a mod to turn the game into 1.6.9, which Hyperspace needs, while it's
-  deployed; taking it out puts your own version back.
-- mod.io takes an OAuth access token as well as an API key, for games that
-  only let signed-in players download.
-- Hitman is no longer in the release downloads, for now: some libraries its
-  support is built on don't have a license yet, so we can't ship them. Your
-  Hitman profiles are kept, and it comes back once they do. Until then,
-  building Patchwork from source still includes it. Deep Rock Galactic
-  support waits on the same thing.
+  - On Windows, add [Hyperspace's rollback](`https://github.com/FTL-Hyperspace/FTL-Version-Rollback/archive/refs/heads/main.zip`)
+  as a mod to turn the game into 1.6.9, which Hyperspace needs
+- mod.io takes an OAuth access token as well as an API key
+- Hitman and DRG are no longer in the release downloads due to licensing issues.
+  Building from source fixes this but we can't ship them in release just yet
