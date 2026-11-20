@@ -1,0 +1,38 @@
+schema = 1
+id = "hollow-knight"
+name = "Hollow Knight"
+description = "Takes mods from the ModLinks catalog that Scarab and Lumafly use, with the Hollow Knight Modding API, which every mod brings along. Mods go in their own folders under Managed/Mods. Game version 1.5 only."
+
+# The API and a few mods have a file for each build of the game. Steam on
+# Linux runs the Linux build unless a compatibility tool is forced; pick
+# windows for Proton. Unset, it's the system patchwork runs on. The macOS
+# build keeps its files elsewhere (hollow_knight.app/Contents/Resources/Data),
+# which the rules below don't cover yet.
+[env.platform]
+name = "Game build"
+choices = ["windows", "linux"]
+
+[sources.modlinks]
+mods = "https://raw.githubusercontent.com/hk-modding/modlinks/main/ModLinks.xml"
+api = "https://raw.githubusercontent.com/hk-modding/modlinks/main/ApiLinks.xml"
+
+[deployer]
+kind = "rules"
+
+# The modding API replaces the game's Assembly-CSharp.dll and adds the
+# libraries it loads mods with, all in Managed. The game's own files are
+# backed up and put back when it's removed.
+[[deployer.rules]]
+kinds = "api"
+to = "hollow_knight_Data/Managed/{path}"
+
+# Each mod is a zip of its folder's contents, or a lone .dll, and gets a
+# folder of its own, as Scarab and Lumafly do.
+[[deployer.rules]]
+to = "hollow_knight_Data/Managed/Mods/{mod}/{path}"
+
+[detect]
+steam = [367520]
+gog = [1308320804]
+folder = "Hollow Knight"
+exe = ["hollow_knight.exe", "hollow_knight.x86_64"]

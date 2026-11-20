@@ -3,6 +3,14 @@
 Each release's section is its GitHub release notes and what the app's update
 dialog shows, so the heading has to match the version being released.
 
+## 0.3.1
+
+- Added Hollow Knight and ModLinks support
+
+### Themes
+Added new themes for the following:
+- Hollow Knight: Silksong
+
 ## 0.3.0
 
 This is a big update, mostly focused on cleaning up the ui a bit and expanding

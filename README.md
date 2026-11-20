@@ -22,9 +22,10 @@ modpacks that sync between friends</p>
 - And some games which are supported but currently untested:
   - Skyrim (Special Edition and VR), Enderal, Fallout 4 (and VR), Starfield,
     Oblivion, Fallout 3 and Fallout: New Vegas.
+  - Hollow Knight
 - You can easily add support for additional games, or customize how mods are managed
 for existing games.
-- Patchwork can get mods from thunderstore, nexus, modrinth, github, and mod.io.
+- Patchwork can get mods from thunderstore, nexus, modrinth, github, mod.io, and more!
 - Fully customizable CSS, so you can style the gui however you like.
 - Full modpack support, so importing from other mod managers should be easy
 - Uses [iroh](https://www.iroh.computer/) to share files with friends via p2p, letting

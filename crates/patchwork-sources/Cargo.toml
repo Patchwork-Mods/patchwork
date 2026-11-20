@@ -12,6 +12,7 @@ description = "Patchwork's mod sources: local files, links, Nexus Mods, Thunders
 patchwork-core.workspace = true
 async-trait.workspace = true
 reqwest.workspace = true
+roxmltree.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true

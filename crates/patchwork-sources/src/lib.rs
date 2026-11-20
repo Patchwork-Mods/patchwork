@@ -3,6 +3,7 @@
 mod github;
 mod local;
 mod modio;
+mod modlinks;
 mod modrinth;
 mod nexus;
 mod pattern;
@@ -12,6 +13,7 @@ mod url;
 pub use github::GitHub;
 pub use local::LocalSource;
 pub use modio::ModIo;
+pub use modlinks::ModLinks;
 pub use modrinth::Modrinth;
 pub use nexus::Nexus;
 pub use thunderstore::Thunderstore;

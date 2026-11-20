@@ -17,7 +17,9 @@ use patchwork_core::Builder;
 use patchwork_core::ext::{Extension, Registrar};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
-use patchwork_sources::{GitHub, LocalSource, ModIo, Modrinth, Nexus, Thunderstore, UrlSource};
+use patchwork_sources::{
+    GitHub, LocalSource, ModIo, ModLinks, Modrinth, Nexus, Thunderstore, UrlSource,
+};
 pub use plain::{IniConfig, JsonConfig, TomlConfig};
 
 #[cfg(feature = "bethesda")]
@@ -40,6 +42,7 @@ pub fn register(builder: Builder) -> Builder {
         .extension(ModrinthExtension)
         .extension(GitHubExtension)
         .extension(ModIoExtension)
+        .extension(ModLinksExtension)
         .extension(BepInEx);
     #[cfg(feature = "bethesda")]
     let builder = builder.extension(Bethesda).extension(Fomod).extension(Loot);
@@ -139,6 +142,19 @@ impl Extension for ModIoExtension {
 
     fn register(&self, ext: &mut Registrar<'_>) {
         ext.source(ModIo);
+    }
+}
+
+/// ModLinks catalogs, which Hollow Knight's mods are listed in.
+pub struct ModLinksExtension;
+
+impl Extension for ModLinksExtension {
+    fn id(&self) -> &'static str {
+        "modlinks"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.source(ModLinks);
     }
 }
 
