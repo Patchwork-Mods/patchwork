@@ -11,6 +11,7 @@ dialog shows, so the heading has to match the version being released.
 ### Themes
 
 Added new themes for the following:
+- FTL
 - Hollow Knight
 - Hollow Knight: Silksong
 - Return of the Obra Dinn

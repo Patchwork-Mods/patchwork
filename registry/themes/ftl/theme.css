@@ -1,0 +1,896 @@
+/*
+ * @theme
+ * name = "FTL"
+ * game = "ftl"
+ * modes = ["dark"]
+ *
+ * The ship's HUD. Buttons are pale plates with a thick dark line inside a
+ * thick pale edge; they light up yellow under the pointer. Deploy is
+ * green, like a charged jump drive, and dangerous buttons are red. Only the
+ * profile buttons have their top-left and bottom-right corners cut off at
+ * 45 degrees. Dialogs and menus are the game's event windows: brown, in a
+ * thick white frame, with the title in outlined white letters sitting on
+ * the frame. Mods are small event windows too (or, as an option, rooms on
+ * the ship), and a mod's switch is a square that's green when the mod is
+ * on and black when it's off. Behind it all is open space.
+ *
+ * [[option]]
+ * id = "background"
+ * label = "Background"
+ * type = "choice"
+ * choices = [
+ *   { value = "space", label = "Stars and nebula" },
+ *   { value = "stars", label = "Stars" },
+ *   { value = "plain", label = "Plain" },
+ * ]
+ *
+ * [[option]]
+ * id = "rooms"
+ * label = "Mods"
+ * type = "choice"
+ * choices = [
+ *   { value = "event", label = "Event windows" },
+ *   { value = "light", label = "Rooms (light)" },
+ *   { value = "dark", label = "Panels (dark)" },
+ * ]
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* The game's HUD colours (by eye, from screenshots). */
+  --ftl-pale: #ebf5e4; /* edges, buttons, text */
+  --ftl-room: #e6e1db; /* the ship's floor */
+  --ftl-grey: #64696f;
+  --ftl-red: #fa5646;
+  --ftl-green: #75ff7a;
+  --ftl-orange: #ff964a;
+  --ftl-yellow: #ffff00;
+  --ftl-ink: #15191d; /* text on a lit plate */
+  --ftl-dark: #2c3136; /* the line inside a button's edge */
+  --ftl-box: #796463; /* event windows and menus */
+  --ftl-white: #ffffff;
+  --ftl-wall: #3b3f44; /* a room's walls */
+  --ftl-well: #1a2027; /* fields and the inside of dark buttons */
+  --ftl-space: #070a10;
+
+  /* The profile buttons' cut frames, nine-slice images in img/ (made by a
+     script: the colours are baked in). They cut 6px into two corners. */
+  --ftl-button: url("img/button.svg");
+  --ftl-button-hover: url("img/button-hover.svg");
+  --ftl-button-primary: url("img/button-primary.svg");
+  --ftl-button-off: url("img/button-off.svg");
+  --ftl-button-off-hover: url("img/button-off-hover.svg");
+  --ftl-button-disabled: url("img/button-disabled.svg");
+
+  /* White letters with a black outline, for titles on a window's frame. */
+  --ftl-outline: -2px -2px 0 #000, 0 -2px 0 #000, 2px -2px 0 #000, 2px 0 0 #000, 2px 2px 0 #000,
+    0 2px 0 #000, -2px 2px 0 #000, -2px 0 0 #000;
+
+  /* FTL's own font if it's installed, otherwise a narrow sans. */
+  --pw-font: "JustinFont12Bold", "Bahnschrift", "Barlow Semi Condensed", "Roboto Condensed",
+    "Arial Narrow", system-ui, sans-serif;
+  --pw-radius: 0;
+
+  --pw-bg: #070a10;
+  --pw-surface: #12171d;
+  --pw-sidebar: #0d1117;
+  --pw-text: #ebf5e4;
+  --pw-muted: #a0a7ac;
+  --pw-border: #64696f;
+  --pw-accent: #ff964a;
+  --pw-accent-text: #15191d;
+  --pw-danger: #fa5646;
+  --pw-danger-text: #15191d;
+  --pw-warning: #ff964a;
+  --pw-link: #ff964a;
+  --pw-focus: #ffff00;
+  --pw-favorite: #ffff00;
+  --pw-hover: rgb(235 245 228 / 0.08);
+  --pw-selection: rgb(255 150 74 / 0.4);
+  --pw-backdrop: rgb(0 0 0 / 0.6);
+  --pw-progress: #75ff7a;
+  --pw-progress-track: rgb(117 255 122 / 0.15);
+  --pw-progress-height: 4px;
+
+  scrollbar-color: var(--ftl-grey) transparent;
+}
+
+/* ---- Space ---- */
+
+body {
+  background:
+    url("img/stars-near.svg"),
+    url("img/stars-far.svg"),
+    radial-gradient(ellipse 55% 45% at 82% 18%, rgb(96 48 132 / 0.3), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 12% 88%, rgb(30 78 128 / 0.28), transparent 70%),
+    var(--ftl-space);
+  background-attachment: fixed;
+}
+
+:root[data-opt-background="stars"] body {
+  background: url("img/stars-near.svg"), url("img/stars-far.svg"), var(--ftl-space);
+  background-attachment: fixed;
+}
+
+:root[data-opt-background="plain"] body {
+  background: var(--ftl-space);
+}
+
+h1,
+h2,
+h3,
+legend,
+.brand {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.brand {
+  color: var(--ftl-pale);
+}
+
+#sidebar {
+  background: rgb(13 17 23 / 0.88);
+  border-right: 3px solid var(--ftl-pale);
+  box-shadow: inset -1px 0 var(--ftl-grey);
+}
+
+#profile-header {
+  border-bottom: 2px solid var(--ftl-grey);
+  background: rgb(7 10 16 / 0.6);
+  gap: 6px;
+}
+
+#profile-header > #tabs {
+  margin-right: calc(var(--pw-gap) - 6px);
+}
+
+#statusbar {
+  background: #0b0f14;
+  border-top: 2px solid var(--ftl-grey);
+}
+
+/* ---- Buttons ---- */
+
+/* A plate: the edge, a dark line inside it (an inset shadow, so it sits in
+   the padding) and the fill. States only change the --ftl-* colours. */
+button:where(
+    :not(
+      .link,
+      .expand,
+      .drag-handle,
+      .dismiss,
+      .config-open,
+      .back,
+      .mod-priority,
+      .mod-settings,
+      .mod-conflict,
+      .mod-requirements,
+      .link-folder-toggle,
+      .remove,
+      .theme-choice,
+      .color-pick,
+      .favorite,
+      .edit-game,
+      .game-card,
+      #game-settings,
+      #profile-settings,
+      :is(.menu-items, .card-update, .settings-menu, .color-pick-popover) button
+    )
+  ),
+.menu summary {
+  --ftl-edge: var(--ftl-pale);
+  --ftl-line: var(--ftl-dark);
+  --ftl-fill: var(--ftl-pale);
+  --ftl-e: 3px;
+  --ftl-l: 3px;
+  padding: 7px 14px;
+  border: var(--ftl-e) solid var(--ftl-edge);
+  border-radius: 0;
+  background: var(--ftl-fill);
+  box-shadow: inset 0 0 0 var(--ftl-l) var(--ftl-line);
+  color: var(--ftl-text, var(--ftl-ink));
+  font-weight: 700;
+}
+
+.menu summary::after {
+  color: inherit;
+}
+
+/* Deploy: the jump drive, charged. */
+button.primary,
+#deploy.primary + .menu > summary {
+  --ftl-edge: var(--ftl-green);
+  --ftl-fill: var(--ftl-green);
+}
+
+button.danger,
+dialog button.danger-text {
+  --ftl-edge: var(--ftl-red);
+  --ftl-fill: var(--ftl-red);
+}
+
+#update.has-updates {
+  --ftl-edge: var(--ftl-orange);
+  --ftl-fill: var(--ftl-orange);
+}
+
+button:hover:not(:disabled),
+.menu summary:hover,
+.menu[open] > summary,
+#deploy.primary + .menu > summary:hover,
+#deploy.primary + .menu[open] > summary,
+#update.has-updates:hover:not(:disabled) {
+  --ftl-edge: var(--ftl-yellow);
+  --ftl-fill: var(--ftl-yellow);
+  --ftl-text: var(--ftl-ink);
+}
+
+button:disabled {
+  --ftl-edge: var(--ftl-grey);
+  --ftl-line: var(--ftl-wall);
+  --ftl-fill: var(--ftl-grey);
+  --ftl-text: #c5cacd;
+  opacity: 1;
+}
+
+/* Small plates: thinner edges, so the label still fits. */
+#statusbar button,
+.segmented button {
+  --ftl-e: 2px;
+  --ftl-l: 2px;
+  padding: 4px 10px;
+}
+
+/* Deploy and Play with their menus: two plates sharing an edge. */
+.split > .menu > summary {
+  margin-left: -3px;
+  padding: 7px 9px;
+}
+
+.split > button:hover {
+  position: relative;
+  z-index: 1;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+.menu summary:focus-visible {
+  outline: 2px solid var(--ftl-yellow);
+  outline-offset: 2px;
+}
+
+/* Tabs and the Cards/List switch: dark plates with a grey edge, the chosen
+   one lit pale. */
+.tabs,
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+
+#settings-tabs,
+#game-settings-tabs {
+  border-bottom: none;
+  flex-wrap: wrap;
+}
+
+.tabs button,
+.segmented button {
+  --ftl-edge: var(--ftl-grey);
+  --ftl-line: #0b0e12;
+  --ftl-fill: var(--ftl-well);
+  --ftl-text: var(--ftl-pale);
+}
+
+.tabs button:hover:not(:disabled),
+.segmented button:hover:not(:disabled) {
+  --ftl-edge: var(--ftl-yellow);
+  --ftl-fill: var(--ftl-well);
+  --ftl-text: var(--ftl-pale);
+}
+
+.tabs button[aria-selected="true"],
+.segmented button[aria-pressed="true"] {
+  --ftl-edge: var(--ftl-pale);
+  --ftl-line: var(--ftl-dark);
+  --ftl-fill: var(--ftl-pale);
+  --ftl-text: var(--ftl-ink);
+}
+
+.tabs button[aria-selected="true"]:hover,
+.segmented button[aria-pressed="true"]:hover {
+  --ftl-edge: var(--ftl-yellow);
+  --ftl-fill: var(--ftl-yellow);
+  --ftl-text: var(--ftl-ink);
+}
+
+/* The profile buttons, the only ones with cut corners. The frame image is
+   drawn over the border and the padding, in place of the plate. */
+:is(#profiles, #new-profile, #no-profile-start) button:not(.link) {
+  --ftl-frame: var(--ftl-button);
+  padding: 9px 14px;
+  border: 3px solid transparent;
+  border-image-source: var(--ftl-frame);
+  border-image-slice: 11 fill;
+  border-image-width: 11px;
+  background: none;
+  box-shadow: none;
+  color: var(--ftl-ink);
+}
+
+:is(#profiles, #new-profile, #no-profile-start) button.primary {
+  --ftl-frame: var(--ftl-button-primary);
+}
+
+:is(#profiles, #new-profile, #no-profile-start) button:not(.link):hover:not(:disabled) {
+  --ftl-frame: var(--ftl-button-hover);
+  color: var(--ftl-ink);
+}
+
+:is(#profiles, #new-profile, #no-profile-start) button:not(.link):disabled {
+  --ftl-frame: var(--ftl-button-disabled);
+  color: #c5cacd;
+}
+
+/* Profiles are dark until chosen, like the tabs. */
+#profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#profiles button {
+  --ftl-frame: var(--ftl-button-off);
+  color: var(--ftl-pale);
+}
+
+#profiles button:hover:not(:disabled) {
+  --ftl-frame: var(--ftl-button-off-hover);
+  color: var(--ftl-pale);
+}
+
+#profiles button[aria-current="true"] {
+  --ftl-frame: var(--ftl-button);
+  color: var(--ftl-ink);
+}
+
+#profiles button[aria-current="true"]:hover {
+  --ftl-frame: var(--ftl-button-hover);
+}
+
+#profiles button[aria-current="true"] .muted {
+  color: #4b5056;
+}
+
+/* ---- Windows ---- */
+
+/* Dialogs and menus are the game's event windows: brown, white text, a
+   thick white frame. The colours worked out on :root are set again here so
+   they read on the brown. */
+dialog,
+.menu-items,
+.settings-menu {
+  --pw-surface: var(--ftl-box);
+  --pw-text: var(--ftl-white);
+  --pw-muted: #eadedc;
+  --pw-border: #b3a09e;
+  --pw-link: var(--ftl-yellow);
+  --pw-warning: var(--ftl-yellow);
+  --pw-danger: #ffb3a8;
+  --pw-hover: rgb(0 0 0 / 0.18);
+  color: var(--ftl-white);
+}
+
+.menu-items,
+.settings-menu {
+  padding: 4px;
+  background: var(--ftl-box);
+  border: 4px solid var(--ftl-white);
+  border-radius: 0;
+  box-shadow: 0 6px 16px rgb(0 0 0 / 0.5);
+}
+
+.menu-items button,
+.menu-items label,
+.settings-menu button {
+  border-radius: 0;
+  color: var(--ftl-white);
+}
+
+/* A choice under the pointer turns yellow, like the game's event choices. */
+.menu-items button:hover,
+.menu-items button:focus-visible,
+.menu-items label:hover,
+.menu-items label:focus-within,
+.settings-menu button:hover,
+.settings-menu button:focus-visible {
+  background: rgb(0 0 0 / 0.18);
+  color: var(--ftl-yellow);
+}
+
+.menu-items button.danger-text:not(:hover, :focus-visible) {
+  color: #ffb3a8;
+}
+
+.menu-items hr {
+  border-top-color: rgb(255 255 255 / 0.5);
+}
+
+/* The frame is drawn as a background that starts a little way down, so the
+   title can sit on its top edge without being clipped by the dialog's
+   scrolling. Its line runs through the middle of the title's 30px line. */
+dialog {
+  --ftl-top: 12px;
+  --ftl-frame-width: 6px;
+  padding: calc(var(--ftl-top) + var(--ftl-frame-width) + 14px) 22px 22px;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background:
+    linear-gradient(var(--ftl-box) 0 0) var(--ftl-frame-width)
+      calc(var(--ftl-top) + var(--ftl-frame-width)) /
+      calc(100% - 2 * var(--ftl-frame-width))
+      calc(100% - var(--ftl-top) - 2 * var(--ftl-frame-width)) no-repeat,
+    linear-gradient(var(--ftl-white) 0 0) 0 var(--ftl-top) / 100% calc(100% - var(--ftl-top))
+      no-repeat;
+}
+
+dialog:has(> h2:first-child, > form:first-child > h2:first-child) {
+  padding-top: 0;
+}
+
+dialog > h2:first-child,
+dialog > form:first-child > h2:first-child {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0 6px;
+  border: none;
+  font-size: 20px;
+  line-height: 30px;
+  color: var(--ftl-white);
+  text-shadow: var(--ftl-outline);
+}
+
+dialog::backdrop {
+  background: var(--pw-backdrop);
+}
+
+/* Sections inside: the same white frame, the title on it. */
+fieldset,
+#settings-dialog fieldset,
+#game-settings-dialog fieldset,
+#profile-settings-dialog fieldset {
+  border: 4px solid var(--ftl-white);
+  border-radius: 0;
+  background: none;
+}
+
+legend,
+#profile-settings-dialog legend {
+  padding: 0 6px;
+  color: var(--ftl-white);
+  font-size: 15px;
+  text-shadow: var(--ftl-outline);
+}
+
+/* ---- Fields ---- */
+
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),
+textarea {
+  background: var(--ftl-well);
+  border: 2px solid var(--ftl-grey);
+  border-radius: 0;
+  color: var(--ftl-pale);
+}
+
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]):hover,
+textarea:hover {
+  border-color: var(--ftl-pale);
+}
+
+/* Dropdowns are brown, with white text, like the event windows. Colour
+   only, so the built-in look's arrow stays. */
+select:not(.mod-version) {
+  background-color: var(--ftl-box);
+  border: 2px solid var(--ftl-white);
+  border-radius: 0;
+  color: var(--ftl-white);
+}
+
+select option {
+  background-color: var(--ftl-box);
+  color: var(--ftl-white);
+}
+
+select:not(.mod-version):hover:not(:disabled) {
+  border-color: var(--ftl-yellow);
+}
+
+select.mod-version {
+  border-radius: 0;
+}
+
+select.mod-version:hover {
+  border-color: var(--ftl-grey);
+}
+
+/* Checkboxes: a square, green when ticked and black when not; radios the
+   same, turned on their corner. */
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 2px solid var(--ftl-pale);
+  border-radius: 0;
+  background: #000;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  margin: 1px;
+  transform: rotate(45deg);
+}
+
+input[type="checkbox"]::before,
+input[type="radio"]::before {
+  content: none;
+}
+
+input[type="checkbox"]:checked,
+input[type="radio"]:checked {
+  background: var(--ftl-green);
+}
+
+input[type="checkbox"]:hover:not(:disabled),
+input[type="radio"]:hover:not(:disabled) {
+  border-color: var(--ftl-yellow);
+}
+
+/* A mod's switch: the same square, a little bigger. */
+.switch input,
+.switch input:checked {
+  width: 20px;
+  height: 20px;
+}
+
+:root[data-opt-rooms="light"] .mod-row .switch input {
+  border-color: var(--ftl-ink);
+}
+
+:root[data-opt-rooms="light"] .mod-row .switch input:hover:not(:disabled) {
+  border-color: #b04a10;
+}
+
+/* Sliders: a dark track and a pale block. The colour picker's hue slider
+   keeps its rainbow. */
+input[type="range"]:not(.color-pick-hue) {
+  appearance: none;
+  height: 8px;
+  padding: 0;
+  background: var(--ftl-well);
+  border: 1px solid var(--ftl-grey);
+  border-radius: 0;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 10px;
+  height: 20px;
+  background: var(--ftl-pale);
+  border: none;
+  border-radius: 0;
+  box-shadow: inset 0 0 0 2px var(--ftl-pale), inset 0 0 0 3px var(--ftl-grey);
+  cursor: pointer;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  background: var(--ftl-yellow);
+  box-shadow: inset 0 0 0 2px var(--ftl-yellow), inset 0 0 0 3px var(--ftl-grey);
+}
+
+/* Downloads fill up like a power bar. */
+#download-progress:not(.indeterminate)::after {
+  background: repeating-linear-gradient(90deg, var(--ftl-green) 0 10px, transparent 10px 12px);
+}
+
+/* ---- Mods ---- */
+
+#tab-mods {
+  padding-top: 8px;
+}
+
+/* The list is the ship: a dark window holding the mods. */
+.mod-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 3px solid var(--ftl-pale);
+  border-radius: 0;
+  background: rgb(18 23 29 / 0.92);
+  box-shadow: inset 0 0 0 3px var(--ftl-dark);
+}
+
+.mod-row,
+.mod-row + .mod-row {
+  border: 2px solid var(--ftl-wall);
+  border-radius: 0;
+}
+
+.mod-row img,
+.mod-row .no-icon {
+  border-radius: 0;
+}
+
+.mod-row:hover {
+  box-shadow: 0 0 0 2px var(--ftl-orange);
+}
+
+.mod-list > li.dragging {
+  border-radius: 0;
+  box-shadow: 0 0 0 2px var(--ftl-yellow);
+}
+
+.mod-row .mod-name {
+  font-weight: 700;
+}
+
+/* Event windows: brown with white text; a mod that's off is darker, its
+   text dimmed. Rows and cards alike. */
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) :is(.mod-row, .mod-card) {
+  --pw-text: var(--ftl-white);
+  --pw-muted: #eadedc;
+  --pw-border: #b3a09e;
+  --pw-surface: var(--ftl-box);
+  --pw-accent: var(--ftl-yellow);
+  --pw-accent-text: var(--ftl-ink);
+  --pw-link: var(--ftl-yellow);
+  --pw-warning: var(--ftl-yellow);
+  --pw-danger: #ffb3a8;
+  --pw-hover: rgb(0 0 0 / 0.18);
+  background: var(--ftl-box);
+  color: var(--ftl-white);
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) :is(.mod-row, .mod-card).disabled {
+  --pw-surface: #4f4140;
+  --pw-text: #d6cbc9;
+  --pw-muted: #bfb1af;
+  background: #4f4140;
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) :is(.mod-row, .mod-card) .no-icon {
+  background: #5f4d4c;
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) :is(.mod-row, .mod-card) .mod-priority.set {
+  color: var(--ftl-yellow);
+  border-color: var(--ftl-yellow);
+}
+
+/* The list is one big event window: a thick off-white frame (the buttons'
+   pale, softer than the dialogs' pure white) with its top-left and
+   bottom-right corners cut at 45 degrees, and the mods its cells, split by
+   bars as thick as the frame. The frame is the list's own background
+   showing around and between the rows. The cuts are gradients, with a
+   pale triangle laid over the first and last rows' corners to
+   finish the diagonal, so nothing in the rows (menus, popovers) is clipped. */
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-list {
+  --ftl-w: 8px;
+  /* No deeper than two frames, or the rows' square corners would poke out
+     past the diagonal. */
+  --ftl-cut: calc(2 * var(--ftl-w));
+  --ftl-k: calc(var(--ftl-cut) + var(--ftl-w) * 1.4142 - 2 * var(--ftl-w));
+  position: relative;
+  gap: var(--ftl-w);
+  padding: var(--ftl-w);
+  border: none;
+  box-shadow: none;
+  background:
+    linear-gradient(135deg, transparent calc(var(--ftl-cut) * 0.7071), var(--ftl-pale) 0) left /
+      50.5% 100% no-repeat,
+    linear-gradient(-45deg, transparent calc(var(--ftl-cut) * 0.7071), var(--ftl-pale) 0) right /
+      50% 100% no-repeat;
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-list::before,
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-list::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  width: var(--ftl-k);
+  height: var(--ftl-k);
+  pointer-events: none;
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-list::before {
+  top: var(--ftl-w);
+  left: var(--ftl-w);
+  background: linear-gradient(135deg, var(--ftl-pale) calc(var(--ftl-k) * 0.7071), transparent 0);
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-list::after {
+  right: var(--ftl-w);
+  bottom: var(--ftl-w);
+  background: linear-gradient(-45deg, var(--ftl-pale) calc(var(--ftl-k) * 0.7071), transparent 0);
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-row,
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-row + .mod-row {
+  border: none;
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-row:hover {
+  box-shadow: inset 0 0 0 3px var(--ftl-orange);
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-list > li.dragging {
+  box-shadow: inset 0 0 0 3px var(--ftl-yellow);
+}
+
+/* An opened mod's buttons are the game's numbered event choices: plain
+   text, "1. Edit", "2. Website" and so on, yellow under the pointer. Laid
+   out in columns rather than one per line, to save room. */
+.row-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 2px 16px;
+  counter-reset: ftl-choice;
+  --ftl-choice-hover: var(--ftl-yellow);
+}
+
+:root[data-opt-rooms="light"] .row-actions {
+  --ftl-choice-hover: #b04a10;
+}
+
+.row-actions button {
+  justify-self: start;
+  margin: 0;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--pw-text);
+  font-weight: 700;
+  text-align: left;
+}
+
+.row-actions button::before {
+  counter-increment: ftl-choice;
+  content: counter(ftl-choice) ". ";
+}
+
+.row-actions .danger {
+  margin-left: 0;
+  color: var(--pw-danger);
+}
+
+.row-actions button:hover:not(:disabled),
+.row-actions button:focus-visible {
+  color: var(--ftl-choice-hover);
+}
+
+.row-actions button:focus-visible {
+  outline-offset: 1px;
+}
+
+/* Cards: the same brown in a thick white frame, yellow on hover. */
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-card {
+  border: 5px solid var(--ftl-white);
+  box-shadow: none;
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-card:hover {
+  border-color: var(--ftl-yellow);
+}
+
+:root:not([data-opt-rooms="light"], [data-opt-rooms="dark"]) .mod-card .card-sheet {
+  background: var(--pw-surface);
+}
+
+/* Light rooms: the ship's pale floor, with dark text; the colours worked
+   out on :root are set again here so they read on it. */
+:root[data-opt-rooms="light"] .mod-row {
+  --pw-text: var(--ftl-ink);
+  --pw-muted: #575c62;
+  --pw-border: #a9a49d;
+  --pw-surface: var(--ftl-room);
+  --pw-accent: #b04a10;
+  --pw-accent-text: #ffffff;
+  --pw-link: #a5440c;
+  --pw-warning: #a5440c;
+  --pw-danger: #c42a1a;
+  --pw-focus: var(--ftl-ink);
+  --pw-hover: rgb(0 0 0 / 0.06);
+  background: var(--ftl-room);
+  color: var(--ftl-ink);
+}
+
+/* A mod that's off is a room without power. */
+:root[data-opt-rooms="light"] .mod-row.disabled {
+  background: #a9a6a1;
+}
+
+:root[data-opt-rooms="light"] .mod-row .no-icon {
+  background: #c9c4bd;
+}
+
+:root[data-opt-rooms="dark"] .mod-row {
+  background: #1d242b;
+  border-color: var(--ftl-grey);
+}
+
+:root[data-opt-rooms="dark"] .mod-row.disabled {
+  background: #14191e;
+}
+
+/* Cards: dark windows with a pale edge, yellow on hover. */
+.result {
+  border: 3px solid var(--ftl-pale);
+  border-radius: 0;
+  background: #12171d;
+  box-shadow: inset 0 0 0 2px var(--ftl-dark);
+}
+
+.result:hover {
+  border-color: var(--ftl-yellow);
+}
+
+.card-sheet {
+  background: #12171d;
+}
+
+.card-sheet::before {
+  border-radius: 0;
+  background: var(--ftl-grey);
+}
+
+/* The game picker's cards. */
+.game-card {
+  border: 2px solid var(--ftl-grey);
+  border-radius: 0;
+  background: #12171d;
+}
+
+.game-card:hover {
+  border-color: var(--ftl-yellow);
+}
+
+.tag,
+.badge {
+  border-radius: 0;
+  border-color: var(--ftl-grey);
+}
+
+.mod-priority {
+  border-radius: 0;
+}
+
+.mod-priority.set {
+  color: var(--ftl-orange);
+  border-color: rgb(255 150 74 / 0.6);
+}
+
+:root[data-opt-rooms="light"] .mod-row .mod-priority.set {
+  color: #a5440c;
+  border-color: #a5440c;
+}
+
+#status.error,
+.error,
+.mod-conflict.lost,
+.requirement-missing {
+  color: var(--pw-danger);
+}

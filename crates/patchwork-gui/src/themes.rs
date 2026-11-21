@@ -612,6 +612,12 @@ mod tests {
             assert_eq!(ids.len(), 3, "{id}: {ids:?}");
             assert!(ids.contains(&"glow"), "{id}: {ids:?}");
         }
+        let ftl: Vec<&str> = catalog.themes["ftl"]
+            .options
+            .iter()
+            .map(|o| o.id.as_str())
+            .collect();
+        assert_eq!(ftl, ["background", "rooms"]);
         assert_eq!(ror2.game.as_deref(), Some("risk-of-rain-2"));
         assert_eq!(ror2.name, "Risk of Rain 2");
         assert_eq!(ror2.origin, ThemeOrigin::Builtin);
