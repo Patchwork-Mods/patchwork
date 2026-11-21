@@ -1,0 +1,557 @@
+/*
+ * @theme
+ * name = "Obra Dinn"
+ * game = "return-of-the-obra-dinn"
+ * modes = ["dark"]
+ *
+ * One-bit, like the game: every pixel is either ink or paper, and the
+ * shades in between are dither patterns. Text is set in an old book serif,
+ * headings in spaced capitals, as in the logbook. Boxes are ruled lines,
+ * dialogs get the logbook's double rule, and what's chosen is inverted:
+ * paper with ink letters. Behind everything, a dithered sea fog along the
+ * bottom of the window. Palettes swap the two colours, as the game's
+ * display options do. One faded red ink marks the main actions, dangers
+ * and progress; the monochrome monitors' palettes have no red, so there
+ * it's paper too, and dangerous buttons get a dashed edge instead.
+ *
+ * [[option]]
+ * id = "palette"
+ * label = "Palette"
+ * type = "choice"
+ * choices = [
+ *   { value = "macintosh", label = "Macintosh" },
+ *   { value = "ibm-8503", label = "IBM 8503" },
+ *   { value = "commodore-1084", label = "Commodore 1084" },
+ *   { value = "ibm-5151", label = "IBM 5151" },
+ *   { value = "zenith-zvm-1240", label = "Zenith ZVM 1240" },
+ * ]
+ *
+ * [[option]]
+ * id = "shading"
+ * label = "Shading"
+ * type = "choice"
+ * choices = [
+ *   { value = "dither", label = "Dithered" },
+ *   { value = "flat", label = "Flat" },
+ * ]
+ *
+ * [[option]]
+ * id = "fog"
+ * label = "Fog"
+ * type = "toggle"
+ * default = true
+ *
+ * [[option]]
+ * id = "pictures"
+ * label = "Pictures"
+ * type = "choice"
+ * choices = [
+ *   { value = "grey", label = "Grey" },
+ *   { value = "color", label = "Color" },
+ * ]
+ */
+
+/* The --pw-* colours are written out here (the Macintosh palette) so the
+   picker's sample can read them; the palette rules below swap them. */
+:root {
+  color-scheme: dark;
+
+  --od-ink: #333319;
+  --od-paper: #e5ffff;
+  --od-red: #dc6c60;
+
+  --pw-font: "IM Fell English", "Libre Caslon Text", "Iowan Old Style", "Palatino Linotype",
+    Palatino, "Book Antiqua", Georgia, serif;
+  --od-title-font: "IM Fell English SC", var(--pw-font);
+  --pw-radius: 0;
+
+  --pw-bg: #333319;
+  --pw-surface: #333319;
+  --pw-sidebar: #333319;
+  --pw-text: #e5ffff;
+  --pw-muted: color-mix(in srgb, #e5ffff 68%, #333319);
+  --pw-border: #e5ffff;
+  --pw-accent: #dc6c60;
+  --pw-accent-text: #333319;
+  --pw-danger: #dc6c60;
+  --pw-danger-text: #333319;
+  --pw-warning: #dc6c60;
+  --pw-link: #e5ffff;
+  --pw-focus: #e5ffff;
+  --pw-favorite: #dc6c60;
+  --pw-shadow-color: #333319;
+  --pw-selection: color-mix(in srgb, #e5ffff 35%, transparent);
+  --pw-progress: #dc6c60;
+  --pw-progress-height: 3px;
+
+  scrollbar-color: var(--od-paper) var(--od-ink);
+}
+
+/* The game's display palettes (ink, paper, red). The colours are by eye,
+   not taken from the game's files. The Commodore's red is a lighter C64
+   red, so it reads on the purple; the green and amber monitors could only
+   show one colour, so their red is the paper. */
+:root[data-opt-palette="ibm-8503"] {
+  --od-ink: #2e3037;
+  --od-paper: #ebe5ce;
+  --od-red: #d8705a;
+}
+:root[data-opt-palette="commodore-1084"] {
+  --od-ink: #40318e;
+  --od-paper: #88d7de;
+  --od-red: #e8968c;
+}
+:root[data-opt-palette="ibm-5151"] {
+  --od-ink: #25342f;
+  --od-paper: #01eb5f;
+  --od-red: var(--od-paper);
+}
+:root[data-opt-palette="zenith-zvm-1240"] {
+  --od-ink: #3f291e;
+  --od-paper: #fdca55;
+  --od-red: var(--od-paper);
+}
+
+/* Every colour from the two above, so a palette only sets those. (The
+   picker's sample doesn't look at rules like this one.) */
+:root[data-opt-palette] {
+  --pw-bg: var(--od-ink);
+  --pw-surface: var(--od-ink);
+  --pw-sidebar: var(--od-ink);
+  --pw-text: var(--od-paper);
+  --pw-muted: color-mix(in srgb, var(--od-paper) 68%, var(--od-ink));
+  --pw-border: var(--od-paper);
+  --pw-accent: var(--od-red);
+  --pw-accent-text: var(--od-ink);
+  --pw-danger: var(--od-red);
+  --pw-danger-text: var(--od-ink);
+  --pw-warning: var(--od-red);
+  --pw-link: var(--od-paper);
+  --pw-focus: var(--od-paper);
+  --pw-favorite: var(--od-red);
+  --pw-shadow-color: var(--od-ink);
+  --pw-selection: color-mix(in srgb, var(--od-paper) 35%, transparent);
+  --pw-progress: var(--od-red);
+}
+
+/* ---- Dither ---- */
+
+/* Paper dots over whatever is behind, at about an eighth, a quarter and
+   half of the pixels. Each is a list of background layers, so it goes in
+   front of a colour: background: var(--od-25), var(--od-ink). A dot is the
+   top-left quarter of a conic gradient centred 1px in. Shading: Flat
+   swaps them for plain see-through paper, which also suits screens scaled
+   by a fraction, where 1px patterns can shimmer. */
+:root {
+  --od-dot: conic-gradient(at 1px 1px, transparent 75%, var(--od-paper) 0);
+  --od-12: var(--od-dot) 0 0 / 4px 4px, var(--od-dot) 2px 2px / 4px 4px;
+  --od-25: var(--od-dot) 0 0 / 2px 2px;
+  --od-50: repeating-conic-gradient(var(--od-paper) 0 25%, transparent 0 50%) 0 0 / 2px 2px;
+  /* Ink dots, for over paper. */
+  --od-ink-50: repeating-conic-gradient(var(--od-ink) 0 25%, transparent 0 50%) 0 0 / 2px 2px;
+}
+
+:root[data-opt-shading="flat"] {
+  --od-12: linear-gradient(color-mix(in srgb, var(--od-paper) 12%, transparent) 0 0);
+  --od-25: linear-gradient(color-mix(in srgb, var(--od-paper) 25%, transparent) 0 0);
+  --od-50: linear-gradient(color-mix(in srgb, var(--od-paper) 50%, transparent) 0 0);
+  --od-ink-50: linear-gradient(color-mix(in srgb, var(--od-ink) 50%, transparent) 0 0);
+}
+
+/* ---- Sea fog behind everything ---- */
+
+/* Two bands along the bottom: an eighth of the pixels, then a quarter
+   nearest the edge. The quarter's dots include the eighth's, so where they
+   overlap it's still a clean quarter. */
+:root {
+  background: var(--od-ink);
+}
+
+body {
+  font-size: 15px;
+  background: none;
+  isolation: isolate;
+}
+
+:root::before,
+:root::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+:root::before {
+  height: 28%;
+  background: var(--od-12);
+}
+
+:root::after {
+  height: 10%;
+  background: var(--od-25);
+}
+
+:root[data-opt-fog="off"]::before,
+:root[data-opt-fog="off"]::after {
+  display: none;
+}
+
+/* ---- Type ---- */
+
+h1,
+h2,
+h3,
+legend,
+.brand {
+  font-family: var(--od-title-font);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* ---- Rules ---- */
+
+#sidebar {
+  background: var(--od-ink);
+  border-right: 3px double var(--od-paper);
+}
+
+#statusbar {
+  background: var(--od-ink);
+  border-top: 1px solid var(--od-paper);
+}
+
+#profile-header {
+  border-bottom: 1px solid var(--od-paper);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--od-paper);
+}
+
+fieldset {
+  border: none;
+  border-top: 1px solid var(--od-paper);
+}
+
+/* The logbook's double rule, with a hard dithered shadow. */
+dialog {
+  background: var(--od-ink);
+  border: 3px double var(--od-paper);
+  outline: 1px solid var(--od-paper);
+  outline-offset: 3px;
+  box-shadow: none;
+  padding: 22px 26px;
+}
+
+/* Half the app behind a dialog drawn over in ink dots (or plain dimmed,
+   if ::backdrop can't see :root's variables). */
+dialog::backdrop {
+  background: var(--od-ink-50, rgb(0 0 0 / 0.5));
+}
+
+.menu-items,
+.settings-menu {
+  background: var(--od-ink);
+  border: 1px solid var(--od-paper);
+  box-shadow: 4px 4px 0 var(--od-ink), 4px 4px 0 1px var(--od-paper);
+}
+
+/* ---- Buttons: ruled boxes, inverted when they matter ---- */
+
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ),
+.menu summary {
+  background: var(--od-ink);
+  color: var(--od-paper);
+  border: 1px solid var(--od-paper);
+  box-shadow: none;
+}
+
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ):hover:not(:disabled),
+.menu summary:hover,
+.menu[open] > summary {
+  background: var(--od-12), var(--od-ink);
+}
+
+/* The main actions in red ink, like a stamp. */
+button.primary,
+#deploy.primary + .menu > summary {
+  background: var(--od-red);
+  border-color: var(--od-red);
+  color: var(--od-ink);
+}
+
+button.primary:hover:not(:disabled),
+#deploy.primary + .menu > summary:hover {
+  background: var(--od-red);
+  outline: 1px solid var(--od-red);
+  outline-offset: 2px;
+}
+
+/* Dangerous ones are ruled and lettered in red, and filled when hovered. */
+button.danger {
+  border-color: var(--od-red);
+  color: var(--od-red);
+}
+
+button.danger:hover:not(:disabled) {
+  background: var(--od-red);
+  color: var(--od-ink);
+}
+
+/* Without a red, a dashed edge tells them apart. */
+:root:is([data-opt-palette="ibm-5151"], [data-opt-palette="zenith-zvm-1240"]) button.danger {
+  border-style: dashed;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+.menu-items button:hover,
+.menu-items button:focus-visible,
+.menu-items label:hover,
+.menu-items label:focus-within,
+.settings-menu button:hover,
+.settings-menu button:focus-visible {
+  background: var(--od-paper);
+  color: var(--od-ink);
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+.menu summary:focus-visible {
+  outline: 1px dashed var(--od-paper);
+  outline-offset: 2px;
+}
+
+/* ---- Fields ---- */
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea {
+  background: var(--od-ink);
+  border: none;
+  border-bottom: 1px solid var(--od-paper);
+}
+
+select {
+  background-color: var(--od-ink);
+  border: 1px solid var(--od-paper);
+}
+
+.card-footer select.mod-version {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+/* Checkboxes are ruled squares, filled when on; radios the same, round. */
+input[type="checkbox"]:not(.switch input),
+input[type="radio"] {
+  appearance: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid var(--od-paper);
+  border-radius: 0;
+  background: var(--od-ink);
+  cursor: pointer;
+}
+
+input[type="radio"] {
+  border-radius: 50%;
+}
+
+input[type="checkbox"]:not(.switch input):checked,
+input[type="radio"]:checked {
+  background: var(--od-paper);
+  box-shadow: inset 0 0 0 2px var(--od-ink);
+}
+
+/* The on/off switch: a ruled box with a square knob, inverted when on. */
+.switch input {
+  width: 32px;
+  height: 16px;
+  border: 1px solid var(--od-paper);
+  border-radius: 0;
+  background: var(--od-25), var(--od-ink);
+  transition: none;
+}
+
+.switch input::before {
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 0;
+  background: var(--od-paper);
+  box-shadow: none;
+  transition: none;
+}
+
+.switch input:checked {
+  background: var(--od-paper);
+}
+
+.switch input:checked::before {
+  background: var(--od-ink);
+  transform: translateX(16px);
+}
+
+/* Sliders: a dotted line and a square knob. The colour picker's rainbow
+   is left alone. */
+input[type="range"]:not(.color-pick-hue) {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  background: none;
+  cursor: pointer;
+}
+
+input[type="range"]:not(.color-pick-hue)::-webkit-slider-runnable-track {
+  --od-at: calc(100% * var(--pw-range, 1));
+  height: 2px;
+  background:
+    linear-gradient(var(--od-paper) 0 0) left / var(--od-at) 100% no-repeat,
+    var(--od-50);
+}
+
+input[type="range"]:not(.color-pick-hue)::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -4px;
+  border: 1px solid var(--od-ink);
+  border-radius: 0;
+  background: var(--od-paper);
+  box-shadow: 0 0 0 1px var(--od-paper);
+}
+
+/* ---- What's chosen: inverted ---- */
+
+.tabs button,
+#profiles button,
+.segmented button {
+  border-radius: 0;
+}
+
+.tabs button:hover,
+#profiles button:hover,
+.segmented button:hover {
+  background: var(--od-12), var(--od-ink);
+}
+
+.tabs button[aria-selected="true"],
+#profiles button[aria-current="true"],
+.segmented button[aria-pressed="true"],
+.tabs button[aria-selected="true"]:hover,
+#profiles button[aria-current="true"]:hover,
+.segmented button[aria-pressed="true"]:hover {
+  background: var(--od-paper);
+  color: var(--od-ink);
+  box-shadow: none;
+}
+
+#profiles button[aria-current="true"] .muted,
+.tabs button[aria-selected="true"] .muted {
+  color: var(--od-ink);
+}
+
+#settings-tabs {
+  border-bottom: 1px solid var(--od-paper);
+}
+
+/* ---- Mods: a ruled ledger ---- */
+
+.mod-list {
+  background: var(--od-ink);
+  border: 1px solid var(--od-paper);
+}
+
+.mod-row + .mod-row {
+  border-top: 1px solid color-mix(in srgb, var(--od-paper) 35%, var(--od-ink));
+}
+
+.mod-row:hover {
+  background: var(--od-12), var(--od-ink);
+}
+
+/* Open: a dithered bar down its left side. */
+.mod-row.expanded {
+  background: var(--od-50) left / 6px 100% no-repeat, var(--od-ink);
+}
+
+.mod-list > li.dragging {
+  background: var(--od-ink);
+  outline: 1px solid var(--od-paper);
+}
+
+.result {
+  background: var(--od-ink);
+  border: 1px solid var(--od-paper);
+}
+
+.result:hover {
+  box-shadow: 3px 3px 0 var(--od-paper);
+}
+
+.card-sheet {
+  background: var(--od-ink);
+  border-top: 1px solid var(--od-paper);
+}
+
+.tag,
+.badge {
+  border: 1px solid var(--od-paper);
+  border-radius: 0;
+  color: var(--od-paper);
+}
+
+.mod-priority.set {
+  color: var(--od-ink);
+  background: var(--od-paper);
+  border-color: var(--od-paper);
+}
+
+/* ---- Pictures ---- */
+
+/* Grey by default, so they don't break the two colours too badly. */
+:root:not([data-opt-pictures="color"])
+  :is(.mod-row img, .result img, .card-cover, .game-art img, .options-preview img) {
+  filter: grayscale(1) contrast(1.25);
+}
