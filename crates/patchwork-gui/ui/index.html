@@ -1004,6 +1004,19 @@
 			</form>
 		</dialog>
 
+		<!-- Something in the way of what was asked for, and its fix; see
+		     resolveBlocker in state.js. -->
+		<dialog id="blocker-dialog">
+			<form method="dialog" class="stack">
+				<h2 id="blocker-title"></h2>
+				<p id="blocker-detail"></p>
+				<div class="row end">
+					<button value="cancel">Cancel</button>
+					<button value="fix" id="blocker-fix" class="primary"></button>
+				</div>
+			</form>
+		</dialog>
+
 		<!-- Offers a newer patchwork; see selfupdate.js. -->
 		<dialog id="self-update-dialog">
 			<form method="dialog" class="stack">

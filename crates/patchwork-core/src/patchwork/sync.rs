@@ -263,13 +263,9 @@ impl Patchwork {
                 .await;
             match fetched {
                 Ok(hash) if hash == m.hash => {}
-                Ok(hash) => self.reporter.report(Event::Warning(format!(
-                    "`{}` isn't what was locked (expected {}, got {}); \
-                     run `patchwork lock --update` to accept the new version",
-                    m.name,
-                    m.hash.short(),
-                    hash.short()
-                ))),
+                Ok(hash) => self
+                    .reporter
+                    .report(Event::Warning(Error::artifact_changed(m, hash).to_string())),
                 Err(Error::NeedsDownload(waiting)) => pending.extend(waiting),
                 Err(e) => self
                     .reporter

@@ -42,11 +42,47 @@ export function status(text, isError = false) {
 /** Runs a command, showing its error in the status bar if it fails. */
 export async function run(command, args) {
   try {
-    return await invoke(command, args);
+    return await invokeResolving(command, args);
   } catch (e) {
-    status(String(e), true);
+    status(errorText(e), true);
     throw e;
   }
+}
+
+/** What to show for an error from a command or `invokeResolving`. */
+export const errorText = (e) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Runs a command, and when something's in the way of it that has a fix (a
+ * blocker; see blockers.rs), asks the user whether to run that fix and
+ * tries again if they do. Fails with an Error saying what was in the way if
+ * they cancel, or with the command's error as it is otherwise.
+ */
+export async function invokeResolving(command, args) {
+  for (;;) {
+    try {
+      return await invoke(command, args);
+    } catch (e) {
+      const blocker = e?.blocker;
+      if (!blocker) throw e;
+      if (!(await confirmBlocker(blocker))) throw new Error(`Cancelled: ${blocker.title}`);
+      status(blocker.fixing);
+      await invokeResolving(blocker.command, blocker.args);
+    }
+  }
+}
+
+/** Shows `blocker` in #blocker-dialog; resolves to whether to run its fix. */
+function confirmBlocker(blocker) {
+  const dialog = $("#blocker-dialog");
+  $("#blocker-title").textContent = blocker.title;
+  $("#blocker-detail").textContent = blocker.detail;
+  $("#blocker-fix").textContent = blocker.fixLabel;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) =>
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "fix"), { once: true }),
+  );
 }
 
 const SOURCE_NAMES = {

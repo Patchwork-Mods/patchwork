@@ -349,8 +349,31 @@ pub(crate) async fn action(
 }
 
 /// `patchwork lock`.
-pub(crate) async fn lock(pw: &Patchwork, explicit: &Option<String>, update: bool) -> Result<()> {
+pub(crate) async fn lock(
+    pw: &Patchwork,
+    explicit: &Option<String>,
+    update: bool,
+    accept: Vec<String>,
+) -> Result<()> {
     let (profile, loaded) = selected(pw, explicit)?;
+    if !accept.is_empty() {
+        let locked = pw.load_lock(&profile)?.map(|l| l.mods).unwrap_or_default();
+        let keys = accept
+            .iter()
+            .map(|wanted| {
+                locked
+                    .iter()
+                    .find(|m| &m.key() == wanted || m.name.eq_ignore_ascii_case(wanted))
+                    .map(|m| m.key())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("no locked mod `{wanted}` in {}", loaded.label())
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for name in pw.accept_changed(&profile, &keys).await? {
+            println!("{name} now uses the file it's downloaded as now");
+        }
+    }
     let lock = pw.lock(&profile, update).await?;
     println!("locked {} mods for {}", lock.mods.len(), loaded.label());
     Ok(())

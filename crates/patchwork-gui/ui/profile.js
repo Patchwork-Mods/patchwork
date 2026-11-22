@@ -1,6 +1,6 @@
 // A game's profiles: the sidebar, and the header and Mods tab of the open one.
 
-import { gameInfo, invoke, profilesOf, run, state, status } from "./state.js";
+import { errorText, gameInfo, invoke, invokeResolving, profilesOf, run, state, status } from "./state.js";
 import { $, copyText, h } from "./dom.js";
 import { showGames } from "./games.js";
 import { renderMods } from "./mods.js";
@@ -402,9 +402,9 @@ exportForm.addEventListener("submit", async (e) => {
   status(`Exporting ${profile.label}…`);
   let text;
   try {
-    text = await invoke("export_profile", { id: profile.id, format: format.id, path });
+    text = await invokeResolving("export_profile", { id: profile.id, format: format.id, path });
   } catch (err) {
-    $("#export-error").textContent = String(err);
+    $("#export-error").textContent = errorText(err);
     $("#export-error").hidden = false;
     status(`Couldn't export ${profile.label}`, true);
     return;

@@ -66,7 +66,7 @@ pub fn start_if_synced(handle: &AppHandle) {
 }
 
 /// The node, started (along with its background syncing) the first time.
-async fn node(handle: &AppHandle) -> Result<&Node, String> {
+async fn node(handle: &AppHandle) -> CmdResult<&Node> {
     let app = handle.state::<App>().inner();
     let mut started = false;
     let node = app
@@ -265,7 +265,7 @@ pub async fn sync_remove_peers(
         .iter()
         .map(|p| {
             p.parse()
-                .map_err(|_| format!("`{p}` isn't a computer's id"))
+                .map_err(|_| format!("`{p}` isn't a computer's id").into())
         })
         .collect::<CmdResult<Vec<_>>>()?;
     let node = node(&handle).await?;

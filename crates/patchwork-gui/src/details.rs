@@ -15,6 +15,7 @@ use patchwork_core::{KnownVersions, Lookup, Patchwork};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::blockers::CmdError;
 use crate::{App, CmdResult, msg};
 
 /// How many fetches of each kind a refresh runs at once.
@@ -335,7 +336,7 @@ async fn work(
         let Some(job) = queue.lock().unwrap().pop_front() else {
             return;
         };
-        let fail = |kind: Kind, e: String| {
+        let fail = |kind: Kind, e: CmdError| {
             failures
                 .lock()
                 .unwrap()

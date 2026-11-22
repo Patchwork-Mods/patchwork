@@ -60,7 +60,7 @@ impl Work {
     pub fn start(&self) -> CmdResult<WorkGuard<'_>> {
         let mut state = self.0.lock().unwrap();
         if state.updating {
-            return Err("patchwork is updating".to_owned());
+            return Err("patchwork is updating".into());
         }
         state.running += 1;
         Ok(WorkGuard(self))
@@ -72,8 +72,7 @@ impl Work {
         let mut state = self.0.lock().unwrap();
         if state.running > 0 {
             return Err(
-                "patchwork is busy (deploying or downloading); update once that's finished"
-                    .to_owned(),
+                "patchwork is busy (deploying or downloading); update once that's finished".into(),
             );
         }
         state.updating = true;
@@ -176,13 +175,13 @@ pub async fn install_update(
     progress: Channel<UpdateProgress>,
 ) -> CmdResult<UpdateOutcome> {
     if let Some(managed) = packaging::packaging() {
-        return Err(managed.how_to_update());
+        return Err(managed.how_to_update().into());
     }
     if installed_from().is_none() {
         return Err(
             "this copy of patchwork wasn't installed from one of its installers; \
              update it the way you installed it"
-                .to_owned(),
+                .into(),
         );
     }
     let _updating = app.work.start_update()?;

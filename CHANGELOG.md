@@ -11,6 +11,8 @@ dialog shows, so the heading has to match the version being released.
 - Cleaned up the mod tab and improved the buttons
 - Shows when a Steam game is on a beta branch beside the profile's name
 - Finds installed games in Steam, GOG and Epic each time Patchwork opens, or with the new Find games button, and notices when a game set up has been moved or uninstalled
+- When something has to be fixed before an action can continue, Patchwork now explains what and offers to fix it
+- A mod whose file changed since it was locked (say, repackaged by its author) can now be accepted at the same version
 
 ### Themes
 

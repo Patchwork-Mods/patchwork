@@ -147,7 +147,8 @@ mod linux {
             return Err(format!(
                 "xdg-mime failed: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
-            ));
+            )
+            .into());
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout
@@ -209,7 +210,8 @@ mod linux {
                     "{} can't be changed, so Patchwork can't {set_it} there.",
                     list.display()
                 )
-            });
+            }
+            .into());
         }
         Err(match plugin {
             Err(e) => format!("Couldn't register for {SCHEME}:// links: {e}"),
@@ -217,7 +219,8 @@ mod linux {
                 "Registered, but the system still sends {SCHEME}:// links elsewhere. \
                  Your desktop may keep its own default; {set_it} in its settings."
             ),
-        })
+        }
+        .into())
     }
 
     /// The `mimeapps.list` `xdg-mime default` writes to, if it can't be

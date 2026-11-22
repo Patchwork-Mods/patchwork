@@ -13,6 +13,7 @@ use patchwork_daemon::{self as daemon, DaemonSettings, Paused, Status, service};
 use serde::Serialize;
 use tauri::State;
 
+use crate::blockers::CmdError;
 use crate::{App, CmdResult, msg};
 
 /// Runs the app as the daemon, rather than opening a window.
@@ -120,7 +121,7 @@ pub async fn daemon_install(app: State<'_, App>) -> CmdResult<()> {
     app.daemon.0.lock().unwrap().take();
     let paused = tauri::async_runtime::spawn_blocking(move || {
         daemon::install(&paths, &program().map_err(msg)?).map_err(msg)?;
-        Ok::<_, String>(pause_new(&paths))
+        Ok::<_, CmdError>(pause_new(&paths))
     })
     .await
     .map_err(msg)??;
@@ -136,7 +137,7 @@ pub async fn daemon_restart(app: State<'_, App>) -> CmdResult<()> {
     let paused = tauri::async_runtime::spawn_blocking(move || {
         daemon::stop(&paths).map_err(msg)?;
         service::start(&program().map_err(msg)?).map_err(msg)?;
-        Ok::<_, String>(pause_new(&paths))
+        Ok::<_, CmdError>(pause_new(&paths))
     })
     .await
     .map_err(msg)??;
@@ -216,7 +217,7 @@ pub fn daemon_set_enabled(app: State<'_, App>, enabled: bool) -> CmdResult<()> {
 #[tauri::command]
 pub fn daemon_set_task(app: State<'_, App>, id: String, enabled: bool) -> CmdResult<()> {
     if !daemon::tasks().iter().any(|t| t.id() == id) {
-        return Err(format!("there's no daemon task `{id}`"));
+        return Err(format!("there's no daemon task `{id}`").into());
     }
     let paths = app.pw.paths();
     let mut settings = DaemonSettings::load(paths).map_err(msg)?;
@@ -232,7 +233,7 @@ pub fn daemon_set_notify(app: State<'_, App>, id: String, notify: bool) -> CmdRe
         .iter()
         .any(|t| t.id() == id && t.notifies().is_some())
     {
-        return Err(format!("the daemon task `{id}` doesn't send notifications"));
+        return Err(format!("the daemon task `{id}` doesn't send notifications").into());
     }
     let paths = app.pw.paths();
     let mut settings = DaemonSettings::load(paths).map_err(msg)?;

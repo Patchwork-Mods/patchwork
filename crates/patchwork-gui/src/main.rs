@@ -1,6 +1,7 @@
 // Don't open a console window alongside the app on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod blockers;
 mod changelog;
 mod cli;
 mod daemon;
@@ -49,17 +50,24 @@ use patchwork_core::{
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Commands fail with a message for the UI to show.
-type CmdResult<T> = Result<T, String>;
+use crate::blockers::{CmdError, blocker_for};
 
-fn msg(e: impl Display) -> String {
-    e.to_string()
+/// Commands fail with a message for the UI to show, or with something in
+/// the way that the user can clear; see blockers.rs.
+type CmdResult<T> = Result<T, CmdError>;
+
+fn msg(e: impl Display) -> CmdError {
+    e.to_string().into()
 }
 
-/// [`msg`] for commands that lock. When locking is waiting on mods the user
-/// has to download themselves, the window is sent them as
-/// `patchwork://pending` to work through.
-fn lock_msg(handle: &AppHandle) -> impl Fn(patchwork_core::Error) -> String + '_ {
+/// [`msg`] for commands that lock the profile `id`. When locking is
+/// waiting on mods the user has to download themselves, the window is sent
+/// them as `patchwork://pending` to work through; when it's stopped by
+/// something with a fix, that's a blocker for `run` in state.js to offer.
+fn lock_msg<'a>(
+    handle: &'a AppHandle,
+    id: &'a str,
+) -> impl Fn(patchwork_core::Error) -> CmdError + 'a {
     move |e| match e {
         patchwork_core::Error::NeedsDownload(pending) => {
             let message = match pending.len() {
@@ -67,9 +75,12 @@ fn lock_msg(handle: &AppHandle) -> impl Fn(patchwork_core::Error) -> String + '_
                 n => format!("{n} mods have to be downloaded from their pages first"),
             };
             let _ = handle.emit("patchwork://pending", pending);
-            message
+            message.into()
         }
-        e => e.to_string(),
+        e => match blocker_for(id, &e) {
+            Some(blocker) => CmdError::blocked(e.to_string(), blocker),
+            None => e.to_string().into(),
+        },
     }
 }
 
@@ -892,7 +903,7 @@ async fn export_profile(
         .pw
         .export_profile(&profile_ref(&id)?, &format)
         .await
-        .map_err(lock_msg(&handle))?;
+        .map_err(lock_msg(&handle, &id))?;
     match path {
         Some(path) => {
             std::fs::write(&path, bytes).map_err(|e| format!("writing {path}: {e}"))?;
@@ -1498,7 +1509,10 @@ async fn set_version(
     let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     app.pw.set_version(&r, &name, version).map_err(msg)?;
-    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
+    app.pw
+        .lock(&r, false)
+        .await
+        .map_err(lock_msg(&handle, &id))?;
     profile_detail(&app.pw, id)
 }
 
@@ -1535,7 +1549,10 @@ async fn set_replaces(
     let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     app.pw.set_replaces(&r, &name, &replaces).map_err(msg)?;
-    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
+    app.pw
+        .lock(&r, false)
+        .await
+        .map_err(lock_msg(&handle, &id))?;
     profile_detail(&app.pw, id)
 }
 
@@ -1598,7 +1615,7 @@ async fn update_mods(
         .pw
         .lock_updating(&r, &keys)
         .await
-        .map_err(lock_msg(&handle))?;
+        .map_err(lock_msg(&handle, &id))?;
     Ok(lock_changes(&app, before, after))
 }
 
@@ -1787,7 +1804,7 @@ async fn deploy(
     let plan = match plan {
         Ok(plan) => plan,
         Err(patchwork_core::Error::Cancelled) => return Ok(Deployed::Cancelled { partway: false }),
-        Err(e) => return Err(lock_msg(&handle)(e)),
+        Err(e) => return Err(lock_msg(&handle, &id)(e)),
     };
     apply_cancellable(handle, plan, job.0.clone()).await
 }
@@ -1868,7 +1885,8 @@ async fn apply_cancellable(
             Err(patchwork_core::Error::Cancelled) => Ok(Deployed::Cancelled { partway: true }),
             Err(e) => Err(format!(
                 "deploy failed partway; what was done is recorded and can be undeployed: {e}"
-            )),
+            )
+            .into()),
         }
     })
     .await
@@ -1991,7 +2009,10 @@ async fn lock_profile(
 ) -> CmdResult<ProfileDetail> {
     let _work = app.work.start()?;
     let r = profile_ref(&id)?;
-    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
+    app.pw
+        .lock(&r, false)
+        .await
+        .map_err(lock_msg(&handle, &id))?;
     profile_detail(&app.pw, id)
 }
 
@@ -2024,7 +2045,8 @@ fn accept_links(handle: &AppHandle, links: Vec<tauri::Url>) {
             let app = handle.state::<App>();
             let _work = match app.work.start() {
                 Ok(work) => work,
-                Err(message) => {
+                Err(e) => {
+                    let message = e.to_string();
                     let _ = handle.emit("patchwork://link", LinkEvent::Failed { message });
                     return;
                 }
@@ -2197,7 +2219,7 @@ fn set_theme_prefs(app: State<'_, App>, prefs: themes::ThemePrefs) -> CmdResult<
     // Keep keys the frontend didn't send back.
     let rest = std::mem::take(&mut file.theme.rest);
     file.theme = themes::ThemePrefs { rest, ..prefs };
-    file.save(config)
+    Ok(file.save(config)?)
 }
 
 /// Pins `game` to the top of the game picker, or unpins it.
@@ -2248,7 +2270,7 @@ fn set_favorite(app: State<'_, App>, game: String, favorite: bool) -> CmdResult<
     } else {
         file.favorites.remove(&game);
     }
-    file.save(config)
+    Ok(file.save(config)?)
 }
 
 #[tauri::command]
@@ -2407,6 +2429,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            blockers::accept_changed,
             ready,
             native_color_picker,
             overview,

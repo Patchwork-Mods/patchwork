@@ -1834,6 +1834,51 @@ impl Patchwork {
             .await
     }
 
+    /// Takes the files the mods in `keys` (as `<source>:<id>`) are
+    /// downloaded as now, for mods whose files changed since they were
+    /// locked (see [`Error::ArtifactChanged`]). They stay at the same
+    /// version; only the hash they're locked to moves. Returns the mods'
+    /// names.
+    pub async fn accept_changed(
+        &self,
+        profile: &ProfileRef,
+        keys: &[String],
+    ) -> Result<Vec<String>> {
+        let loaded = self.load_profile(profile)?;
+        let Some(mut lock) = self.load_lock(profile)? else {
+            return Err(Error::invalid(format!(
+                "{} isn't locked yet",
+                loaded.label()
+            )));
+        };
+        let mut accepted = Vec::new();
+        for key in keys {
+            let m = lock
+                .mods
+                .iter_mut()
+                .find(|m| &m.key() == key)
+                .ok_or_else(|| {
+                    Error::invalid(format!("`{key}` isn't locked in {}", loaded.label()))
+                })?;
+            self.reporter.report(Event::Fetching {
+                name: m.name.clone(),
+            });
+            m.hash = self
+                .fetch(
+                    &loaded.game,
+                    &m.source,
+                    &m.id,
+                    &m.name,
+                    &m.artifact,
+                    m.format,
+                )
+                .await?;
+            accepted.push(m.name.clone());
+        }
+        self.save_lock(profile, &lock)?;
+        Ok(accepted)
+    }
+
     /// [`Patchwork::lock`], resolving again the locked mods `update` says
     /// to.
     async fn relock(
@@ -2135,13 +2180,7 @@ impl Patchwork {
                     fetched => fetched?,
                 };
                 if hash != old.hash {
-                    return Err(Error::invalid(format!(
-                        "`{}` changed since it was locked (expected {}, got {}); \
-                         run `patchwork lock --update` to accept the new version",
-                        old.name,
-                        old.hash.short(),
-                        hash.short()
-                    )));
+                    return Err(Error::artifact_changed(&old, hash));
                 }
             }
             return Ok(Locking::Locked(Box::new(old), None));

@@ -569,6 +569,52 @@ async fn updating_some_mods_leaves_the_rest_locked() {
     assert_eq!(version("b"), "1.0");
 }
 
+/// A mod whose file changed upstream since it was locked, here without
+/// it in the store (as on a second PC the lockfile synced to), stops
+/// locking until the new file is accepted, which keeps its version.
+#[tokio::test]
+async fn a_changed_file_is_kept_out_until_accepted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("mods");
+    fs::create_dir_all(&dir).unwrap();
+    let source = std::sync::Arc::new(Versioned {
+        dir: dir.clone(),
+        version: std::sync::Mutex::new("1.0".to_owned()),
+    });
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(SharedSource(source.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let spec = ModSpec {
+        source: "versioned".to_owned(),
+        id: "a".to_owned(),
+        version: None,
+    };
+    pw.add_mod(&profile, spec, None, true).await.unwrap();
+    let before = pw.lock(&profile, false).await.unwrap().mods[0].clone();
+
+    fs::write(dir.join("a-1.0.txt"), "a 1.0, repackaged").unwrap();
+    fs::remove_file(pw.store.path(&before.hash, before.format)).unwrap();
+    let Err(Error::ArtifactChanged(changed)) = pw.lock(&profile, false).await else {
+        panic!("locking should have stopped on the changed file");
+    };
+    let crate::error::ArtifactChanged {
+        key, expected, got, ..
+    } = *changed;
+    assert_eq!(key, "versioned:a");
+    assert_eq!(expected, before.hash);
+    assert_ne!(got, before.hash);
+
+    let accepted = pw.accept_changed(&profile, &[key]).await.unwrap();
+    assert_eq!(accepted, ["a"]);
+    let after = pw.lock(&profile, false).await.unwrap().mods[0].clone();
+    assert_eq!(after.hash, got);
+    assert_eq!(after.version.as_deref(), Some("1.0"));
+}
+
 /// Lists the same versions for every mod, counting how often it's asked.
 struct SlowVersions(std::sync::Arc<AtomicUsize>);
 

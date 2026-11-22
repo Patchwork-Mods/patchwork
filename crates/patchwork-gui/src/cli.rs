@@ -70,7 +70,7 @@ pub fn cli_status() -> CliStatus {
 #[tauri::command]
 pub async fn install_cli(app: State<'_, App>) -> CmdResult<String> {
     let (Some(src), Some(dst)) = (bundled(), target()) else {
-        return Err("this copy of patchwork can't install its command-line tool".to_owned());
+        return Err("this copy of patchwork can't install its command-line tool".into());
     };
     if installed_from() == Some(BundleType::App) {
         link_with_admin(&src, &dst)?;
@@ -140,7 +140,7 @@ fn copy(src: &Path, dst: &Path) -> std::io::Result<()> {
 fn link_with_admin(src: &Path, dst: &Path) -> CmdResult<()> {
     // Run from the disk image, the link would break once it's ejected.
     if src.starts_with("/Volumes") {
-        return Err("move Patchwork to Applications first, then try again".to_owned());
+        return Err("move Patchwork to Applications first, then try again".into());
     }
     let dir = dst.parent().unwrap_or(Path::new("/"));
     // The paths go in as arguments, so they don't need quoting for AppleScript.
@@ -166,12 +166,9 @@ fn link_with_admin(src: &Path, dst: &Path) -> CmdResult<()> {
         let err = String::from_utf8_lossy(&output.stderr);
         // -128 is the user cancelling the password prompt.
         if err.contains("-128") {
-            Err("cancelled".to_owned())
+            Err("cancelled".into())
         } else {
-            Err(format!(
-                "couldn't install the patchwork command: {}",
-                err.trim()
-            ))
+            Err(format!("couldn't install the patchwork command: {}", err.trim()).into())
         }
     }
 }

@@ -217,6 +217,11 @@ enum Command {
         /// Re-resolve mods that are already locked.
         #[arg(long)]
         update: bool,
+        /// Use the file this mod is downloaded as now, when it changed since
+        /// it was locked, keeping its version. Takes a name or a
+        /// `<source>:<id>` key, and can be given more than once.
+        #[arg(long, value_name = "MOD")]
+        accept: Vec<String>,
     },
     /// Deploy the profile's enabled mods to the game.
     Deploy {
@@ -399,7 +404,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Action { id, dry_run } => deploy::action(&pw, &cli.profile, id, dry_run).await?,
         Command::Conflicts { name } => deps::conflicts(&pw, &cli.profile, name)?,
         Command::Sort(args) => mods::sort(&pw, &cli.profile, args).await?,
-        Command::Lock { update } => deploy::lock(&pw, &cli.profile, update).await?,
+        Command::Lock { update, accept } => deploy::lock(&pw, &cli.profile, update, accept).await?,
         Command::Deploy { dry_run, verify } => {
             deploy::deploy(&pw, &cli.profile, dry_run, verify).await?
         }

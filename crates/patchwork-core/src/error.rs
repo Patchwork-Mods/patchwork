@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::hash::ContentHash;
+use crate::lock::LockedMod;
 use crate::source::PendingDownload;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -59,11 +61,45 @@ pub enum Error {
     /// Called off through a [`crate::cancel::Cancel`].
     #[error("cancelled")]
     Cancelled,
+    /// A locked mod's file came back different from the one it was locked
+    /// with, at the same version. Usually the mod's host repackaged it;
+    /// [`crate::Patchwork::accept_changed`] takes the new file.
+    #[error("{0}")]
+    ArtifactChanged(Box<ArtifactChanged>),
     #[error("{0}")]
     Invalid(String),
 }
 
+/// What [`Error::ArtifactChanged`] says changed.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "`{name}` changed since it was locked (expected {}, got {}); \
+     run `patchwork lock --accept {key}` to use the new file",
+    expected.short(),
+    got.short()
+)]
+pub struct ArtifactChanged {
+    /// The mod's key, `<source>:<id>`.
+    pub key: String,
+    pub name: String,
+    pub version: Option<String>,
+    pub expected: ContentHash,
+    pub got: ContentHash,
+}
+
 impl Error {
+    /// [`Error::ArtifactChanged`] for `locked`, whose file hashes to `got`
+    /// now.
+    pub fn artifact_changed(locked: &LockedMod, got: ContentHash) -> Self {
+        Error::ArtifactChanged(Box::new(ArtifactChanged {
+            key: locked.key(),
+            name: locked.name.clone(),
+            version: locked.version.clone(),
+            expected: locked.hash,
+            got,
+        }))
+    }
+
     pub fn invalid(message: impl Into<String>) -> Self {
         Error::Invalid(message.into())
     }
