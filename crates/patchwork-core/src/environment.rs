@@ -28,6 +28,10 @@ pub struct GameEnv {
     /// changes with every update, even ones that leave `version` alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steam_build: Option<String>,
+    /// The Steam beta branch that's installed, like `experimental`, for
+    /// Steam installs that aren't on the default (`public`) one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steam_branch: Option<String>,
     /// What the profile picked (or the game defaults to) for the game
     /// definition's `[env]` axes, besides `version`, which goes in
     /// `version`.
@@ -40,17 +44,15 @@ impl GameEnv {
     /// read is left unknown rather than being an error, since a game that
     /// can't be identified can still have mods deployed to it.
     pub fn detect(game: &GameDef, root: &Path) -> Self {
+        let steam = steam_install(game, root);
         Self {
             version: game
                 .detect
                 .version
                 .iter()
                 .find_map(|probe| probe_version(probe, root)),
-            steam_build: game
-                .detect
-                .steam
-                .iter()
-                .find_map(|app| steam_build(root, *app)),
+            steam_build: steam.as_ref().and_then(|s| s.build.clone()),
+            steam_branch: steam.and_then(|s| s.branch),
             axes: BTreeMap::new(),
         }
     }
@@ -100,12 +102,23 @@ impl GameEnv {
 
 impl fmt::Display for GameEnv {
     /// `1.6.1170 (Steam build 13190634)`, or as much of it as is known,
-    /// then the picked axes, like `, loader fabric`.
+    /// with the Steam branch if it isn't the default one, like
+    /// `1.6.1170 (Steam build 13190634, experimental branch)`, then the
+    /// picked axes, like `, loader fabric`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.version, &self.steam_build) {
-            (Some(v), Some(b)) => write!(f, "{v} (Steam build {b})"),
+        let build = self
+            .steam_build
+            .as_ref()
+            .map(|b| format!("Steam build {b}"));
+        let branch = self.steam_branch.as_ref().map(|b| format!("{b} branch"));
+        let steam = match (build, branch) {
+            (Some(build), Some(branch)) => Some(format!("{build}, {branch}")),
+            (build, branch) => build.or(branch),
+        };
+        match (&self.version, steam) {
+            (Some(v), Some(s)) => write!(f, "{v} ({s})"),
             (Some(v), None) => f.write_str(v),
-            (None, Some(b)) => write!(f, "Steam build {b}"),
+            (None, Some(s)) => f.write_str(&s),
             (None, None) => f.write_str("unknown version"),
         }?;
         for (axis, value) in &self.axes {
@@ -252,17 +265,37 @@ fn u32_at(data: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
 }
 
-/// The build id from Steam's manifest for `app`, if `root` is in a Steam
-/// library (`<library>/steamapps/common/<game>`).
-fn steam_build(root: &Path, app: u32) -> Option<String> {
+/// What Steam's manifest says about a game's install.
+struct SteamInstall {
+    build: Option<String>,
+    branch: Option<String>,
+}
+
+/// What Steam's manifest says about `root`, for the first of the game's
+/// Steam apps it has one for, if `root` is in a Steam library
+/// (`<library>/steamapps/common/<game>`).
+fn steam_install(game: &GameDef, root: &Path) -> Option<SteamInstall> {
     let steamapps = root.parent()?.parent()?;
-    let manifest = steamapps.join(format!("appmanifest_{app}.acf"));
-    let text = std::fs::read_to_string(manifest).ok()?;
-    let build = vdf::parse(&text)?
-        .get("AppState")?
-        .get_str("buildid")?
-        .to_owned();
-    (!build.is_empty()).then_some(build)
+    game.detect.steam.iter().find_map(|app| {
+        let manifest = steamapps.join(format!("appmanifest_{app}.acf"));
+        let text = std::fs::read_to_string(manifest).ok()?;
+        let state = vdf::parse(&text)?;
+        let state = state.get("AppState")?;
+        let nonempty = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+        // `MountedConfig` is what's installed; `UserConfig` is what's
+        // picked in Steam, which can be waiting to download. Older
+        // manifests only have `UserConfig`.
+        let branch = ["MountedConfig", "UserConfig"]
+            .iter()
+            .find_map(|config| state.get(config))
+            .and_then(|config| config.get_str("BetaKey"))
+            .filter(|b| !b.eq_ignore_ascii_case("public"))
+            .and_then(nonempty);
+        Some(SteamInstall {
+            build: state.get_str("buildid").and_then(nonempty),
+            branch,
+        })
+    })
 }
 
 #[cfg(test)]

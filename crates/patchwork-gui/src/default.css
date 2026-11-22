@@ -672,6 +672,13 @@ button.link {
   gap: 4px;
 }
 
+/* The game is on a Steam beta branch, so mods may not work the same. */
+#steam-branch {
+  margin-left: 4px;
+  border-color: currentColor;
+  color: var(--pw-warning);
+}
+
 .tabs button {
   border: none;
   background: none;

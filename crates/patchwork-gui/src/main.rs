@@ -256,6 +256,9 @@ struct ProfileDetail {
     /// Whether the profile has changed since it was last deployed, so it
     /// can be reverted.
     has_changes: bool,
+    /// The Steam beta branch the game is on, like `experimental`, if it's
+    /// on one; shown beside the profile's name.
+    steam_branch: Option<String>,
     /// The ways the game can be started, for the Play button; none until
     /// it's known where it's installed.
     launch_options: Vec<LaunchOption>,
@@ -614,6 +617,10 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let game_files = state.files.len();
     let deploy_status = pw.deploy_status(&r).map_err(msg)?;
     let has_changes = pw.has_changes(&r).map_err(msg)?;
+    let steam_branch = pw
+        .game_env(&target)
+        .map_err(msg)?
+        .and_then(|env| env.steam_branch);
     let lock = pw.load_lock(&r).map_err(msg)?;
     let dependencies = lock
         .iter()
@@ -727,6 +734,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         game_files,
         deploy_status,
         has_changes,
+        steam_branch,
         launch_options,
         setup,
     })

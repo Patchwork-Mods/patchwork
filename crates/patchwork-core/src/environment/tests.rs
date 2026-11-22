@@ -151,3 +151,37 @@ fn steam_installs_know_their_build() {
     // not for a game Steam doesn't know as that app
     assert!(GameEnv::detect(&game("steam = [2]"), &root).is_empty());
 }
+
+#[test]
+fn steam_installs_know_their_beta_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let steamapps = tmp.path().join("steamapps");
+    let root = steamapps.join("common/My Game");
+    std::fs::create_dir_all(&root).unwrap();
+    let manifest = |mounted: &str, user: &str| {
+        let text = format!(
+            "\"AppState\"\n{{\n\t\"buildid\"\t\t\"20811355\"\n\
+             \t\"UserConfig\"\n\t{{\n{user}\t}}\n{mounted}}}\n"
+        );
+        std::fs::write(steamapps.join("appmanifest_548430.acf"), text).unwrap();
+        GameEnv::detect(&game("steam = [548430]"), &root)
+    };
+    let beta =
+        |key: &str| format!("\t\t\"language\"\t\t\"english\"\n\t\t\"BetaKey\"\t\t\"{key}\"\n");
+    let mounted = |inner: &str| format!("\t\"MountedConfig\"\n\t{{\n{inner}\t}}\n");
+
+    let env = manifest(&mounted(&beta("experimental")), &beta("experimental"));
+    assert_eq!(env.steam_branch.as_deref(), Some("experimental"));
+    assert_eq!(env.to_string(), "Steam build 20811355, experimental branch");
+
+    // what's installed, not what's picked and still downloading
+    let env = manifest(&mounted(""), &beta("experimental"));
+    assert_eq!(env.steam_branch, None);
+    // older manifests only say what's picked
+    let env = manifest("", &beta("experimental"));
+    assert_eq!(env.steam_branch.as_deref(), Some("experimental"));
+    // the default branch isn't worth saying
+    let env = manifest(&mounted(&beta("public")), &beta("public"));
+    assert_eq!(env.steam_branch, None);
+    assert_eq!(env.to_string(), "Steam build 20811355");
+}

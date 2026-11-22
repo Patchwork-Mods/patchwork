@@ -140,6 +140,7 @@ export function renderProfile({ keepMods = false } = {}) {
   $("#update").disabled = !p?.mods.length;
   markUpdates();
   $("#no-profile").hidden = !!p;
+  renderSteamBranch(p);
   if (!p) {
     const game = gameInfo(state.game);
     $("#profile-title").textContent = game.name;
@@ -176,6 +177,17 @@ export function renderProfile({ keepMods = false } = {}) {
     ),
   );
   renderTabs();
+}
+
+/** Says which Steam beta branch the game is on, if it's on one. */
+function renderSteamBranch(p) {
+  const badge = $("#steam-branch");
+  const branch = p?.steamBranch;
+  badge.hidden = !branch;
+  badge.textContent = branch ? `${branch} branch` : "";
+  badge.title = branch
+    ? `Steam has the ${branch} beta branch of the game installed, so mods made for the default branch may not work`
+    : "";
 }
 
 /** A button to deal with issue `i`, for the issues that have one. */
