@@ -9,9 +9,11 @@ import {
   compact,
   h,
   initials,
+  gamepadIcon,
+  historyIcon,
   link,
   linkIcon,
-  openExternal,
+  pencilIcon,
   tagIcon,
   trashIcon,
 } from "./dom.js";
@@ -19,7 +21,6 @@ import { openProfile, refresh, showProfile } from "./profile.js";
 import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
 import { showChangelog } from "./changelog.js";
-import { showOptions } from "./form.js";
 import { dragHandle, dragging } from "./reorder.js";
 import { conflictMark } from "./conflicts.js";
 import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
@@ -90,9 +91,10 @@ function showingLoadOrder(mods) {
 const expandedRows = new Set();
 
 // An added mod's list row: a handle to drag it by, its picture, name and
-// author, an on/off switch and its version, and an arrow that expands it to
-// show its description, when it was updated, links to its pages, its
-// changelog and a remove button.
+// author (a link to their mods), a bell to follow it, an on/off switch and
+// its version, and an arrow that expands it to show its description, when
+// it was updated, its source id (a link to its page), and icon buttons to
+// edit it, see its changelog and the like, and remove it.
 /** A warning sign on a mod with issues (see Patchwork::issues), saying what
  * they are when hovered. */
 function issueMark(m) {
@@ -112,39 +114,31 @@ function unsharedMark(m) {
 
 const FOLLOWED = "You follow it, so you're told when a new version is out";
 
-/** Marks a mod the user follows (see `followButton`). */
-function followMark(m) {
-  if (!m.followed) return null;
-  return h("span", { class: "mod-followed muted", title: FOLLOWED, "aria-label": "Followed" }, bellIcon());
-}
-
 /**
- * Follows the mod, so the daemon's update check sends a desktop
- * notification when a new version is out, or stops following it. Mods are
- * followed by source and id, so in every profile that has them. Updates
- * the button and the mark in place rather than drawing the mod again, which
- * would take focus from the button.
+ * A bell that follows the mod when clicked, so the daemon's update check
+ * sends a desktop notification when a new version is out, or stops
+ * following it. Mods are followed by source and id, so in every profile
+ * that has them. Filled in while followed; otherwise it only shows while
+ * the mod is hovered or focused (see .follow-toggle in default.css).
  */
-function followButton(m) {
-  const label = h("span");
-  const button = h("button", { type: "button", class: "follow" }, bellIcon(), label);
+function followToggle(m) {
+  if (!m.versioned && !m.followed) return null;
+  const button = h("button", { type: "button", class: "follow-toggle" }, bellIcon());
   const show = () => {
     button.setAttribute("aria-pressed", String(!!m.followed));
-    button.title = m.followed ? `${FOLLOWED}. Click to stop.` : "Get a notification when a new version is out";
-    label.textContent = m.followed ? "Following" : "Follow";
+    button.title = m.followed ? `${FOLLOWED}. Click to stop.` : "Follow: get a notification when a new version is out";
+    button.setAttribute("aria-label", `Follow ${m.name}`);
   };
   show();
-  button.addEventListener("click", async () => {
+  button.addEventListener("click", async (e) => {
+    // it sits on a list row, which expands when clicked
+    e.stopPropagation();
     button.disabled = true;
     try {
       const follow = !m.followed;
       const { unheard } = await run("set_followed", { source: m.source, id: m.id, follow });
       m.followed = follow;
       show();
-      const marks = button.closest(".mod-row")?.querySelector(".mod-name")
-        ?? button.closest(".mod-card")?.querySelector(".card-marks");
-      marks?.querySelector(".mod-followed")?.remove();
-      if (follow) marks?.append(followMark(m));
       if (!follow) status(`Stopped following ${m.name}`);
       else if (unheard) status(`Following ${m.name}, but nothing will tell you yet: ${unheard} (Settings → Background)`);
       else status(`Following ${m.name}; you'll get a notification when a new version is out`);
@@ -155,6 +149,36 @@ function followButton(m) {
   return button;
 }
 
+/** A small icon button with its name as a hidden label (which themes may
+ * show instead of the icon) and as its tooltip, unless `title` says more. */
+function iconAction(icon, label, attrs = {}) {
+  return h(
+    "button",
+    { type: "button", title: label, ...attrs, class: `icon-action ${attrs.class ?? ""}`.trim() },
+    icon,
+    h("span", { class: "action-label" }, label),
+  );
+}
+
+/** A mod's id at its source, as a link to its page there when it has one. */
+function sourceLink(m, item) {
+  const text = `${m.source}:${m.shownId}`;
+  if (!item.url) return h("span", {}, text);
+  const a = link(item.url, text);
+  a.classList.add("quiet-link");
+  a.title = `Open its page: ${item.url}`;
+  return a;
+}
+
+/** A mod's author, as a link to their other mods when there's a page for them. */
+function authorLink(item) {
+  const a = link(item.author_url, item.author);
+  if (typeof a === "string") return a;
+  a.classList.add("quiet-link");
+  a.title = `The author's mods: ${item.author_url}`;
+  return a;
+}
+
 /** Marks a mod with choices nothing's been picked in yet, like an
  * installer's options, so it's deployed with the defaults. */
 function optionsMark(m) {
@@ -163,21 +187,6 @@ function optionsMark(m) {
   const what = unpicked.map((o) => o.title.toLowerCase()).join(" or ");
   const why = `Nothing's been picked in its ${what} yet, so it's deployed with the defaults`;
   return h("span", { class: "mod-options muted", title: why }, "default options");
-}
-
-/** A button for each set of choices the mod has, like its installer. */
-function optionsButtons(m) {
-  return (m.options ?? []).map((o) =>
-    h(
-      "button",
-      {
-        type: "button",
-        title: `Pick the options in its ${o.title.toLowerCase()}`,
-        onclick: () => showOptions(m, o),
-      },
-      o.title,
-    ),
-  );
 }
 
 const PRIORITY_TITLE =
@@ -487,9 +496,9 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
           unsharedMark(m),
           optionsMark(m),
           requirementsMark(m),
-          followMark(m),
+          followToggle(m),
         ),
-        item.author && h("span", { class: "author" }, item.author),
+        item.author && h("span", { class: "author" }, authorLink(item)),
       ),
     );
     if (!details.hidden) fillDetails();
@@ -517,8 +526,10 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
     if (open && details.hidden) fillDetails();
     details.hidden = !open;
   };
-  // clicking anywhere on the picture or name expands it too
-  head.addEventListener("click", () => setExpanded(!expandedRows.has(key)));
+  // clicking anywhere on the picture or name expands it too, but not the author's link
+  head.addEventListener("click", (e) => {
+    if (!e.target.closest("a")) setExpanded(!expandedRows.has(key));
+  });
   setExpanded(expandedRows.has(key));
 
   row.append(
@@ -559,11 +570,9 @@ function rowDetails(m, item, onRemove) {
       h("span", { title: new Date(item.updated).toLocaleString() }, `Updated ${ago(item.updated)}`),
     count(item.downloads, "downloads"),
     count(item.rating, "likes"),
-    h("span", {}, `${m.source}:${m.shownId}`),
+    sourceLink(m, item),
     worksWith(m),
   ].filter(Boolean);
-  const urlButton = (url, text) =>
-    url && h("button", { type: "button", title: url, onclick: () => openExternal(url) }, text);
   return [
     summary && h("p", {}, summary),
     h(
@@ -579,21 +588,9 @@ function rowDetails(m, item, onRemove) {
       "div",
       { class: "row-actions" },
       editButton(m),
-      m.versioned && followButton(m),
-      urlButton(item.url, "Website"),
-      urlButton(item.author_url, "Author's mods"),
-      m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
-      ...optionsButtons(m),
-      h(
-        "button",
-        {
-          type: "button",
-          title: "Say which versions of the game it works with",
-          onclick: () => showGameVersions(m),
-        },
-        "Game versions",
-      ),
-      h("button", { type: "button", class: "danger", onclick: onRemove }, "Remove"),
+      changelogButton(m),
+      gameVersionsButton(m),
+      iconAction(trashIcon(), "Remove", { class: "danger", title: `Remove ${m.name}`, onclick: onRemove }),
     ),
   ];
 }
@@ -759,8 +756,9 @@ function cardPeek(card) {
 // An added mod's card: its picture, with a sheet under it holding its
 // details, the on/off switch, priority and version. Hovering the card (or
 // tabbing into it) slides the sheet up over the picture, leaving a strip of
-// it showing, to bring up what hangs below: buttons for its settings,
-// options, changelog and pages, and what it needs. The remove button and
+// it showing, to bring up what hangs below: icon buttons to edit it, for
+// its settings, changelog and the like, and its source id (a link to its
+// page). The bell to follow it sits by its tags in the footer. The remove button and
 // the handle to drag it by sit on the strip that still shows.
 function modCard(m, { movable, onToggle, onRemove, onVersion }) {
   const cover = h("div", { class: "card-cover" });
@@ -776,12 +774,15 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
   // most cards never are.
   let raised = false;
   const fillMore = () => {
-    settings ??= settingsButton(m, { label: true });
+    if (!settings) {
+      settings = settingsButton(m);
+      settings.classList.add("icon-action");
+    }
     more.replaceChildren(...cardMore(m, item, settings).filter(Boolean));
   };
   const fill = () => {
     item = cardItem(m);
-    tags.replaceChildren(...[tagsMark(m), tiesMark(m)].filter(Boolean));
+    tags.replaceChildren(...[tagsMark(m), tiesMark(m), followToggle(m)].filter(Boolean));
     cover.replaceChildren(modIcon(item));
     body.replaceChildren(cardBody(item));
     if (raised) fillMore();
@@ -803,7 +804,6 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
       unsharedMark(m),
       optionsMark(m),
       requirementsMark(m),
-      followMark(m),
     ),
     update,
     h(
@@ -863,43 +863,37 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
 
 /** Opens the Edit dialog, to change how the mod is shown. */
 function editButton(m) {
-  return h(
-    "button",
-    {
-      type: "button",
-      class: "edit-mod",
-      title: "Change its name, picture, description, tags or notes",
-      onclick: () => showEditMod(m),
-    },
-    "Edit",
-  );
+  return iconAction(pencilIcon(), "Edit", {
+    class: "edit-mod",
+    title: "Edit: change its name, picture, description, tags or notes",
+    onclick: () => showEditMod(m),
+  });
+}
+
+/** Shows what changed in each of its versions, for a mod that has them. */
+function changelogButton(m) {
+  return m.versioned && iconAction(historyIcon(), "Changelog", { onclick: () => showChangelog(m) });
+}
+
+/** Says which versions of the game it works with. */
+function gameVersionsButton(m) {
+  return iconAction(gamepadIcon(), "Game versions", {
+    title: "Game versions: say which versions of the game it works with",
+    onclick: () => showGameVersions(m),
+  });
 }
 
 /** What hangs below a card's sheet, brought up by raising it. */
 function cardMore(m, item, settings) {
-  const urlButton = (url, text, title) =>
-    url &&
-    h("button", { type: "button", title: `${title}: ${url}`, onclick: () => openExternal(url) }, text);
-  const facts = [h("span", {}, `${m.source}:${m.shownId}`), worksWith(m)].filter(Boolean);
+  const facts = [sourceLink(m, item), worksWith(m)].filter(Boolean);
   return [
     h(
       "div",
       { class: "card-actions" },
       editButton(m),
       settings,
-      m.versioned && followButton(m),
-      m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
-      h(
-        "button",
-        {
-          type: "button",
-          title: "Say which versions of the game it works with",
-          onclick: () => showGameVersions(m),
-        },
-        "Supports",
-      ),
-      urlButton(item.url, "Website", "Its page"),
-      urlButton(item.author_url, "Author", "The author's mods"),
+      changelogButton(m),
+      gameVersionsButton(m),
     ),
     h("div", { class: "facts muted" }, facts.map((f) => h("div", {}, f))),
   ];

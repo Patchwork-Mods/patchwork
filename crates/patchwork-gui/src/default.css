@@ -1242,8 +1242,9 @@ dialog button.danger-text {
 
 .row-actions {
   display: flex;
-  gap: 6px;
+  gap: 2px;
   margin-top: 2px;
+  margin-left: -6px;
 }
 
 .row-actions .danger {
@@ -1294,19 +1295,43 @@ select.mod-version {
   cursor: help;
 }
 
-/* A mod the user follows, to be told about its new versions. */
-.mod-followed {
-  display: inline-flex;
+/* A bell that follows a mod, to be told about its new versions (see
+   followToggle in mods.js). Filled in while followed; otherwise it only
+   shows while its mod is hovered or has the focus. */
+.follow-toggle {
+  display: inline-grid;
+  place-items: center;
   margin-left: 6px;
+  padding: 2px;
+  color: var(--pw-muted);
+  background: transparent;
+  border-color: transparent;
   vertical-align: middle;
-  cursor: help;
 }
 
-/* The bell in .mod-followed and on the Follow button. */
-.mod-followed svg,
-button.follow svg {
-  width: 0.9em;
-  height: 0.9em;
+.card-footer-end .follow-toggle {
+  margin-left: 0;
+}
+
+.follow-toggle:hover {
+  color: var(--pw-text);
+}
+
+.follow-toggle[aria-pressed="true"] {
+  color: var(--pw-accent);
+}
+
+.follow-toggle[aria-pressed="false"] {
+  opacity: 0;
+}
+
+:is(.mod-row, .mod-card):is(:hover, :focus-within) .follow-toggle {
+  opacity: 1;
+}
+
+.follow-toggle svg {
+  width: 15px;
+  height: 15px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
@@ -1314,14 +1339,70 @@ button.follow svg {
   stroke-linejoin: round;
 }
 
-button.follow {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.follow-toggle[aria-pressed="true"] svg {
+  fill: currentColor;
 }
 
-button.follow[aria-pressed="true"] svg {
-  fill: currentColor;
+/* A link that looks like the text around it until hovered, like a mod's
+   source id (to its page) and its author (to their mods). */
+a.quiet-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.quiet-link:hover,
+:where(:root:not([data-pointer])) a.quiet-link:focus-visible {
+  color: var(--pw-link);
+  text-decoration: underline;
+}
+
+/* A mod's actions (Edit, Changelog and the like) are small icon buttons,
+   named by their tooltips. Each keeps its name in an .action-label, out of
+   sight but read out, which a theme can show in place of the icon. */
+.icon-action {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--pw-muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+.icon-action:hover {
+  color: var(--pw-text);
+  border-color: var(--pw-border);
+}
+
+.icon-action.danger {
+  color: var(--pw-muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+.icon-action.danger:hover {
+  color: var(--pw-danger);
+  border-color: var(--pw-border);
+}
+
+.icon-action svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.action-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* A mod with choices (like an installer's options) nothing's been picked
@@ -2228,19 +2309,10 @@ body.dragging-mod .mod-card .card-sheet {
 }
 
 .card-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.card-actions button {
-  justify-content: center;
-  min-width: 0;
-  padding: 3px 4px;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: -6px;
 }
 
 .card-more .facts {
@@ -2284,6 +2356,16 @@ body.dragging-mod .mod-card .card-sheet {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* On a card, it's one of the icon actions under the sheet. */
+.mod-settings.icon-action {
+  justify-content: center;
+}
+
+.mod-settings.icon-action svg {
+  width: 16px;
+  height: 16px;
 }
 
 .mod-row .mod-settings {

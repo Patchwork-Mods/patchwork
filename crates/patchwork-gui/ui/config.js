@@ -183,13 +183,12 @@ function settingsOf(m) {
   return all;
 }
 
-/** A mod's settings button, hidden while it has none; with `label`, it says "Settings". */
-export function settingsButton(m, { label = false } = {}) {
+/** A mod's settings button (a cog), hidden while it has none. */
+export function settingsButton(m) {
   const button = h(
     "button",
     { type: "button", class: "mod-settings", hidden: true, "aria-haspopup": "menu" },
     gearIcon(),
-    label && h("span", {}, "Settings"),
   );
   button.addEventListener("click", (e) => {
     // it sits on a list row, which expands when clicked

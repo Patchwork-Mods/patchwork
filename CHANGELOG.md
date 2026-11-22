@@ -8,6 +8,7 @@ dialog shows, so the heading has to match the version being released.
 - Added Hollow Knight and ModLinks support
 - Added ability for themes to declare options
 - You can now follow mods, which will give you a notification when a new update comes out.
+- Cleaned up the mod tab and improved the buttons
 
 ### Themes
 

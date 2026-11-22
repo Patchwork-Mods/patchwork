@@ -133,7 +133,7 @@ export function trashIcon() {
   return svg;
 }
 
-/** A bell, for following a mod (see `followButton` in mods.js). */
+/** A bell, for following a mod (see `followToggle` in mods.js). */
 export function bellIcon() {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
@@ -177,6 +177,35 @@ export function linkIcon() {
   }
   return svg;
 }
+
+/** A 24×24 line icon drawn from path data, stroked in the current colour. */
+function strokeIcon(...paths) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of paths) {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+/** A pencil, for editing how a mod is shown. */
+export const pencilIcon = () =>
+  strokeIcon("M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z", "M15 5l4 4");
+
+/** A clock turning back, for a mod's changelog. */
+export const historyIcon = () =>
+  strokeIcon("M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", "M3 3v5h5", "M12 7v5l4 2");
+
+/** A gamepad, for which versions of the game a mod works with. */
+export const gamepadIcon = () =>
+  strokeIcon(
+    "M6 11h4M8 9v4M15 12h.01M18 10h.01",
+    "M17.32 5H6.68a4 4 0 0 0-3.98 3.59l-.7 6.92A3 3 0 0 0 5 19c1 0 1.5-.5 2-1l1.41-1.41A2 2 0 0 1 9.83 16h4.34a2 2 0 0 1 1.42.59L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3.49l-.7-6.92A4 4 0 0 0 17.32 5z",
+  );
 
 /** A luggage tag, for a mod's tags. */
 export function tagIcon() {

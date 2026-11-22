@@ -741,12 +741,14 @@ input[type="range"]:hover::-webkit-slider-thumb {
 }
 
 /* An opened mod's buttons are the game's numbered event choices: plain
-   text, "1. Edit", "2. Website" and so on, yellow under the pointer. Laid
-   out in columns rather than one per line, to save room. */
+   text, "1. Edit", "2. Changelog" and so on (their labels in place of their
+   icons), yellow under the pointer. Laid out in columns rather than one per
+   line, to save room. */
 .row-actions {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 2px 16px;
+  margin-left: 0;
   counter-reset: ftl-choice;
   --ftl-choice-hover: var(--ftl-yellow);
 }
@@ -756,7 +758,10 @@ input[type="range"]:hover::-webkit-slider-thumb {
 }
 
 .row-actions button {
+  display: inline-block;
   justify-self: start;
+  width: auto;
+  height: auto;
   margin: 0;
   padding: 2px 0;
   border: none;
@@ -765,6 +770,18 @@ input[type="range"]:hover::-webkit-slider-thumb {
   color: var(--pw-text);
   font-weight: 700;
   text-align: left;
+}
+
+.row-actions svg {
+  display: none;
+}
+
+.row-actions .action-label {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
 }
 
 .row-actions button::before {
