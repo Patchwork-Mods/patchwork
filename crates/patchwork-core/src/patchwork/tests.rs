@@ -3961,3 +3961,75 @@ fn added_games_keep_their_name() {
     // still the whole definition
     assert_eq!(entry.value.deployer.kind, "none");
 }
+
+/// Puts Steam app `app` in the library at `library`, as Steam would.
+fn steam_install(library: &Path, app: u32, dir: &str) -> PathBuf {
+    let steamapps = library.join("steamapps");
+    let path = steamapps.join("common").join(dir);
+    fs::create_dir_all(&path).unwrap();
+    fs::write(
+        steamapps.join(format!("appmanifest_{app}.acf")),
+        format!("\"AppState\"\n{{\n\t\"appid\"\t\t\"{app}\"\n\t\"installdir\"\t\t\"{dir}\"\n}}\n"),
+    )
+    .unwrap();
+    path.canonicalize().unwrap()
+}
+
+#[test]
+fn detecting_games_sets_up_found_ones_and_moves_gone_ones() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    let steam = tmp.path().join("steam");
+    let other = tmp.path().join("other");
+    for (id, app) in [
+        ("new", 1),
+        ("kept", 2),
+        ("moved", 3),
+        ("gone", 4),
+        ("twice", 5),
+    ] {
+        let mut def = new_game(id, "none");
+        def.detect.steam = vec![app];
+        pw.add_game(def).unwrap();
+    }
+    let new = steam_install(&steam, 1, "New");
+    // set up somewhere of the user's own, which is left alone
+    steam_install(&steam, 2, "Kept");
+    let kept = tmp.path().join("my games/Kept");
+    fs::create_dir_all(&kept).unwrap();
+    pw.set_game_path("kept", &kept).unwrap();
+    // set up, then its folder went and it turned up in another library
+    let old = tmp.path().join("old/Moved");
+    fs::create_dir_all(&old).unwrap();
+    pw.set_game_path("moved", &old).unwrap();
+    fs::remove_dir_all(&old).unwrap();
+    let moved = steam_install(&steam, 3, "Moved");
+    // set up, then its folder went for good
+    let gone = tmp.path().join("old/Gone");
+    fs::create_dir_all(&gone).unwrap();
+    pw.set_game_path("gone", &gone).unwrap();
+    fs::remove_dir_all(&gone).unwrap();
+    steam_install(&steam, 5, "Twice");
+    steam_install(&other, 5, "Twice");
+
+    let detected = pw.detect_games(&Locator::steam([steam, other]));
+    assert_eq!(detected.added, ["new"]);
+    assert_eq!(detected.moved, ["moved"]);
+    assert_eq!(detected.missing, ["gone"]);
+    assert_eq!(detected.ambiguous, ["twice"]);
+    assert!(detected.failed.is_empty(), "{:?}", detected.failed);
+    let path = |id| pw.game_install(id).unwrap().map(|i| i.path);
+    assert_eq!(path("new"), Some(new));
+    assert_eq!(path("kept"), Some(kept.canonicalize().unwrap()));
+    assert_eq!(path("moved"), Some(moved));
+    assert!(path("gone").is_some());
+    assert_eq!(path("twice"), None);
+
+    // nothing more to do the second time
+    let again = pw.detect_games(&Locator::default());
+    assert!(again.added.is_empty() && again.moved.is_empty());
+    assert_eq!(again.missing, ["gone"]);
+}

@@ -43,8 +43,9 @@ async function renderGames() {
   if (!shown || render !== renders) return;
   const favorites = new Set(state.overview.favorites);
   const rest = shown.filter((g) => !favorites.has(g.id));
-  const installed = rest.filter((g) => g.install);
-  const others = rest.filter((g) => !g.install);
+  // a game whose folder has gone shows as not installed, but keeps its settings
+  const installed = rest.filter((g) => g.install && !g.missing);
+  const others = rest.filter((g) => !g.install || g.missing);
   fillSection($("#favorite-games"), shown.filter((g) => favorites.has(g.id)));
   // While searching, adding a game is only offered when nothing matches.
   fillSection($("#installed-games"), installed);
@@ -86,6 +87,7 @@ function gameCard(g) {
       gameArt(g),
       h("span", { class: "game-name" }, g.name),
       h("span", { class: "muted" }, `${count} profile${count === 1 ? "" : "s"}`),
+      g.missing ? h("span", { class: "badge", title: `Not found at ${g.install}` }, "Folder missing") : null,
       g.origin === "user"
         ? h("span", { class: "badge" }, "Added by you")
         : g.origin.endsWith("+ user")
@@ -190,6 +192,55 @@ function addGameCard() {
     ),
   );
 }
+
+/**
+ * Looks for every game (see detect_games in main.rs), setting up the ones
+ * found and moving the ones whose folder has gone, then shows the result.
+ * `quiet` says nothing unless something changed, for when it's done on its
+ * own as Patchwork opens.
+ */
+export async function detectGames({ quiet = false } = {}) {
+  const button = $("#detect-games");
+  button.disabled = true;
+  if (!quiet) status("Looking for games…");
+  let detected;
+  try {
+    detected = await invoke("detect_games");
+  } catch (err) {
+    if (!quiet) status(String(err), true);
+    else console.warn(err);
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  for (const [game, err] of detected.failed) console.warn(`couldn't set up ${game}: ${err}`);
+  const changed = detected.added.length + detected.moved.length;
+  if (changed || !quiet) {
+    state.overview = await run("overview");
+    // only redraw the picker; an open game's page is left as it is
+    if (!state.game) await renderGames();
+  }
+  if (changed || !quiet) status(detectedSummary(detected));
+}
+
+function detectedSummary({ added, moved, missing, ambiguous, failed }) {
+  const names = (ids) => {
+    const shown = ids.slice(0, 3).map((id) => gameInfo(id)?.name ?? id);
+    return ids.length > 3 ? `${shown.join(", ")} and ${ids.length - 3} more` : shown.join(", ");
+  };
+  const games = (n) => `${n} game${n === 1 ? "" : "s"}`;
+  const parts = [];
+  if (added.length) parts.push(`Found ${games(added.length)}: ${names(added)}`);
+  if (moved.length) parts.push(`found ${names(moved)} in a new folder`);
+  if (ambiguous.length) parts.push(`${names(ambiguous)} found in more than one place; open it to pick`);
+  if (missing.length) parts.push(`couldn't find ${games(missing.length)} where they were set up`);
+  if (failed.length) parts.push(`couldn't set up ${names(failed.map(([id]) => id))}`);
+  if (!parts.length) return "No new games found";
+  const text = parts.join("; ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+$("#detect-games").addEventListener("click", () => detectGames());
 
 gameSearch.addEventListener("input", () => {
   if (state.overview) renderGames();

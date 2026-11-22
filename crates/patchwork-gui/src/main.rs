@@ -32,6 +32,7 @@ use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
 use patchwork_core::launch::{self, LaunchOption, Via};
 use patchwork_core::list::{List, ListEntry};
+use patchwork_core::locate::Locator;
 use patchwork_core::lock::{DependencyInfo, Lockfile, SoftDependencyInfo, mod_key};
 use patchwork_core::matching::{self, ModText};
 use patchwork_core::options::Answer;
@@ -191,6 +192,9 @@ struct GameInfo {
     id: String,
     name: String,
     install: Option<String>,
+    /// Whether `install` is set but isn't a folder any more, as when the
+    /// game's been uninstalled or is on a drive that isn't plugged in.
+    missing: bool,
     /// Where the definition came from, e.g. `builtin` or `builtin + user`.
     origin: String,
     /// Something an `<img>` can load: the definition's URL, or a local
@@ -370,13 +374,12 @@ fn overview(app: State<'_, App>) -> CmdResult<Overview> {
         .map(|entry| {
             let game = &entry.value;
             let (search_sources, search_sorts) = search_sources(pw, &game.id)?;
+            let install = pw.game_install(&game.id).map_err(msg)?.map(|i| i.path);
             Ok(GameInfo {
                 id: game.id.clone(),
                 name: game.name.clone(),
-                install: pw
-                    .game_install(&game.id)
-                    .map_err(msg)?
-                    .map(|i| i.path.display().to_string()),
+                missing: install.as_ref().is_some_and(|p| !p.is_dir()),
+                install: install.map(|p| p.display().to_string()),
                 origin: entry.origins(),
                 image: match &game.image {
                     Some(image) => image_src(image),
@@ -964,6 +967,17 @@ fn find_installs(app: State<'_, App>, game: String) -> CmdResult<Vec<FoundInstal
             origin: f.origin.to_string(),
         })
         .collect())
+}
+
+/// Looks for every game on this machine, setting up the ones that aren't
+/// and moving the ones whose folder has gone; see
+/// [`Patchwork::detect_games`]. Async so the scan runs off the main thread.
+#[tauri::command]
+async fn detect_games(app: State<'_, App>) -> CmdResult<patchwork_core::Detected> {
+    let locator = tauri::async_runtime::spawn_blocking(Locator::scan)
+        .await
+        .map_err(msg)?;
+    Ok(app.pw.detect_games(&locator))
 }
 
 /// A game's settings on this machine, for the game settings dialog.
@@ -2408,6 +2422,7 @@ fn main() {
             import_profile,
             set_game_path,
             find_installs,
+            detect_games,
             game_settings,
             game_env,
             set_game_settings,

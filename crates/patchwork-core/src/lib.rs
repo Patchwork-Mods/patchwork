@@ -63,7 +63,7 @@ use std::time::Duration;
 
 pub use error::{Error, Result};
 pub use patchwork::{
-    Builder, Captured, Change, ConfigFileInfo, ConfigView, DeployStatus, GameInstall,
+    Builder, Captured, Change, ConfigFileInfo, ConfigView, DeployStatus, Detected, GameInstall,
     HISTORY_LIMIT, HistoryEntry, ImportOptions, Imported, KnownSummary, KnownVersions, ListInfo,
     Lookup, ModOptionsInfo, ModOptionsView, Patchwork, ProfileChange, SyncApplied, ToolRan,
     latest_version, newer_version,

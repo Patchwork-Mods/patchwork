@@ -10,8 +10,8 @@ import { modsView, setModsView } from "./mods.js";
 import { refresh } from "./profile.js";
 import { showMissed } from "./daemon.js";
 import { invoke } from "./state.js";
+import { detectGames } from "./games.js";
 // these only wire up their parts of the page
-import "./games.js";
 import "./browse.js";
 import "./list.js";
 import "./config.js";
@@ -76,3 +76,5 @@ const shown = refresh()
   .catch(() => {});
 
 shown.then(showMissed).catch(() => {});
+// Games installed or moved since last time; quiet unless it finds any.
+shown.then(() => detectGames({ quiet: true })).catch(() => {});

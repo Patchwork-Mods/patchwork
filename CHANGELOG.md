@@ -10,6 +10,7 @@ dialog shows, so the heading has to match the version being released.
 - You can now follow mods, which will give you a notification when a new update comes out.
 - Cleaned up the mod tab and improved the buttons
 - Shows when a Steam game is on a beta branch beside the profile's name
+- Finds installed games in Steam, GOG and Epic each time Patchwork opens, or with the new Find games button, and notices when a game set up has been moved or uninstalled
 
 ### Themes
 

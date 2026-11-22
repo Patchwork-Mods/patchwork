@@ -366,6 +366,24 @@ impl Builder {
     }
 }
 
+/// What [`Patchwork::detect_games`] did, by game id.
+#[derive(Debug, Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Detected {
+    /// Games that weren't set up and now are.
+    pub added: Vec<String>,
+    /// Games whose folder had gone, moved to where they were found now.
+    pub moved: Vec<String>,
+    /// Games whose folder has gone and that couldn't be found again. Their
+    /// settings are kept, in case it's on a drive that isn't plugged in.
+    pub missing: Vec<String>,
+    /// Games that aren't set up and were found in more than one place, so
+    /// the user has to pick.
+    pub ambiguous: Vec<String>,
+    /// Games that were found but couldn't be set up, with why.
+    pub failed: Vec<(String, String)>,
+}
+
 /// Everything a frontend needs. The CLI is a thin layer over this, and a GUI
 /// should be able to be one too.
 pub struct Patchwork {
@@ -678,6 +696,44 @@ impl Patchwork {
     pub fn find_installs(&self, game: &str) -> Result<Vec<Found>> {
         let registry = self.registry();
         Ok(Locator::scan().find(&registry.game(game)?.value))
+    }
+
+    /// Brings every game's install folder up to date with what `locator`
+    /// finds: games that aren't set up are set up where they're found, and
+    /// games whose folder has gone are moved to where they're found now. A
+    /// game that's set up and whose folder is still there is never moved,
+    /// and nothing is set up for a game found in more than one place.
+    pub fn detect_games(&self, locator: &Locator) -> Detected {
+        let registry = self.registry();
+        let mut detected = Detected::default();
+        for entry in registry.games().filter(|e| !e.value.hidden) {
+            let game = &entry.value;
+            let current = match self.game_install(&game.id) {
+                Ok(current) => current.map(|i| i.path),
+                Err(e) => {
+                    detected.failed.push((game.id.clone(), e.to_string()));
+                    continue;
+                }
+            };
+            if current.as_ref().is_some_and(|p| p.is_dir()) {
+                continue;
+            }
+            let found = locator.find(game);
+            let [found] = found.as_slice() else {
+                if found.len() > 1 && current.is_none() {
+                    detected.ambiguous.push(game.id.clone());
+                } else if current.is_some() {
+                    detected.missing.push(game.id.clone());
+                }
+                continue;
+            };
+            match self.set_game_path(&game.id, &found.path) {
+                Ok(_) if current.is_some() => detected.moved.push(game.id.clone()),
+                Ok(_) => detected.added.push(game.id.clone()),
+                Err(e) => detected.failed.push((game.id.clone(), e.to_string())),
+            }
+        }
+        detected
     }
 
     /// The ways `game` can be started, the default one marked. `None` if
