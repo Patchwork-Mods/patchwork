@@ -35,6 +35,13 @@ pub(crate) enum DaemonCommand {
     /// Say how long a periodic task leaves between runs, such as `6h`, or
     /// with `default` go back to its own schedule.
     Every { task: String, every: String },
+    /// Turn a task's desktop notifications on or off, such as the update
+    /// check's for mods you follow (`patchwork follow`).
+    Notify {
+        task: String,
+        #[arg(value_parser = ["on", "off"])]
+        on: String,
+    },
     /// Run the daemon here until it's stopped. This is what `install` has
     /// the system run.
     Run,
@@ -118,10 +125,16 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
                 let on = own.enabled.unwrap_or_else(|| task.default_enabled());
                 let every = own
                     .every
+                    .as_ref()
                     .map(|e| format!(", every {e}"))
                     .unwrap_or_default();
+                let notify = match task.notifies() {
+                    Some(_) if own.notifies() => ", notifies",
+                    Some(_) => ", doesn't notify",
+                    None => "",
+                };
                 println!(
-                    "{} ({}{every}): {}",
+                    "{} ({}{every}{notify}): {}",
                     task.id(),
                     if on { "on" } else { "off" },
                     task.description()
@@ -151,6 +164,17 @@ pub(crate) async fn run(paths: Paths, command: DaemonCommand) -> Result<()> {
                 Some(every) => println!("{task} runs every {every}"),
                 None => println!("{task} runs on its own schedule"),
             }
+        }
+        DaemonCommand::Notify { task, on } => {
+            let id = known_task(&task)?;
+            if !daemon::tasks()
+                .iter()
+                .any(|t| t.id() == id && t.notifies().is_some())
+            {
+                anyhow::bail!("{task} doesn't send notifications");
+            }
+            settings::set_notify(&paths, id, on == "on")?;
+            println!("{task}'s notifications are {on}");
         }
         DaemonCommand::Run => {
             #[cfg(windows)]

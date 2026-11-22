@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use patchwork_core::Patchwork;
 use patchwork_core::edits;
+use patchwork_core::follow::{Follows, set_followed};
 use patchwork_core::lock::mod_key;
 use patchwork_core::order::{self, SortKey};
 use patchwork_core::profile::ProfileMod;
@@ -358,6 +359,51 @@ pub(crate) async fn unpin(pw: &Patchwork, explicit: &Option<String>, name: Strin
         .and_then(|m| m.version.as_deref())
         .unwrap_or("its newest version");
     println!("unpinned {name}; it's now at {version}");
+    Ok(())
+}
+
+/// `patchwork follow` and `patchwork unfollow`.
+pub(crate) fn follow(
+    pw: &Patchwork,
+    explicit: &Option<String>,
+    name: Option<String>,
+    follow: bool,
+) -> Result<()> {
+    let Some(name) = name else {
+        let follows = Follows::load(pw.paths())?;
+        if follows.mods.is_empty() {
+            println!("you don't follow any mods; `patchwork follow <mod>` does");
+        }
+        for key in &follows.mods {
+            println!("{key}");
+        }
+        return Ok(());
+    };
+    let (_, loaded) = selected(pw, explicit)?;
+    let m = loaded
+        .mods
+        .iter()
+        .find(|m| m.name == name)
+        .with_context(|| format!("{} has no mod named `{name}`", loaded.label()))?;
+    set_followed(pw.paths(), &m.source, &m.id, follow)?;
+    if !follow {
+        println!("no longer following {name}");
+        return Ok(());
+    }
+    println!("following {name} in every profile that has it");
+    let settings = patchwork_daemon::DaemonSettings::load(pw.paths())?;
+    let updates = settings.task("updates");
+    if patchwork_daemon::service::installed()?.is_none() {
+        println!(
+            "the daemon isn't installed, so nothing will tell you; `patchwork daemon install` sets it up"
+        );
+    } else if !settings.on() || updates.enabled == Some(false) {
+        println!(
+            "the daemon's update check is off, so nothing will tell you; `patchwork daemon enable updates` turns it on"
+        );
+    } else if !updates.notifies() {
+        println!("its notifications are off; `patchwork daemon notify updates on` turns them on");
+    }
     Ok(())
 }
 

@@ -133,6 +133,18 @@ export function trashIcon() {
   return svg;
 }
 
+/** A bell, for following a mod (see `followButton` in mods.js). */
+export function bellIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0");
+  svg.append(path);
+  return svg;
+}
+
 /**
  * Asks for a folder with the system's own picker and puts it in `input`.
  * Leaves `input` alone if the picker is cancelled.

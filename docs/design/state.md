@@ -10,6 +10,8 @@ and `<data>` are the platform's usual config and data directories, such as
 - `<config>/games/`, `<config>/rulesets/`, `<config>/themes/`: the user's
   own definitions and themes
 - `<config>/daemon.toml`: see Daemon below
+- `<config>/follows.toml`: the mods followed for update notifications, as
+  `source:id` (`mods`); the same on linked computers
 - `<config>/gui.toml`: the app's own preferences, such as which theme is
   picked, for every game and for single games (`[theme.games]`), and the
   games starred as favorites (`favorites`)
@@ -51,13 +53,16 @@ and `<data>` are the platform's usual config and data directories, such as
 
 - `<data>/sync/`: this machine's iroh key, which profiles it syncs, the
   nicknames the user gave other machines (`names.toml`, never synced),
+  the followed mods as of the last sync with linked computers
+  (`follows.toml`, to tell changes made here from ones that arrived),
   iroh's data, and what the daemon synced while the app was closed
   (`missed.json`)
 
 ## Daemon
 
 - `<config>/daemon.toml`: which of the daemon's tasks are on, and how often
-  periodic ones run (`[tasks.<id>]`, `enabled`, `every`)
+  periodic ones run (`[tasks.<id>]`, `enabled`, `every`), and whether a
+  task's desktop notifications are on (`notify`)
 - `<data>/daemon/`: where the running daemon can be reached
   (`daemon.json`), its log, and each task's own files under `tasks/<id>/`,
   such as a periodic task's past runs (`runs.json`) and what the update

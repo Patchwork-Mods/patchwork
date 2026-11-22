@@ -34,9 +34,11 @@ export async function renderDaemon() {
 
 /**
  * A checkbox for each of the daemon's tasks, with when it next runs if it's
- * running. Rows already shown are updated in place, so refreshing doesn't
- * take focus from a checkbox or flip one that's being changed. While the
- * whole daemon's off they're greyed out, and keep their own settings.
+ * running, and under a task that sends desktop notifications one more for
+ * those (`.daemon-notify`). Rows already shown are updated in place, so
+ * refreshing doesn't take focus from a checkbox or flip one that's being
+ * changed. While the whole daemon's off they're greyed out, and keep their
+ * own settings.
  */
 function showTasks({ enabled, tasks }, running) {
   const master = $("#daemon-enabled");
@@ -44,11 +46,11 @@ function showTasks({ enabled, tasks }, running) {
   const on = master.checked;
   const list = $("#daemon-tasks");
   list.classList.toggle("off", !on);
-  const shown = [...list.children];
-  const same = shown.length === tasks.length && tasks.every((t, i) => shown[i].dataset.task === t.id);
-  if (!same) {
+  const keys = tasks.flatMap((t) => (t.notifies ? [t.id, `${t.id}.notify`] : [t.id]));
+  const shown = [...list.children].map((row) => row.dataset.task);
+  if (shown.join() !== keys.join()) {
     list.replaceChildren(
-      ...tasks.map((task) =>
+      ...tasks.flatMap((task) => [
         h(
           "label",
           { "data-task": task.id },
@@ -60,11 +62,22 @@ function showTasks({ enabled, tasks }, running) {
           h("span", {}, task.description),
           h("small", { class: "muted" }),
         ),
-      ),
+        task.notifies &&
+          h(
+            "label",
+            { class: "daemon-notify", "data-task": `${task.id}.notify` },
+            h("input", {
+              type: "checkbox",
+              name: `daemon-notify-${task.id}`,
+              onchange: (e) => setNotify(task.id, e.target),
+            }),
+            h("span", {}, task.notifies),
+          ),
+      ].filter(Boolean)),
     );
   }
-  for (const [i, task] of tasks.entries()) {
-    const row = list.children[i];
+  for (const task of tasks) {
+    const row = list.querySelector(`[data-task="${task.id}"]`);
     const input = row.querySelector("input");
     if (!input.dataset.busy) input.checked = task.enabled;
     input.disabled = !on || !!input.dataset.busy;
@@ -73,15 +86,32 @@ function showTasks({ enabled, tasks }, running) {
     if (on && now?.running) note = "running now";
     else if (on && now?.enabled && now.next) note = `next ${new Date(now.next).toLocaleString()}`;
     row.querySelector("small").textContent = note;
+    const notify = list.querySelector(`[data-task="${task.id}.notify"] input`);
+    if (notify) {
+      if (!notify.dataset.busy) notify.checked = task.notify;
+      notify.disabled = !on || !input.checked || !!notify.dataset.busy;
+    }
   }
 }
 
-async function setTask(id, input) {
+/** Greys out each notifications checkbox whose task is off, or all while the daemon is. */
+function greyNotifies() {
+  const on = $("#daemon-enabled").checked;
+  for (const notify of $("#daemon-tasks").querySelectorAll(".daemon-notify")) {
+    const id = notify.dataset.task.replace(/\.notify$/, "");
+    const task = $("#daemon-tasks").querySelector(`[data-task="${id}"] input`);
+    const input = notify.querySelector("input");
+    input.disabled = !on || !task?.checked || !!input.dataset.busy;
+  }
+}
+
+/** Saves one of the daemon's checkboxes with `save()`, putting it back if that fails. */
+async function setCheckbox(input, save, done) {
   input.disabled = true;
   input.dataset.busy = "1";
   try {
-    await invoke("daemon_set_task", { id, enabled: input.checked });
-    status(input.checked ? "Turned on; it starts once Patchwork is closed" : "Turned off");
+    await save();
+    status(done(input.checked));
   } catch (err) {
     input.checked = !input.checked;
     $("#daemon-error").textContent = String(err);
@@ -90,7 +120,24 @@ async function setTask(id, input) {
   } finally {
     delete input.dataset.busy;
     input.disabled = !$("#daemon-enabled").checked;
+    greyNotifies();
   }
+}
+
+function setTask(id, input) {
+  return setCheckbox(
+    input,
+    () => invoke("daemon_set_task", { id, enabled: input.checked }),
+    (on) => (on ? "Turned on; it starts once Patchwork is closed" : "Turned off"),
+  );
+}
+
+function setNotify(id, input) {
+  return setCheckbox(
+    input,
+    () => invoke("daemon_set_notify", { id, notify: input.checked }),
+    (on) => (on ? "Notifications on" : "Notifications off"),
+  );
 }
 
 $("#daemon-enabled").addEventListener("change", async (e) => {
@@ -110,6 +157,7 @@ $("#daemon-enabled").addEventListener("change", async (e) => {
     input.disabled = false;
     list.classList.toggle("off", !input.checked);
     for (const t of tasks()) t.disabled = !input.checked || !!t.dataset.busy;
+    greyNotifies();
   }
 });
 

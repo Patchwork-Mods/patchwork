@@ -37,6 +37,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, watch};
 
+mod notify;
 pub mod service;
 pub mod settings;
 pub mod sync;

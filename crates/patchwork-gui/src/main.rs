@@ -27,6 +27,7 @@ use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, Dest, Ro
 use patchwork_core::edits::{self, FieldInfo, FieldValue};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter, Silent};
+use patchwork_core::follow::Follows;
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
 use patchwork_core::launch::{self, LaunchOption, Via};
@@ -298,6 +299,9 @@ struct UiMod {
     /// What it lists that it may not need, and whether the profile has
     /// each; empty until it's locked.
     soft_dependencies: Vec<UiSoftDependency>,
+    /// Whether the user follows it, to be told about its new versions (see
+    /// [`patchwork_core::follow`]).
+    followed: bool,
 }
 
 /// A soft dependency of a profile's mod; see [`Lockfile::soft_dependencies`].
@@ -658,6 +662,8 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
             Some((key, soft))
         })
         .collect();
+    // only marks, so a list that can't be read is as good as none
+    let follows = Follows::load(pw.paths()).unwrap_or_default();
     let mods = loaded
         .mods
         .into_iter()
@@ -674,6 +680,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 .flatten();
             UiMod {
                 update,
+                followed: follows.mods.contains(&key),
                 shown_id: pw.display_id(lock.as_ref(), &m),
                 versions: known.map(|k| k.versions),
                 summary,
@@ -2172,6 +2179,44 @@ fn set_theme_prefs(app: State<'_, App>, prefs: themes::ThemePrefs) -> CmdResult<
 }
 
 /// Pins `game` to the top of the game picker, or unpins it.
+/// Whether the user would hear about a followed mod's new versions, and if
+/// not, why not.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Followed {
+    /// Why no notification would come, if one wouldn't.
+    unheard: Option<&'static str>,
+}
+
+/// Follows the mod `source:id`, or stops following it.
+#[tauri::command]
+fn set_followed(
+    app: State<'_, App>,
+    source: String,
+    id: String,
+    follow: bool,
+) -> CmdResult<Followed> {
+    let paths = app.pw.paths();
+    patchwork_core::follow::set_followed(paths, &source, &id, follow).map_err(msg)?;
+    let settings = patchwork_daemon::DaemonSettings::load(paths).map_err(msg)?;
+    let updates = settings.task("updates");
+    let unheard = if !follow {
+        None
+    } else if patchwork_daemon::service::installed()
+        .map_err(msg)?
+        .is_none()
+    {
+        Some("the background daemon isn't installed")
+    } else if !settings.on() || updates.enabled == Some(false) {
+        Some("the background update check is off")
+    } else if !updates.notifies() {
+        Some("update notifications are off")
+    } else {
+        None
+    };
+    Ok(Followed { unheard })
+}
+
 #[tauri::command]
 fn set_favorite(app: State<'_, App>, game: String, favorite: bool) -> CmdResult<()> {
     let config = &app.pw.paths().config;
@@ -2431,6 +2476,8 @@ fn main() {
             daemon::daemon_uninstall,
             daemon::daemon_tasks,
             daemon::daemon_set_task,
+            daemon::daemon_set_notify,
+            set_followed,
             daemon::daemon_set_enabled,
             cli::install_cli,
             sync::sync_status,

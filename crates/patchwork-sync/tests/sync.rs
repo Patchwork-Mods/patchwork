@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use iroh::endpoint::presets;
 use patchwork_core::Patchwork;
+use patchwork_core::follow::{Follows, set_followed};
 use patchwork_core::game::GameDef;
 use patchwork_core::order::Position;
 use patchwork_core::paths::Paths;
@@ -287,6 +288,35 @@ async fn linked_computers_get_each_others_profiles_including_new_ones() {
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert!(!has(&a, &later));
         assert!(has(&b, &later));
+    };
+    both_running((&a_node, &a), (&b_node, &b), steps).await;
+
+    a_node.shutdown().await.unwrap();
+    b_node.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn linked_computers_follow_the_same_mods() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = patchwork(&tmp.path().join("a"));
+    let b = patchwork(&tmp.path().join("b"));
+    // followed before linking, so it goes over once they are
+    set_followed(a.paths(), "local", "before", true).unwrap();
+    let a_node = node(&a).await;
+    let b_node = node(&b).await;
+    let ticket = a_node.link_devices(&a).await.unwrap();
+    b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
+
+    let follows =
+        |pw: &Patchwork, id: &str| Follows::load(pw.paths()).is_ok_and(|f| f.follows("local", id));
+    let steps = async {
+        until(|| follows(&b, "before")).await;
+        // followed on one while both run, then dropped on the other
+        set_followed(b.paths(), "local", "later", true).unwrap();
+        until(|| follows(&a, "later")).await;
+        set_followed(a.paths(), "local", "later", false).unwrap();
+        until(|| !follows(&b, "later")).await;
+        assert!(follows(&a, "before") && follows(&b, "before"));
     };
     both_running((&a_node, &a), (&b_node, &b), steps).await;
 

@@ -10,6 +10,7 @@
 //! [tasks.updates]
 //! enabled = true
 //! every = "6h"
+//! notify = true
 //! ```
 //!
 //! `enabled = false` turns the whole daemon off: it runs none of its tasks,
@@ -45,9 +46,18 @@ pub struct TaskSettings {
     /// or `"30m"`, in place of its own schedule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub every: Option<String>,
+    /// Whether a task that sends desktop notifications (see
+    /// [`crate::Task::notifies`]) does; on unless it says not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<bool>,
 }
 
 impl TaskSettings {
+    /// See [`TaskSettings::notify`].
+    pub fn notifies(&self) -> bool {
+        self.notify.unwrap_or(true)
+    }
+
     /// [`TaskSettings::every`], if it's set and makes sense.
     pub fn every(&self) -> Result<Option<SignedDuration>> {
         let Some(every) = &self.every else {
@@ -110,6 +120,15 @@ pub fn set_enabled(paths: &Paths, id: &str, enabled: bool) -> Result<()> {
     Ok(())
 }
 
+/// Turns task `id`'s desktop notifications on or off.
+pub fn set_notify(paths: &Paths, id: &str, notify: bool) -> Result<()> {
+    let mut settings = DaemonSettings::load(paths)?;
+    settings.tasks.entry(id.to_owned()).or_default().notify = Some(notify);
+    settings.save(paths)?;
+    drop(crate::pause(paths)?);
+    Ok(())
+}
+
 /// Sets how long task `id` leaves between runs (see
 /// [`TaskSettings::every`]), or with `None` goes back to its own schedule.
 pub fn set_every(paths: &Paths, id: &str, every: Option<&str>) -> Result<()> {
@@ -134,12 +153,20 @@ mod tests {
         assert!(DaemonSettings::load(&paths).unwrap().on());
         set_enabled(&paths, "sync", false).unwrap();
         set_every(&paths, "updates", Some("6h")).unwrap();
+        assert!(
+            DaemonSettings::load(&paths)
+                .unwrap()
+                .task("updates")
+                .notifies()
+        );
+        set_notify(&paths, "updates", false).unwrap();
         let settings = DaemonSettings::load(&paths).unwrap();
         assert_eq!(settings.task("sync").enabled, Some(false));
         assert_eq!(
             settings.task("updates").every().unwrap(),
             Some(SignedDuration::from_hours(6))
         );
+        assert!(!settings.task("updates").notifies());
         assert!(set_every(&paths, "updates", Some("soon")).is_err());
         assert_eq!(settings.task("nothing").enabled, None);
         set_on(&paths, false).unwrap();

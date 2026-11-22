@@ -130,6 +130,11 @@ impl Paths {
         self.config.join("daemon.toml")
     }
 
+    /// The mods the user follows (see [`crate::follow`]).
+    pub fn follows(&self) -> PathBuf {
+        self.config.join("follows.toml")
+    }
+
     pub fn game_installs(&self) -> PathBuf {
         self.data.join("games")
     }

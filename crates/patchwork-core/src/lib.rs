@@ -28,6 +28,7 @@ pub mod environment;
 pub mod error;
 pub mod event;
 pub mod ext;
+pub mod follow;
 pub mod fsutil;
 pub mod game;
 pub mod hash;

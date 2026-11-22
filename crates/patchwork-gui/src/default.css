@@ -1294,6 +1294,36 @@ select.mod-version {
   cursor: help;
 }
 
+/* A mod the user follows, to be told about its new versions. */
+.mod-followed {
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: middle;
+  cursor: help;
+}
+
+/* The bell in .mod-followed and on the Follow button. */
+.mod-followed svg,
+button.follow svg {
+  width: 0.9em;
+  height: 0.9em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+button.follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+button.follow[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+
 /* A mod with choices (like an installer's options) nothing's been picked
    in yet. */
 .mod-options {
@@ -3245,6 +3275,15 @@ legend {
 
 .daemon-tasks.off {
   opacity: 0.5;
+}
+
+/* A task's notifications checkbox, under the task, greyed out while it's off. */
+.daemon-tasks .daemon-notify {
+  padding-left: 24px;
+}
+
+.daemon-tasks .daemon-notify:has(input:disabled) {
+  opacity: 0.6;
 }
 
 /* A section's title with a rule running from it to the right edge. */

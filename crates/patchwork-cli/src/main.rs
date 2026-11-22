@@ -68,6 +68,11 @@ enum Command {
     Pin { name: String, version: String },
     /// Let a pinned mod follow the newest version again.
     Unpin { name: String },
+    /// Get a desktop notification when a mod has a new version (from the
+    /// daemon's update check), or with no name list the mods you follow.
+    Follow { name: Option<String> },
+    /// Stop getting notifications for a mod's new versions.
+    Unfollow { name: String },
     /// List the versions a mod can be pinned to, newest first.
     Versions { name: String },
     /// Show which versions of the game a mod works with, or say so in place
@@ -373,6 +378,8 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Disable { name } => mods::disable(&pw, &cli.profile, name)?,
         Command::Pin { name, version } => mods::pin(&pw, &cli.profile, name, version).await?,
         Command::Unpin { name } => mods::unpin(&pw, &cli.profile, name).await?,
+        Command::Follow { name } => mods::follow(&pw, &cli.profile, name, true)?,
+        Command::Unfollow { name } => mods::follow(&pw, &cli.profile, Some(name), false)?,
         Command::Supports(args) => deps::supports(&pw, &cli.profile, args)?,
         Command::Env(args) => options::env(&pw, &cli.profile, args).await?,
         Command::Instance { value, reset } => options::instance(&pw, &cli.profile, value, reset)?,

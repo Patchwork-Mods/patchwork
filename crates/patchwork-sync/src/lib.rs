@@ -11,7 +11,8 @@
 //! - Between one person's own computers ([`Node::link_devices`]): every
 //!   profile on any of them, including ones made later, is kept in step on
 //!   all of them. A devices document lists each profile's document, as
-//!   `profile/<uuid>`, with a ticket to it.
+//!   `profile/<uuid>`, with a ticket to it, and the mods the user follows
+//!   (see [`follows`]).
 //! - With friends ([`Node::share`], writable): everyone can change the
 //!   profile, and every change goes to everyone. Whoever can write to a
 //!   document puts themselves in it as `peer/<endpoint id>`, so everyone
@@ -66,6 +67,7 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
 pub mod files;
+mod follows;
 pub mod moves;
 pub mod names;
 
@@ -558,6 +560,7 @@ impl Node {
             .parse()
             .map_err(|e| anyhow!("bad document id `{id}`: {e}"))?;
         self.drop_doc(Watched::Devices, id).await?;
+        follows::forget(&self.dir)?;
         self.save_list(&list)
     }
 
@@ -658,7 +661,7 @@ impl Node {
             self.write(doc, vec![(key, serde_json::to_vec(&ticket)?)])
                 .await?;
         }
-        Ok(())
+        self.sync_follows(pw, doc).await
     }
 
     /// Whether `synced` was here and has since been removed, so should stop
@@ -797,6 +800,12 @@ impl Node {
                     Err(broadcast::error::RecvError::Closed) => return Ok(()),
                 },
                 _ = hand_edits.tick() => {
+                    if self.follows_changed(pw)
+                        && let Some(doc) = self.devices_doc().await?
+                        && let Err(e) = self.sync_follows(pw, &doc).await
+                    {
+                        on_sync(Err(e));
+                    }
                     for synced in self.synced()? {
                         let changed = synced.writable
                             && !synced.moved

@@ -4,6 +4,7 @@ import { run, state, status } from "./state.js";
 import {
   $,
   ago,
+  bellIcon,
   chevronIcon,
   compact,
   h,
@@ -107,6 +108,51 @@ function unsharedMark(m) {
   if (!(state.profile?.unshared ?? []).includes(m.name)) return null;
   const why = "Added on this computer; it isn't synced with whoever shares this profile";
   return h("span", { class: "mod-unshared muted", title: why }, "only here");
+}
+
+const FOLLOWED = "You follow it, so you're told when a new version is out";
+
+/** Marks a mod the user follows (see `followButton`). */
+function followMark(m) {
+  if (!m.followed) return null;
+  return h("span", { class: "mod-followed muted", title: FOLLOWED, "aria-label": "Followed" }, bellIcon());
+}
+
+/**
+ * Follows the mod, so the daemon's update check sends a desktop
+ * notification when a new version is out, or stops following it. Mods are
+ * followed by source and id, so in every profile that has them. Updates
+ * the button and the mark in place rather than drawing the mod again, which
+ * would take focus from the button.
+ */
+function followButton(m) {
+  const label = h("span");
+  const button = h("button", { type: "button", class: "follow" }, bellIcon(), label);
+  const show = () => {
+    button.setAttribute("aria-pressed", String(!!m.followed));
+    button.title = m.followed ? `${FOLLOWED}. Click to stop.` : "Get a notification when a new version is out";
+    label.textContent = m.followed ? "Following" : "Follow";
+  };
+  show();
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const follow = !m.followed;
+      const { unheard } = await run("set_followed", { source: m.source, id: m.id, follow });
+      m.followed = follow;
+      show();
+      const marks = button.closest(".mod-row")?.querySelector(".mod-name")
+        ?? button.closest(".mod-card")?.querySelector(".card-marks");
+      marks?.querySelector(".mod-followed")?.remove();
+      if (follow) marks?.append(followMark(m));
+      if (!follow) status(`Stopped following ${m.name}`);
+      else if (unheard) status(`Following ${m.name}, but nothing will tell you yet: ${unheard} (Settings → Background)`);
+      else status(`Following ${m.name}; you'll get a notification when a new version is out`);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
 }
 
 /** Marks a mod with choices nothing's been picked in yet, like an
@@ -441,6 +487,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
           unsharedMark(m),
           optionsMark(m),
           requirementsMark(m),
+          followMark(m),
         ),
         item.author && h("span", { class: "author" }, item.author),
       ),
@@ -532,6 +579,7 @@ function rowDetails(m, item, onRemove) {
       "div",
       { class: "row-actions" },
       editButton(m),
+      m.versioned && followButton(m),
       urlButton(item.url, "Website"),
       urlButton(item.author_url, "Author's mods"),
       m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
@@ -755,6 +803,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
       unsharedMark(m),
       optionsMark(m),
       requirementsMark(m),
+      followMark(m),
     ),
     update,
     h(
@@ -838,6 +887,7 @@ function cardMore(m, item, settings) {
       { class: "card-actions" },
       editButton(m),
       settings,
+      m.versioned && followButton(m),
       m.versioned && h("button", { type: "button", onclick: () => showChangelog(m) }, "Changelog"),
       h(
         "button",

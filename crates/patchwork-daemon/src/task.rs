@@ -33,6 +33,13 @@ pub trait Task: Send + Sync {
     /// Whether it's on when `daemon.toml` doesn't say.
     fn default_enabled(&self) -> bool;
 
+    /// If it sends desktop notifications, names what they're about, as a
+    /// setting, such as "Notify me about mods I follow". They can be turned
+    /// off on their own (see [`TaskSettings::notify`]).
+    fn notifies(&self) -> Option<&'static str> {
+        None
+    }
+
     /// When it next needs patchwork open, without opening it. Asked again
     /// whenever the daemon's deciding what to do, and at least every
     /// minute while it's idle.
@@ -93,6 +100,18 @@ impl Cx {
     /// Where it can keep files of its own.
     pub fn dir(&self) -> PathBuf {
         self.paths.daemon().join("tasks").join(self.id)
+    }
+
+    /// Shows a desktop notification, unless the user's turned them off
+    /// for this task (see [`TaskSettings::notify`]). One that can't be
+    /// shown is noted in the log instead.
+    pub async fn notify(&self, summary: &str, body: &str) {
+        if !self.settings.notifies() {
+            return;
+        }
+        if let Err(e) = crate::notify::show(summary, body).await {
+            self.record_error(format!("couldn't show a notification: {e:#}"));
+        }
     }
 
     /// Notes something it did in the daemon's log and status.
@@ -166,6 +185,10 @@ pub trait Job: Send + Sync {
     fn id(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn default_enabled(&self) -> bool;
+    /// See [`Task::notifies`].
+    fn notifies(&self) -> Option<&'static str> {
+        None
+    }
     /// How often it runs unless `daemon.toml` says (see
     /// [`TaskSettings::every`]).
     fn schedule(&self) -> Box<dyn Schedule>;
@@ -232,6 +255,10 @@ impl<J: Job> Task for Periodic<J> {
 
     fn default_enabled(&self) -> bool {
         self.0.default_enabled()
+    }
+
+    fn notifies(&self) -> Option<&'static str> {
+        self.0.notifies()
     }
 
     fn wanted(&self, cx: &Cx) -> Wanted {

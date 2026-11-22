@@ -2,7 +2,8 @@
 //! every profile whose source lists them, so the app has update marks ready
 //! when it opens, and keeps a list of what can be updated
 //! ([`found`]). Nothing is ever updated or deployed: that's still up to
-//! whoever's at the computer.
+//! whoever's at the computer. New versions of mods the user follows (see
+//! [`patchwork_core::follow`]) get a desktop notification.
 
 use std::collections::HashSet;
 use std::fs;
@@ -11,6 +12,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use futures_util::future::BoxFuture;
 use jiff::{SignedDuration, Timestamp};
+use patchwork_core::follow::Follows;
 use patchwork_core::paths::Paths;
 use patchwork_core::{KnownVersions, Patchwork};
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,11 @@ pub struct Update {
     pub game: String,
     /// The mod's name in the profile.
     pub name: String,
+    /// Left out by versions from before mods could be followed.
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub id: String,
     /// What it's pinned to or locked at.
     pub current: Option<String>,
     pub newer: String,
@@ -82,6 +89,10 @@ impl Job for Updates {
         true
     }
 
+    fn notifies(&self) -> Option<&'static str> {
+        Some("Notify me about mods I follow")
+    }
+
     fn schedule(&self) -> Box<dyn Schedule> {
         Box::new(Every(EVERY))
     }
@@ -111,8 +122,64 @@ impl Job for Updates {
                 ));
             }
             save_found(cx.paths(), &found)?;
+            let follows = Follows::load(cx.paths()).unwrap_or_else(|e| {
+                cx.record_error(format!("couldn't read the mods you follow: {e:#}"));
+                Follows::default()
+            });
+            if let Some((summary, body)) = notification(&new, &follows) {
+                cx.notify(&summary, &body).await;
+            }
             Ok(!new.is_empty())
         })
+    }
+}
+
+/// How many mods a notification names before it says "and n more".
+const NAMED: usize = 3;
+
+/// What to tell the user about `new` updates to mods they follow, if any
+/// are: one notification for all of them, naming each mod once however
+/// many profiles have it.
+fn notification(new: &[&Update], follows: &Follows) -> Option<(String, String)> {
+    let mut seen = HashSet::new();
+    let mut mods: Vec<(&Update, Vec<&str>)> = Vec::new();
+    for u in new.iter().filter(|u| follows.follows(&u.source, &u.id)) {
+        if seen.insert((&u.source, &u.id, &u.newer)) {
+            mods.push((u, vec![&u.label]));
+        } else if let Some((_, labels)) = mods
+            .iter_mut()
+            .find(|(m, _)| (&m.source, &m.id, &m.newer) == (&u.source, &u.id, &u.newer))
+        {
+            labels.push(&u.label);
+        }
+    }
+    match mods.as_slice() {
+        [] => None,
+        [(u, labels)] => Some((
+            format!("{} {} is out", u.name, u.newer),
+            format!("It can be updated in {}.", list(labels)),
+        )),
+        _ => {
+            let names: Vec<&str> = mods.iter().map(|(u, _)| u.name.as_str()).collect();
+            Some((
+                format!("{} mods you follow have updates", mods.len()),
+                format!("{}.", list(&names)),
+            ))
+        }
+    }
+}
+
+/// "a", "a and b", "a, b and c", or "a, b, c and 2 more".
+fn list(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        _ if items.len() > NAMED => format!(
+            "{} and {} more",
+            items[..NAMED].join(", "),
+            items.len() - NAMED
+        ),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -159,6 +226,8 @@ async fn check(pw: &Patchwork) -> Result<Found> {
                     label: label.clone(),
                     game: loaded.game.clone(),
                     name: m.name.clone(),
+                    source: m.source.clone(),
+                    id: m.id.clone(),
                     current,
                     newer,
                 });
@@ -166,4 +235,52 @@ async fn check(pw: &Patchwork) -> Result<Found> {
         }
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn update(label: &str, source: &str, id: &str, newer: &str) -> Update {
+        Update {
+            profile: uuid::Uuid::nil(),
+            label: label.into(),
+            game: "ror2".into(),
+            name: id.into(),
+            source: source.into(),
+            id: id.into(),
+            current: Some("1.0.0".into()),
+            newer: newer.into(),
+        }
+    }
+
+    #[test]
+    fn only_followed_mods_are_notified_once_each() {
+        let mut follows = Follows::default();
+        follows.mods.insert("ts:A".into());
+        follows.mods.insert("ts:B".into());
+        let a1 = update("Main", "ts", "A", "2.0.0");
+        let a2 = update("Testing", "ts", "A", "2.0.0");
+        let c = update("Main", "ts", "C", "3.0.0");
+        assert_eq!(notification(&[&c], &follows), None);
+        assert_eq!(
+            notification(&[&a1, &c, &a2], &follows),
+            Some((
+                "A 2.0.0 is out".into(),
+                "It can be updated in Main and Testing.".into()
+            ))
+        );
+        let b = update("Main", "ts", "B", "1.1.0");
+        assert_eq!(
+            notification(&[&a1, &b, &a2], &follows),
+            Some(("2 mods you follow have updates".into(), "A and B.".into()))
+        );
+    }
+
+    #[test]
+    fn lists_name_a_few_then_count() {
+        assert_eq!(list(&["a"]), "a");
+        assert_eq!(list(&["a", "b", "c"]), "a, b and c");
+        assert_eq!(list(&["a", "b", "c", "d", "e"]), "a, b, c and 2 more");
+    }
 }

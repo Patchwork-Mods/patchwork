@@ -171,6 +171,11 @@ pub struct DaemonTask {
     enabled: bool,
     /// How long it leaves between runs, if `daemon.toml` says.
     every: Option<String>,
+    /// What its desktop notifications are about, as a setting, if it sends
+    /// any.
+    notifies: Option<&'static str>,
+    /// Whether it sends them.
+    notify: bool,
 }
 
 #[tauri::command]
@@ -184,6 +189,8 @@ pub fn daemon_tasks(app: State<'_, App>) -> CmdResult<DaemonTasks> {
                 id: task.id(),
                 description: task.description(),
                 enabled: own.enabled.unwrap_or_else(|| task.default_enabled()),
+                notifies: task.notifies(),
+                notify: own.notifies(),
                 every: own.every,
             }
         })
@@ -214,6 +221,22 @@ pub fn daemon_set_task(app: State<'_, App>, id: String, enabled: bool) -> CmdRes
     let paths = app.pw.paths();
     let mut settings = DaemonSettings::load(paths).map_err(msg)?;
     settings.tasks.entry(id).or_default().enabled = Some(enabled);
+    settings.save(paths).map_err(msg)
+}
+
+/// Turns a task's desktop notifications on or off. Like
+/// [`daemon_set_task`], it takes effect once the app's closed.
+#[tauri::command]
+pub fn daemon_set_notify(app: State<'_, App>, id: String, notify: bool) -> CmdResult<()> {
+    if !daemon::tasks()
+        .iter()
+        .any(|t| t.id() == id && t.notifies().is_some())
+    {
+        return Err(format!("the daemon task `{id}` doesn't send notifications"));
+    }
+    let paths = app.pw.paths();
+    let mut settings = DaemonSettings::load(paths).map_err(msg)?;
+    settings.tasks.entry(id).or_default().notify = Some(notify);
     settings.save(paths).map_err(msg)
 }
 
