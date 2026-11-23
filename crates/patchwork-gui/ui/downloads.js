@@ -19,22 +19,33 @@ listen("patchwork://pending", ({ payload }) => {
   waiting = payload.map((pending) => ({ pending, done: false }));
   profileId = state.profile?.id ?? null;
   render();
+  $("#downloads-status").hidden = true;
   const dialog = $("#downloads-dialog");
   if (!dialog.open) dialog.showModal();
   // so "Mod Manager Download" links come back here
   invoke("handle_links").catch((err) => status(`Couldn't take links from the browser: ${err}`, true));
 });
 
+/** Says `text` in the status bar, and in the dialog while it's open, where
+ * background messages (like sync's) can't cover it up. */
+function say(text, isError = false) {
+  status(text, isError);
+  const line = $("#downloads-status");
+  line.textContent = text;
+  line.classList.toggle("error", isError);
+  line.hidden = false;
+}
+
 listen("patchwork://link", ({ payload: e }) => {
   switch (e.kind) {
     case "downloading":
-      return status("Downloading from the browser…");
+      return say("Downloading from the browser…");
     case "failed":
-      return status(e.message, true);
+      return say(`Couldn't download from the browser: ${e.message}`, true);
     case "downloaded": {
       const item = waiting.find((w) => sameFile(w.pending.file, e.file));
       if (item) return markDone(item);
-      return status(`Downloaded ${e.file.source}:${e.file.id}; it's used whenever a profile needs it`);
+      return say(`Downloaded ${e.file.source}:${e.file.id}; it's used whenever a profile needs it`);
     }
   }
 });
@@ -70,7 +81,7 @@ async function chooseFile(item) {
 
 function markDone(item) {
   item.done = true;
-  status(`Downloaded ${item.pending.name}`);
+  say(`Downloaded ${item.pending.name}`);
   render();
   if (waiting.every((w) => w.done)) finish().catch(() => {});
 }

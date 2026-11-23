@@ -433,9 +433,17 @@ fn no_file(
     }
 }
 
-/// The page where a user can download `file` of mod `id` themselves.
+/// The page showing `file` of mod `id`, in its Files tab.
 fn file_page(domain: &str, id: &str, file: &str) -> String {
     format!("https://www.nexusmods.com/{domain}/mods/{id}?tab=files&file_id={file}")
+}
+
+/// The page where a user starts the download of `file` of mod `id`
+/// themselves: Nexus's "Mod Manager Download" one (`nmm=1`), whose
+/// download comes back to patchwork as an `nxm://` link. Without it, the
+/// Files tab's download button hands the browser the archive instead.
+fn download_page(domain: &str, id: &str, file: &str) -> String {
+    format!("{}&nmm=1", file_page(domain, id, file))
 }
 
 /// Picks which of a mod's files `version` refers to. Without a version,
@@ -669,7 +677,7 @@ impl Source for Nexus {
         if response.status() == reqwest::StatusCode::FORBIDDEN {
             let domain = config(ctx)?.game_domain;
             return Ok(Download::NeedsUser {
-                page: file_page(&domain, &mod_id.to_string(), file),
+                page: download_page(&domain, &mod_id.to_string(), file),
             });
         }
         let links: Vec<NexusDownloadLink> = decode(&url, response).await?;

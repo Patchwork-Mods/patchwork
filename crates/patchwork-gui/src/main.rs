@@ -2039,6 +2039,10 @@ fn accept_links(handle: &AppHandle, links: Vec<tauri::Url>) {
                 Ok(work) => work,
                 Err(e) => {
                     let message = e.to_string();
+                    eprintln!(
+                        "link {}: {message}",
+                        link.as_str().split('?').next().unwrap_or_default()
+                    );
                     let _ = handle.emit("patchwork://link", LinkEvent::Failed { message });
                     return;
                 }
@@ -2053,6 +2057,13 @@ fn accept_links(handle: &AppHandle, links: Vec<tauri::Url>) {
                     message: e.to_string(),
                 },
             };
+            // the key in the link is only good for this download, but
+            // still isn't worth printing
+            let shown = link.as_str().split('?').next().unwrap_or_default();
+            match &event {
+                LinkEvent::Failed { message } => eprintln!("link {shown}: {message}"),
+                _ => eprintln!("link {shown}: downloaded"),
+            }
             let _ = handle.emit("patchwork://link", event);
         });
     }
@@ -2397,16 +2408,7 @@ fn main() {
             if let Some(links) = app.deep_link().get_current()? {
                 accept_links(app.handle(), links);
             }
-            // An AppImage has no installer to tell the system it handles
-            // `nxm://` links, so it does that itself each time it starts (it
-            // may have moved). Windows' installer does it too, but only for
-            // the user who installed it.
-            use tauri::utils::config::BundleType;
-            if let Some(BundleType::AppImage | BundleType::Nsis) = selfupdate::installed_from()
-                && let Err(e) = app.deep_link().register_all()
-            {
-                eprintln!("couldn't register for nxm:// links: {e}");
-            }
+            links::on_startup(app.handle());
             cli::refresh_copy(&app.state::<App>());
             let handle = app.handle().clone();
             std::thread::spawn(move || {

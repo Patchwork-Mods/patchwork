@@ -7,15 +7,22 @@
 // deployed by themselves. Both list the other computers syncing, which the
 // user can name to tell apart; names stay on this computer.
 
-import { invoke, listen, run, state, status } from "./state.js";
+import { invoke, listen, run, showWarnings, state, status } from "./state.js";
 import { $, copyText, h } from "./dom.js";
 import { closeProfileMenu, menuTarget, openProfile, refresh, renderSidebar } from "./profile.js";
 import { openGame } from "./games.js";
 import { go } from "./nav.js";
 import { offerDaemon, offerDaemonAfterJoining } from "./daemon.js";
 
+/** The last sync's warnings for each profile (or "" for the whole sync),
+ * so a round of syncs that each warn reads as one message to open rather
+ * than a run of them overwriting each other in the status bar. */
+const syncWarnings = new Map();
+
 listen("patchwork://synced", ({ payload: e }) => {
-  for (const warning of e.warnings) status(warning, true);
+  syncWarnings.set(e.profile ?? "", e.warnings);
+  const all = [...syncWarnings.values()].flat();
+  if (e.warnings.length) showWarnings("Synced", all);
   if (e.changed) {
     if (e.profile && e.profile === state.profile?.id) {
       status("Updated by another computer; deploy to apply the changes");

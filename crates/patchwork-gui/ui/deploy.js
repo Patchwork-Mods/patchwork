@@ -1,6 +1,16 @@
 // Deploying the profile, updating its mods, and progress from main.rs.
 
-import { fixPreviews, gameInfo, invoke, listen, run, state, status, windowFixes } from "./state.js";
+import {
+  fixPreviews,
+  gameInfo,
+  invoke,
+  listen,
+  run,
+  showWarnings,
+  state,
+  status,
+  windowFixes,
+} from "./state.js";
 import { $, h, link } from "./dom.js";
 import { openProfile, renderDeploy, showProfile } from "./profile.js";
 import { renderEntries } from "./changelog.js";
@@ -72,17 +82,6 @@ export function cancelJob() {
   status("Cancelling…");
   run("cancel_job").catch(() => {});
 }
-
-/** Says `message` in the status bar, with a button to read `warnings` if there are any. */
-function showWarnings(message, warnings) {
-  if (!warnings.length) return status(message);
-  const count = warnings.length;
-  status(`${message}, with ${count} warning${count === 1 ? "" : "s"}`);
-  $("#warnings-list").replaceChildren(...warnings.map((w) => h("li", {}, w)));
-  $("#status-warnings").hidden = false;
-}
-
-$("#status-warnings").addEventListener("click", () => $("#warnings-dialog").showModal());
 
 $("#deploy").addEventListener("click", () => {
   if (state.job) return cancelJob();

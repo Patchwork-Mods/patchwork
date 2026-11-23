@@ -385,7 +385,7 @@
 		</dialog>
 
 		<dialog id="warnings-dialog">
-			<!-- What the last deploy warned about; see deploy.js. -->
+			<!-- What the last deploy or sync warned about; see showWarnings in state.js. -->
 			<form method="dialog" class="stack">
 				<h2>Deploy warnings</h2>
 				<ul id="warnings-list" class="warnings"></ul>
@@ -999,6 +999,7 @@
 					however you like and choose the file.
 				</p>
 				<ul id="downloads-list" class="downloads"></ul>
+				<p id="downloads-status" hidden></p>
 				<div class="row end">
 					<button value="close">Close</button>
 				</div>

@@ -61,6 +61,17 @@ export function status(text, isError = false) {
   $("#status-warnings").hidden = true;
 }
 
+/** Says `message` in the status bar, with a button to read `warnings` if there are any. */
+export function showWarnings(message, warnings) {
+  if (!warnings.length) return status(message);
+  const count = warnings.length;
+  status(`${message}, with ${count} warning${count === 1 ? "" : "s"}`);
+  $("#warnings-list").replaceChildren(...warnings.map((w) => h("li", {}, w)));
+  $("#status-warnings").hidden = false;
+}
+
+$("#status-warnings").addEventListener("click", () => $("#warnings-dialog").showModal());
+
 /** Runs a command, showing its error in the status bar if it fails. */
 export async function run(command, args) {
   try {
