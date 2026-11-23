@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Patchwork;
 use crate::error::IoContext;
+use crate::fix::Fix;
 use crate::fsutil;
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, Lockfile, mod_key};
@@ -222,7 +223,14 @@ pub(super) fn portable_ids(mods: &mut [ProfileMod], lock: &mut Lockfile) -> Vec<
 }
 
 pub(super) fn not_here(name: &str) -> Error {
-    Error::invalid(format!(
-        "`{name}` is a local mod from another machine, and its file isn't on this one"
-    ))
+    Error::blocked(
+        format!("`{name}` is a local mod from another machine, and its file isn't on this one"),
+        format!("{name} is on another PC"),
+        format!(
+            "{name} was added from a file on another PC this profile syncs with, and that \
+             file hasn't been copied here yet. Syncing copies it over once that PC is on and \
+             running Patchwork."
+        ),
+        Fix::Sync,
+    )
 }

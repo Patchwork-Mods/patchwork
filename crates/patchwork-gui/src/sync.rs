@@ -10,7 +10,12 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::OnceCell;
 
+use patchwork_core::profile::ProfileRef;
+
 use crate::{App, CmdResult, msg, profile_ref};
+
+/// How long [`wait_for_files`] waits for another machine to send them.
+const FILES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// How long joining waits for the profile to arrive.
 const JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -287,4 +292,29 @@ pub fn sync_name_peer(app: State<'_, App>, peer: String, name: String) -> CmdRes
         .parse()
         .map_err(|_| format!("`{peer}` isn't a computer's id"))?;
     patchwork_sync::set_peer_name(&app.pw.paths().sync(), &peer, &name).map_err(msg)
+}
+
+/// Waits for `profile`'s local mods from other machines to arrive, which
+/// they do in the background once one that has them is online. Fails if
+/// they haven't within [`FILES_TIMEOUT`].
+pub async fn wait_for_files(handle: &AppHandle, profile: &ProfileRef) -> CmdResult<()> {
+    node(handle).await?;
+    let app = handle.state::<App>();
+    let until = std::time::Instant::now() + FILES_TIMEOUT;
+    loop {
+        let missing = app.pw.missing_local_files(profile)?;
+        if missing.is_empty() {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= until {
+            let names: Vec<_> = missing.iter().map(|m| m.name.as_str()).collect();
+            return Err(format!(
+                "{} didn't arrive; turn on a PC that has {} and open Patchwork there, then try again",
+                names.join(", "),
+                if names.len() == 1 { "it" } else { "them" }
+            )
+            .into());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
 }

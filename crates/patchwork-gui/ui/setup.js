@@ -2,7 +2,7 @@
 // game's [env] axes (its mod loader, say) and whether it's deployed to an
 // instance of its own. Like the CLI's `env` and `instance`.
 
-import { invoke, state, status } from "./state.js";
+import { invoke, state, status, windowFixes } from "./state.js";
 import { $, h } from "./dom.js";
 import { openProfile, showProfile } from "./profile.js";
 
@@ -79,6 +79,13 @@ async function openSetup() {
 }
 
 $("#profile-settings").addEventListener("click", () => openSetup().catch(() => {}));
+
+// A blocker's Open profile settings (see state.js). What it was for is
+// tried again once the settings are saved, by whoever does it.
+windowFixes.profileSettings = async () => {
+  await openSetup().catch(() => {});
+  return false;
+};
 
 form.querySelector("[value=cancel]").addEventListener("click", () => dialog.close());
 

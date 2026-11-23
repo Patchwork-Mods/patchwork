@@ -24,6 +24,7 @@ use crate::environment::GameEnv;
 use crate::error::IoContext;
 use crate::event::{Event, Reporter, Silent};
 use crate::ext::{Extension, Hook, Registered};
+use crate::fix::Fix;
 use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, LinkMethod, validate_game_id};
 use crate::hash::ContentHash;
@@ -619,7 +620,6 @@ impl Patchwork {
         let was = saved.and_then(|i| i.link);
         for target in self.targets_of(game)? {
             let state = self.deploy_state(&target)?;
-            let undeploy = self.undeploy_command(&target)?;
             let path = match &target {
                 DeployTarget::Game(_) => install.path.clone(),
                 DeployTarget::Instance { profile, .. } => self.instance_dir(profile),
@@ -629,20 +629,32 @@ impl Patchwork {
                 ..install.clone()
             };
             if let Some((_, was)) = state.moved_root(&resolve_roots(def, &roots).roots()) {
-                return Err(Error::invalid(format!(
-                    "mods are still deployed to {}; run `{undeploy}` first",
-                    was.display()
-                )));
+                return Err(self.undeploy_first(
+                    &target,
+                    format!("mods are still deployed to {}", was.display()),
+                    &format!(
+                        "Mods are still deployed to {}, so they have to come out of there \
+                         before {}'s folder can change. Otherwise Patchwork would lose track \
+                         of them.",
+                        was.display(),
+                        def.name
+                    ),
+                )?);
             }
             // files already placed stay the way they were placed, so the
             // method can only change while there aren't any
             if was.unwrap_or(def.link) != install.link.unwrap_or(def.link)
                 && !state.files.is_empty()
             {
-                return Err(Error::invalid(format!(
-                    "mods are still deployed to {}; run `{undeploy}` before changing how they're linked",
-                    state.root.display()
-                )));
+                return Err(self.undeploy_first(
+                    &target,
+                    format!(
+                        "mods are still deployed to {}, so how they're linked can't change",
+                        state.root.display()
+                    ),
+                    "Files Patchwork already placed stay the way they were placed, so how \
+                     they're linked can only change while nothing's deployed.",
+                )?);
             }
         }
         fsutil::write_toml(&self.install_file(game), &install)?;
@@ -1980,6 +1992,17 @@ impl Patchwork {
                     issues.extend(self.incompatible(&loaded, &lock, env)?);
                 }
                 issues.extend(self.known_found_issues(&loaded, &lock)?);
+                for changed in self.changed_files(profile, &lock)? {
+                    issues.push(Issue::artifact_changed(&changed));
+                }
+                let elsewhere: Vec<_> = self
+                    .missing_local_files(profile)?
+                    .into_iter()
+                    .map(|m| m.name)
+                    .collect();
+                if !elsewhere.is_empty() {
+                    issues.push(Issue::on_another_pc(elsewhere));
+                }
                 issues
             }
             None => Vec::new(),
@@ -2836,12 +2859,21 @@ impl Patchwork {
             let now = roots
                 .get(&moved)
                 .map_or_else(|| "nowhere".to_owned(), |p| p.display().to_string());
-            return Err(Error::invalid(format!(
-                "mods are deployed to {}, but {} is now set to {now}; run `patchwork undeploy {}` first",
-                was.display(),
-                game.name,
-                game.id
-            )));
+            return Err(self.undeploy_first(
+                &target,
+                format!(
+                    "mods are deployed to {}, but {} is now set to {now}",
+                    was.display(),
+                    game.name
+                ),
+                &format!(
+                    "Mods are deployed to {}, but {} is now set to {now}. They have to come \
+                     out of the old place before deploying to the new one, or Patchwork would \
+                     lose track of them.",
+                    was.display(),
+                    game.name
+                ),
+            )?);
         } else {
             prev.set_roots(&roots);
         }
@@ -3341,19 +3373,36 @@ fn resolve_roots(def: &GameDef, install: &GameInstall) -> ResolvedRoots {
 
 /// The error for a game that hasn't been set up, saying how to.
 fn not_installed(game: &GameDef) -> Error {
-    let fix = match Locator::scan().find(game).as_slice() {
-        [found] => format!(
-            "it looks to be in {}, so run `patchwork game detect {} --set` to use that, or `patchwork game set-path {} <dir>`",
-            found.path.display(),
-            game.id,
-            game.id
+    let message = format!("patchwork doesn't know where {} is installed", game.name);
+    let title = format!("Where's {} installed?", game.name);
+    match Locator::scan().find(game).as_slice() {
+        [found] => Error::blocked(
+            message,
+            title,
+            format!(
+                "Patchwork hasn't been told where {} is installed yet, but it looks to be in \
+                 {}. Use that folder, or choose where it is from the game's settings.",
+                game.name,
+                found.path.display()
+            ),
+            Fix::SetGamePath {
+                game: game.id.clone(),
+                path: found.path.clone(),
+            },
         ),
-        _ => format!("run `patchwork game set-path {} <dir>`", game.id),
-    };
-    Error::invalid(format!(
-        "patchwork doesn't know where {} is installed; {fix}",
-        game.name
-    ))
+        _ => Error::blocked(
+            message,
+            title,
+            format!(
+                "Patchwork hasn't been told where {} is installed yet, and couldn't find it. \
+                 Choose the folder it's installed in.",
+                game.name
+            ),
+            Fix::ChooseGamePath {
+                game: game.id.clone(),
+            },
+        ),
+    }
 }
 
 /// `path` made absolute, if it's a directory.

@@ -117,11 +117,15 @@ impl Patchwork {
         let target = self.deploy_target(&loaded)?;
         let deployed = self.deploy_state(&target)?.profile;
         if deployed.as_deref() == Some(profile.to_string().as_str()) {
-            return Err(Error::invalid(format!(
-                "{} is deployed; run `{}` first",
-                loaded.label(),
-                self.undeploy_command(&target)?
-            )));
+            let label = loaded.label();
+            return Err(self.undeploy_first(
+                &target,
+                format!("{label} is deployed, so it can't be deleted"),
+                &format!(
+                    "{label} is deployed, so its mods have to come out before it's deleted. \
+                     Otherwise they'd be left in the game with nothing keeping track of them."
+                ),
+            )?);
         }
         self.remove_instance(profile, &loaded.game)?;
         let dir = self.profile_dir(profile);

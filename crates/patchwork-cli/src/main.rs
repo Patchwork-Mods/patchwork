@@ -319,15 +319,23 @@ impl Reporter for Printer {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run(Cli::parse()).await {
+    let cli = Cli::parse();
+    let profile = cli.profile.clone();
+    match run(cli).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
-            if let Some(patchwork_core::Error::NeedsDownload(_)) = e.downcast_ref() {
-                eprintln!(
+            match e.downcast_ref() {
+                Some(patchwork_core::Error::NeedsDownload(_)) => eprintln!(
                     "\nDownload each one from its page, then run `patchwork provide <mod> <file>`,\n\
                      or `patchwork link <link>` with the link a \"Mod Manager Download\" button gives you."
-                );
+                ),
+                Some(e) => {
+                    if let Some(fix) = e.fix() {
+                        eprintln!("to fix it, run `{}`", fix.command(profile.as_deref()));
+                    }
+                }
+                None => {}
             }
             ExitCode::FAILURE
         }

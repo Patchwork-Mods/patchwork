@@ -2,11 +2,18 @@
 // the dialog it opens when there's a newer release. See check_for_update,
 // install_update and cancel_update in selfupdate.rs.
 
-import { invoke, status } from "./state.js";
+import { invoke, status, windowFixes } from "./state.js";
 import { $, copyText, openExternal } from "./dom.js";
 import { renderEntries } from "./changelog.js";
 
 const { Channel } = window.__TAURI__.core;
+
+// A blocker's or issue's Update Patchwork (see state.js) opens the update
+// dialog. Whatever it was for can't go ahead until Patchwork restarts.
+windowFixes.updatePatchwork = () => {
+  button.click();
+  return false;
+};
 
 const button = $("#self-update");
 const dialog = $("#self-update-dialog");

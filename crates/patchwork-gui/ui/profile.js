@@ -1,6 +1,17 @@
 // A game's profiles: the sidebar, and the header and Mods tab of the open one.
 
-import { errorText, gameInfo, invoke, invokeResolving, profilesOf, run, state, status } from "./state.js";
+import {
+  applyFix,
+  errorText,
+  gameInfo,
+  invoke,
+  invokeResolving,
+  profilesOf,
+  run,
+  state,
+  status,
+  windowFixes,
+} from "./state.js";
 import { $, copyText, h } from "./dom.js";
 import { showGames } from "./games.js";
 import { renderMods } from "./mods.js";
@@ -192,6 +203,26 @@ function renderSteamBranch(p) {
 
 /** A button to deal with issue `i`, for the issues that have one. */
 function issueAction(p, i) {
+  if (i.fix) {
+    const onclick = async (e) => {
+      e.target.disabled = true;
+      try {
+        // Fixes the window applies say how they're going themselves.
+        if (windowFixes[i.fix.type]) {
+          await applyFix(i.fix, p.id);
+        } else {
+          status(i.fix.doing);
+          await applyFix(i.fix, p.id);
+          status("Done");
+        }
+      } catch (err) {
+        status(errorText(err), true);
+      } finally {
+        if (state.profile?.id === p.id) await openProfile(p.id).catch(() => {});
+      }
+    };
+    return h("button", { type: "button", class: "issue-action", onclick }, i.fix.label);
+  }
   if (i.kind.type !== "incompatibleGame") return null;
   const m = p.mods.find((m) => m.name === i.mods[0]);
   if (!m) return null;
@@ -539,6 +570,15 @@ function renderGamePath(installed) {
     (e) => console.warn(e),
   );
 }
+
+// A blocker's Choose folder… (see state.js): asks where the game is, and
+// uses that.
+windowFixes.chooseGamePath = async (fix) => {
+  const path = await window.__TAURI__.dialog.open({ directory: true, multiple: false });
+  if (!path) return false;
+  await invokeResolving("apply_fix", { fix: { type: "setGamePath", game: fix.game, path } });
+  return true;
+};
 
 $("#game-path").addEventListener("submit", async (e) => {
   e.preventDefault();

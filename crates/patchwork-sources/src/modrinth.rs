@@ -435,10 +435,20 @@ fn kind(project: &Project, version: &Version) -> String {
 fn check_version_picked(ctx: &SourceContext<'_>) -> Result<()> {
     let picked = ctx.env.and_then(|e| e.version.as_deref()).is_some();
     match ctx.game.env.get(EnvDefs::VERSION) {
-        Some(axis) if !picked => Err(error(format!(
-            "pick the profile's {} first, so the right files can be found",
-            axis.name
-        ))),
+        Some(axis) if !picked => Err(patchwork_core::Error::blocked(
+            format!(
+                "source `{ID}`: pick the profile's {} first, so the right files can be found",
+                axis.name
+            ),
+            format!("Pick a {} first", axis.name),
+            format!(
+                "Modrinth has files for each {0}, so there's no telling which of a mod's \
+                 files to use until the profile says which {0} it's for. Pick one in the \
+                 profile's settings.",
+                axis.name
+            ),
+            patchwork_core::fix::Fix::ProfileSettings,
+        )),
         _ => Ok(()),
     }
 }

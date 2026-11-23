@@ -2,12 +2,13 @@
 //! reports through [`Issue`], so a frontend can show them all in one place
 //! without knowing about each kind.
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::check::Problem;
 use crate::compat::GameVersions;
 use crate::deploy::{Dest, Drift};
 use crate::environment::GameEnv;
+use crate::fix::Fix;
 use crate::lock::UnmetRequirement;
 use crate::source::VersionReq;
 
@@ -22,6 +23,30 @@ pub struct Issue {
     /// kind.
     pub message: String,
     pub kind: IssueKind,
+    /// What deals with it, if something does. Goes to frontends with its
+    /// `label` and `doing` alongside, for a button.
+    #[serde(serialize_with = "labelled", skip_serializing_if = "Option::is_none")]
+    pub fix: Option<Fix>,
+}
+
+/// A fix with its [`Fix::label`] and [`Fix::doing`] alongside, for
+/// frontends that show it as a button. Reading it back as a [`Fix`] ignores
+/// them.
+fn labelled<S: Serializer>(fix: &Option<Fix>, s: S) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Labelled<'a> {
+        #[serde(flatten)]
+        fix: &'a Fix,
+        label: String,
+        doing: String,
+    }
+    fix.as_ref()
+        .map(|fix| Labelled {
+            fix,
+            label: fix.label(),
+            doing: fix.doing(),
+        })
+        .serialize(s)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -75,6 +100,13 @@ pub enum IssueKind {
     /// [`crate::list`]) as the profile has it, like an item that comes
     /// before one it needs.
     List { id: String },
+    /// A locked mod downloads as a different file now, at the same version;
+    /// see [`crate::Error::ArtifactChanged`]. Until the new file's taken,
+    /// it can't be deployed.
+    ArtifactChanged { key: String },
+    /// Local mods added on another machine whose files haven't been synced
+    /// here yet.
+    OnAnotherPc,
     /// What an extension's [`Check`](crate::check::Check) found.
     Check {
         /// The check's id, `<extension>.<check>`.
@@ -96,6 +128,7 @@ impl From<UnmetRequirement> for Issue {
                 found: unmet.found,
                 pinned: unmet.pinned,
             },
+            fix: None,
         }
     }
 }
@@ -118,6 +151,7 @@ impl Issue {
                 version: version.to_owned(),
                 supports,
             },
+            fix: None,
         }
     }
 
@@ -142,6 +176,7 @@ impl Issue {
                 value: value.to_owned(),
                 supports: supports.to_vec(),
             },
+            fix: None,
         }
     }
 
@@ -154,6 +189,7 @@ impl Issue {
                  include, so some of what it does for {game} is missing"
             ),
             kind: IssueKind::MissingExtension { id: id.to_owned() },
+            fix: Some(Fix::UpdatePatchwork),
         }
     }
 
@@ -169,6 +205,7 @@ impl Issue {
                 ext: ext.to_owned(),
                 name: name.to_owned(),
             },
+            fix: None,
         }
     }
 
@@ -179,6 +216,7 @@ impl Issue {
             mods: problem.mods,
             message: problem.message,
             kind: IssueKind::List { id: id.to_owned() },
+            fix: None,
         }
     }
 
@@ -192,6 +230,46 @@ impl Issue {
                 id: id.to_owned(),
                 list: problem.list.map(|name| crate::ext::hook_id(ext, &name)),
             },
+            fix: None,
+        }
+    }
+
+    pub fn artifact_changed(changed: &crate::error::ArtifactChanged) -> Self {
+        let name = &changed.name;
+        Issue {
+            severity: Severity::Error,
+            mods: vec![name.clone()],
+            message: format!(
+                "`{name}` downloads as a different file now than the one it was locked with, \
+                 most likely because it was repackaged; use the new file to deploy it"
+            ),
+            kind: IssueKind::ArtifactChanged {
+                key: changed.key.clone(),
+            },
+            fix: Some(Fix::AcceptChanged {
+                keys: vec![changed.key.clone()],
+                names: vec![name.clone()],
+            }),
+        }
+    }
+
+    /// `names` are local mods whose files are on another machine.
+    pub fn on_another_pc(names: Vec<String>) -> Self {
+        let message = match names.as_slice() {
+            [name] => format!(
+                "`{name}` was added from a file on another PC that hasn't been copied here yet"
+            ),
+            _ => format!(
+                "{} mods were added from files on another PC that haven't been copied here yet",
+                names.len()
+            ),
+        };
+        Issue {
+            severity: Severity::Error,
+            mods: names,
+            message,
+            kind: IssueKind::OnAnotherPc,
+            fix: Some(Fix::Sync),
         }
     }
 
@@ -204,6 +282,7 @@ impl Issue {
                  deploy again, and check that its mods work with this version"
             ),
             kind: IssueKind::GameChanged { from, to },
+            fix: Some(Fix::Deploy),
         }
     }
 
@@ -242,6 +321,7 @@ impl Issue {
                  deploy again to put them back"
             ),
             kind: IssueKind::FilesChanged { missing, changed },
+            fix: Some(Fix::Deploy),
         }
     }
 }

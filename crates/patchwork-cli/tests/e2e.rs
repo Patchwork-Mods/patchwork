@@ -261,7 +261,11 @@ fn games_are_found_in_steam() {
 
     env.run(&["profile", "new", "lethal-company/main"]);
     let err = env.fails(&["deploy"]);
-    assert!(err.contains("game detect lethal-company --set"), "{err}");
+    assert!(
+        err.contains("to fix it, run `patchwork game set-path lethal-company ")
+            && err.contains("Lethal Company`"),
+        "{err}"
+    );
 
     let out = env.run(&["game", "detect"]);
     assert!(

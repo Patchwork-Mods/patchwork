@@ -17,9 +17,10 @@ use tokio::sync::broadcast;
 
 use super::Patchwork;
 use super::local::{LOCAL, not_here};
-use crate::error::IoContext;
+use crate::error::{ArtifactChanged, IoContext};
 use crate::event::Event;
 use crate::fsutil;
+use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile};
 use crate::profile::{Profile, ProfileRef};
 use crate::sync::{self, Entries};
@@ -52,6 +53,21 @@ pub struct Applied {
 struct SyncBase {
     /// Values are JSON, so they're kept as text.
     entries: BTreeMap<String, String>,
+}
+
+/// What [`Patchwork::download_locked`] found had changed since it was
+/// locked.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ChangedFiles {
+    mods: Vec<ChangedFile>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ChangedFile {
+    /// The mod's key, `<source>:<id>`.
+    key: String,
+    expected: ContentHash,
+    got: ContentHash,
 }
 
 impl Patchwork {
@@ -233,12 +249,17 @@ impl Patchwork {
     /// lockfile. Mods that can't be downloaded are warned about, except
     /// for files the user has to download themselves, which are all
     /// returned at once as [`Error::NeedsDownload`].
+    ///
+    /// Mods whose files changed since they were locked are warned about
+    /// too, and kept for [`Patchwork::issues`] to report until the new
+    /// file's taken or the mod's locked again.
     pub async fn download_locked(&self, profile: &ProfileRef) -> Result<()> {
         let loaded = self.load_profile(profile)?;
         let Some(lock) = self.load_lock(profile)? else {
             return Ok(());
         };
         let mut pending = Vec::new();
+        let mut changed = ChangedFiles::default();
         for m in &lock.mods {
             if self.store.contains(&m.hash, m.format) {
                 continue;
@@ -263,19 +284,69 @@ impl Patchwork {
                 .await;
             match fetched {
                 Ok(hash) if hash == m.hash => {}
-                Ok(hash) => self
-                    .reporter
-                    .report(Event::Warning(Error::artifact_changed(m, hash).to_string())),
+                Ok(hash) => {
+                    self.reporter
+                        .report(Event::Warning(Error::artifact_changed(m, hash).to_string()));
+                    changed.mods.push(ChangedFile {
+                        key: m.key(),
+                        expected: m.hash,
+                        got: hash,
+                    });
+                }
                 Err(Error::NeedsDownload(waiting)) => pending.extend(waiting),
                 Err(e) => self
                     .reporter
                     .report(Event::Warning(format!("`{}`: {e}", m.name))),
             }
         }
+        // Only mods that aren't in the store were fetched, so this is all of
+        // them that are still changed.
+        let file = self.changed_files_file(profile);
+        if changed.mods.is_empty() {
+            if file.exists() {
+                fs::remove_file(&file).at(&file)?;
+            }
+        } else {
+            fsutil::write_json(&file, &changed)?;
+        }
         if !pending.is_empty() {
             return Err(Error::NeedsDownload(pending));
         }
         Ok(())
+    }
+
+    /// Where [`Patchwork::download_locked`] keeps the mods it found had
+    /// changed.
+    fn changed_files_file(&self, profile: &ProfileRef) -> PathBuf {
+        self.profile_state_dir(profile).join("changed-files.json")
+    }
+
+    /// The mods [`Patchwork::download_locked`] last found had changed since
+    /// they were locked, and still are: locked to the file they were, which
+    /// isn't here.
+    pub(super) fn changed_files(
+        &self,
+        profile: &ProfileRef,
+        lock: &Lockfile,
+    ) -> Result<Vec<ArtifactChanged>> {
+        let found: ChangedFiles =
+            fsutil::read_json(&self.changed_files_file(profile))?.unwrap_or_default();
+        Ok(found
+            .mods
+            .into_iter()
+            .filter_map(|c| {
+                let m = lock.mods.iter().find(|m| m.key() == c.key)?;
+                (m.hash == c.expected && !self.store.contains(&m.hash, m.format)).then(|| {
+                    ArtifactChanged {
+                        key: c.key,
+                        name: m.name.clone(),
+                        version: m.version.clone(),
+                        expected: c.expected,
+                        got: c.got,
+                    }
+                })
+            })
+            .collect())
     }
 
     fn sync_base(&self, profile: &ProfileRef) -> Result<Option<Entries>> {

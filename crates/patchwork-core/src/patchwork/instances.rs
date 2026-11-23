@@ -13,6 +13,7 @@ use super::Patchwork;
 use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::event::Event;
+use crate::fix::{Fix, ProfileName};
 use crate::fsutil;
 use crate::game::LaunchDefs;
 use crate::launch::{Launch, LaunchOption};
@@ -65,11 +66,16 @@ impl Patchwork {
             _ => DeployTarget::Game(loaded.game.clone()),
         };
         if was != now && self.is_deployed_to(profile, &was)? {
-            return Err(Error::invalid(format!(
-                "{} is deployed; run `{}` first",
-                loaded.label(),
-                self.undeploy_command(&was)?
-            )));
+            let label = loaded.label();
+            return Err(self.undeploy_first(
+                &was,
+                format!("{label} is deployed, so where it's deployed to can't change"),
+                &format!(
+                    "{label} is deployed, so it has to come out before it can move between \
+                     the game's folder and an instance of its own. Otherwise Patchwork would \
+                     lose track of its files."
+                ),
+            )?);
         }
         fsutil::write_toml(&self.local_settings_file(profile), &settings)
     }
@@ -134,15 +140,47 @@ impl Patchwork {
         Ok(targets)
     }
 
-    /// The command that undeploys everything from `target`.
-    pub(super) fn undeploy_command(&self, target: &DeployTarget) -> Result<String> {
-        Ok(match target {
-            DeployTarget::Game(game) => format!("patchwork undeploy {game}"),
-            DeployTarget::Instance { profile, .. } => format!(
-                "patchwork --profile {} undeploy",
-                self.load_profile(profile)?.label()
-            ),
+    /// The fix that undeploys everything from `target`.
+    pub fn undeploy_fix(&self, target: &DeployTarget) -> Result<Fix> {
+        Ok(Fix::Undeploy {
+            game: target.game().to_owned(),
+            instance: match target {
+                DeployTarget::Game(_) => None,
+                DeployTarget::Instance { profile, .. } => Some(ProfileName {
+                    id: profile.to_string(),
+                    label: self.load_profile(profile)?.label(),
+                }),
+            },
         })
+    }
+
+    /// [`Error::Blocked`] for something that can't be done while mods are
+    /// deployed to `target`: `message` says so in a sentence, and `why`
+    /// explains it for the blocker, in sentences.
+    pub(super) fn undeploy_first(
+        &self,
+        target: &DeployTarget,
+        message: String,
+        why: &str,
+    ) -> Result<Error> {
+        let registry = self.registry();
+        let game = &registry.game(target.game())?.value.name;
+        let place = match target {
+            DeployTarget::Game(_) => format!("{game}'s folder"),
+            DeployTarget::Instance { profile, .. } => {
+                format!("{}'s instance", self.load_profile(profile)?.label())
+            }
+        };
+        Ok(Error::blocked(
+            message,
+            format!("Mods are deployed to {place}"),
+            format!(
+                "{why} Undeploying takes every file Patchwork put in {place} back out and \
+                 puts back any of the game's own files they replaced. Your profiles stay as \
+                 they are, and you can deploy again afterwards."
+            ),
+            self.undeploy_fix(target)?,
+        ))
     }
 
     /// Whether `target` has anything of `profile`'s that patchwork would

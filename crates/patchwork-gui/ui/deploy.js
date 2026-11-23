@@ -1,6 +1,6 @@
 // Deploying the profile, updating its mods, and progress from main.rs.
 
-import { gameInfo, listen, run, state, status } from "./state.js";
+import { gameInfo, listen, run, state, status, windowFixes } from "./state.js";
 import { $, h, link } from "./dom.js";
 import { openProfile, renderDeploy, showProfile } from "./profile.js";
 import { renderEntries } from "./changelog.js";
@@ -35,6 +35,9 @@ export async function deployProfile(id, { verify = false, button = "#deploy", me
   showWarnings(done, warnings);
   return true;
 }
+
+// A blocker's or issue's Deploy (see state.js).
+windowFixes.deploy = (_fix, id) => deployProfile(id);
 
 /** Deploys profile `id` before playing, with Play showing Cancel meanwhile. */
 export const deployFirst = (id) =>

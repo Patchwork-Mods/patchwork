@@ -3,6 +3,7 @@
 //! it changed for the app to show the next time it opens
 //! ([`take_missed`]).
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +11,9 @@ use anyhow::{Context, Result};
 use futures_util::future::BoxFuture;
 use jiff::Timestamp;
 use patchwork_core::Patchwork;
+use patchwork_core::issue::Severity;
 use patchwork_core::paths::Paths;
+use patchwork_core::profile::ProfileRef;
 use patchwork_sync::{Node, Outcome, devices_linked, synced_profiles};
 use serde::{Deserialize, Serialize};
 
@@ -46,10 +49,22 @@ impl Task for Sync {
             let dir = cx.paths().sync();
             let node = Node::spawn(&dir).await.context("couldn't start syncing")?;
             let missed = missed_file(&dir);
-            let result = tokio::select! {
-                result = node.run(pw, |outcome| record_outcome(cx, &missed, pw, outcome)) => {
-                    result.context("syncing stopped")
+            let (synced, mut to_check) = tokio::sync::mpsc::unbounded_channel();
+            let on_sync = |outcome: Result<Outcome>| {
+                if let Ok(o) = &outcome {
+                    let _ = synced.send(o.profile.clone());
                 }
+                record_outcome(cx, &missed, pw, outcome);
+            };
+            let notify = async {
+                let mut told = BTreeSet::new();
+                while let Some(profile) = to_check.recv().await {
+                    notify_blockers(pw, cx, &profile, &mut told).await;
+                }
+            };
+            let result = tokio::select! {
+                result = node.run(pw, on_sync) => result.context("syncing stopped"),
+                () = notify => Ok(()),
                 _ = cx.stopping() => Ok(()),
             };
             if let Err(e) = node.shutdown().await {
@@ -57,6 +72,34 @@ impl Task for Sync {
             }
             result
         })
+    }
+}
+
+/// Tells the user about what a sync left in the way of using `profile`:
+/// its issues that stop it deploying and have a fix, like a mod whose file
+/// changed. They stay among the profile's issues for when the app opens,
+/// with the fix. `told` is what's been told already, so each is told once.
+async fn notify_blockers(
+    pw: &Patchwork,
+    cx: &Cx,
+    profile: &ProfileRef,
+    told: &mut BTreeSet<(ProfileRef, String)>,
+) {
+    let Ok(issues) = pw.issues(profile) else {
+        return;
+    };
+    let label = pw
+        .load_profile(profile)
+        .map(|p| p.label())
+        .unwrap_or_else(|_| profile.to_string());
+    for issue in issues {
+        if issue.severity != Severity::Error || issue.fix.is_none() {
+            continue;
+        }
+        if told.insert((profile.clone(), issue.message.clone())) {
+            let body = format!("{}. Open Patchwork to fix it.", issue.message);
+            cx.notify(&format!("{label} needs attention"), &body).await;
+        }
     }
 }
 

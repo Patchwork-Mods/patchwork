@@ -10,6 +10,7 @@ use serde::Serialize;
 use super::{Patchwork, deploy_order};
 use crate::deploy::{GameFiles, InstalledMod, ModFile};
 use crate::ext::{self, Hook};
+use crate::fix::Fix;
 use crate::game::GameDef;
 use crate::lock::LockedMod;
 use crate::options::{Answer, Form, ModContext, ModOptions, ModPeek, ModTransform, checked};
@@ -354,9 +355,15 @@ impl Patchwork {
             return Err(no_such_mod(&label, name));
         }
         let Some(locked) = lock.iter().flat_map(|l| &l.mods).find(|l| l.name == name) else {
-            return Err(Error::invalid(format!(
-                "`{name}` hasn't been downloaded yet; lock {label} first"
-            )));
+            return Err(Error::blocked(
+                format!("`{name}` hasn't been downloaded yet"),
+                format!("{name} hasn't been downloaded yet"),
+                format!(
+                    "{name} has to be downloaded before its files can be looked at. \
+                     Downloading gets everything {label} needs that isn't here yet."
+                ),
+                Fix::Lock,
+            ));
         };
         self.packed(locked)
     }

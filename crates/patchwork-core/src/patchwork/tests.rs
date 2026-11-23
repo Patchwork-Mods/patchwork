@@ -601,6 +601,14 @@ async fn a_changed_file_is_kept_out_until_accepted() {
     let Err(Error::ArtifactChanged(changed)) = pw.lock(&profile, false).await else {
         panic!("locking should have stopped on the changed file");
     };
+    let blocker = Error::ArtifactChanged(changed.clone()).blocker().unwrap();
+    assert_eq!(
+        blocker.fix,
+        crate::fix::Fix::AcceptChanged {
+            keys: vec!["versioned:a".to_owned()],
+            names: vec!["a".to_owned()],
+        }
+    );
     let crate::error::ArtifactChanged {
         key, expected, got, ..
     } = *changed;
@@ -613,6 +621,57 @@ async fn a_changed_file_is_kept_out_until_accepted() {
     let after = pw.lock(&profile, false).await.unwrap().mods[0].clone();
     assert_eq!(after.hash, got);
     assert_eq!(after.version.as_deref(), Some("1.0"));
+}
+
+/// A changed file found while downloading a synced lockfile is an issue
+/// with a fix until it's accepted, rather than just a warning.
+#[tokio::test]
+async fn a_changed_file_found_downloading_is_an_issue() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("mods");
+    fs::create_dir_all(&dir).unwrap();
+    let source = std::sync::Arc::new(Versioned {
+        dir: dir.clone(),
+        version: std::sync::Mutex::new("1.0".to_owned()),
+    });
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(SharedSource(source.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let spec = ModSpec {
+        source: "versioned".to_owned(),
+        id: "a".to_owned(),
+        version: None,
+    };
+    pw.add_mod(&profile, spec, None, true).await.unwrap();
+    let before = pw.lock(&profile, false).await.unwrap().mods[0].clone();
+    let changed = |pw: &Patchwork| {
+        pw.issues(&profile)
+            .unwrap()
+            .into_iter()
+            .filter(|i| matches!(i.kind, crate::issue::IssueKind::ArtifactChanged { .. }))
+            .collect::<Vec<_>>()
+    };
+    assert!(changed(&pw).is_empty());
+
+    fs::write(dir.join("a-1.0.txt"), "a 1.0, repackaged").unwrap();
+    fs::remove_file(pw.store.path(&before.hash, before.format)).unwrap();
+    pw.download_locked(&profile).await.unwrap();
+    let issues = changed(&pw);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].severity, crate::issue::Severity::Error);
+    let Some(crate::fix::Fix::AcceptChanged { keys, .. }) = issues[0].fix.clone() else {
+        panic!("{:?}", issues[0].fix);
+    };
+    let json = serde_json::to_value(&issues[0]).unwrap();
+    assert_eq!(json["fix"]["type"], "acceptChanged");
+    assert_eq!(json["fix"]["label"], "Use the new file");
+
+    pw.accept_changed(&profile, &keys).await.unwrap();
+    assert!(changed(&pw).is_empty());
 }
 
 /// Lists the same versions for every mod, counting how often it's asked.
@@ -977,7 +1036,14 @@ async fn removing_a_profile_needs_it_undeployed_first() {
 
     pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
     let err = pw.remove_profile(&profile).unwrap_err();
-    assert!(err.to_string().contains("undeploy"), "{err}");
+    assert_eq!(
+        err.fix(),
+        Some(crate::fix::Fix::Undeploy {
+            game: "my-game".into(),
+            instance: None
+        }),
+        "{err}"
+    );
 
     pw.apply(
         &pw.plan_undeploy(&DeployTarget::Game("my-game".into()))
@@ -1395,6 +1461,7 @@ async fn local_mods_from_another_machine_come_from_the_store() {
     for update in [false, true] {
         let err = b.lock(&profile, update).await.unwrap_err();
         assert!(err.to_string().contains("isn't on this one"), "{err}");
+        assert_eq!(err.fix(), Some(crate::fix::Fix::Sync));
     }
 
     // the lockfile still has its name
@@ -1869,7 +1936,10 @@ async fn game_settings_override_the_definition() {
     // files already placed can't change how they're linked
     install.link = Some(LinkMethod::Symlink);
     let err = pw.set_game_install("my-game", install.clone()).unwrap_err();
-    assert!(err.to_string().contains("undeploy"), "{err}");
+    assert!(
+        matches!(err.fix(), Some(crate::fix::Fix::Undeploy { .. })),
+        "{err}"
+    );
     pw.apply(
         &pw.plan_undeploy(&DeployTarget::Game("my-game".into()))
             .unwrap(),
@@ -2006,7 +2076,10 @@ async fn games_deploy_to_their_other_roots() {
         .roots
         .insert(appdata_id.clone(), tmp.path().to_owned());
     let err = pw.set_game_install("my-game", install).unwrap_err();
-    assert!(err.to_string().contains("undeploy"), "{err}");
+    assert!(
+        matches!(err.fix(), Some(crate::fix::Fix::Undeploy { .. })),
+        "{err}"
+    );
 
     pw.apply(
         &pw.plan_undeploy(&DeployTarget::Game("my-game".into()))
@@ -2051,6 +2124,14 @@ async fn synced_profiles_are_taken_as_they_are_and_keep_local_changes() {
     let missing = b.missing_local_files(&profile).unwrap();
     assert_eq!(missing.len(), 1);
     assert!(a.missing_local_files(&profile).unwrap().is_empty());
+    let on_another_pc = |pw: &Patchwork| {
+        pw.issues(&profile)
+            .unwrap()
+            .into_iter()
+            .any(|i| i.kind == crate::issue::IssueKind::OnAnotherPc)
+    };
+    assert!(on_another_pc(&b));
+    assert!(!on_another_pc(&a));
     let from_a = a.stored_file(&missing[0]).unwrap();
     let wrong = tmp.path().join("wrong.pak");
     fs::write(&wrong, "v2").unwrap();
@@ -2058,6 +2139,7 @@ async fn synced_profiles_are_taken_as_they_are_and_keep_local_changes() {
     assert!(err.to_string().contains("isn't the one"), "{err}");
     b.add_synced_file(&missing[0], &from_a).unwrap();
     assert!(b.missing_local_files(&profile).unwrap().is_empty());
+    assert!(!on_another_pc(&b));
     b.download_locked(&profile).await.unwrap();
 
     // a change on each side: b's isn't published yet when a's arrives
@@ -2852,8 +2934,9 @@ async fn profiles_with_instances_are_each_deployed_to_their_own() {
 
     // switching to the game's folder needs it undeployed first
     let err = pw.set_instance(&a, Some(false)).unwrap_err();
-    assert!(
-        err.to_string().contains("--profile my-game/a undeploy"),
+    assert_eq!(
+        err.fix().unwrap().command(None),
+        "patchwork --profile my-game/a undeploy",
         "{err}"
     );
     let a_loaded = pw.load_profile(&a).unwrap();
@@ -2874,7 +2957,16 @@ async fn profiles_with_instances_are_each_deployed_to_their_own() {
 
     // what the game put in an instance outlives its profile
     let err = pw.remove_profile(&b).unwrap_err();
-    assert!(err.to_string().contains("undeploy"), "{err}");
+    assert!(
+        matches!(
+            err.fix(),
+            Some(crate::fix::Fix::Undeploy {
+                instance: Some(_),
+                ..
+            })
+        ),
+        "{err}"
+    );
     let b_loaded = pw.load_profile(&b).unwrap();
     let target = pw.deploy_target(&b_loaded).unwrap();
     pw.apply(&pw.plan_undeploy(&target).unwrap()).unwrap();

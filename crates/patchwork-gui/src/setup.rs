@@ -97,10 +97,7 @@ pub async fn set_profile_env(
             .map_err(msg)?;
     }
     if !picks.is_empty() {
-        app.pw
-            .lock(&r, false)
-            .await
-            .map_err(lock_msg(&handle, &id))?;
+        app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
     }
     profile_detail(&app.pw, id)
 }

@@ -50,24 +50,22 @@ use patchwork_core::{
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::blockers::{CmdError, blocker_for};
+use crate::blockers::CmdError;
 
 /// Commands fail with a message for the UI to show, or with something in
 /// the way that the user can clear; see blockers.rs.
 type CmdResult<T> = Result<T, CmdError>;
 
-fn msg(e: impl Display) -> CmdError {
-    e.to_string().into()
+/// `e` for the window: its message, and its blocker when it's a core error
+/// that has one (see blockers.rs).
+fn msg(e: impl Display + 'static) -> CmdError {
+    CmdError::from_display(&e)
 }
 
-/// [`msg`] for commands that lock the profile `id`. When locking is
-/// waiting on mods the user has to download themselves, the window is sent
-/// them as `patchwork://pending` to work through; when it's stopped by
-/// something with a fix, that's a blocker for `run` in state.js to offer.
-fn lock_msg<'a>(
-    handle: &'a AppHandle,
-    id: &'a str,
-) -> impl Fn(patchwork_core::Error) -> CmdError + 'a {
+/// [`msg`] for commands that lock a profile. When locking is waiting on
+/// mods the user has to download themselves, the window is sent them as
+/// `patchwork://pending` to work through.
+fn lock_msg(handle: &AppHandle) -> impl Fn(patchwork_core::Error) -> CmdError + '_ {
     move |e| match e {
         patchwork_core::Error::NeedsDownload(pending) => {
             let message = match pending.len() {
@@ -77,10 +75,7 @@ fn lock_msg<'a>(
             let _ = handle.emit("patchwork://pending", pending);
             message.into()
         }
-        e => match blocker_for(id, &e) {
-            Some(blocker) => CmdError::blocked(e.to_string(), blocker),
-            None => e.to_string().into(),
-        },
+        e => CmdError::from_core(&e),
     }
 }
 
@@ -903,7 +898,7 @@ async fn export_profile(
         .pw
         .export_profile(&profile_ref(&id)?, &format)
         .await
-        .map_err(lock_msg(&handle, &id))?;
+        .map_err(lock_msg(&handle))?;
     match path {
         Some(path) => {
             std::fs::write(&path, bytes).map_err(|e| format!("writing {path}: {e}"))?;
@@ -1509,10 +1504,7 @@ async fn set_version(
     let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     app.pw.set_version(&r, &name, version).map_err(msg)?;
-    app.pw
-        .lock(&r, false)
-        .await
-        .map_err(lock_msg(&handle, &id))?;
+    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
     profile_detail(&app.pw, id)
 }
 
@@ -1549,10 +1541,7 @@ async fn set_replaces(
     let _work = app.work.start()?;
     let r = profile_ref(&id)?;
     app.pw.set_replaces(&r, &name, &replaces).map_err(msg)?;
-    app.pw
-        .lock(&r, false)
-        .await
-        .map_err(lock_msg(&handle, &id))?;
+    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
     profile_detail(&app.pw, id)
 }
 
@@ -1615,7 +1604,7 @@ async fn update_mods(
         .pw
         .lock_updating(&r, &keys)
         .await
-        .map_err(lock_msg(&handle, &id))?;
+        .map_err(lock_msg(&handle))?;
     Ok(lock_changes(&app, before, after))
 }
 
@@ -1804,7 +1793,7 @@ async fn deploy(
     let plan = match plan {
         Ok(plan) => plan,
         Err(patchwork_core::Error::Cancelled) => return Ok(Deployed::Cancelled { partway: false }),
-        Err(e) => return Err(lock_msg(&handle, &id)(e)),
+        Err(e) => return Err(lock_msg(&handle)(e)),
     };
     apply_cancellable(handle, plan, job.0.clone()).await
 }
@@ -2009,10 +1998,7 @@ async fn lock_profile(
 ) -> CmdResult<ProfileDetail> {
     let _work = app.work.start()?;
     let r = profile_ref(&id)?;
-    app.pw
-        .lock(&r, false)
-        .await
-        .map_err(lock_msg(&handle, &id))?;
+    app.pw.lock(&r, false).await.map_err(lock_msg(&handle))?;
     profile_detail(&app.pw, id)
 }
 
@@ -2429,7 +2415,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
-            blockers::accept_changed,
+            blockers::apply_fix,
             ready,
             native_color_picker,
             overview,
