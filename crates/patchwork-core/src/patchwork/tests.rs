@@ -378,6 +378,76 @@ async fn own_files_profile(
     (pw, profile, downloads)
 }
 
+/// [`OwnFiles`]' mods, which can't be downloaded without a key.
+struct KeyNeeded;
+
+#[async_trait::async_trait]
+impl Source for KeyNeeded {
+    fn id(&self) -> &str {
+        "own"
+    }
+
+    async fn resolve(
+        &self,
+        _: &SourceContext<'_>,
+        _: &str,
+        _: Option<&str>,
+    ) -> Result<crate::source::ResolvedMod> {
+        unreachable!()
+    }
+
+    async fn download(&self, _: &SourceContext<'_>, _: &str, _: &str) -> Result<Download> {
+        Err(Error::blocked(
+            "own needs a key",
+            "Own needs a key",
+            "Add one in Settings.",
+            crate::fix::Fix::SourceSettings {
+                source: "own".to_owned(),
+                name: "Own".to_owned(),
+            },
+        ))
+    }
+}
+
+/// A locked mod that can't be downloaded in the background because
+/// something's in the way is an issue with a fix, rather than a warning.
+#[tokio::test]
+async fn a_blocked_download_is_an_issue() {
+    let tmp = tempfile::tempdir().unwrap();
+    let url = serve_once("200 OK", b"mod bytes");
+    let (pw, profile, _) = own_files_profile(tmp.path(), Some(url), &["a"]).await;
+    pw.lock(&profile, false).await.unwrap();
+    drop(pw);
+    fs::remove_dir_all(tmp.path().join("data/store")).unwrap();
+
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(KeyNeeded)
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.download_locked(&profile).await.unwrap();
+    let blocked: Vec<_> = pw
+        .issues(&profile)
+        .unwrap()
+        .into_iter()
+        .filter(|i| matches!(i.kind, crate::issue::IssueKind::DownloadBlocked { .. }))
+        .collect();
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].mods, ["a"]);
+    assert_eq!(blocked[0].severity, crate::issue::Severity::Error);
+    assert_eq!(
+        blocked[0].message,
+        "`a` can't be downloaded: Own needs a key"
+    );
+    assert_eq!(blocked[0].fix, Some(crate::fix::Fix::Lock));
+    // downloading them shows the blocker itself
+    let err = pw.lock(&profile, false).await.unwrap_err();
+    assert!(matches!(
+        err.fix(),
+        Some(crate::fix::Fix::SourceSettings { .. })
+    ));
+}
+
 #[tokio::test]
 async fn names_another_file_of_a_mod_after_the_file() {
     let tmp = tempfile::tempdir().unwrap();

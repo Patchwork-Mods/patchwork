@@ -146,8 +146,9 @@ export function bellIcon() {
 }
 
 /**
- * Asks for a folder with the system's own picker and puts it in `input`.
- * Leaves `input` alone if the picker is cancelled.
+ * Asks for a folder with the system's own picker and puts it in `input`,
+ * as a change to it (so a settings dialog saves it). Leaves `input` alone
+ * if the picker is cancelled.
  */
 export async function pickFolder(input) {
   try {
@@ -155,7 +156,10 @@ export async function pickFolder(input) {
       directory: true,
       defaultPath: input.value || undefined,
     });
-    if (path) input.value = path;
+    if (path) {
+      input.value = path;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   } catch (err) {
     status(String(err), true);
   }

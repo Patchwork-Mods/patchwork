@@ -1998,6 +1998,9 @@ impl Patchwork {
                 for changed in self.changed_files(profile, &loaded, &lock)? {
                     issues.push(Issue::artifact_changed(&changed));
                 }
+                for (blocker, names) in self.blocked_downloads(profile, &lock)? {
+                    issues.push(Issue::download_blocked(&blocker, names));
+                }
                 let elsewhere: Vec<_> = self
                     .missing_local_files(profile)?
                     .into_iter()

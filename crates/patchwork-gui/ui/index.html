@@ -448,14 +448,19 @@
 		<!-- A game's settings, in tabs. General is this machine's settings for
          it, sent as a GameInstall (see patchwork-core; games.js).
          Appearance is how it's shown: its name, picture and color (see
-         editgame.js) and its theme (see theme.js). -->
-		<dialog id="game-settings-dialog">
+         editgame.js) and its theme (see theme.js). Changes save as they're
+         made, and can be undone (see autosave.js). -->
+		<dialog id="game-settings-dialog" class="settings">
 			<form id="game-settings-form" method="dialog" class="stack">
-				<h2 id="game-settings-title">Game settings</h2>
-				<div id="game-settings-tabs" class="tabs" role="tablist">
-					<button type="button" role="tab" data-tab="general" aria-selected="true">General</button>
-					<button type="button" role="tab" data-tab="appearance">Appearance</button>
-				</div>
+				<header class="settings-header">
+					<div class="row settings-title">
+						<h2 id="game-settings-title">Game settings</h2>
+					</div>
+					<div id="game-settings-tabs" class="tabs" role="tablist">
+						<button type="button" role="tab" data-tab="general" aria-selected="true">General</button>
+						<button type="button" role="tab" data-tab="appearance">Appearance</button>
+					</div>
+				</header>
 				<div class="field" data-panel="general">
 					<label for="game-settings-path">Install folder</label>
 					<div class="row">
@@ -471,7 +476,7 @@
 					<legend>Deploying</legend>
 					<label class="field">
 						<span>Put files in the game folder by</span>
-						<select name="link">
+						<select name="link" data-label="way files are put in the game folder">
 							<option value="">Default</option>
 							<option value="copy">Copying (safest)</option>
 							<option value="hardlink">Hard linking (saves space)</option>
@@ -487,12 +492,12 @@
 					<legend>Launching</legend>
 					<label id="game-settings-launch" class="field" hidden>
 						<span>Start</span>
-						<select name="launch"></select>
+						<select name="launch" data-label="way Play starts the game"></select>
 						<small class="muted">What Play starts. Its menu can start the others.</small>
 					</label>
 					<label class="field">
 						<span>Run with</span>
-						<select name="runner"></select>
+						<select name="runner" data-label="runner"></select>
 						<small id="game-settings-runner-note" class="muted"></small>
 					</label>
 					<div id="game-settings-runner-fields" class="stack"></div>
@@ -517,22 +522,23 @@
 				<div id="game-settings-appearance" class="stack" data-panel="appearance">
 					<!-- Filled in from the backend's game_fields; see editgame.js. -->
 					<div id="game-appearance-fields" class="stack"></div>
-					<label class="field">
+					<!-- Theme and its options save themselves; see theme.js. -->
+					<label class="field" data-autosave="off">
 						<span>Theme</span>
 						<!-- Filled in by renderGameTheme() in theme.js. -->
 						<select id="game-settings-theme"></select>
 					</label>
 					<!-- The picked theme's options, if it has any; see theme.js. -->
-					<div id="game-theme-options" class="stack" hidden></div>
+					<div id="game-theme-options" class="stack" data-autosave="off" hidden></div>
 				</div>
 				<p class="muted hint" data-panel="general">
 					Accounts for sources like Nexus Mods are in
 					<button type="button" id="game-settings-app" class="link">Settings</button>.
 				</p>
-				<p id="game-settings-error" class="error" hidden></p>
+				<p id="game-settings-error" class="error settings-error" hidden></p>
 				<div class="row end">
-					<button type="button" value="cancel" formnovalidate>Cancel</button>
-					<button type="submit" value="save" class="primary">Save</button>
+					<small class="muted settings-saved">Changes are saved as you make them.</small>
+					<button type="button" value="cancel" formnovalidate>Close</button>
 				</div>
 			</form>
 		</dialog>
@@ -540,17 +546,21 @@
 		<!-- Settings for every game, in tabs: one section per source that takes
          any (see settings.js), linking the user's own computers (see
          sync.js) and the sync daemon (see daemon.js), plus which program
-         opens nxm:// links (see links.js), and the app's look (see theme.js). Only the sources' settings wait for Save; every other
-         button acts straight away. -->
-		<dialog id="settings-dialog">
+         opens nxm:// links (see links.js), and the app's look (see theme.js). Every
+         change saves as it's made, and can be undone (see autosave.js). -->
+		<dialog id="settings-dialog" class="settings">
 			<form id="settings-form" method="dialog" class="stack">
-				<h2>Settings</h2>
-				<div id="settings-tabs" class="tabs" role="tablist">
-					<button type="button" role="tab" data-tab="accounts" aria-selected="true">Accounts</button>
-					<button type="button" role="tab" data-tab="computers">My computers</button>
-					<button type="button" role="tab" data-tab="daemon">Background</button>
-					<button type="button" role="tab" data-tab="appearance">Appearance</button>
-				</div>
+				<header class="settings-header">
+					<div class="row settings-title">
+						<h2>Settings</h2>
+					</div>
+					<div id="settings-tabs" class="tabs" role="tablist">
+						<button type="button" role="tab" data-tab="accounts" aria-selected="true">Accounts</button>
+						<button type="button" role="tab" data-tab="computers">My computers</button>
+						<button type="button" role="tab" data-tab="daemon">Background</button>
+						<button type="button" role="tab" data-tab="appearance">Appearance</button>
+					</div>
+				</header>
 				<div id="settings-sources" class="stack" data-panel="accounts"></div>
 				<fieldset id="links" class="stack" data-panel="accounts">
 					<legend>Links from the browser</legend>
@@ -564,7 +574,7 @@
 						<button type="button" id="links-handle" hidden>Use Patchwork for these links</button>
 					</div>
 				</fieldset>
-				<fieldset id="computers" class="stack" data-panel="computers" hidden>
+				<fieldset id="computers" class="stack" data-panel="computers">
 					<legend>My computers</legend>
 					<p class="muted">Link the computers you play on so they all have the same profiles.</p>
 					<ul class="muted computers-about">
@@ -602,7 +612,7 @@
 						<button type="button" id="computers-submit">Link</button>
 					</div>
 				</fieldset>
-				<fieldset id="daemon" class="stack" data-panel="daemon" hidden>
+				<fieldset id="daemon" class="stack" data-panel="daemon">
 					<legend>Background</legend>
 					<p class="muted">Keeps working after you close Patchwork: synced profiles still send and receive changes, and
 						mod updates are still checked for. It starts when you log in, and each job below can be turned off.</p>
@@ -625,7 +635,7 @@
 						<button type="button" id="daemon-install" class="primary">Install</button>
 					</div>
 				</fieldset>
-				<fieldset id="appearance" class="stack" data-panel="appearance" hidden>
+				<fieldset id="appearance" class="stack" data-panel="appearance">
 					<legend>Appearance</legend>
 					<!-- One button per theme for every game, filled in by theme.js.
 					     Hovering or focusing one shows it on the whole window
@@ -665,20 +675,25 @@
 					</div>
 					<p id="appearance-problems" class="error" hidden></p>
 				</fieldset>
-				<p id="settings-error" class="error" hidden></p>
+				<p id="settings-error" class="error settings-error" hidden></p>
 				<div class="row end">
+					<small class="muted settings-saved">Changes are saved as you make them.</small>
 					<button type="button" value="cancel" formnovalidate>Close</button>
-					<button type="submit" value="save" class="primary" data-panel="accounts">Save</button>
 				</div>
 			</form>
 		</dialog>
 
 		<!-- The open profile's settings: what it picks about the game it runs
 		     and whether it has an instance of its own on this machine; see
-		     setup.js. -->
-		<dialog id="profile-settings-dialog">
+		     setup.js. Changes save as they're made, and can be undone (see
+		     autosave.js). -->
+		<dialog id="profile-settings-dialog" class="settings">
 			<form id="profile-settings-form" method="dialog" class="stack">
-				<h2 id="profile-settings-title">Profile settings</h2>
+				<header class="settings-header">
+					<div class="row settings-title">
+						<h2 id="profile-settings-title">Profile settings</h2>
+					</div>
+				</header>
 				<fieldset id="profile-settings-env" class="stack" hidden>
 					<legend>Game</legend>
 					<div id="profile-settings-axes" class="stack"></div>
@@ -689,7 +704,7 @@
 					<legend>Where it's deployed</legend>
 					<label class="field">
 						<span>Deploy to</span>
-						<select name="instance">
+						<select name="instance" data-label="folder it deploys to">
 							<option value="">Default</option>
 							<option value="on">A folder of its own</option>
 							<option value="off">The game's folder</option>
@@ -698,10 +713,10 @@
 						<small class="muted">Only on this computer. Undeploy first to change this while it's deployed.</small>
 					</label>
 				</fieldset>
-				<p id="profile-settings-error" class="error" hidden></p>
+				<p id="profile-settings-error" class="error settings-error" hidden></p>
 				<div class="row end">
-					<button type="button" value="cancel" formnovalidate>Cancel</button>
-					<button type="submit" value="save" class="primary">Save</button>
+					<small class="muted settings-saved">Changes are saved as you make them.</small>
+					<button type="button" value="cancel" formnovalidate>Close</button>
 				</div>
 			</form>
 		</dialog>

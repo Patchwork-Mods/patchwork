@@ -90,6 +90,11 @@ pub enum IssueKind {
     /// Local mods added on another machine whose files haven't been synced
     /// here yet.
     OnAnotherPc,
+    /// Locked mods that couldn't be downloaded in the background because
+    /// something was in the way, like a source's missing API key. `title`
+    /// is the [`Blocker`](crate::fix::Blocker)'s; downloading them again
+    /// shows the whole of it, with what clears it.
+    DownloadBlocked { title: String },
     /// What an extension's [`Check`](crate::check::Check) found.
     Check {
         /// The check's id, `<extension>.<check>`.
@@ -253,6 +258,26 @@ impl Issue {
             message,
             kind: IssueKind::OnAnotherPc,
             fix: Some(Fix::Sync),
+        }
+    }
+
+    /// `names` are locked mods that couldn't be downloaded because of
+    /// `blocker`. Their fix is downloading them again, from the
+    /// frontend, which then shows `blocker` with its own fixes and tries
+    /// again once one's applied.
+    pub fn download_blocked(blocker: &crate::fix::Blocker, names: Vec<String>) -> Self {
+        let which = match names.as_slice() {
+            [name] => format!("`{name}` can't be downloaded"),
+            _ => format!("{} mods can't be downloaded", names.len()),
+        };
+        Issue {
+            severity: Severity::Error,
+            mods: names,
+            message: format!("{which}: {}", blocker.title),
+            kind: IssueKind::DownloadBlocked {
+                title: blocker.title.clone(),
+            },
+            fix: Some(Fix::Lock),
         }
     }
 

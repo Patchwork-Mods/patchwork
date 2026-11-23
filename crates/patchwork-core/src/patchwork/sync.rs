@@ -19,6 +19,7 @@ use super::Patchwork;
 use super::local::{LOCAL, not_here};
 use crate::error::{ArtifactChanged, IoContext};
 use crate::event::Event;
+use crate::fix::Blocker;
 use crate::fsutil;
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
@@ -60,6 +61,20 @@ struct SyncBase {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ChangedFiles {
     mods: Vec<ChangedFile>,
+}
+
+/// The mods [`Patchwork::download_locked`] couldn't download because
+/// something was in the way, like a source's missing API key.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct BlockedDownloads {
+    mods: Vec<BlockedDownload>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BlockedDownload {
+    /// The mod's key, `<source>:<id>`.
+    key: String,
+    blocker: Blocker,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -260,6 +275,7 @@ impl Patchwork {
         };
         let mut pending = Vec::new();
         let mut changed = ChangedFiles::default();
+        let mut blocked = BlockedDownloads::default();
         for m in &lock.mods {
             if self.store.contains(&m.hash, m.format) {
                 continue;
@@ -295,10 +311,25 @@ impl Patchwork {
                     });
                 }
                 Err(Error::NeedsDownload(waiting)) => pending.extend(waiting),
-                Err(e) => self
-                    .reporter
-                    .report(Event::Warning(format!("`{}`: {e}", m.name))),
+                Err(e) => match e.blocker() {
+                    // an issue (see `blocked_downloads`) says what to do
+                    Some(blocker) => blocked.mods.push(BlockedDownload {
+                        key: m.key(),
+                        blocker,
+                    }),
+                    None => self
+                        .reporter
+                        .report(Event::Warning(format!("`{}`: {e}", m.name))),
+                },
             }
+        }
+        let file = self.blocked_downloads_file(profile);
+        if blocked.mods.is_empty() {
+            if file.exists() {
+                fs::remove_file(&file).at(&file)?;
+            }
+        } else {
+            fsutil::write_json(&file, &blocked)?;
         }
         // Only mods that aren't in the store were fetched, so this is all of
         // them that are still changed.
@@ -342,6 +373,43 @@ impl Patchwork {
                     .then(|| ArtifactChanged::new(m, c.got, is_in_profile(loaded, &c.key)))
             })
             .collect())
+    }
+
+    /// Where [`Patchwork::download_locked`] keeps the mods it couldn't
+    /// download because something was in the way.
+    fn blocked_downloads_file(&self, profile: &ProfileRef) -> PathBuf {
+        self.profile_state_dir(profile)
+            .join("blocked-downloads.json")
+    }
+
+    /// The mods [`Patchwork::download_locked`] last couldn't download
+    /// because something was in the way, and still aren't here, by what was
+    /// in the way: mods blocked by the same thing (all needing a Nexus API
+    /// key, say) together, by name.
+    pub(super) fn blocked_downloads(
+        &self,
+        profile: &ProfileRef,
+        lock: &Lockfile,
+    ) -> Result<Vec<(Blocker, Vec<String>)>> {
+        let found: BlockedDownloads =
+            fsutil::read_json(&self.blocked_downloads_file(profile))?.unwrap_or_default();
+        let mut by_blocker: Vec<(Blocker, Vec<String>)> = Vec::new();
+        for b in found.mods {
+            let Some(m) = lock.mods.iter().find(|m| m.key() == b.key) else {
+                continue;
+            };
+            if self.store.contains(&m.hash, m.format) {
+                continue;
+            }
+            match by_blocker
+                .iter_mut()
+                .find(|(blocker, _)| *blocker == b.blocker)
+            {
+                Some((_, names)) => names.push(m.name.clone()),
+                None => by_blocker.push((b.blocker, vec![m.name.clone()])),
+            }
+        }
+        Ok(by_blocker)
     }
 
     fn sync_base(&self, profile: &ProfileRef) -> Result<Option<Entries>> {

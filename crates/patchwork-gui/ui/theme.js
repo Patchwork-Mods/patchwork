@@ -23,6 +23,7 @@
 import { invoke, listen, run, status } from "./state.js";
 import { $, h } from "./dom.js";
 import { colorPicker, fullHex } from "./colorpick.js";
+import { autosave } from "./autosave.js";
 
 const systemDark = matchMedia("(prefers-color-scheme: dark)");
 const systemReduced = matchMedia("(prefers-reduced-motion: reduce)");
@@ -473,7 +474,7 @@ function renderGameNote() {
 async function pick(theme) {
   clearTimeout(hoverTimer);
   previewing = undefined;
-  await savePrefs({ theme: theme?.id ?? null });
+  await savePrefs({ theme: theme?.id ?? null }, "theme");
   renderPicker();
   renderThemeOptions();
   quiet = true;
@@ -539,13 +540,14 @@ function setOption(themeId, option, value, done) {
   if (!done) return;
   const options = { ...prefs.options };
   options[themeId] = { ...options[themeId], [option.id]: value };
-  savePrefs({ options }).catch(() => {});
+  savePrefs({ options }, `${theme.name} ${option.label.toLowerCase()}`).catch(() => {});
 }
 
 async function resetOptions(themeId) {
   const options = { ...prefs.options };
   delete options[themeId];
-  await savePrefs({ options });
+  const name = themes.find((t) => t.id === themeId)?.name ?? "theme's";
+  await savePrefs({ options }, `${name} options`);
   renderThemeOptions();
 }
 
@@ -558,43 +560,81 @@ function renderModeNote() {
   if (only) note.textContent = `The theme in use${name ? ` (${name})` : ""} only has a ${only} look.`;
 }
 
-async function savePrefs(change) {
+/** Settings → Appearance, as where a change to [theme] is undone: the
+ *  dialog it's recorded in, and how to show it again once it is. */
+const inSettings = { dialog: () => $("#settings-dialog"), show: () => renderAppearance() };
+
+/** Saves `change` to gui.toml's [theme]. With `label` (what it changes),
+ *  records it to be undone `where` it was made (see inSettings). */
+async function savePrefs(change, label, where = inSettings) {
+  // only what's changed is put back, not anything changed since
+  const before = Object.fromEntries(Object.keys(change).map((key) => [key, prefs[key]]));
   prefs = { ...prefs, ...change };
-  await run("set_theme_prefs", { prefs });
+  const saved = prefs;
+  const saving = label ? autosave(where.dialog()) : null;
+  // waits for any undo running, so they're saved in order
+  const save = () => run("set_theme_prefs", { prefs: saved });
+  await (saving ? saving.queue(save) : save());
+  saving?.record({
+    label,
+    tab: "appearance",
+    undo: () => restorePrefs(before, where),
+    redo: () => restorePrefs(change, where),
+  });
   cache.clear();
   await applyTheme(document.body.dataset.game || null);
   renderModeNote();
 }
 
+/** Saves `change` to [theme] again, for undo and redo, and shows it `where`
+ *  it was made. */
+async function restorePrefs(change, where) {
+  clearTimeout(hoverTimer);
+  previewing = undefined;
+  prefs = { ...prefs, ...change };
+  await run("set_theme_prefs", { prefs });
+  cache.clear();
+  await applyTheme(document.body.dataset.game || null);
+  await where.show();
+}
+
 modeSelect.addEventListener("change", () =>
-  savePrefs({ mode: modeSelect.value })
+  savePrefs({ mode: modeSelect.value }, "mode")
     .then(renderPicker)
     .catch(() => {}),
 );
 gameThemesSelect.addEventListener("change", () =>
-  savePrefs({ game_themes: gameThemesSelect.value })
+  savePrefs({ game_themes: gameThemesSelect.value }, "game themes setting")
     .then(() => {
       renderPicker();
       renderThemeOptions();
     })
     .catch(() => {}),
 );
-reduceMotion.addEventListener("change", () => savePrefs({ reduce_motion: reduceMotion.checked }).catch(() => {}));
+reduceMotion.addEventListener("change", () => savePrefs({ reduce_motion: reduceMotion.checked }, "reduce motion setting").catch(() => {}));
 
 // A game's settings: the theme for just that game, a value of gui.toml's
-// [theme.games] ("" for Automatic). Picking one shows it straight away;
-// it's saved with the rest of the game's settings.
+// [theme.games] ("" for Automatic), and its options. Each is saved as it's
+// changed, and undone from the game's settings (see autosave.js). While
+// they're open, the window shows the game's theme as it's picked there.
 
 const gameThemeSelect = $("#game-settings-theme");
 const gameThemeOptions = $("#game-theme-options");
+const gameDialog = gameThemeSelect.closest("dialog");
 let gameThemeFor = null;
-/** Options changed in the open game's settings and not saved yet, by
- *  theme id then option id. */
-let gameEdits = {};
-/** Themes whose options were put back to their defaults there. */
-let gameResets = new Set();
-/** theme() for the game with the Theme picked there, with `gameEdits`. */
+/** theme() for the game with the Theme picked there. */
 let gamePreview = null;
+
+/** A game's settings, as where a change to [theme] is undone (see
+ *  inSettings): shown again there if they're still open on `game`. */
+const inGame = (game) => ({
+  dialog: () => gameDialog,
+  show: async () => {
+    if (gameThemeFor !== game || !gameDialog.open) return;
+    await renderGameTheme(game);
+    if (gamePreview) paint(gamePreview);
+  },
+});
 
 /** Fills in the game settings' Theme for `game`. */
 export async function renderGameTheme(game) {
@@ -636,8 +676,6 @@ export async function renderGameTheme(game) {
     known ? null : h("option", { value: set }, `${set} (missing)`),
   );
   gameThemeSelect.value = set;
-  gameEdits = {};
-  gameResets = new Set();
   await showGameOptions();
 }
 
@@ -645,53 +683,53 @@ export async function renderGameTheme(game) {
  *  theme, or a theme for every game picked for just this game. With
  *  `show`, paints it on the window too. */
 async function showGameOptions(show = false) {
+  const game = gameThemeFor;
   const pick = gameThemeSelect.value;
-  const preview = await invoke("theme", { game: gameThemeFor, pick });
-  if (gameThemeSelect.value !== pick) return;
-  for (const theme of [preview.global, preview.game]) {
-    if (!theme) continue;
-    if (gameResets.has(theme.id)) theme.values = {};
-    theme.values = { ...theme.values, ...gameEdits[theme.id] };
-  }
+  const preview = await invoke("theme", { game, pick });
+  if (gameThemeSelect.value !== pick || gameThemeFor !== game) return;
   gamePreview = preview;
   const own = [preview.game, preview.global?.id === pick ? preview.global : null].filter((t) => t?.options?.length);
   gameThemeOptions.replaceChildren(
     ...own.map((theme) =>
       optionsGroup(
         theme,
-        gameEdits[theme.id] || (!gameResets.has(theme.id) && Object.keys(prefs.options?.[theme.id] ?? {}).length > 0),
-        (option, value) => {
+        Object.keys(prefs.options?.[theme.id] ?? {}).length > 0,
+        (option, value, done) => {
           theme.values = { ...theme.values, [option.id]: value };
-          gameEdits[theme.id] = { ...gameEdits[theme.id], [option.id]: value };
           paint(gamePreview);
+          if (!done) return;
+          // Options belong to a theme, wherever it's used.
+          const options = { ...prefs.options };
+          options[theme.id] = { ...options[theme.id], [option.id]: value };
+          savePrefs({ options }, `${theme.name} ${option.label.toLowerCase()}`, inGame(game))
+            .then(() => paint(gamePreview))
+            .catch(() => {});
         },
         () => {
-          gameResets.add(theme.id);
-          delete gameEdits[theme.id];
-          showGameOptions(true).catch(() => {});
+          const options = { ...prefs.options };
+          delete options[theme.id];
+          savePrefs({ options }, `${theme.name} options`, inGame(game))
+            .then(() => showGameOptions(true))
+            .catch(() => {});
         },
       ),
     ),
   );
   gameThemeOptions.hidden = !own.length;
-  if (show && gameThemeSelect.closest("dialog").open) paint(preview);
+  if (show && gameDialog.open) paint(preview);
 }
 
-gameThemeSelect.addEventListener("change", () => showGameOptions(true).catch(() => {}));
-
-/** Saves the game settings' Theme. */
-export async function saveGameTheme() {
+gameThemeSelect.addEventListener("change", () => {
+  const game = gameThemeFor;
   const games = { ...prefs.games };
-  if (gameThemeSelect.value) games[gameThemeFor] = gameThemeSelect.value;
-  else delete games[gameThemeFor];
-  // Options belong to a theme, wherever it's used.
-  const options = { ...prefs.options };
-  for (const id of gameResets) delete options[id];
-  for (const [id, edits] of Object.entries(gameEdits)) options[id] = { ...options[id], ...edits };
-  await savePrefs({ games, options });
-}
+  if (gameThemeSelect.value) games[game] = gameThemeSelect.value;
+  else delete games[game];
+  savePrefs({ games }, "theme", inGame(game))
+    .then(() => showGameOptions(true))
+    .catch(() => {});
+});
 
-// Back to the theme in use, after a preview that wasn't saved.
-gameThemeSelect.closest("dialog").addEventListener("close", () => {
+// Back to the theme in use, after showing the game's in its settings.
+gameDialog.addEventListener("close", () => {
   if (current) paint(current);
 });

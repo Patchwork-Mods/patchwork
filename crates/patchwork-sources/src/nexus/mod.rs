@@ -847,9 +847,16 @@ impl Nexus {
     fn mod_api<'a>(&self, ctx: &SourceContext<'a>, mod_id: u64) -> Result<(String, &'a str)> {
         let config = config(ctx)?;
         let api_key = api_key(ctx.settings).ok_or_else(|| {
-            error(
-                "Nexus needs an API key; add one in Settings, or with `patchwork config set nexus.api_key <key>` (get one from https://www.nexusmods.com/settings/api-keys)"
-                    .to_owned(),
+            patchwork_core::Error::blocked(
+                "source `nexus`: Nexus needs an API key; add one in Settings, or with `patchwork config set nexus.api_key <key>` (get one from https://www.nexusmods.com/settings/api-keys)",
+                "Nexus needs an API key",
+                "Nexus Mods only lets patchwork look up and download mods with your personal \
+                 API key. Copy it from https://www.nexusmods.com/settings/api-keys (at the \
+                 bottom, under Personal API Key) and paste it into Settings, under Nexus Mods.",
+                patchwork_core::fix::Fix::SourceSettings {
+                    source: "nexus".to_owned(),
+                    name: "Nexus Mods".to_owned(),
+                },
             )
         })?;
         Ok((

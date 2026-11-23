@@ -1,13 +1,16 @@
 // How the open profile's game is set up to run: what it picks for the
 // game's [env] axes (its mod loader, say) and whether it's deployed to an
-// instance of its own. Like the CLI's `env` and `instance`.
+// instance of its own. Like the CLI's `env` and `instance`. Each change is
+// saved as it's made, and can be undone (see autosave.js).
 
 import { invoke, state, status, windowFixes } from "./state.js";
 import { $, h } from "./dom.js";
 import { openProfile, showProfile } from "./profile.js";
+import { autosave } from "./autosave.js";
 
 const dialog = $("#profile-settings-dialog");
 const form = $("#profile-settings-form");
+const saving = autosave(dialog);
 
 /** Whether profile `p`'s game has anything to set up per profile. */
 export const hasSetup = (p) => !!p && (p.setup.env.length > 0 || !!p.setup.instance);
@@ -41,7 +44,8 @@ function axisField(axis) {
         // core's EnvDefs::VERSION, which stands in for the version found
         placeholder: axis.default ?? (axis.id === "version" ? "The installed game's" : "Not picked"),
       });
-  if (!axis.choices.length) input.value = axis.picked ?? "";
+  // what's saved goes in as defaultValue (see autosave.js)
+  if (!axis.choices.length) input.defaultValue = axis.picked ?? "";
   return h("div", { class: "field" }, h("label", { for: id }, axis.name), input);
 }
 
@@ -52,15 +56,8 @@ function instanceValue(p) {
   return inst.on ? "on" : "off";
 }
 
-function showError(err) {
-  $("#profile-settings-error").textContent = String(err);
-  $("#profile-settings-error").hidden = !err;
-}
-
-async function openSetup() {
-  const p = state.profile;
-  form.reset();
-  showError(null);
+/** Fills the form in for profile `p`, as it's saved. */
+function fill(p) {
   $("#profile-settings-title").textContent = `${p.name} settings`;
 
   $("#profile-settings-env").hidden = !p.setup.env.length;
@@ -74,8 +71,12 @@ async function openSetup() {
     select.value = instanceValue(p);
     $("#profile-settings-dir").textContent = `Its own folder is ${inst.dir}`;
   }
+}
 
-  dialog.showModal();
+async function openSetup() {
+  const p = state.profile;
+  fill(p);
+  saving.open({ key: p.id });
 }
 
 $("#profile-settings").addEventListener("click", () => openSetup().catch(() => {}));
@@ -87,44 +88,57 @@ windowFixes.profileSettings = async () => {
   return false;
 };
 
-form.querySelector("[value=cancel]").addEventListener("click", () => dialog.close());
-
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const p = state.profile;
-  const submit = form.querySelector("[type=submit]");
-  submit.disabled = true;
-  showError(null);
-  let detail = null;
+/**
+ * Saves a change to profile `id` with `save()`, which resolves to the
+ * profile as it is then, and shows it. If it fails, some of it may have
+ * been saved, so the profile's loaded again.
+ */
+async function update(id, save) {
+  let detail;
   try {
-    // Where it's deployed first, since that can refuse (while it's
-    // deployed) and relocking for new picks can take a while.
-    const instance = form.elements.instance.value;
-    if (p.setup.instance && instance !== instanceValue(p)) {
-      const on = instance === "" ? null : instance === "on";
-      detail = await invoke("set_profile_instance", { id: p.id, on });
-    }
-    const picks = {};
-    for (const axis of p.setup.env) {
-      const value = form.elements[axis.id].value.trim() || null;
-      if (value !== (axis.picked ?? null)) picks[axis.id] = value;
-    }
-    if (Object.keys(picks).length) {
-      status("Finding versions of the mods that suit…");
-      detail = await invoke("set_profile_env", { id: p.id, picks });
-    }
+    detail = await save();
   } catch (err) {
-    showError(err);
-    status("Couldn't save the profile's settings", true);
-    // some of it may have been saved
-    await openProfile(p.id).catch(() => {});
-    return;
-  } finally {
-    submit.disabled = false;
+    await openProfile(id).catch(() => {});
+    if (state.profile?.id === id && dialog.open) await saving.refill(() => fill(state.profile));
+    throw err;
   }
-  dialog.close();
-  if (detail) {
-    showProfile(detail);
-    status(`Saved ${p.label}'s settings`);
+  if (!detail || state.profile?.id !== id) return;
+  showProfile(detail);
+  if (dialog.open) await saving.refill(() => fill(state.profile));
+}
+
+/** Where profile `id` is deployed: "" for the game's default, "on" or "off". */
+const setInstance = (id, value) =>
+  update(id, () => invoke("set_profile_instance", { id, on: value === "" ? null : value === "on" }));
+
+/** Picks `value` (null for the default) for profile `id`'s env axis `axis`. */
+function setAxis(id, axis, value) {
+  status("Finding versions of the mods that suit…");
+  return update(id, () => invoke("set_profile_env", { id, picks: { [axis]: value } }));
+}
+
+// Where it's deployed saves as it changes, which can be refused (while it's
+// deployed); so do the picks, which can take a while, as relocking for
+// them can mean downloading.
+saving.watch(form, (field) => {
+  const p = state.profile;
+  const id = p.id;
+  if (field.name === "instance") {
+    return saving.change(saving.labelOf(field), async () => {
+      const before = instanceValue(state.profile);
+      const value = field.value;
+      if (value === before) return null;
+      await setInstance(id, value);
+      return { undo: () => setInstance(id, before), redo: () => setInstance(id, value) };
+    });
   }
+  const axis = p.setup.env.find((a) => a.id === field.name);
+  if (!axis) return false;
+  return saving.change(saving.labelOf(field), async () => {
+    const before = state.profile.setup.env.find((a) => a.id === axis.id)?.picked ?? null;
+    const value = field.value.trim() || null;
+    if (value === before) return null;
+    await setAxis(id, axis.id, value);
+    return { undo: () => setAxis(id, axis.id, before), redo: () => setAxis(id, axis.id, value) };
+  });
 });

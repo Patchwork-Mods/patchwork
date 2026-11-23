@@ -153,6 +153,9 @@ pub enum Fix {
     /// Open the profile's settings, to pick something it needs. Only a
     /// frontend can do this.
     ProfileSettings,
+    /// Open Settings at `source`'s settings (its API key, say), named
+    /// `name`, to fill in something it needs. Only a frontend can do this.
+    SourceSettings { source: String, name: String },
 }
 
 impl Fix {
@@ -172,6 +175,7 @@ impl Fix {
             Fix::Sync => "Get it from my other PC".to_owned(),
             Fix::UpdatePatchwork => "Update Patchwork".to_owned(),
             Fix::ProfileSettings => "Open profile settings".to_owned(),
+            Fix::SourceSettings { .. } => "Open Settings".to_owned(),
         }
     }
 
@@ -192,6 +196,7 @@ impl Fix {
             Fix::Sync => "Waiting for your other PC…".to_owned(),
             Fix::UpdatePatchwork => "Updating Patchwork…".to_owned(),
             Fix::ProfileSettings => "Opening profile settings…".to_owned(),
+            Fix::SourceSettings { .. } => "Opening Settings…".to_owned(),
         }
     }
 
@@ -231,6 +236,9 @@ impl Fix {
             Fix::Sync => "patchwork sync".to_owned(),
             Fix::UpdatePatchwork => "patchwork self-update".to_owned(),
             Fix::ProfileSettings => on("env".to_owned()),
+            Fix::SourceSettings { source, .. } => {
+                format!("patchwork config set {source}.api_key <key>")
+            }
         }
     }
 }

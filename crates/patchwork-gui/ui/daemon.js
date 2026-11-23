@@ -10,6 +10,10 @@ import { $, ago, h } from "./dom.js";
 import { openProfile, refresh, renderSidebar } from "./profile.js";
 import { openGame } from "./games.js";
 import { go } from "./nav.js";
+import { autosave } from "./autosave.js";
+
+/** Settings, where the Background tab is, for undoing its changes. */
+const saving = () => autosave($("#settings-dialog"));
 
 /** Remembers "Not now", so sharing again doesn't ask again. */
 const OFFER_DISMISSED = "daemon-offer-dismissed";
@@ -105,13 +109,18 @@ function greyNotifies() {
   }
 }
 
-/** Saves one of the daemon's checkboxes with `save()`, putting it back if that fails. */
-async function setCheckbox(input, save, done) {
+/**
+ * Saves one of the daemon's checkboxes with `save(on)`, putting it back if
+ * that fails, and records it to be undone as a change to `label`.
+ */
+async function setCheckbox(input, label, save, done) {
+  const on = input.checked;
   input.disabled = true;
   input.dataset.busy = "1";
   try {
-    await save();
-    status(done(input.checked));
+    await saving().queue(() => save(on));
+    recordCheckbox(label, save, on);
+    status(done(on));
   } catch (err) {
     input.checked = !input.checked;
     $("#daemon-error").textContent = String(err);
@@ -124,10 +133,23 @@ async function setCheckbox(input, save, done) {
   }
 }
 
+/** Records turning a checkbox `on` (or off) with `save(on)`, to be undone. */
+function recordCheckbox(label, save, on) {
+  const set = (on) => save(on).then(() => renderDaemon());
+  saving().record({ label, tab: "daemon", undo: () => set(!on), redo: () => set(on) });
+}
+
+/** What a task's checkbox is called, for undoing it. */
+const taskLabel = (input) => {
+  const name = input.closest("label")?.querySelector("span")?.textContent ?? "task";
+  return `“${name}” setting`;
+};
+
 function setTask(id, input) {
   return setCheckbox(
     input,
-    () => invoke("daemon_set_task", { id, enabled: input.checked }),
+    taskLabel(input),
+    (enabled) => invoke("daemon_set_task", { id, enabled }),
     (on) => (on ? "Turned on; it starts once Patchwork is closed" : "Turned off"),
   );
 }
@@ -135,7 +157,8 @@ function setTask(id, input) {
 function setNotify(id, input) {
   return setCheckbox(
     input,
-    () => invoke("daemon_set_notify", { id, notify: input.checked }),
+    taskLabel(input),
+    (notify) => invoke("daemon_set_notify", { id, notify }),
     (on) => (on ? "Notifications on" : "Notifications off"),
   );
 }
@@ -144,9 +167,11 @@ $("#daemon-enabled").addEventListener("change", async (e) => {
   const input = e.target;
   const list = $("#daemon-tasks");
   const tasks = () => list.querySelectorAll("input");
+  const save = (enabled) => invoke("daemon_set_enabled", { enabled });
   input.disabled = true;
   try {
-    await invoke("daemon_set_enabled", { enabled: input.checked });
+    await saving().queue(() => save(input.checked));
+    recordCheckbox("“Work in the background” setting", save, input.checked);
     status(input.checked ? "Turned on; it starts once Patchwork is closed" : "Turned off; it won't do anything in the background");
   } catch (err) {
     input.checked = !input.checked;
@@ -248,7 +273,7 @@ const REFRESH_MS = 3000;
 // once it's done.
 setInterval(() => {
   const panel = $("#daemon");
-  if (panel.hidden || !panel.closest("dialog")?.open) return;
+  if (panel.classList.contains("other-tab") || !panel.closest("dialog")?.open) return;
   if ([...panel.querySelectorAll("button")].some((b) => b.disabled)) return;
   Promise.all([invoke("daemon_status"), invoke("daemon_tasks")])
     .then(([daemon, settings]) => {

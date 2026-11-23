@@ -43,14 +43,27 @@ export async function renderGameAppearance(id) {
   $("#game-appearance-fields").replaceChildren(...shown.views.map((v) => v.el));
 }
 
-/** Saves the tab's fields, if any were changed. Says whether they were. */
+/** The edits the tab's fields were filled in from, as set_game_edits takes them. */
+const savedEdits = () =>
+  Object.fromEntries(shown.views.map((v) => [v.field.id, v.field.edited ?? null]));
+
+/**
+ * Saves the tab's fields, if any were changed, resolving to the edits as
+ * they were and are, `{ before, after }`, or null if nothing was.
+ */
 export async function saveGameAppearance() {
-  if (!shown) return false;
-  const changes = changesOf(shown.views);
-  const before = Object.fromEntries(
-    shown.views.map((v) => [v.field.id, v.field.edited ?? null]),
-  );
-  if (JSON.stringify(changes) === JSON.stringify(before)) return false;
-  await invoke("set_game_edits", { game: shown.id, changes });
-  return true;
+  if (!shown) return null;
+  const after = changesOf(shown.views);
+  const before = savedEdits();
+  if (JSON.stringify(after) === JSON.stringify(before)) return null;
+  await invoke("set_game_edits", { game: shown.id, changes: after });
+  for (const v of shown.views) v.field.edited = after[v.field.id];
+  return { before, after };
+}
+
+/** Saves game `id`'s edits as `changes`, for undo and redo, and shows them
+ *  if the tab's on that game. */
+export async function setGameAppearance(id, changes) {
+  await invoke("set_game_edits", { game: id, changes });
+  if (shown?.id === id) await renderGameAppearance(id);
 }

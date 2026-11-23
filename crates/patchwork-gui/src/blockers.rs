@@ -148,7 +148,11 @@ pub async fn apply_fix(
                 .map_err(lock_msg(&handle))?;
         }
         Fix::Sync => crate::sync::wait_for_files(&handle, &profile()?).await?,
-        Fix::Deploy | Fix::ChooseGamePath { .. } | Fix::UpdatePatchwork | Fix::ProfileSettings => {
+        Fix::Deploy
+        | Fix::ChooseGamePath { .. }
+        | Fix::UpdatePatchwork
+        | Fix::ProfileSettings
+        | Fix::SourceSettings { .. } => {
             return Err(format!("`{}` is done by the window", fix.label()).into());
         }
     }

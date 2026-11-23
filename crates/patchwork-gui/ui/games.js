@@ -6,8 +6,9 @@ import { refresh, renderProfile, renderSidebar, switchProfile } from "./profile.
 import { selectTab } from "./browse.js";
 import { go } from "./nav.js";
 import { openSettings, readSetting, settingField } from "./settings.js";
-import { applyTheme, renderGameTheme, saveGameTheme } from "./theme.js";
-import { renderGameAppearance, saveGameAppearance } from "./editgame.js";
+import { applyTheme, renderGameTheme } from "./theme.js";
+import { renderGameAppearance, saveGameAppearance, setGameAppearance } from "./editgame.js";
+import { autosave } from "./autosave.js";
 
 function showScreen(screen) {
   document.body.dataset.screen = screen;
@@ -374,9 +375,12 @@ document.addEventListener("click", (e) => {
 // Game settings. General is sent back to set_game_settings as a
 // GameInstall (see patchwork-core): the folder, how files are linked, the
 // deployer's settings, how it's started, and where the game's other
-// folders are. Appearance is editgame.js's and theme.js's.
+// folders are. Appearance is editgame.js's and theme.js's. Each change is
+// saved as it's made, and can be undone (see autosave.js).
 
+const settingsDialog = $("#game-settings-dialog");
 const settingsForm = $("#game-settings-form");
+const saving = autosave(settingsDialog);
 /** The deployer's settings as last shown. */
 let deployerSettings = [];
 /** The game's other roots as last shown. */
@@ -388,21 +392,12 @@ let runnerChoices = null;
 let shownInstall = {};
 /** The game the dialog is about, which needn't be the open one. */
 let settingsGame = null;
-
-/** Shows one of the dialog's tabs: "general" or "appearance". */
-function selectGameSettingsTab(key) {
-  for (const tab of document.querySelectorAll("#game-settings-tabs [role=tab]")) {
-    tab.setAttribute("aria-selected", String(tab.dataset.tab === key));
-  }
-  for (const panel of settingsForm.querySelectorAll("[data-panel]")) {
-    // panels with nothing to show (like Launching, for some games) stay hidden
-    panel.classList.toggle("other-tab", panel.dataset.panel !== key);
-  }
-}
-
-for (const tab of document.querySelectorAll("#game-settings-tabs [role=tab]")) {
-  tab.addEventListener("click", () => selectGameSettingsTab(tab.dataset.tab));
-}
+/** General as last saved, as sent to set_game_settings (null for a game
+ *  that isn't set up), to tell whether it's changed. */
+let savedGeneral = null;
+/** Whether anything's been saved since the dialog opened, so the window
+ *  catches up once it's closed. */
+let gameChanged = false;
 
 /**
  * The runner's settings under names of their own, since runners can share keys
@@ -491,23 +486,17 @@ function rootField(root, set) {
 
 $("#game-settings").addEventListener("click", () => openGameSettings(state.game, "general"));
 
-/** Opens game `id`'s settings on `tab` (see selectGameSettingsTab). */
-async function openGameSettings(id, tab) {
+/** Fills in General for game `id`, from what's saved. */
+async function fillGeneral(id) {
   const game = gameInfo(id);
-  let settings, env;
-  try {
-    [settings, env] = await Promise.all([
-      invoke("game_settings", { game: game.id }),
-      invoke("game_env", { game: game.id }),
-      renderGameAppearance(game.id),
-    ]);
-  } catch (err) {
-    status(String(err), true);
-    return;
-  }
+  const [settings, env] = await Promise.all([
+    invoke("game_settings", { game: game.id }),
+    invoke("game_env", { game: game.id }),
+  ]);
   settingsGame = game.id;
-  settingsForm.reset();
-  settingsForm.elements.path.value = settings.install?.path ?? "";
+  // what's saved goes in as each box's defaultValue (see autosave.js)
+  settingsForm.elements.path.defaultValue = settings.install?.path ?? "";
+  settingsForm.elements.path.value = settingsForm.elements.path.defaultValue;
   const link = settingsForm.elements.link;
   const defaultLabel = [...link.options].find((o) => o.value === settings.defaultLink)?.text;
   link.options[0].text = `Default (${defaultLabel ?? settings.defaultLink})`;
@@ -522,31 +511,41 @@ async function openGameSettings(id, tab) {
   shownInstall = install;
   renderLaunching(settings, install);
   $("#game-settings-prefix").hidden = !settings.usesPrefix;
-  settingsForm.elements.prefix.value = install.prefix ?? "";
+  settingsForm.elements.prefix.defaultValue = install.prefix ?? "";
+  settingsForm.elements.prefix.value = settingsForm.elements.prefix.defaultValue;
   settingsForm.elements.prefix.placeholder = settings.prefix ?? "Not found";
   $("#game-settings-root-list").replaceChildren(
     ...rootSettings.map((r) => rootField(r, install.roots?.[r.id])),
   );
-  await renderGameTheme(game.id);
   $("#game-settings-title").textContent = `${game.name} settings`;
   $("#game-settings-env").textContent = env?.summary ? `Installed: ${env.summary}` : "";
   $("#game-settings-env").hidden = !env?.summary;
-  $("#game-settings-error").hidden = true;
-  selectGameSettingsTab(tab);
-  $("#game-settings-dialog").showModal();
+  savedGeneral = readGeneral();
 }
 
-settingsForm.querySelector("[value=cancel]").addEventListener("click", () => {
-  $("#game-settings-dialog").close();
-});
+/** Opens game `id`'s settings on `tab`: "general" or "appearance". */
+async function openGameSettings(id, tab) {
+  try {
+    await Promise.all([fillGeneral(id), renderGameAppearance(id), renderGameTheme(id)]);
+  } catch (err) {
+    status(String(err), true);
+    return;
+  }
+  gameChanged = false;
+  saving.open({ key: id, tab });
+}
 
 $("#game-settings-app").addEventListener("click", () => {
-  $("#game-settings-dialog").close();
+  settingsDialog.close();
   openSettings("accounts").catch(() => {});
 });
 
-settingsForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
+/**
+ * General as the form has it, as set_game_settings takes it, or null for a
+ * game that isn't set up and still has no folder. Throws if the folder's
+ * been emptied.
+ */
+function readGeneral() {
   const deployer = {};
   for (const setting of deployerSettings) {
     const value = readSetting(settingsForm, setting);
@@ -570,15 +569,9 @@ settingsForm.addEventListener("submit", async (e) => {
   }
   const path = settingsForm.elements.path.value.trim();
   // a game that isn't set up can still have its appearance changed
-  const setUp = path || shownInstall.path;
-  if (!path && setUp) {
-    selectGameSettingsTab("general");
-    $("#game-settings-error").textContent = "The install folder can't be empty.";
-    $("#game-settings-error").hidden = false;
-    settingsForm.elements.path.focus();
-    return;
-  }
-  const settings = {
+  if (!path && !shownInstall.path) return null;
+  if (!path) throw new Error("The install folder can't be empty.");
+  return {
     path,
     link: settingsForm.elements.link.value || null,
     deployer,
@@ -588,22 +581,67 @@ settingsForm.addEventListener("submit", async (e) => {
     runner: runnerChoices ? settingsForm.elements.runner.value || null : (shownInstall.runner ?? null),
     runners,
   };
-  const submit = settingsForm.querySelector("[type=submit]");
-  submit.disabled = true;
-  try {
-    if (setUp) await invoke("set_game_settings", { game: settingsGame, settings });
-    const appearanceChanged = await saveGameAppearance();
-    await saveGameTheme();
-    // the name shows in the picker and sidebar, the color in the theme
-    if (appearanceChanged && state.game === settingsGame) await applyTheme(settingsGame);
-  } catch (err) {
-    $("#game-settings-error").textContent = String(err);
-    $("#game-settings-error").hidden = false;
-    return;
-  } finally {
-    submit.disabled = false;
+}
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/** Saves game `id`'s General as `settings`, for undo and redo, and shows it
+ *  if the dialog's on that game. */
+async function setGeneral(id, settings) {
+  await invoke("set_game_settings", { game: id, settings });
+  gameChanged = true;
+  if (settingsGame === id && settingsDialog.open) await saving.refill(() => fillGeneral(id));
+}
+
+/** Saves game `id`'s Appearance edits as `changes`, for undo and redo. */
+async function setAppearance(id, changes) {
+  await saving.refill(() => setGameAppearance(id, changes));
+  gameChanged = true;
+  // its color is in the theme
+  if (state.game === id) await applyTheme(id);
+}
+
+// Each field saves as it's changed: General's together, as one GameInstall,
+// and Appearance's together, as the game's edits. The Theme saves itself
+// (see theme.js).
+saving.watch(settingsForm, (field) => {
+  const id = settingsGame;
+  if (field.closest("#game-settings-appearance")) {
+    return saving.change(
+      saving.labelOf(field),
+      async () => {
+        const saved = await saveGameAppearance();
+        if (!saved) return null;
+        gameChanged = true;
+        if (state.game === id) await applyTheme(id);
+        return { undo: () => setAppearance(id, saved.before), redo: () => setAppearance(id, saved.after) };
+      },
+      { tab: "appearance" },
+    );
   }
-  $("#game-settings-dialog").close();
-  await refresh();
-  status(`Saved ${gameInfo(settingsGame)?.name ?? settingsGame} settings`);
+  return saving.change(
+    saving.labelOf(field),
+    async () => {
+      const settings = readGeneral();
+      const before = savedGeneral;
+      if (!settings || same(settings, before)) return null;
+      await invoke("set_game_settings", { game: id, settings });
+      savedGeneral = settings;
+      gameChanged = true;
+      // a game just set up has nothing to go back to
+      if (!before) return {};
+      return { undo: () => setGeneral(id, before), redo: () => setGeneral(id, settings) };
+    },
+    { tab: "general" },
+  );
 });
+
+// Once it's closed (and anything typed is saved), the window catches up:
+// the game's name in the picker and sidebar, its folder, and so on.
+settingsDialog.addEventListener("close", () =>
+  saving.queue(async () => {
+    if (!gameChanged) return;
+    gameChanged = false;
+    await refresh();
+  }),
+);

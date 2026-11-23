@@ -57,7 +57,8 @@ export function fieldView(
       });
   control.name = field.id;
   control.id = `${prefix}-${field.id}`;
-  control.value = asText(field.edited ?? field.source);
+  // defaultValue, as what's saved (see autosave.js)
+  control.defaultValue = asText(field.edited ?? field.source);
   // emptied, it goes back to the source's, so that's what shows
   control.placeholder =
     field.source != null
@@ -71,6 +72,7 @@ export function fieldView(
   const reset = () => {
     control.value = asText(field.source);
     control.dispatchEvent(new Event("input"));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
   };
   const resetButton = h(
     "button",
@@ -194,7 +196,7 @@ function colorView(field, prefix, onChange, { noSource, defaultColor }) {
   update();
   const reset = () => {
     own.checked = false;
-    own.dispatchEvent(new Event("change"));
+    own.dispatchEvent(new Event("change", { bubbles: true }));
   };
   return { field, control: own, el, changed, reset, value };
 }
@@ -234,6 +236,7 @@ async function choosePicture(input) {
     if (path) {
       input.value = path;
       input.dispatchEvent(new Event("input"));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
     }
   } catch (err) {
     status(String(err), true);

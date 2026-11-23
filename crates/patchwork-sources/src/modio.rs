@@ -220,8 +220,16 @@ fn credentials(settings: Option<&toml::Table>) -> Option<Credentials<'_>> {
 
 fn need_credentials<'a>(ctx: &SourceContext<'a>) -> Result<Credentials<'a>> {
     credentials(ctx.settings).ok_or_else(|| {
-        error(
-            "mod.io needs an API key; add one in Settings, or with `patchwork config set modio.api_key <key>` (make a read-only one at https://mod.io/me/access)",
+        patchwork_core::Error::blocked(
+            "source `modio`: mod.io needs an API key; add one in Settings, or with `patchwork config set modio.api_key <key>` (make a read-only one at https://mod.io/me/access)",
+            "mod.io needs an API key",
+            "mod.io only lets patchwork look up and download mods with an API key of your \
+             own. Make a read-only one at https://mod.io/me/access and paste it into \
+             Settings, under mod.io.",
+            patchwork_core::fix::Fix::SourceSettings {
+                source: ID.to_owned(),
+                name: "mod.io".to_owned(),
+            },
         )
     })
 }

@@ -3071,10 +3071,6 @@ textarea {
   border-bottom: 1px solid var(--pw-border);
 }
 
-#game-settings-form .other-tab {
-  display: none;
-}
-
 /* A folder input with "Browse…" beside it. */
 .field .row input {
   flex: 1;
@@ -3275,6 +3271,41 @@ legend {
 #settings-tabs {
   display: flex;
   border-bottom: 1px solid var(--pw-border);
+}
+
+/* Settings dialogs (see autosave.js): the title, undo buttons and tabs
+   stay at the top while the rest scrolls under them. The dialog's top
+   padding moves into the header, so nothing shows above it. */
+dialog.settings {
+  padding-top: 0;
+}
+
+/* Only the shown tab's parts, whatever display a theme gives them. */
+dialog.settings .other-tab {
+  display: none !important;
+}
+
+.settings-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 1em;
+  background: var(--pw-surface);
+}
+
+.settings-title {
+  justify-content: space-between;
+}
+
+.settings-undo {
+  gap: 2px;
+}
+
+.settings-saved {
+  margin-right: auto;
 }
 
 /* Offering background sync once something's shared or linked. */

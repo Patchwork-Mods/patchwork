@@ -47,6 +47,32 @@ addEventListener(
   true,
 );
 
+// Clicking outside a dialog cancels it, as its Cancel (or Close) button
+// would, or as Escape does if it has none. A dialog that's busy, with its
+// Cancel disabled or hidden or turning Escape away, stays open. Only a click that
+// starts and ends outside counts, so selecting text in a dialog and letting
+// go outside it doesn't close it.
+const outside = (dialog, e) => {
+  if (e.target !== dialog) return false;
+  const r = dialog.getBoundingClientRect();
+  return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+};
+let pressedOutside = null;
+document.addEventListener("pointerdown", (e) => {
+  pressedOutside = e.target instanceof HTMLDialogElement && e.target.open && outside(e.target, e) ? e.target : null;
+});
+document.addEventListener("click", (e) => {
+  const dialog = pressedOutside;
+  pressedOutside = null;
+  if (!dialog || !outside(dialog, e)) return;
+  const cancel = [...dialog.querySelectorAll("button[value=cancel]")].find((b) => b.closest("dialog") === dialog);
+  if (cancel) {
+    if (!cancel.disabled && !cancel.hidden) cancel.click();
+  } else if (dialog.dispatchEvent(new Event("cancel", { cancelable: true }))) {
+    dialog.close();
+  }
+});
+
 // Whether the window is in the background (not focused, or hidden), so
 // themes can stop anything that moves, which otherwise keeps the GPU busy
 // redrawing a window nobody is looking at.
