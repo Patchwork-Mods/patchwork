@@ -425,13 +425,21 @@ async fn a_blocked_download_is_an_issue() {
         .deployer(NoDeployer)
         .open()
         .unwrap();
+    let blocked = |pw: &Patchwork| {
+        pw.issues(&profile)
+            .unwrap()
+            .into_iter()
+            .filter(|i| matches!(i.kind, crate::issue::IssueKind::DownloadBlocked { .. }))
+            .collect::<Vec<_>>()
+    };
+    // nothing's downloaded for a game that isn't set up here, so nothing's
+    // in the way yet
     pw.download_locked(&profile).await.unwrap();
-    let blocked: Vec<_> = pw
-        .issues(&profile)
-        .unwrap()
-        .into_iter()
-        .filter(|i| matches!(i.kind, crate::issue::IssueKind::DownloadBlocked { .. }))
-        .collect();
+    assert!(blocked(&pw).is_empty());
+
+    set_up_game(&pw, tmp.path());
+    pw.download_locked(&profile).await.unwrap();
+    let blocked = blocked(&pw);
     assert_eq!(blocked.len(), 1);
     assert_eq!(blocked[0].mods, ["a"]);
     assert_eq!(blocked[0].severity, crate::issue::Severity::Error);
@@ -768,6 +776,7 @@ async fn a_changed_file_found_downloading_is_an_issue() {
         .open()
         .unwrap();
     pw.add_game(new_game("my-game", "none")).unwrap();
+    set_up_game(&pw, tmp.path());
     let profile = pw.create_profile("my-game", "default").unwrap();
     let spec = ModSpec {
         source: "versioned".to_owned(),
@@ -1388,6 +1397,13 @@ impl Source for LocalFiles {
 }
 
 /// patchwork with the `local` source, rooted at `root`.
+/// Sets up `my-game` as installed in a folder under `root`.
+fn set_up_game(pw: &Patchwork, root: &Path) {
+    let game = root.join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+}
+
 fn with_local_files(root: &Path) -> Patchwork {
     let pw = Patchwork::builder(Paths::rooted(root))
         .source(LocalFiles)
@@ -2258,6 +2274,17 @@ async fn synced_profiles_are_taken_as_they_are_and_keep_local_changes() {
             .into_iter()
             .any(|i| i.kind == crate::issue::IssueKind::OnAnotherPc)
     };
+    // b hasn't the game, so the file isn't wanted there yet
+    assert!(!on_another_pc(&b));
+    // setting it up has sync catch up
+    set_up_game(&b, &tmp.path().join("b"));
+    assert_eq!(
+        changed.try_recv().unwrap(),
+        ProfileChange {
+            profile: profile.clone(),
+            synced: false
+        }
+    );
     assert!(on_another_pc(&b));
     assert!(!on_another_pc(&a));
     let from_a = a.stored_file(&missing[0]).unwrap();

@@ -27,7 +27,8 @@ use crate::profile::{Profile, ProfileRef};
 use crate::sync::{self, Entries};
 use crate::{Error, Result};
 
-/// A profile or its lockfile was saved, or the profile was removed.
+/// A profile or its lockfile was saved, or the profile was removed, or its
+/// game was set up here, so its mods can be downloaded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileChange {
     pub profile: ProfileRef,
@@ -268,8 +269,24 @@ impl Patchwork {
     /// Mods whose files changed since they were locked are warned about
     /// too, and kept for [`Patchwork::issues`] to report until the new
     /// file's taken or the mod's locked again.
+    ///
+    /// Nothing's downloaded for a game that isn't set up here, since its
+    /// mods couldn't be used; setting it up has it synced again (see
+    /// [`Patchwork::set_game_install`]), which downloads them then.
     pub async fn download_locked(&self, profile: &ProfileRef) -> Result<()> {
         let loaded = self.load_profile(profile)?;
+        if self.game_install(&loaded.game)?.is_none() {
+            // what an earlier download found no longer needs dealing with
+            for file in [
+                self.blocked_downloads_file(profile),
+                self.changed_files_file(profile),
+            ] {
+                if file.exists() {
+                    fs::remove_file(&file).at(&file)?;
+                }
+            }
+            return Ok(());
+        }
         let Some(lock) = self.load_lock(profile)? else {
             return Ok(());
         };

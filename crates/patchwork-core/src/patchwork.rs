@@ -536,6 +536,10 @@ impl Patchwork {
 
     /// Replaces a game's settings, after checking them. Returns them as
     /// saved, with the path made absolute.
+    ///
+    /// Setting up a game that wasn't counts as a change to each of its
+    /// profiles (see [`Patchwork::watch_profiles`]), so sync downloads the
+    /// mods it skipped while the game wasn't here.
     pub fn set_game_install(&self, game: &str, install: GameInstall) -> Result<GameInstall> {
         let registry = self.registry();
         let def = &registry.game(game)?.value;
@@ -620,7 +624,7 @@ impl Patchwork {
             runners,
         };
         // Instances use the install's link method and other roots too.
-        let was = saved.and_then(|i| i.link);
+        let was = saved.as_ref().and_then(|i| i.link);
         for target in self.targets_of(game)? {
             let state = self.deploy_state(&target)?;
             let path = match &target {
@@ -661,6 +665,17 @@ impl Patchwork {
             }
         }
         fsutil::write_toml(&self.install_file(game), &install)?;
+        if saved.is_none() {
+            // its profiles' mods weren't downloaded while it wasn't set up
+            // (see `download_locked`); this has sync catch up
+            // the settings are saved, so a profile that won't load doesn't
+            // fail this
+            for (profile, loaded) in self.profiles().unwrap_or_default() {
+                if loaded.game == game {
+                    self.profile_changed(&profile, false);
+                }
+            }
+        }
         Ok(install)
     }
 
@@ -1995,19 +2010,11 @@ impl Patchwork {
                     issues.extend(self.incompatible(&loaded, &lock, env)?);
                 }
                 issues.extend(self.known_found_issues(&loaded, &lock)?);
-                for changed in self.changed_files(profile, &loaded, &lock)? {
-                    issues.push(Issue::artifact_changed(&changed));
-                }
-                for (blocker, names) in self.blocked_downloads(profile, &lock)? {
-                    issues.push(Issue::download_blocked(&blocker, names));
-                }
-                let elsewhere: Vec<_> = self
-                    .missing_local_files(profile)?
-                    .into_iter()
-                    .map(|m| m.name)
-                    .collect();
-                if !elsewhere.is_empty() {
-                    issues.push(Issue::on_another_pc(elsewhere));
+                // mods aren't downloaded for a game that isn't set up here
+                // (see `download_locked`), so there's nothing to say about
+                // them until it is
+                if self.game_install(&loaded.game)?.is_some() {
+                    issues.extend(self.download_issues(profile, &loaded, &lock)?);
                 }
                 issues
             }
@@ -2037,6 +2044,33 @@ impl Patchwork {
         }
         if !drifted.is_empty() {
             issues.push(Issue::files_changed(&drifted));
+        }
+        Ok(issues)
+    }
+
+    /// What's in the way of `profile`'s mods being here: files that changed
+    /// since they were locked, downloads something blocked, and local mods
+    /// still only on another PC.
+    fn download_issues(
+        &self,
+        profile: &ProfileRef,
+        loaded: &Profile,
+        lock: &Lockfile,
+    ) -> Result<Vec<Issue>> {
+        let mut issues = Vec::new();
+        for changed in self.changed_files(profile, loaded, lock)? {
+            issues.push(Issue::artifact_changed(&changed));
+        }
+        for (blocker, names) in self.blocked_downloads(profile, lock)? {
+            issues.push(Issue::download_blocked(&blocker, names));
+        }
+        let elsewhere: Vec<_> = self
+            .missing_local_files(profile)?
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        if !elsewhere.is_empty() {
+            issues.push(Issue::on_another_pc(elsewhere));
         }
         Ok(issues)
     }
