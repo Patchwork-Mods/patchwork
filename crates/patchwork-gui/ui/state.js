@@ -1,6 +1,6 @@
 // What's open, and talking to main.rs.
 
-import { $ } from "./dom.js";
+import { $, h } from "./dom.js";
 
 /**
  * A command's error that has a blocker (see blockers.rs). It reads as its
@@ -75,27 +75,32 @@ export async function run(command, args) {
 export const errorText = (e) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Runs a command, and when something's in the way of it that has a fix (a
- * blocker; see blockers.rs), asks the user whether to apply that fix and
- * tries again if they do. Fails with an Error saying what was in the way if
- * they cancel, with the command's error if the fix didn't clear it, or with
- * the command's error as it is otherwise.
+ * Runs a command, and when something's in the way of it (a blocker; see
+ * blockers.rs), asks the user which of its fixes to apply, applies it and
+ * tries again. A blocker with no fixes is one the user sees to themselves,
+ * so they're just asked whether to try again. Fails with an Error saying
+ * what was in the way if they cancel, with the command's error if a fix
+ * didn't clear it, or with the command's error as it is otherwise.
  */
 export async function invokeResolving(command, args) {
   const tried = new Set();
+  const key = (fix) => JSON.stringify(fix);
   for (;;) {
     try {
       return await invoke(command, args);
     } catch (e) {
       const blocker = e?.blocker;
       if (!blocker) throw e;
-      // The same thing in the way again means the fix didn't clear it.
-      const key = JSON.stringify(blocker.fix);
-      if (tried.has(key)) throw new Error(e.message);
-      tried.add(key);
-      if (!(await confirmBlocker(blocker))) throw new Error(`Cancelled: ${blocker.title}`);
-      status(blocker.fixing);
-      const retry = await applyFix(blocker.fix, args?.id ?? state.profile?.id);
+      // Something already fixed being in the way again means the fix
+      // didn't clear it.
+      if (blocker.fixes.some((fix) => tried.has(key(fix)))) throw new Error(e.message);
+      const id = args?.id ?? state.profile?.id;
+      const choice = await chooseFix(blocker, id);
+      if (choice === null) throw new Error(`Cancelled: ${blocker.title}`);
+      if (choice === TRY_AGAIN) continue;
+      tried.add(key(choice));
+      status(choice.doing);
+      const retry = await applyFix(choice, id);
       if (!retry) throw new Error(`Cancelled: ${blocker.title}`);
     }
   }
@@ -110,6 +115,14 @@ export async function invokeResolving(command, args) {
 export const windowFixes = {};
 
 /**
+ * What #blocker-dialog shows under a fix's blocker before it's picked, by
+ * the fix's type: functions taking the fix and the profile id, resolving to
+ * a node (like the files an undeploy takes out). The modules that know how
+ * put them here.
+ */
+export const fixPreviews = {};
+
+/**
  * Applies `fix` (see core's fix.rs) for profile `id`, in the window or
  * through apply_fix. Resolves to whether to try what it was for again.
  */
@@ -120,17 +133,61 @@ export async function applyFix(fix, id) {
   return true;
 }
 
-/** Shows `blocker` in #blocker-dialog; resolves to whether to run its fix. */
-function confirmBlocker(blocker) {
+/** What `chooseFix` resolves to for a blocker's Try again. */
+const TRY_AGAIN = "tryAgain";
+
+/**
+ * Shows `blocker` (for profile `id`) in #blocker-dialog, with a button for
+ * each of its fixes, the first one primary, or Try again if it has none.
+ * Resolves to the fix picked, TRY_AGAIN, or null if cancelled.
+ */
+function chooseFix(blocker, id) {
   const dialog = $("#blocker-dialog");
   $("#blocker-title").textContent = blocker.title;
   $("#blocker-detail").textContent = blocker.detail;
-  $("#blocker-fix").textContent = blocker.fixLabel;
+  const buttons = blocker.fixes.length
+    ? blocker.fixes.map((fix, i) =>
+        h("button", { value: `fix-${i}`, class: i === 0 ? "primary" : "" }, fix.label),
+      )
+    : [h("button", { value: TRY_AGAIN, class: "primary" }, "Try again")];
+  // the primary button goes last, by Cancel's opposite end
+  $("#blocker-actions").replaceChildren(
+    h("button", { value: "cancel" }, "Cancel"),
+    ...buttons.reverse(),
+  );
+  showPreviews(blocker, id);
   dialog.returnValue = "";
   dialog.showModal();
   return new Promise((resolve) =>
-    dialog.addEventListener("close", () => resolve(dialog.returnValue === "fix"), { once: true }),
+    dialog.addEventListener(
+      "close",
+      () => {
+        const value = dialog.returnValue;
+        if (value === TRY_AGAIN) return resolve(TRY_AGAIN);
+        resolve(value.startsWith("fix-") ? blocker.fixes[Number(value.slice(4))] : null);
+      },
+      { once: true },
+    ),
   );
+}
+
+/** Counts showPreviews calls, so an old one doesn't fill a newer dialog. */
+let previews = 0;
+
+/** Fills #blocker-preview with what `fixPreviews` show for `blocker`'s fixes. */
+async function showPreviews(blocker, id) {
+  const mine = ++previews;
+  const preview = $("#blocker-preview");
+  const shown = blocker.fixes.filter((fix) => fixPreviews[fix.type]);
+  preview.replaceChildren();
+  preview.hidden = !shown.length;
+  const nodes = await Promise.all(
+    shown.map((fix) =>
+      fixPreviews[fix.type](fix, id).catch((e) => h("p", { class: "error" }, errorText(e))),
+    ),
+  );
+  // a dialog for another blocker might be open by now
+  if (mine === previews) preview.replaceChildren(...nodes);
 }
 
 const SOURCE_NAMES = {

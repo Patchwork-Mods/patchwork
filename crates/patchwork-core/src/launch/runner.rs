@@ -20,6 +20,7 @@ use serde::Deserialize;
 
 use super::{Launch, PrefixOverrides, Setup, Via, is_proton_prefix, steam_command};
 use crate::deploy::Os;
+use crate::fix::Blocker;
 use crate::game::GameDef;
 use crate::registry::Registry;
 use crate::settings::{SettingKind, SettingSpec, SettingState};
@@ -59,6 +60,9 @@ pub enum Fit {
     /// It would be, but something it needs is missing, which is what the
     /// user has to be told if nothing after it can run the game either.
     Missing(String),
+    /// Like [`Fit::Missing`], but the user can see to it outside patchwork
+    /// (the blocker says how) and then try again.
+    Blocked(String, Box<Blocker>),
 }
 
 impl Fit {
@@ -66,7 +70,22 @@ impl Fit {
         match self {
             Fit::Ready => Error::invalid("the runner said it was ready and then wasn't"),
             Fit::Unsuited(why) | Fit::Missing(why) => Error::invalid(why),
+            Fit::Blocked(why, blocker) => Error::blocked_by(why, *blocker),
         }
+    }
+
+    /// Why it can't run, if it can't.
+    pub fn why(&self) -> Option<&str> {
+        match self {
+            Fit::Ready => None,
+            Fit::Unsuited(why) | Fit::Missing(why) | Fit::Blocked(why, _) => Some(why),
+        }
+    }
+
+    /// [`Fit::Blocked`] until `game` has been started from Steam once, to
+    /// set up `what`.
+    fn start_from_steam(why: String, game: &str, what: &str) -> Fit {
+        Fit::Blocked(why, Box::new(super::start_from_steam(game, what)))
     }
 }
 
@@ -245,17 +264,18 @@ impl<'a> Runners<'a> {
             let runner = self.get(id)?;
             match runner.check(ctx) {
                 Fit::Ready => return Ok(runner),
-                Fit::Missing(why) => {
-                    missing.get_or_insert(why);
+                fit @ (Fit::Missing(_) | Fit::Blocked(..)) => {
+                    missing.get_or_insert(fit);
                 }
-                Fit::Unsuited(why) => {
-                    unsuited.get_or_insert(why);
+                fit @ Fit::Unsuited(_) => {
+                    unsuited.get_or_insert(fit);
                 }
             }
         }
-        Err(Error::invalid(missing.or(unsuited).unwrap_or_else(|| {
-            format!("nothing can run {}", ctx.game.name)
-        })))
+        Err(missing
+            .or(unsuited)
+            .map(Fit::into_error)
+            .unwrap_or_else(|| Error::invalid(format!("nothing can run {}", ctx.game.name))))
     }
 }
 
@@ -288,15 +308,19 @@ impl Steam {
             None
         } else {
             let prefix = ctx.setup.prefix.clone().ok_or_else(|| {
-                Fit::Missing(format!(
-                    "can't find {}'s Proton prefix, where Wine has to be told to load its mods' {}; start it from Steam once so Proton sets it up, then try again",
-                    ctx.game.name,
-                    ctx.overrides
-                        .iter()
-                        .map(|d| format!("{d}.dll"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
+                let game = &ctx.game.name;
+                Fit::start_from_steam(
+                    format!(
+                        "can't find {game}'s Proton prefix, where Wine has to be told to load its mods' {}; start it from Steam once so Proton sets it up, then try again",
+                        ctx.overrides
+                            .iter()
+                            .map(|d| format!("{d}.dll"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    game,
+                    "patchwork can't find the Wine prefix its mods have to be loaded in",
+                )
             })?;
             Some(PrefixOverrides {
                 prefix,
@@ -422,9 +446,13 @@ impl Proton {
                     "{game} uses a Wine prefix Proton didn't make"
                 )));
             }
-            return Err(Fit::Missing(format!(
-                "can't find which Proton runs {game}; start it from Steam once so Proton sets it up, then try again"
-            )));
+            return Err(Fit::start_from_steam(
+                format!(
+                    "can't find which Proton runs {game}; start it from Steam once so Proton sets it up, then try again"
+                ),
+                game,
+                "patchwork can't tell which Proton it uses or where its Wine prefix is",
+            ));
         };
         if setup.setting(PROTON, PROTON_FOLDER.key).is_some() && !proton.join("proton").is_file() {
             return Err(Fit::Missing(format!(
@@ -442,10 +470,14 @@ impl Proton {
             None => None,
             Some((_, Some(runtime))) => Some(runtime.as_path()),
             Some((app, None)) => {
-                return Err(Fit::Missing(format!(
-                    "{} needs the Steam Linux Runtime (Steam app {app}) to run in, and it isn't installed; start {game} from Steam once so it installs it",
-                    proton.display(),
-                )));
+                return Err(Fit::start_from_steam(
+                    format!(
+                        "{} needs the Steam Linux Runtime (Steam app {app}) to run in, and it isn't installed; start {game} from Steam once so it installs it",
+                        proton.display(),
+                    ),
+                    game,
+                    "the Steam Linux Runtime its Proton runs in isn't installed",
+                ));
             }
         };
         Ok(ProtonCommand {

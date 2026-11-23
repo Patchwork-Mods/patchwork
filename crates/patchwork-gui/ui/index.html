@@ -1004,16 +1004,14 @@
 			</form>
 		</dialog>
 
-		<!-- Something in the way of what was asked for, and its fix; see
-		     resolveBlocker in state.js. -->
+		<!-- Something in the way of what was asked for, and the fixes for it;
+		     see chooseFix in state.js. -->
 		<dialog id="blocker-dialog">
 			<form method="dialog" class="stack">
 				<h2 id="blocker-title"></h2>
 				<p id="blocker-detail"></p>
-				<div class="row end">
-					<button value="cancel">Cancel</button>
-					<button value="fix" id="blocker-fix" class="primary"></button>
-				</div>
+				<div id="blocker-preview" class="stack" hidden></div>
+				<div id="blocker-actions" class="row end"></div>
 			</form>
 		</dialog>
 

@@ -3,16 +3,16 @@
 //! An error that has something in the way of what was asked, rather than
 //! something broken, says what that is with a [`Blocker`] (see
 //! [`Error::blocker`](crate::Error::blocker)): a title, a detail, and the
-//! [`Fix`] that clears it. Each case is written once, here or where the
-//! error is raised; the GUI shows it as a button and the CLI prints
+//! [`Fix`]es that clear it. Each case is written once, here or where the
+//! error is raised; the GUI shows each fix as a button and the CLI prints
 //! [`Fix::command`].
 //!
-//! Every error that carries a fix has to be raised before anything was
-//! changed, since frontends try what failed again once the fix has run.
+//! Every error that carries a blocker has to be raised before anything was
+//! changed, since frontends try what failed again once it's cleared.
 
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 /// Something in the way, and what clears it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,9 +20,77 @@ use serde::{Deserialize, Serialize};
 pub struct Blocker {
     /// What's in the way, short enough for a dialog's heading.
     pub title: String,
-    /// Why it's in the way, and what the fix does.
+    /// Why it's in the way, and what the fixes do.
     pub detail: String,
-    pub fix: Fix,
+    /// What clears it, the one to suggest first. Empty when nothing
+    /// patchwork can do will: the user deals with it themselves (the detail
+    /// says how) and tries again. Goes to frontends with each fix's `label`
+    /// and `doing` alongside, for its button.
+    #[serde(serialize_with = "labelled_all")]
+    pub fixes: Vec<Fix>,
+}
+
+impl Blocker {
+    /// A blocker cleared by `fix`.
+    pub fn new(title: impl Into<String>, detail: impl Into<String>, fix: Fix) -> Self {
+        Self::with_fixes(title, detail, vec![fix])
+    }
+
+    /// A blocker cleared by any of `fixes`, the first being the one to
+    /// suggest.
+    pub fn with_fixes(
+        title: impl Into<String>,
+        detail: impl Into<String>,
+        fixes: Vec<Fix>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            detail: detail.into(),
+            fixes,
+        }
+    }
+
+    /// A blocker only the user can clear, outside patchwork, after which
+    /// what failed can be tried again; `detail` says how.
+    pub fn try_again(title: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self::with_fixes(title, detail, Vec::new())
+    }
+
+    /// The fix to suggest, if there is one.
+    pub fn fix(&self) -> Option<&Fix> {
+        self.fixes.first()
+    }
+}
+
+/// A fix with its [`Fix::label`] and [`Fix::doing`] alongside, for
+/// frontends that show it as a button. Reading it back as a [`Fix`] ignores
+/// them.
+#[derive(Serialize)]
+struct Labelled<'a> {
+    #[serde(flatten)]
+    fix: &'a Fix,
+    label: String,
+    doing: String,
+}
+
+impl<'a> From<&'a Fix> for Labelled<'a> {
+    fn from(fix: &'a Fix) -> Self {
+        Labelled {
+            fix,
+            label: fix.label(),
+            doing: fix.doing(),
+        }
+    }
+}
+
+/// Serializes a fix as [`Labelled`].
+pub(crate) fn labelled<S: Serializer>(fix: &Option<Fix>, s: S) -> Result<S::Ok, S::Error> {
+    fix.as_ref().map(Labelled::from).serialize(s)
+}
+
+/// Serializes fixes as [`Labelled`].
+fn labelled_all<S: Serializer>(fixes: &[Fix], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(fixes.iter().map(Labelled::from))
 }
 
 /// A profile a [`Fix`] is about, by id and by the name users know it by.
@@ -52,6 +120,15 @@ pub enum Fix {
         keys: Vec<String>,
         names: Vec<String>,
     },
+    /// Move the mods in `keys` (as `<source>:<id>`, named `names`) to their
+    /// newest versions; see
+    /// [`Patchwork::lock_updating`](crate::Patchwork::lock_updating).
+    UpdateMods {
+        keys: Vec<String>,
+        names: Vec<String>,
+    },
+    /// Take the mods named `names` out of the profile.
+    RemoveMods { names: Vec<String> },
     /// Take every file patchwork put in `game`'s folder back out, or in
     /// `instance`'s folder for a profile with an instance of its own.
     /// Frontends confirm it first, since it changes the game.
@@ -84,6 +161,9 @@ impl Fix {
         match self {
             Fix::AcceptChanged { names, .. } if names.len() == 1 => "Use the new file".to_owned(),
             Fix::AcceptChanged { .. } => "Use the new files".to_owned(),
+            Fix::UpdateMods { .. } => "Update to latest".to_owned(),
+            Fix::RemoveMods { names } if names.len() == 1 => "Remove it".to_owned(),
+            Fix::RemoveMods { .. } => "Remove them".to_owned(),
             Fix::Undeploy { .. } => "Undeploy and continue".to_owned(),
             Fix::Deploy => "Deploy".to_owned(),
             Fix::SetGamePath { .. } => "Use this folder".to_owned(),
@@ -101,6 +181,8 @@ impl Fix {
             Fix::AcceptChanged { names, .. } => {
                 format!("Using the new file for {}…", names.join(", "))
             }
+            Fix::UpdateMods { names, .. } => format!("Updating {}…", names.join(", ")),
+            Fix::RemoveMods { names } => format!("Removing {}…", names.join(", ")),
             Fix::Undeploy { .. } => "Undeploying…".to_owned(),
             Fix::Deploy => "Deploying…".to_owned(),
             Fix::SetGamePath { .. } | Fix::ChooseGamePath { .. } => {
@@ -125,6 +207,17 @@ impl Fix {
                 let accepts: Vec<_> = keys.iter().map(|k| format!("--accept {k}")).collect();
                 on(format!("lock {}", accepts.join(" ")))
             }
+            Fix::UpdateMods { keys, .. } => {
+                let updates: Vec<_> = keys.iter().map(|k| format!("--update-mod {k}")).collect();
+                on(format!("lock {}", updates.join(" ")))
+            }
+            Fix::RemoveMods { names } => {
+                let removes: Vec<_> = names
+                    .iter()
+                    .map(|n| on(format!("remove {}", quoted(n))))
+                    .collect();
+                removes.join(" && ")
+            }
             Fix::Undeploy {
                 instance: Some(p), ..
             } => format!("patchwork --profile {} undeploy", p.label),
@@ -139,6 +232,19 @@ impl Fix {
             Fix::UpdatePatchwork => "patchwork self-update".to_owned(),
             Fix::ProfileSettings => on("env".to_owned()),
         }
+    }
+}
+
+/// `arg` as one shell word.
+fn quoted(arg: &str) -> String {
+    if !arg.is_empty()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.:/+@".contains(c))
+    {
+        arg.to_owned()
+    } else {
+        format!("'{}'", arg.replace('\'', r"'\''"))
     }
 }
 
@@ -179,5 +285,23 @@ mod tests {
             instance: None,
         };
         assert_eq!(undeploy.command(Some("g/p")), "patchwork undeploy g");
+        let remove = Fix::RemoveMods {
+            names: vec!["A".to_owned(), "It's B".to_owned()],
+        };
+        assert_eq!(
+            remove.command(None),
+            r"patchwork remove A && patchwork remove 'It'\''s B'"
+        );
+    }
+
+    #[test]
+    fn blockers_go_to_frontends_with_labelled_fixes() {
+        let blocker = Blocker::new("t", "d", Fix::Lock);
+        let value = serde_json::to_value(&blocker).unwrap();
+        assert_eq!(value["fixes"][0]["type"], "lock");
+        assert_eq!(value["fixes"][0]["label"], "Download");
+        assert_eq!(serde_json::from_value::<Blocker>(value).unwrap(), blocker);
+        let retry = serde_json::to_value(Blocker::try_again("t", "d")).unwrap();
+        assert_eq!(retry["fixes"], serde_json::json!([]));
     }
 }

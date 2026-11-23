@@ -1,50 +1,26 @@
 //! Errors the user can do something about. Most commands that fail just
 //! have a message for the status bar, but some fail on something with a fix,
 //! like a mod whose file changed since it was locked. Core says what that
-//! is with a [`patchwork_core::fix::Blocker`], which reaches the window as
-//! a [`Blocker`]. `invokeResolving` in state.js asks the user whether to
-//! apply its fix, does (through [`apply_fix`], or in the window for fixes
-//! only it can do), and tries the command that failed again.
+//! is with a [`Blocker`], which reaches the window with a label for each of
+//! its fixes. `invokeResolving` in state.js asks the user which fix to apply
+//! (or just to try again, for a blocker with none), applies it (through
+//! [`apply_fix`], or in the window for fixes only it can do), and tries the
+//! command that failed again.
 
 use std::any::Any;
 use std::fmt;
 use std::path::Path;
 
 use patchwork_core::deploy::DeployTarget;
-use patchwork_core::fix::Fix;
+use patchwork_core::fix::{Blocker, Fix, ProfileName};
 use serde::{Serialize, Serializer};
 use serde_json::json;
 use tauri::{AppHandle, State};
 
-use crate::{App, CmdResult, Deployed, Job, apply_cancellable, lock_msg, profile_ref};
-
-/// Something in the way of a command, and how to clear it, as the window
-/// shows it.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Blocker {
-    /// What's in the way, short enough for a dialog's heading.
-    pub title: String,
-    /// Why it's in the way, and what the fix does.
-    pub detail: String,
-    /// What the button that applies `fix` says.
-    pub fix_label: String,
-    pub fix: Fix,
-    /// What the status bar says while `fix` is applied.
-    pub fixing: String,
-}
-
-impl From<patchwork_core::fix::Blocker> for Blocker {
-    fn from(b: patchwork_core::fix::Blocker) -> Self {
-        Self {
-            fix_label: b.fix.label(),
-            fixing: b.fix.doing(),
-            title: b.title,
-            detail: b.detail,
-            fix: b.fix,
-        }
-    }
-}
+use crate::{
+    App, CmdResult, Deployed, Job, PlanSummary, apply_cancellable, lock_changes, lock_msg, msg,
+    profile_ref,
+};
 
 /// Why a command failed: a message, or a [`Blocker`] the user can clear.
 #[derive(Debug)]
@@ -96,7 +72,7 @@ impl CmdError {
     pub fn from_core(e: &patchwork_core::Error) -> Self {
         Self {
             message: e.to_string(),
-            blocker: e.blocker().map(|b| Box::new(b.into())),
+            blocker: e.blocker().map(Box::new),
         }
     }
 
@@ -134,14 +110,25 @@ pub async fn apply_fix(
             let _work = app.work.start()?;
             app.pw.accept_changed(&profile()?, &keys).await?;
         }
+        Fix::UpdateMods { keys, .. } => {
+            let _work = app.work.start()?;
+            let r = profile()?;
+            let before = app.pw.load_lock(&r)?;
+            let after = app
+                .pw
+                .lock_updating(&r, &keys)
+                .await
+                .map_err(lock_msg(&handle))?;
+            lock_changes(&app, before, after);
+        }
+        Fix::RemoveMods { names } => {
+            let r = profile()?;
+            for name in names {
+                app.pw.remove_mod(&r, &name)?;
+            }
+        }
         Fix::Undeploy { game, instance } => {
-            let target = match instance {
-                Some(p) => DeployTarget::Instance {
-                    game,
-                    profile: profile_ref(&p.id)?,
-                },
-                None => DeployTarget::Game(game),
-            };
+            let target = undeploy_target(game, instance)?;
             let _work = app.work.start()?;
             let job = Job::start(&app);
             let plan = app.pw.plan_undeploy(&target)?;
@@ -166,6 +153,32 @@ pub async fn apply_fix(
         }
     }
     Ok(())
+}
+
+/// What [`Fix::Undeploy`] would take out, for the blocker's dialog to list
+/// before the user picks it. Unlike `plan_undeploy`, it isn't kept for
+/// `apply_plan`: `apply_fix` plans it again.
+#[tauri::command]
+pub fn preview_undeploy(app: State<'_, App>, fix: Fix) -> CmdResult<PlanSummary> {
+    let Fix::Undeploy { game, instance } = fix else {
+        return Err("only an undeploy can be previewed".into());
+    };
+    let plan = app
+        .pw
+        .plan_undeploy(&undeploy_target(game, instance)?)
+        .map_err(msg)?;
+    Ok(PlanSummary::of(&plan))
+}
+
+/// Where [`Fix::Undeploy`] undeploys from.
+fn undeploy_target(game: String, instance: Option<ProfileName>) -> CmdResult<DeployTarget> {
+    Ok(match instance {
+        Some(p) => DeployTarget::Instance {
+            game,
+            profile: profile_ref(&p.id)?,
+        },
+        None => DeployTarget::Game(game),
+    })
 }
 
 #[cfg(test)]
@@ -193,8 +206,8 @@ mod tests {
         let value = serde_json::to_value(CmdError::from_display(&e)).unwrap();
         assert_eq!(value["message"], "m");
         assert_eq!(value["blocker"]["title"], "t");
-        assert_eq!(value["blocker"]["fix"]["type"], "chooseGamePath");
-        assert_eq!(value["blocker"]["fixLabel"], "Choose folder…");
+        assert_eq!(value["blocker"]["fixes"][0]["type"], "chooseGamePath");
+        assert_eq!(value["blocker"]["fixes"][0]["label"], "Choose folder…");
         let wrapped = anyhow::Error::from(e);
         assert!(CmdError::from_display(&wrapped).blocker.is_some());
     }

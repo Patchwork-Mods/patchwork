@@ -21,7 +21,7 @@ use crate::deploy::{
 use crate::edits::game::{UserGameFile, game_field};
 use crate::edits::{FieldInfo, FieldValue};
 use crate::environment::GameEnv;
-use crate::error::IoContext;
+use crate::error::{ArtifactChanged, IoContext};
 use crate::event::{Event, Reporter, Silent};
 use crate::ext::{Extension, Hook, Registered};
 use crate::fix::Fix;
@@ -205,6 +205,9 @@ enum Locking {
     /// Waiting on the user to download it. Its dependencies (as
     /// `source:id`) still get locked in the meantime.
     Pending(Vec<PendingDownload>, Vec<String>),
+    /// Its file changed since it was locked. Its dependencies still get
+    /// locked, so every mod that changed is found at once.
+    Changed(Box<ArtifactChanged>, Vec<String>),
 }
 
 /// Which store entry a [`SourceFile`] is, saved under
@@ -1992,7 +1995,7 @@ impl Patchwork {
                     issues.extend(self.incompatible(&loaded, &lock, env)?);
                 }
                 issues.extend(self.known_found_issues(&loaded, &lock)?);
-                for changed in self.changed_files(profile, &lock)? {
+                for changed in self.changed_files(profile, &loaded, &lock)? {
                     issues.push(Issue::artifact_changed(&changed));
                 }
                 let elsewhere: Vec<_> = self
@@ -2105,6 +2108,7 @@ impl Patchwork {
         let mut resolved_keys = HashSet::new();
         let mut mods = Vec::new();
         let mut pending = Vec::new();
+        let mut changed = Vec::new();
 
         while !level.is_empty() {
             let todo: Vec<_> = level
@@ -2131,6 +2135,10 @@ impl Patchwork {
                         pending.extend(waiting);
                         dependencies
                     }
+                    Locking::Changed(one, dependencies) => {
+                        changed.push(*one);
+                        dependencies
+                    }
                 };
                 for dep in dependencies {
                     if let Some((source, id)) = dep.split_once(':') {
@@ -2146,6 +2154,9 @@ impl Patchwork {
         }
         // everything else is fetched by now, so the user can see to all of
         // these at once
+        if !changed.is_empty() {
+            return Err(Error::ArtifactChanged(changed));
+        }
         if !pending.is_empty() {
             return Err(Error::NeedsDownload(pending));
         }
@@ -2164,6 +2175,7 @@ impl Patchwork {
         replacements: &BTreeMap<String, String>,
     ) -> Result<Locking> {
         let key = mod_key(&spec.source, &spec.id);
+        let in_profile = name.is_some();
         let unchanged = previous
             .get(&key)
             .filter(|old| old.requested == spec.version);
@@ -2203,7 +2215,8 @@ impl Patchwork {
                     fetched => fetched?,
                 };
                 if hash != old.hash {
-                    return Err(Error::artifact_changed(&old, hash));
+                    let changed = ArtifactChanged::new(&old, hash, in_profile);
+                    return Ok(Locking::Changed(Box::new(changed), old.dependencies));
                 }
             }
             return Ok(Locking::Locked(Box::new(old), None));

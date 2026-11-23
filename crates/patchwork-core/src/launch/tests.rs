@@ -234,7 +234,9 @@ fn overrides_go_in_the_prefix_for_steam_to_start_it() {
 
     // without the prefix they can't be
     setup.prefix = None;
-    let err = plan(&game(""), None, &setup).unwrap_err().to_string();
+    let err = plan(&game(""), None, &setup).unwrap_err();
+    assert_try_again(&err);
+    let err = err.to_string();
     assert!(err.contains("winhttp.dll"), "{err}");
     assert!(err.contains("start it from Steam once"), "{err}");
 }
@@ -401,7 +403,9 @@ fn a_steam_game_needs_its_proton() {
     let mut setup = steam_setup(tmp.path(), &["Game.exe"]);
     setup.proton = None;
     let game = game("[launch.game]\nenv = { A = \"1\" }");
-    let err = plan(&game, None, &setup).unwrap_err().to_string();
+    let err = plan(&game, None, &setup).unwrap_err();
+    assert_try_again(&err);
+    let err = err.to_string();
     assert!(err.contains("start it from Steam once"), "{err}");
 
     // but a prefix of the user's own is run with Wine
@@ -781,4 +785,25 @@ fn runners_from_data_have_settings() {
 fn filling_leaves_unclosed_placeholders_alone() {
     let vars = BTreeMap::from([("a".to_owned(), "1".to_owned())]);
     assert_eq!(runner::fill("x${a}y${b}z${a", &vars), "x1y${b}z${a");
+}
+
+/// `err` is a blocker that only starting the game from Steam clears, so
+/// there's nothing to do but try again.
+fn assert_try_again(err: &crate::Error) {
+    let blocker = err
+        .blocker()
+        .expect("starting from Steam once is a blocker");
+    assert!(
+        blocker.title.contains("from Steam once"),
+        "{}",
+        blocker.title
+    );
+    assert!(blocker.fixes.is_empty(), "{:?}", blocker.fixes);
+}
+
+#[test]
+fn an_unset_prefix_is_cleared_by_starting_from_steam() {
+    let tmp = tempfile::tempdir().unwrap();
+    let err = add_prefix_overrides(tmp.path(), &["winhttp".to_owned()]).unwrap_err();
+    assert_try_again(&err);
 }

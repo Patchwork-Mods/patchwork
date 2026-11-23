@@ -1,6 +1,6 @@
 // Deploying the profile, updating its mods, and progress from main.rs.
 
-import { gameInfo, listen, run, state, status, windowFixes } from "./state.js";
+import { fixPreviews, gameInfo, invoke, listen, run, state, status, windowFixes } from "./state.js";
 import { $, h, link } from "./dom.js";
 import { openProfile, renderDeploy, showProfile } from "./profile.js";
 import { renderEntries } from "./changelog.js";
@@ -132,6 +132,20 @@ $("#plan-dialog").addEventListener("close", async () => {
     showWarnings(`Undeployed everything from ${name}`, outcome.warnings);
   }
 });
+
+// A blocker's Undeploy and continue lists what it takes out, like Undeploy
+// in the menu does, since picking it is all the asking there is.
+fixPreviews.undeploy = async (fix) => {
+  const plan = await invoke("preview_undeploy", { fix });
+  const files = plan.ops.length;
+  return h(
+    "div",
+    { class: "stack" },
+    h("p", { class: "hint" }, `It takes out ${files} file${files === 1 ? "" : "s"}:`),
+    plan.warnings.length > 0 && h("ul", { class: "warnings" }, plan.warnings.map((w) => h("li", {}, w))),
+    h("ul", { class: "plan-ops" }, plan.ops.map(opRow)),
+  );
+};
 
 function opRow(op) {
   switch (op.op) {

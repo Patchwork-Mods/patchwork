@@ -222,6 +222,11 @@ enum Command {
         /// `<source>:<id>` key, and can be given more than once.
         #[arg(long, value_name = "MOD")]
         accept: Vec<String>,
+        /// Move just this mod to its newest version, like `--update` for one
+        /// mod. Takes a name or a `<source>:<id>` key, and can be given more
+        /// than once.
+        #[arg(long, value_name = "MOD", conflicts_with = "update")]
+        update_mod: Vec<String>,
     },
     /// Deploy the profile's enabled mods to the game.
     Deploy {
@@ -331,8 +336,20 @@ async fn main() -> ExitCode {
                      or `patchwork link <link>` with the link a \"Mod Manager Download\" button gives you."
                 ),
                 Some(e) => {
-                    if let Some(fix) = e.fix() {
-                        eprintln!("to fix it, run `{}`", fix.command(profile.as_deref()));
+                    let fixes = e.blocker().map(|b| b.fixes).unwrap_or_default();
+                    let commands: Vec<_> = fixes
+                        .iter()
+                        .map(|fix| fix.command(profile.as_deref()))
+                        .collect();
+                    match commands.as_slice() {
+                        [] => {}
+                        [command] => eprintln!("to fix it, run `{command}`"),
+                        _ => {
+                            eprintln!("to fix it, run one of:");
+                            for command in commands {
+                                eprintln!("  {command}");
+                            }
+                        }
                     }
                 }
                 None => {}
@@ -412,7 +429,11 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Action { id, dry_run } => deploy::action(&pw, &cli.profile, id, dry_run).await?,
         Command::Conflicts { name } => deps::conflicts(&pw, &cli.profile, name)?,
         Command::Sort(args) => mods::sort(&pw, &cli.profile, args).await?,
-        Command::Lock { update, accept } => deploy::lock(&pw, &cli.profile, update, accept).await?,
+        Command::Lock {
+            update,
+            accept,
+            update_mod,
+        } => deploy::lock(&pw, &cli.profile, update, accept, update_mod).await?,
         Command::Deploy { dry_run, verify } => {
             deploy::deploy(&pw, &cli.profile, dry_run, verify).await?
         }

@@ -2,7 +2,7 @@
 //! reports through [`Issue`], so a frontend can show them all in one place
 //! without knowing about each kind.
 
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 
 use crate::check::Problem;
 use crate::compat::GameVersions;
@@ -25,28 +25,11 @@ pub struct Issue {
     pub kind: IssueKind,
     /// What deals with it, if something does. Goes to frontends with its
     /// `label` and `doing` alongside, for a button.
-    #[serde(serialize_with = "labelled", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        serialize_with = "crate::fix::labelled",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub fix: Option<Fix>,
-}
-
-/// A fix with its [`Fix::label`] and [`Fix::doing`] alongside, for
-/// frontends that show it as a button. Reading it back as a [`Fix`] ignores
-/// them.
-fn labelled<S: Serializer>(fix: &Option<Fix>, s: S) -> Result<S::Ok, S::Error> {
-    #[derive(Serialize)]
-    struct Labelled<'a> {
-        #[serde(flatten)]
-        fix: &'a Fix,
-        label: String,
-        doing: String,
-    }
-    fix.as_ref()
-        .map(|fix| Labelled {
-            fix,
-            label: fix.label(),
-            doing: fix.doing(),
-        })
-        .serialize(s)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]

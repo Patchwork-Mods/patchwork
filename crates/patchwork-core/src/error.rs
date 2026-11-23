@@ -62,11 +62,12 @@ pub enum Error {
     /// Called off through a [`crate::cancel::Cancel`].
     #[error("cancelled")]
     Cancelled,
-    /// A locked mod's file came back different from the one it was locked
-    /// with, at the same version. Usually the mod's host repackaged it;
-    /// [`crate::Patchwork::accept_changed`] takes the new file.
-    #[error("{0}")]
-    ArtifactChanged(Box<ArtifactChanged>),
+    /// Locked mods' files came back different from the ones they were
+    /// locked with, at the same version. Usually the mod's host repackaged
+    /// it; [`crate::Patchwork::accept_changed`] takes the new file. Never
+    /// empty.
+    #[error("{}", changed_message(.0))]
+    ArtifactChanged(Vec<ArtifactChanged>),
     /// Something's in the way that the user can clear; see
     /// [`crate::fix`]. Raised before anything was changed, so what failed
     /// can be tried again once it's cleared.
@@ -90,6 +91,11 @@ pub struct ArtifactChanged {
     pub version: Option<String>,
     pub expected: ContentHash,
     pub got: ContentHash,
+    /// Whether it's one of the profile's own mods, under `name`, rather
+    /// than something one of them depends on.
+    pub in_profile: bool,
+    /// Whether the profile pins its version.
+    pub pinned: bool,
 }
 
 /// What [`Error::Blocked`] says is in the way.
@@ -110,13 +116,15 @@ impl Error {
         detail: impl Into<String>,
         fix: Fix,
     ) -> Self {
+        Self::blocked_by(message, Blocker::new(title, detail, fix))
+    }
+
+    /// [`Error::Blocked`] by `blocker`, with `message` for where only a
+    /// message fits.
+    pub fn blocked_by(message: impl Into<String>, blocker: Blocker) -> Self {
         Error::Blocked(Box::new(Blocked {
             message: message.into(),
-            blocker: Blocker {
-                title: title.into(),
-                detail: detail.into(),
-                fix,
-            },
+            blocker,
         }))
     }
 
@@ -125,63 +133,30 @@ impl Error {
     pub fn blocker(&self) -> Option<Blocker> {
         match self {
             Error::Blocked(b) => Some(b.blocker.clone()),
-            Error::ArtifactChanged(changed) => {
-                let ArtifactChanged {
-                    key, name, version, ..
-                } = &**changed;
-                let at = version
-                    .as_deref()
-                    .map(|v| format!(" {v}"))
-                    .unwrap_or_default();
-                Some(Blocker {
-                    title: format!("{name} changed since it was locked"),
-                    detail: format!(
-                        "{name}{at} downloads as a different file now than the one this \
-                         profile was locked with, here or on a PC it syncs with. That usually \
-                         means its author or the site it's from repackaged it. Using the new \
-                         file keeps {name} at the same version, and PCs this profile syncs \
-                         with will use it too."
-                    ),
-                    fix: Fix::AcceptChanged {
-                        keys: vec![key.clone()],
-                        names: vec![name.clone()],
-                    },
-                })
-            }
+            Error::ArtifactChanged(changed) => Some(changed_blocker(changed)),
             Error::Schema {
                 kind,
                 path,
                 found,
                 supported,
-            } => Some(Blocker {
-                title: "Patchwork needs updating".to_owned(),
-                detail: format!(
+            } => Some(Blocker::new(
+                "Patchwork needs updating",
+                format!(
                     "{} was saved by a newer version of Patchwork, most likely on another PC \
                      it syncs with. It's {kind} schema {found}, and this version only reads up \
                      to {supported}. Update Patchwork to use it here.",
                     path.display()
                 ),
-                fix: Fix::UpdatePatchwork,
-            }),
+                Fix::UpdatePatchwork,
+            )),
             _ => None,
         }
     }
 
-    /// What clears the error, if anything does; see [`Error::blocker`].
+    /// The fix to suggest for the error, if there is one; see
+    /// [`Error::blocker`].
     pub fn fix(&self) -> Option<Fix> {
-        self.blocker().map(|b| b.fix)
-    }
-
-    /// [`Error::ArtifactChanged`] for `locked`, whose file hashes to `got`
-    /// now.
-    pub fn artifact_changed(locked: &LockedMod, got: ContentHash) -> Self {
-        Error::ArtifactChanged(Box::new(ArtifactChanged {
-            key: locked.key(),
-            name: locked.name.clone(),
-            version: locked.version.clone(),
-            expected: locked.hash,
-            got,
-        }))
+        self.blocker()?.fixes.into_iter().next()
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -193,6 +168,94 @@ impl Error {
             path: path.into(),
             message: message.to_string(),
         }
+    }
+}
+
+impl ArtifactChanged {
+    /// `locked` (one of the profile's own mods if `in_profile`), whose file
+    /// hashes to `got` now.
+    pub fn new(locked: &LockedMod, got: ContentHash, in_profile: bool) -> Self {
+        ArtifactChanged {
+            key: locked.key(),
+            name: locked.name.clone(),
+            version: locked.version.clone(),
+            expected: locked.hash,
+            got,
+            in_profile,
+            pinned: locked.requested.is_some(),
+        }
+    }
+}
+
+fn changed_message(changed: &[ArtifactChanged]) -> String {
+    match changed {
+        [one] => one.to_string(),
+        _ => format!(
+            "{} changed since they were locked",
+            and_list(changed.iter().map(|c| format!("`{}`", c.name)))
+        ),
+    }
+}
+
+/// What [`Error::ArtifactChanged`] is in the way of: every fix applies to
+/// all the mods, so updating is only offered if none is pinned, and
+/// removing if they're all the profile's own.
+fn changed_blocker(changed: &[ArtifactChanged]) -> Blocker {
+    let keys: Vec<String> = changed.iter().map(|c| c.key.clone()).collect();
+    let names: Vec<String> = changed.iter().map(|c| c.name.clone()).collect();
+    let (title, detail) = match changed {
+        [ArtifactChanged { name, version, .. }] => {
+            let at = version
+                .as_deref()
+                .map(|v| format!(" {v}"))
+                .unwrap_or_default();
+            (
+                format!("{name} changed since it was locked"),
+                format!(
+                    "{name}{at} downloads as a different file now than the one this profile was \
+                     locked with, here or on a PC it syncs with. That usually means its author \
+                     or the site it's from repackaged it. Using the new file keeps {name} at the \
+                     same version, and PCs this profile syncs with will use it too."
+                ),
+            )
+        }
+        _ => {
+            let list = and_list(names.iter().cloned());
+            (
+                format!("{} mods changed since they were locked", changed.len()),
+                format!(
+                    "{list} download as different files now than the ones this profile was \
+                     locked with, here or on a PC it syncs with. That usually means their \
+                     authors or the sites they're from repackaged them. Using the new files \
+                     keeps them at the same versions, and PCs this profile syncs with will use \
+                     them too."
+                ),
+            )
+        }
+    };
+    let mut fixes = vec![Fix::AcceptChanged {
+        keys: keys.clone(),
+        names: names.clone(),
+    }];
+    if changed.iter().all(|c| !c.pinned) {
+        fixes.push(Fix::UpdateMods {
+            keys,
+            names: names.clone(),
+        });
+    }
+    if changed.iter().all(|c| c.in_profile) {
+        fixes.push(Fix::RemoveMods { names });
+    }
+    Blocker::with_fixes(title, detail, fixes)
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn and_list(items: impl IntoIterator<Item = String>) -> String {
+    let items: Vec<String> = items.into_iter().collect();
+    match items.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 

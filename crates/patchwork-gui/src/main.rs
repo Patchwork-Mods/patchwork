@@ -346,6 +346,16 @@ struct PlanSummary {
     warnings: Vec<String>,
 }
 
+impl PlanSummary {
+    fn of(plan: &DeployPlan) -> Self {
+        PlanSummary {
+            ops: plan.ops.iter().cloned().map(UiOp::from).collect(),
+            unchanged: plan.unchanged,
+            warnings: plan.warnings.clone(),
+        }
+    }
+}
+
 /// The orders each search source can sort its results in, by source id.
 type SearchSorts = BTreeMap<String, Vec<SortBy>>;
 
@@ -1913,11 +1923,7 @@ fn plan_undeploy(app: State<'_, App>, game: String, id: Option<String>) -> CmdRe
 
 /// Keeps `plan` for `apply_plan` and summarises it for the UI.
 fn hold_plan(app: &App, plan: DeployPlan) -> PlanSummary {
-    let summary = PlanSummary {
-        ops: plan.ops.iter().cloned().map(UiOp::from).collect(),
-        unchanged: plan.unchanged,
-        warnings: plan.warnings.clone(),
-    };
+    let summary = PlanSummary::of(&plan);
     *app.plan.lock().unwrap() = Some(plan);
     summary
 }
@@ -2416,6 +2422,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             blockers::apply_fix,
+            blockers::preview_undeploy,
             ready,
             native_color_picker,
             overview,

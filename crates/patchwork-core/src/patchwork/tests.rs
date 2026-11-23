@@ -569,11 +569,12 @@ async fn updating_some_mods_leaves_the_rest_locked() {
     assert_eq!(version("b"), "1.0");
 }
 
-/// A mod whose file changed upstream since it was locked, here without
-/// it in the store (as on a second PC the lockfile synced to), stops
-/// locking until the new file is accepted, which keeps its version.
+/// Mods whose files changed upstream since they were locked, here without
+/// them in the store (as on a second PC the lockfile synced to), stop
+/// locking, all in one error, until the new files are accepted, which keeps
+/// their versions.
 #[tokio::test]
-async fn a_changed_file_is_kept_out_until_accepted() {
+async fn changed_files_are_kept_out_until_accepted() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("mods");
     fs::create_dir_all(&dir).unwrap();
@@ -588,39 +589,96 @@ async fn a_changed_file_is_kept_out_until_accepted() {
         .unwrap();
     pw.add_game(new_game("my-game", "none")).unwrap();
     let profile = pw.create_profile("my-game", "default").unwrap();
-    let spec = ModSpec {
-        source: "versioned".to_owned(),
-        id: "a".to_owned(),
-        version: None,
-    };
-    pw.add_mod(&profile, spec, None, true).await.unwrap();
-    let before = pw.lock(&profile, false).await.unwrap().mods[0].clone();
+    for id in ["a", "b"] {
+        let spec = ModSpec {
+            source: "versioned".to_owned(),
+            id: id.to_owned(),
+            version: None,
+        };
+        pw.add_mod(&profile, spec, None, true).await.unwrap();
+    }
+    let before = pw.lock(&profile, false).await.unwrap().mods;
 
-    fs::write(dir.join("a-1.0.txt"), "a 1.0, repackaged").unwrap();
-    fs::remove_file(pw.store.path(&before.hash, before.format)).unwrap();
-    let Err(Error::ArtifactChanged(changed)) = pw.lock(&profile, false).await else {
-        panic!("locking should have stopped on the changed file");
+    for (m, id) in before.iter().zip(["a", "b"]) {
+        fs::write(
+            dir.join(format!("{id}-1.0.txt")),
+            format!("{id} 1.0, repackaged"),
+        )
+        .unwrap();
+        fs::remove_file(pw.store.path(&m.hash, m.format)).unwrap();
+    }
+    let err = pw.lock(&profile, false).await.unwrap_err();
+    let Error::ArtifactChanged(changed) = &err else {
+        panic!("locking should have stopped on the changed files: {err}");
     };
-    let blocker = Error::ArtifactChanged(changed.clone()).blocker().unwrap();
+    assert_eq!(changed.len(), 2, "both changed mods are found at once");
     assert_eq!(
-        blocker.fix,
-        crate::fix::Fix::AcceptChanged {
-            keys: vec!["versioned:a".to_owned()],
-            names: vec!["a".to_owned()],
-        }
+        err.to_string(),
+        "`a` and `b` changed since they were locked"
     );
-    let crate::error::ArtifactChanged {
-        key, expected, got, ..
-    } = *changed;
-    assert_eq!(key, "versioned:a");
-    assert_eq!(expected, before.hash);
-    assert_ne!(got, before.hash);
+    let keys = vec!["versioned:a".to_owned(), "versioned:b".to_owned()];
+    let names = vec!["a".to_owned(), "b".to_owned()];
+    let blocker = err.blocker().unwrap();
+    assert_eq!(blocker.title, "2 mods changed since they were locked");
+    assert_eq!(
+        blocker.fixes,
+        [
+            crate::fix::Fix::AcceptChanged {
+                keys: keys.clone(),
+                names: names.clone(),
+            },
+            crate::fix::Fix::UpdateMods {
+                keys: keys.clone(),
+                names: names.clone(),
+            },
+            crate::fix::Fix::RemoveMods { names },
+        ]
+    );
+    let crate::error::ArtifactChanged { expected, got, .. } = changed[0].clone();
+    assert_eq!(expected, before[0].hash);
+    assert_ne!(got, before[0].hash);
 
-    let accepted = pw.accept_changed(&profile, &[key]).await.unwrap();
-    assert_eq!(accepted, ["a"]);
+    let accepted = pw.accept_changed(&profile, &keys).await.unwrap();
+    assert_eq!(accepted, ["a", "b"]);
     let after = pw.lock(&profile, false).await.unwrap().mods[0].clone();
     assert_eq!(after.hash, got);
     assert_eq!(after.version.as_deref(), Some("1.0"));
+}
+
+/// A changed mod the profile pins can't be updated, and one that's only a
+/// dependency can't be removed, so neither is offered.
+#[test]
+fn a_changed_file_only_offers_what_applies() {
+    let changed = |in_profile, pinned| crate::error::ArtifactChanged {
+        key: "s:a".to_owned(),
+        name: "A".to_owned(),
+        version: Some("1.0".to_owned()),
+        expected: crate::hash::ContentHash::of(b"old"),
+        got: crate::hash::ContentHash::of(b"new"),
+        in_profile,
+        pinned,
+    };
+    let labels = |c| {
+        Error::ArtifactChanged(vec![c])
+            .blocker()
+            .unwrap()
+            .fixes
+            .iter()
+            .map(|f| f.label())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        labels(changed(true, false)),
+        ["Use the new file", "Update to latest", "Remove it"]
+    );
+    assert_eq!(
+        labels(changed(true, true)),
+        ["Use the new file", "Remove it"]
+    );
+    assert_eq!(
+        labels(changed(false, false)),
+        ["Use the new file", "Update to latest"]
+    );
 }
 
 /// A changed file found while downloading a synced lockfile is an issue

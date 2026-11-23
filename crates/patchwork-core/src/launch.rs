@@ -26,6 +26,7 @@ use serde::Serialize;
 
 use crate::deploy::{DeployState, Os};
 use crate::error::IoContext;
+use crate::fix::Blocker;
 use crate::game::{GameDef, LaunchDef, LaunchDefs};
 use crate::locate::{self, SteamInstall};
 use crate::patchwork::GameInstall;
@@ -440,10 +441,7 @@ pub fn runner_choices(game: &GameDef, setup: &Setup, runners: &Runners<'_>) -> R
             };
             let unavailable = match (&prepared, &ctx) {
                 (Err(e), _) => Some(e.to_string()),
-                (_, Some(ctx)) => match runner.check(ctx) {
-                    Fit::Ready => None,
-                    Fit::Unsuited(why) | Fit::Missing(why) => Some(why),
-                },
+                (_, Some(ctx)) => runner.check(ctx).why().map(str::to_owned),
                 (_, None) => None,
             };
             let set = setup.runner_settings.get(&id);
@@ -596,6 +594,20 @@ pub struct Started {
     pub added_overrides: Vec<String>,
 }
 
+/// What's in the way of running `game` through Proton until it's been
+/// started from Steam once, which sets up `what`. Only the user can do that,
+/// so it's cleared by trying again afterwards.
+fn start_from_steam(game: &str, what: &str) -> Blocker {
+    Blocker::try_again(
+        format!("Start {game} from Steam once"),
+        format!(
+            "{game} runs through Proton, and {what} until it's been started from Steam at \
+             least once. Start it from Steam, close it once it's at its menu, and then try \
+             again."
+        ),
+    )
+}
+
 /// The `user.reg` key that DLL overrides for every program go in.
 const DLL_OVERRIDES_KEY: &str = r"[Software\\Wine\\DllOverrides]";
 
@@ -608,10 +620,13 @@ pub fn add_prefix_overrides(prefix: &Path, dlls: &[String]) -> Result<Vec<String
     let reg = prefix.join("user.reg");
     let text = match std::fs::read_to_string(&reg) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(Error::invalid(format!(
-                "{} hasn't been set up by Wine yet; start the game from Steam once, then try again",
-                prefix.display()
-            )));
+            return Err(Error::blocked_by(
+                format!(
+                    "{} hasn't been set up by Wine yet; start the game from Steam once, then try again",
+                    prefix.display()
+                ),
+                start_from_steam("the game", "its Wine prefix isn't set up"),
+            ));
         }
         text => text.at(&reg)?,
     };

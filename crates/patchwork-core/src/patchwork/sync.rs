@@ -21,7 +21,7 @@ use crate::error::{ArtifactChanged, IoContext};
 use crate::event::Event;
 use crate::fsutil;
 use crate::hash::ContentHash;
-use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile};
+use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
 use crate::profile::{Profile, ProfileRef};
 use crate::sync::{self, Entries};
 use crate::{Error, Result};
@@ -285,8 +285,9 @@ impl Patchwork {
             match fetched {
                 Ok(hash) if hash == m.hash => {}
                 Ok(hash) => {
-                    self.reporter
-                        .report(Event::Warning(Error::artifact_changed(m, hash).to_string()));
+                    let in_profile = is_in_profile(&loaded, &m.key());
+                    let one = ArtifactChanged::new(m, hash, in_profile);
+                    self.reporter.report(Event::Warning(one.to_string()));
                     changed.mods.push(ChangedFile {
                         key: m.key(),
                         expected: m.hash,
@@ -327,6 +328,7 @@ impl Patchwork {
     pub(super) fn changed_files(
         &self,
         profile: &ProfileRef,
+        loaded: &Profile,
         lock: &Lockfile,
     ) -> Result<Vec<ArtifactChanged>> {
         let found: ChangedFiles =
@@ -336,15 +338,8 @@ impl Patchwork {
             .into_iter()
             .filter_map(|c| {
                 let m = lock.mods.iter().find(|m| m.key() == c.key)?;
-                (m.hash == c.expected && !self.store.contains(&m.hash, m.format)).then(|| {
-                    ArtifactChanged {
-                        key: c.key,
-                        name: m.name.clone(),
-                        version: m.version.clone(),
-                        expected: c.expected,
-                        got: c.got,
-                    }
-                })
+                (m.hash == c.expected && !self.store.contains(&m.hash, m.format))
+                    .then(|| ArtifactChanged::new(m, c.got, is_in_profile(loaded, &c.key)))
             })
             .collect())
     }
@@ -372,4 +367,10 @@ impl Patchwork {
     fn sync_base_file(&self, profile: &ProfileRef) -> PathBuf {
         self.profile_state_dir(profile).join("synced.json")
     }
+}
+
+/// Whether the mod `key` (`<source>:<id>`) is one of `loaded`'s own, rather
+/// than something they depend on.
+fn is_in_profile(loaded: &Profile, key: &str) -> bool {
+    loaded.mods.iter().any(|m| mod_key(&m.source, &m.id) == key)
 }

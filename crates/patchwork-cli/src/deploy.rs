@@ -354,11 +354,12 @@ pub(crate) async fn lock(
     explicit: &Option<String>,
     update: bool,
     accept: Vec<String>,
+    update_mod: Vec<String>,
 ) -> Result<()> {
     let (profile, loaded) = selected(pw, explicit)?;
-    if !accept.is_empty() {
-        let locked = pw.load_lock(&profile)?.map(|l| l.mods).unwrap_or_default();
-        let keys = accept
+    let locked = pw.load_lock(&profile)?.map(|l| l.mods).unwrap_or_default();
+    let keys = |wanted: &[String]| {
+        wanted
             .iter()
             .map(|wanted| {
                 locked
@@ -369,12 +370,18 @@ pub(crate) async fn lock(
                         anyhow::anyhow!("no locked mod `{wanted}` in {}", loaded.label())
                     })
             })
-            .collect::<Result<Vec<_>>>()?;
-        for name in pw.accept_changed(&profile, &keys).await? {
+            .collect::<Result<Vec<_>>>()
+    };
+    if !accept.is_empty() {
+        for name in pw.accept_changed(&profile, &keys(&accept)?).await? {
             println!("{name} now uses the file it's downloaded as now");
         }
     }
-    let lock = pw.lock(&profile, update).await?;
+    let lock = if update_mod.is_empty() {
+        pw.lock(&profile, update).await?
+    } else {
+        pw.lock_updating(&profile, &keys(&update_mod)?).await?
+    };
     println!("locked {} mods for {}", lock.mods.len(), loaded.label());
     Ok(())
 }
