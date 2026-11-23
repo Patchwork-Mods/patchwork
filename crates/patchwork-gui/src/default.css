@@ -2810,6 +2810,12 @@ dialog::backdrop {
   color: var(--pw-muted);
 }
 
+.downloads .failed .error {
+  display: block;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
 /* Export and import dialogs: codes and links are long and unbroken. */
 
 textarea {
@@ -3624,16 +3630,17 @@ dialog.settings .other-tab {
 
 /* Download progress (see progress.js). A mod's row or card gets .downloading
    while its file downloads, plus .indeterminate when its size isn't known,
-   and --pw-download-progress from 0 to 1. #download-progress is all of them
+   and --pw-download-progress from 0 to 1, and so does a row of the "Download
+   from the browser" dialog (.downloads li). #download-progress is all of them
    together, along the top of the status bar, with the same variable and
    classes. The bars are pseudo-elements so they can't push anything around:
    ::before is the track and ::after the bar. */
-.mod-row.downloading {
+:is(.mod-row, .downloads li).downloading {
   position: relative;
 }
 
-:is(.mod-row, .mod-card).downloading::before,
-:is(.mod-row, .mod-card).downloading::after,
+:is(.mod-row, .mod-card, .downloads li).downloading::before,
+:is(.mod-row, .mod-card, .downloads li).downloading::after,
 #download-progress::after {
   content: "";
   position: absolute;
@@ -3644,12 +3651,12 @@ dialog.settings .other-tab {
   pointer-events: none;
 }
 
-:is(.mod-row, .mod-card).downloading::before {
+:is(.mod-row, .mod-card, .downloads li).downloading::before {
   right: 0;
   background: var(--pw-progress-track);
 }
 
-:is(.mod-row, .mod-card).downloading::after,
+:is(.mod-row, .mod-card, .downloads li).downloading::after,
 #download-progress::after {
   width: calc(var(--pw-download-progress, 0) * 100%);
   background: var(--pw-progress);
@@ -3671,7 +3678,7 @@ dialog.settings .other-tab {
 }
 
 /* No size to go by, so a piece of bar sweeps across instead. */
-:is(.mod-row, .mod-card).indeterminate::after,
+:is(.mod-row, .mod-card, .downloads li).indeterminate::after,
 #download-progress.indeterminate::after {
   width: 100%;
   background: linear-gradient(90deg, transparent, var(--pw-progress), transparent) no-repeat;
@@ -3689,11 +3696,11 @@ dialog.settings .other-tab {
   }
 }
 
-[data-motion="reduced"] :is(:is(.mod-row, .mod-card).downloading::after, #download-progress::after) {
+[data-motion="reduced"] :is(:is(.mod-row, .mod-card, .downloads li).downloading::after, #download-progress::after) {
   transition: none;
 }
 
-[data-motion="reduced"] :is(:is(.mod-row, .mod-card).indeterminate::after, #download-progress.indeterminate::after) {
+[data-motion="reduced"] :is(:is(.mod-row, .mod-card, .downloads li).indeterminate::after, #download-progress.indeterminate::after) {
   background: var(--pw-progress);
   opacity: 0.5;
   animation: none;

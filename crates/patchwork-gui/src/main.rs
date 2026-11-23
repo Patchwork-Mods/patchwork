@@ -2019,13 +2019,23 @@ fn provide_download(app: State<'_, App>, file: SourceFile, path: String) -> CmdR
 }
 
 /// How a link from the browser went, sent to the window as
-/// `patchwork://link`.
+/// `patchwork://link`. Once patchwork knows which file a link is for, the
+/// events say so, and `Downloading` gives the `name` its progress comes
+/// under in `patchwork://event`.
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum LinkEvent {
-    Downloading,
-    Downloaded { file: SourceFile },
-    Failed { message: String },
+    Downloading {
+        file: SourceFile,
+        name: String,
+    },
+    Downloaded {
+        file: SourceFile,
+    },
+    Failed {
+        file: Option<SourceFile>,
+        message: String,
+    },
 }
 
 /// Downloads what each link from the browser is for, like Nexus's
@@ -2034,38 +2044,46 @@ fn accept_links(handle: &AppHandle, links: Vec<tauri::Url>) {
     for link in links {
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
-            let app = handle.state::<App>();
-            let _work = match app.work.start() {
-                Ok(work) => work,
-                Err(e) => {
-                    let message = e.to_string();
-                    eprintln!(
-                        "link {}: {message}",
-                        link.as_str().split('?').next().unwrap_or_default()
-                    );
-                    let _ = handle.emit("patchwork://link", LinkEvent::Failed { message });
-                    return;
-                }
-            };
-            let _ = handle.emit("patchwork://link", LinkEvent::Downloading);
-            let event = match app.pw.accept_link(link.as_str()).await {
-                Ok(Some(file)) => LinkEvent::Downloaded { file },
-                Ok(None) => LinkEvent::Failed {
-                    message: format!("patchwork doesn't know what {link} is for"),
-                },
-                Err(e) => LinkEvent::Failed {
-                    message: e.to_string(),
-                },
-            };
             // the key in the link is only good for this download, but
             // still isn't worth printing
             let shown = link.as_str().split('?').next().unwrap_or_default();
+            let event = accept_link(&handle, &link).await;
             match &event {
-                LinkEvent::Failed { message } => eprintln!("link {shown}: {message}"),
+                LinkEvent::Failed { message, .. } => eprintln!("link {shown}: {message}"),
                 _ => eprintln!("link {shown}: downloaded"),
             }
             let _ = handle.emit("patchwork://link", event);
         });
+    }
+}
+
+/// Downloads what `link` is for, telling the window when it starts, and
+/// gives how it went.
+async fn accept_link(handle: &AppHandle, link: &tauri::Url) -> LinkEvent {
+    let failed = |file: Option<&SourceFile>, message: String| LinkEvent::Failed {
+        file: file.cloned(),
+        message,
+    };
+    let app = handle.state::<App>();
+    let _work = match app.work.start() {
+        Ok(work) => work,
+        Err(e) => return failed(None, e.to_string()),
+    };
+    let linked = match app.pw.link_file(link.as_str()).await {
+        Ok(Some(linked)) => linked,
+        Ok(None) => return failed(None, format!("patchwork doesn't know what {link} is for")),
+        Err(e) => return failed(None, e.to_string()),
+    };
+    let _ = handle.emit(
+        "patchwork://link",
+        LinkEvent::Downloading {
+            file: linked.file.clone(),
+            name: linked.name.clone(),
+        },
+    );
+    match app.pw.download_linked(&linked).await {
+        Ok(()) => LinkEvent::Downloaded { file: linked.file },
+        Err(e) => failed(Some(&linked.file), e.to_string()),
     }
 }
 

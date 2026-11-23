@@ -16,6 +16,7 @@ dialog shows, so the heading has to match the version being released.
 - A mod whose file changed since it was locked (say, repackaged by its author) can now be accepted at the same version
 - Reworked settings page to not require manual saving
 - No longer warns about mods for games that aren't set up on this computer
+- Added per-mod download progress bars to the manual download modal
 
 ### Themes
 

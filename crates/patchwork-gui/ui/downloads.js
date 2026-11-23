@@ -3,12 +3,18 @@
 // patchwork://pending. Each is done once the browser hands back its "Mod
 // Manager Download" link (see accept_links in main.rs) or the user picks a
 // file they downloaded, and the profile is locked again once they all are.
+// Each row shows how its download is going: a bar while it downloads (styled
+// like a mod row's, see progress.js), and why if it failed.
 
 import { invoke, listen, run, state, status } from "./state.js";
 import { $, h, openExternal } from "./dom.js";
 import { showProfile } from "./profile.js";
 
-/** The pending downloads, as `{ pending, done }`, and whose they are. */
+/**
+ * The pending downloads, and whose they are. Each is `{ pending, done }`,
+ * plus while it downloads `progress` (the name its progress comes under in
+ * patchwork://event, and how far it's got) and, if it failed, `failed`.
+ */
 let waiting = [];
 let profileId = null;
 
@@ -36,36 +42,94 @@ function say(text, isError = false) {
   line.hidden = false;
 }
 
+const itemFor = (file) => (file ? waiting.find((w) => sameFile(w.pending.file, file)) : undefined);
+
 listen("patchwork://link", ({ payload: e }) => {
+  const item = itemFor(e.file);
   switch (e.kind) {
     case "downloading":
-      return say("Downloading from the browser…");
+      if (!item) return say("Downloading from the browser…");
+      item.failed = null;
+      item.progress = { name: e.name, downloaded: 0, total: null };
+      say(`Downloading ${item.pending.name}…`);
+      return render();
     case "failed":
-      return say(`Couldn't download from the browser: ${e.message}`, true);
-    case "downloaded": {
-      const item = waiting.find((w) => sameFile(w.pending.file, e.file));
+      if (!item) return say(`Couldn't download from the browser: ${e.message}`, true);
+      item.progress = null;
+      item.failed = e.message;
+      say(`Couldn't download ${item.pending.name}: ${e.message}`, true);
+      return render();
+    case "downloaded":
       if (item) return markDone(item);
       return say(`Downloaded ${e.file.source}:${e.file.id}; it's used whenever a profile needs it`);
-    }
   }
 });
 
+// How far each one's got, updating its bar in place rather than drawing the
+// list again every tenth of a second.
+listen("patchwork://event", ({ payload: e }) => {
+  if (e.kind !== "downloading") return;
+  const index = waiting.findIndex((w) => w.progress?.name === e.name);
+  if (index < 0) return;
+  Object.assign(waiting[index].progress, { downloaded: e.downloaded, total: e.total ?? null });
+  const row = $("#downloads-list").children[index];
+  if (row) showProgress(row, waiting[index].progress);
+});
+
+const megabytes = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
+
+function showProgress(row, { downloaded, total }) {
+  const value = total ? Math.min(1, downloaded / total) : null;
+  row.classList.toggle("indeterminate", value === null);
+  row.style.setProperty("--pw-download-progress", String(value ?? 0));
+  const text = total ? `${megabytes(downloaded)} of ${megabytes(total)}` : `${megabytes(downloaded)}`;
+  const label = row.querySelector(".progress-text");
+  if (label) label.textContent = text;
+  row.setAttribute("aria-valuenow", String(Math.round((value ?? 0) * 100)));
+  row.setAttribute("aria-valuetext", text);
+}
+
 function render() {
-  $("#downloads-list").replaceChildren(
-    ...waiting.map((item) =>
+  $("#downloads-list").replaceChildren(...waiting.map(row));
+}
+
+function row(item) {
+  const buttons = [
+    h("button", { type: "button", onclick: () => openExternal(item.pending.page) }, "Open page"),
+    h("button", { type: "button", onclick: () => chooseFile(item) }, "Choose file…"),
+  ];
+  if (item.done) {
+    return h(
+      "li",
+      { class: "row done" },
+      h("span", { class: "name" }, item.pending.name),
+      h("span", { class: "muted" }, "Downloaded"),
+    );
+  }
+  if (item.progress) {
+    const li = h(
+      "li",
+      { class: "row downloading", role: "progressbar", "aria-label": item.pending.name },
+      h("span", { class: "name" }, item.pending.name),
+      h("span", { class: "muted progress-text" }),
+    );
+    showProgress(li, item.progress);
+    return li;
+  }
+  if (item.failed) {
+    return h(
+      "li",
+      { class: "row failed" },
       h(
-        "li",
-        { class: item.done ? "row done" : "row" },
-        h("span", { class: "name" }, item.pending.name),
-        item.done
-          ? h("span", { class: "muted" }, "Downloaded")
-          : [
-              h("button", { type: "button", onclick: () => openExternal(item.pending.page) }, "Open page"),
-              h("button", { type: "button", onclick: () => chooseFile(item) }, "Choose file…"),
-            ],
+        "span",
+        { class: "name" },
+        item.pending.name,
+        h("span", { class: "error", title: item.failed }, `Couldn't download: ${item.failed}`),
       ),
-    ),
-  );
+      ...buttons,
+    );
+  }
+  return h("li", { class: "row" }, h("span", { class: "name" }, item.pending.name), ...buttons);
 }
 
 async function chooseFile(item) {
@@ -81,6 +145,7 @@ async function chooseFile(item) {
 
 function markDone(item) {
   item.done = true;
+  item.progress = item.failed = null;
   say(`Downloaded ${item.pending.name}`);
   render();
   if (waiting.every((w) => w.done)) finish().catch(() => {});

@@ -45,8 +45,8 @@ use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::{Origin, SettingSpec, SettingState, Settings};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{
-    ArtifactFormat, ArtifactLocation, Download, FileChoice, ModSpec, Need, PendingDownload,
-    ResolvedMod, Source, SourceContext, SourceFile, is_archive_name,
+    ArtifactFormat, ArtifactLocation, Download, FileChoice, LinkedFile, ModSpec, Need,
+    PendingDownload, ResolvedMod, Source, SourceContext, SourceFile, is_archive_name,
 };
 use crate::store::Store;
 use crate::sync::dedupe_names;
@@ -2463,8 +2463,20 @@ impl Patchwork {
 
     /// Downloads the file that a link from the user's browser is for, like a
     /// Nexus `nxm://` link, so the next lock uses it. `Ok(None)` means no
-    /// source recognizes the link.
+    /// source recognizes the link. [`Patchwork::link_file`] and
+    /// [`Patchwork::download_linked`] do the same in two steps.
     pub async fn accept_link(&self, link: &str) -> Result<Option<SourceFile>> {
+        let Some(linked) = self.link_file(link).await? else {
+            return Ok(None);
+        };
+        self.download_linked(&linked).await?;
+        Ok(Some(linked.file))
+    }
+
+    /// Which file a link from the user's browser is for, and where to get
+    /// it, without downloading it yet. `Ok(None)` means no source
+    /// recognizes the link.
+    pub async fn link_file(&self, link: &str) -> Result<Option<LinkedFile>> {
         let registry = self.registry();
         for (source_id, source) in &self.sources {
             for entry in registry.games() {
@@ -2489,15 +2501,23 @@ impl Patchwork {
                     id: handoff.id,
                     file: handoff.file,
                 };
-                let name = format!("{source_id}:{}", file.id);
-                let hash = self
-                    .fetch_url(&handoff.url, &name, ArtifactFormat::File)
-                    .await?;
-                self.remember_source_file(&file, hash)?;
-                return Ok(Some(file));
+                return Ok(Some(LinkedFile {
+                    name: file.key(),
+                    file,
+                    url: handoff.url,
+                }));
             }
         }
         Ok(None)
+    }
+
+    /// Downloads a file from [`Patchwork::link_file`], reporting its
+    /// progress under its `name`, so the next lock uses it.
+    pub async fn download_linked(&self, linked: &LinkedFile) -> Result<()> {
+        let hash = self
+            .fetch_url(&linked.url, &linked.name, ArtifactFormat::File)
+            .await?;
+        self.remember_source_file(&linked.file, hash)
     }
 
     /// The store entry for `file`, if it's been downloaded and is still

@@ -560,7 +560,13 @@ async fn links_from_the_browser_download_their_file() {
     let (pw, profile, downloads) = own_files_profile(tmp.path(), Some(url), &["a"]).await;
 
     assert_eq!(pw.accept_link("https://example.com").await.unwrap(), None);
+    assert_eq!(pw.link_file("https://example.com").await.unwrap(), None);
+    // which file it's for is known before it downloads, with the name its
+    // progress comes under
+    let linked = pw.link_file("own://a").await.unwrap().unwrap();
+    assert_eq!(linked.name, linked.file.key());
     let file = pw.accept_link("own://a").await.unwrap().unwrap();
+    assert_eq!(file, linked.file);
     assert_eq!(
         (file.game.as_str(), file.key()),
         ("my-game", "own:a".to_owned())

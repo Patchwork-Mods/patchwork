@@ -154,6 +154,17 @@ pub struct PendingDownload {
     pub file: SourceFile,
 }
 
+/// The file a link from the user's browser is for, from
+/// [`crate::Patchwork::link_file`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedFile {
+    pub file: SourceFile,
+    /// What its download's progress is reported as, in
+    /// [`crate::Event::Downloading`] and [`crate::Event::Downloaded`].
+    pub name: String,
+    pub url: String,
+}
+
 /// Where to download one of a source's files, from a link that the user's
 /// browser handed back.
 #[derive(Debug, Clone, PartialEq, Eq)]
