@@ -349,7 +349,7 @@ pub(crate) fn dedupe_names(mods: Vec<ProfileMod>) -> Vec<ProfileMod> {
 }
 
 /// Folder names have to be unique within a profile too, ignoring case.
-fn dedupe_folder_names(folders: Vec<Folder>) -> Vec<Folder> {
+pub(crate) fn dedupe_folder_names(folders: Vec<Folder>) -> Vec<Folder> {
     let mut taken: HashSet<String> = HashSet::new();
     folders
         .into_iter()

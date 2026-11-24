@@ -1,8 +1,8 @@
 # Folders, shared sets and layered profiles
 
-Status (2026-11-23): proposal. Step 1 (folders inside a profile) is being
-built. Where what gets built differs from this, the notes under each step
-in "Order of work" say so, and those notes win.
+Status (2026-11-24): step 1 (folders inside a profile) is done; the rest
+is a proposal. Where what gets built differs from this, the notes under
+each step in "Order of work" say so, and those notes win.
 
 ## The problem
 
@@ -80,6 +80,14 @@ folder = "0b6d3c4e-..."
   `folder`s when they save, and ignore `folder/` entries. Folders are only
   about how the list is shown, so this loses nothing that matters, and
   neither `PROFILE_SCHEMA` nor `SYNC_FORMAT` changes for them.
+- **History**: each deploy's snapshot keeps the folders. Which folder a
+  mod is in doesn't count as a change since the deploy (like hidden tags),
+  so filing mods alone doesn't light up Revert. Going back (revert or
+  rollback) keeps the folders there are now and how mods have been filed
+  since, except where that would change the deploy's order: those mods are
+  filed as they were then. A mod that comes back is in its old folder,
+  which comes back too if it was removed (renamed if its name has been
+  taken).
 - **Sharing**: the patchwork zip carries folders. Formats that can't carry
   them (r2modman codes, URL lists) leave the mods unfiled.
 - **GUI**: in the Mods tab's own order, a folder is a collapsible section
@@ -182,7 +190,9 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
 ## Order of work
 
 1. **Folders inside a profile**: core, sync, zip export, CLI, GUI.
-   Replaces nothing yet; hidden tags stay as they are.
+   Replaces nothing yet; hidden tags stay as they are. *Done.* As built:
+   the GUI files a mod from the folder button on each mod (not its menu),
+   and deploy history keeps folders (see "History" above).
 2. **Shared sets as linked folders**: local only, no syncing of sets.
 3. **Personal layer** on synced profiles, with the split lock.
 4. **Optional folders** in synced profiles.

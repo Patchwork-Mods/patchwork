@@ -23,7 +23,8 @@ use crate::fsutil;
 use crate::hash::ContentHash;
 use crate::list::ListEntry;
 use crate::lock::{Lockfile, mod_key};
-use crate::profile::{ProfileMod, ProfileRef, upgrade_plugins};
+use crate::profile::{Folder, Profile, ProfileMod, ProfileRef, upgrade_plugins};
+use crate::sync::dedupe_folder_names;
 use crate::{Error, Result};
 
 /// How many deploys each profile's history keeps. Older ones are dropped.
@@ -35,6 +36,10 @@ pub(super) struct Deployed {
     /// Left out by versions from before there was a history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     deployed_at: Option<Timestamp>,
+    /// The profile's folders, so mods' `folder`s still name them after
+    /// going back. Left out by versions from before there were folders.
+    #[serde(default, rename = "folder", skip_serializing_if = "Vec::is_empty")]
+    folders: Vec<Folder>,
     #[serde(default, rename = "mod")]
     mods: Vec<ProfileMod>,
     /// Saved before profile schema 3, which moved it into `ext`.
@@ -48,9 +53,18 @@ pub(super) struct Deployed {
 
 impl Deployed {
     /// Whether the two would deploy the same thing; when they happened
-    /// doesn't matter.
+    /// doesn't matter, nor which folders the mods are in (only how the list
+    /// is shown, like hidden tags). Folders' places in the load order do
+    /// matter, but that's the mods' order.
     fn same_as(&self, other: &Deployed) -> bool {
-        self.mods == other.mods && self.ext == other.ext && toml_eq(&self.lock, &other.lock)
+        self.mods.len() == other.mods.len()
+            && self
+                .mods
+                .iter()
+                .zip(&other.mods)
+                .all(|(a, b)| same_but_folder(a, b))
+            && self.ext == other.ext
+            && toml_eq(&self.lock, &other.lock)
     }
 }
 
@@ -144,6 +158,7 @@ impl Patchwork {
         let loaded = self.load_profile(profile)?;
         let deployed = Deployed {
             deployed_at: Some(Timestamp::now()),
+            folders: loaded.folders,
             mods: loaded.mods,
             plugins: Vec::new(),
             ext: loaded.ext,
@@ -181,6 +196,7 @@ impl Patchwork {
         let loaded = self.load_profile(profile)?;
         Ok(Some(Deployed {
             deployed_at: None,
+            folders: loaded.folders,
             mods: loaded.mods,
             plugins: Vec::new(),
             ext: loaded.ext,
@@ -269,7 +285,12 @@ impl Patchwork {
 
     fn restore(&self, profile: &ProfileRef, deployed: Deployed) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
-        loaded.mods = deployed.mods;
+        loaded.mods = refile(&loaded.mods, deployed.mods);
+        loaded.folders = restored_folders(
+            std::mem::take(&mut loaded.folders),
+            deployed.folders,
+            &loaded.mods,
+        );
         loaded.ext = deployed.ext;
         self.save_lock(profile, &deployed.lock)?;
         self.save_profile(profile, &loaded)
@@ -429,6 +450,103 @@ fn changes(
         }
     }
     changes
+}
+
+/// Whether `a` and `b` are the same apart from which folder they're in.
+fn same_but_folder(a: &ProfileMod, b: &ProfileMod) -> bool {
+    if a.folder == b.folder {
+        return a == b;
+    }
+    ProfileMod {
+        folder: b.folder,
+        ..a.clone()
+    } == *b
+}
+
+/// The mods `then` (going back to a deploy), each in the folder it's in
+/// `now` if it's still in the profile, so going back keeps how they've
+/// been filed since. A mod is filed as it was at the deploy instead when
+/// keeping its folder would change the order, as keeping each folder's
+/// mods together can: the deploy's filing was in that order. Mods that
+/// have kept their place since are seen to first, so a mod that moved into
+/// a folder is the one taken back out of it.
+fn refile(now: &[ProfileMod], then: Vec<ProfileMod>) -> Vec<ProfileMod> {
+    let filed: HashMap<(&str, &str), Option<uuid::Uuid>> = now
+        .iter()
+        .map(|m| ((m.source.as_str(), m.id.as_str()), m.folder))
+        .collect();
+    let in_order = |mods: &[ProfileMod]| {
+        let mut grouped = Profile::new("", "");
+        grouped.mods = mods.to_vec();
+        grouped.group_folders();
+        grouped
+            .mods
+            .iter()
+            .zip(mods)
+            .all(|(a, b)| a.source == b.source && a.id == b.id)
+    };
+    let mut mods = then;
+    let unmoved = kept_places(now, &mods);
+    let (first, moved): (Vec<usize>, Vec<usize>) = (0..mods.len()).partition(|&i| unmoved[i]);
+    for i in first.into_iter().chain(moved) {
+        let key = (mods[i].source.as_str(), mods[i].id.as_str());
+        let Some(&folder) = filed.get(&key) else {
+            continue;
+        };
+        if folder == mods[i].folder {
+            continue;
+        }
+        let was = std::mem::replace(&mut mods[i].folder, folder);
+        if !in_order(&mods) {
+            mods[i].folder = was;
+        }
+    }
+    mods
+}
+
+/// Which of `then`'s mods are where they were in `now`, among the mods in
+/// both: those in a longest run the two orders have in common.
+fn kept_places(now: &[ProfileMod], then: &[ProfileMod]) -> Vec<bool> {
+    let same = |a: &ProfileMod, b: &ProfileMod| a.source == b.source && a.id == b.id;
+    let (n, t) = (now.len(), then.len());
+    // longest[i][j]: the longest common run of now[i..] and then[j..]
+    let mut longest = vec![vec![0u32; t + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..t).rev() {
+            longest[i][j] = if same(&now[i], &then[j]) {
+                longest[i + 1][j + 1] + 1
+            } else {
+                longest[i + 1][j].max(longest[i][j + 1])
+            };
+        }
+    }
+    let mut kept = vec![false; t];
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < t {
+        if same(&now[i], &then[j]) {
+            kept[j] = true;
+            i += 1;
+            j += 1;
+        } else if longest[i + 1][j] >= longest[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    kept
+}
+
+/// The profile's folders after going back to a deploy: the ones it has
+/// now, so renames and new folders stay, and any of the deploy's that a
+/// mod is in again, renamed if another has taken its name.
+fn restored_folders(now: Vec<Folder>, then: Vec<Folder>, mods: &[ProfileMod]) -> Vec<Folder> {
+    let back: Vec<Folder> = then
+        .into_iter()
+        .filter(|f| {
+            !now.iter().any(|n| n.id == f.id) && mods.iter().any(|m| m.folder == Some(f.id))
+        })
+        .collect();
+    dedupe_folder_names(now.into_iter().chain(back).collect())
 }
 
 /// A deploy saved at `path`, with what older versions saved where it is

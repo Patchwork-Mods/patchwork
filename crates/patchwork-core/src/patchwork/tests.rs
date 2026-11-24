@@ -1019,6 +1019,92 @@ async fn reverting_undoes_changes_since_the_last_deploy() {
 }
 
 #[tokio::test]
+async fn going_back_keeps_folders_and_how_mods_are_filed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("mods");
+    fs::create_dir_all(&dir).unwrap();
+    let source = std::sync::Arc::new(Versioned {
+        dir,
+        version: std::sync::Mutex::new("1.0".to_owned()),
+    });
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(SharedSource(source.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let spec = |id: &str| ModSpec {
+        source: "versioned".to_owned(),
+        id: id.to_owned(),
+        version: None,
+    };
+    for id in ["a", "b", "c"] {
+        pw.add_mod(&profile, spec(id), None, true).await.unwrap();
+    }
+    let libs = pw.add_folder(&profile, "Libs", &["b".to_owned()]).unwrap();
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    let filed = || -> Vec<(String, Option<String>)> {
+        let loaded = pw.load_profile(&profile).unwrap();
+        loaded
+            .mods
+            .iter()
+            .map(|m| (m.name.clone(), loaded.folder_of(m).map(|f| f.name.clone())))
+            .collect()
+    };
+    let row = |name: &str, folder: Option<&str>| (name.to_owned(), folder.map(str::to_owned));
+
+    // filing mods doesn't change what's deployed, and going back keeps it
+    pw.add_folder(&profile, "UI", &["c".to_owned()]).unwrap();
+    assert!(!pw.has_changes(&profile).unwrap());
+    pw.remove_mod(&profile, "a").unwrap();
+    assert!(pw.has_changes(&profile).unwrap());
+    pw.revert(&profile).unwrap();
+    assert!(!pw.has_changes(&profile).unwrap());
+    assert_eq!(
+        filed(),
+        [row("a", None), row("b", Some("Libs")), row("c", Some("UI"))]
+    );
+
+    // a mod coming back is in the folder it was in, which comes back too,
+    // renamed if its name has been taken since
+    pw.remove_folder(&profile, "Libs").unwrap();
+    pw.remove_mod(&profile, "b").unwrap();
+    pw.rename_folder(&profile, "UI", "libs").unwrap();
+    pw.revert(&profile).unwrap();
+    assert!(!pw.has_changes(&profile).unwrap());
+    let loaded = pw.load_profile(&profile).unwrap();
+    let back = loaded.folders.iter().find(|f| f.id == libs.id).unwrap();
+    assert_eq!(back.name, "Libs 2");
+    assert_eq!(
+        filed(),
+        [
+            row("a", None),
+            row("b", Some("Libs 2")),
+            row("c", Some("libs"))
+        ]
+    );
+
+    // filing that moved a mod can't be kept without moving it again, so
+    // it's filed as it was
+    pw.set_mod_folder(&profile, "a", Some("libs")).unwrap();
+    assert!(pw.has_changes(&profile).unwrap());
+    pw.revert(&profile).unwrap();
+    assert!(!pw.has_changes(&profile).unwrap());
+    assert_eq!(
+        filed(),
+        [
+            row("a", None),
+            row("b", Some("Libs 2")),
+            row("c", Some("libs"))
+        ]
+    );
+}
+
+#[tokio::test]
 async fn history_keeps_each_different_deploy_to_roll_back_to() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("mods");
