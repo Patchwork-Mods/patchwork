@@ -75,7 +75,20 @@ pub(crate) fn run(pw: &Patchwork, command: SetCommand, explicit: &Option<String>
         SetCommand::Include { set, after } => {
             let set = pw.find_set(game, &set)?;
             pw.include_set(&profile, set.id, after.as_deref())?;
-            println!("{} now includes {}", loaded.label(), set.name);
+            let personal = pw
+                .load_profile(&profile)?
+                .include(set.id)
+                .is_some_and(|i| i.personal);
+            if personal {
+                println!(
+                    "{} now includes {}, only on this person's computers (it's synced, and \
+                     sets aren't)",
+                    loaded.label(),
+                    set.name
+                );
+            } else {
+                println!("{} now includes {}", loaded.label(), set.name);
+            }
         }
         SetCommand::Copy { set } => {
             let set = pw.find_set(game, &set)?;

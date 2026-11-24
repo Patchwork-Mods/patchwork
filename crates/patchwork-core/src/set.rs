@@ -108,6 +108,11 @@ pub struct OtherFolder {
     /// Why it can only be copied in rather than used as the same folder,
     /// if it can't be.
     pub copy_only: Option<String>,
+    /// Whether, used as the same folder, it'd be in the profile's personal
+    /// layer (see [`crate::personal`]): the profile's synced, and sets
+    /// aren't, so it'd only be on this person's computers. Copied in, it
+    /// goes to everyone.
+    pub personal: bool,
 }
 
 /// The settings `profile`'s sets change in config files, as loaded: a

@@ -304,6 +304,9 @@ struct UiFolder {
     /// [`patchwork_core::personal`]): a linked folder whose mods stay on
     /// this person's computers.
     personal: bool,
+    /// Whether it's a shared set's linked folder that the profile includes
+    /// personally, so it's only on this person's computers too.
+    personal_set: bool,
 }
 
 #[derive(Serialize)]
@@ -715,7 +718,8 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let folders = loaded
         .all_folders()
         .map(|f| {
-            let linked = loaded.include(f.id).is_some();
+            let include = loaded.include(f.id);
+            let linked = include.is_some();
             let also_in = includers
                 .remove(&f.id)
                 .unwrap_or_default()
@@ -731,6 +735,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 linked,
                 also_in,
                 personal: f.id == loaded.id,
+                personal_set: f.id != loaded.id && include.is_some_and(|i| i.personal),
             }
         })
         .collect();
@@ -1404,15 +1409,6 @@ fn use_folder(
 fn include_set(app: State<'_, App>, id: String, set: String) -> CmdResult<ProfileDetail> {
     app.pw
         .include_set(&profile_ref(&id)?, blockers::parse_set(&set)?, None)
-        .map_err(msg)?;
-    profile_detail(&app.pw, id)
-}
-
-/// Copies the shared set `set` into the profile as a folder of its own.
-#[tauri::command]
-fn copy_set(app: State<'_, App>, id: String, set: String) -> CmdResult<ProfileDetail> {
-    app.pw
-        .copy_set(&profile_ref(&id)?, blockers::parse_set(&set)?)
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
@@ -2706,7 +2702,6 @@ fn main() {
             other_folders,
             use_folder,
             include_set,
-            copy_set,
             unlink_set,
             sort_mods,
             reorder_mods,

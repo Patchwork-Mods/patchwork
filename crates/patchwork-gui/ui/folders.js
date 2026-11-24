@@ -147,7 +147,10 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
     ? [
         { label: "Rename…", run: () => renameFolder(folder) },
         "-",
-        { label: "Stop sharing, keeping its mods here", run: () => unlink(folder, true) },
+        {
+          label: folder.personalSet ? "Stop sharing, keeping its mods in Personal" : "Stop sharing, keeping its mods here",
+          run: () => unlink(folder, true),
+        },
         { label: "Remove from this profile", danger: true, run: () => unlink(folder, false) },
       ]
     : [
@@ -178,19 +181,29 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
         },
         state.profile.devicesLinked ? "Only on your computers" : "Only on this computer",
       )
-    : folder.linked &&
-    h(
-      "span",
-      {
-        class: "badge folder-shared",
-        title: folder.alsoIn.length
-          ? `Shared with ${folder.alsoIn.join(", ")}. Changing what's in it changes it there too; turning its mods on or off is this profile's own.`
-          : "Shared with other profiles. Changing what's in it changes it there too; turning its mods on or off is this profile's own.",
-      },
-      folder.alsoIn.length
-        ? `Shared with ${folder.alsoIn.length} ${folder.alsoIn.length === 1 ? "profile" : "profiles"}`
-        : "Shared",
-    );
+    : folder.linked && [
+      h(
+        "span",
+        {
+          class: "badge folder-shared",
+          title: folder.alsoIn.length
+            ? `Shared with ${folder.alsoIn.join(", ")}. Changing what's in it changes it there too; turning its mods on or off is this profile's own.`
+            : "Shared with other profiles. Changing what's in it changes it there too; turning its mods on or off is this profile's own.",
+        },
+        folder.alsoIn.length
+          ? `Shared with ${folder.alsoIn.length} ${folder.alsoIn.length === 1 ? "profile" : "profiles"}`
+          : "Shared",
+      ),
+      folder.personalSet &&
+        h(
+          "span",
+          {
+            class: "badge folder-shared",
+            title: `Only on ${where()}: the profile's synced, but shared folders aren't, so no one else it's shared with gets these mods.`,
+          },
+          state.profile.devicesLinked ? "Only on your computers" : "Only on this computer",
+        ),
+    ];
   section.append(
     h(
       "div",
@@ -361,7 +374,9 @@ async function unlink(folder, keep) {
   showProfile(profile);
   status(
     keep
-      ? `${folder.name} is this profile's own now; the other profiles still have theirs`
+      ? folder.personalSet
+        ? `${folder.name}'s mods are in Personal now; the other profiles still have the folder`
+        : `${folder.name} is this profile's own now; the other profiles still have theirs`
       : `Took ${folder.name} out of this profile; add it again from Add folder`,
   );
 }
@@ -473,7 +488,11 @@ function otherRow(other) {
         act("Add", true, {
           class: "primary",
           disabled: Boolean(other.copyOnly),
-          title: other.copyOnly ?? "Use the same folder here: changing what's in it changes it in every profile that has it",
+          title:
+            other.copyOnly ??
+            (other.personal
+              ? `Use the same folder here, only on ${where()}: shared folders aren't synced, so no one else this profile's shared with gets it`
+              : "Use the same folder here: changing what's in it changes it in every profile that has it"),
         }),
       ),
     ),
@@ -485,6 +504,10 @@ function otherRow(other) {
       whose(other),
       already && [h("br"), already],
       other.copyOnly && [h("br"), `Can only be copied in: ${other.copyOnly}.`],
+      other.personal && [
+        h("br"),
+        `This profile's synced, so added it's only on ${where()}. Copy it in to share it with everyone.`,
+      ],
     ),
   );
 }
@@ -500,13 +523,16 @@ async function useFolder(other, link) {
     link,
   });
   showProfile(profileDetail);
-  status(link ? `Added ${other.name}, shared with ${other.profiles.join(", ") || "this profile"}` : `Copied ${other.name} in as a folder`);
+  const only = other.personal ? `, only on ${where()}` : "";
+  status(
+    link
+      ? `Added ${other.name}, shared with ${other.profiles.join(", ") || "this profile"}${only}`
+      : `Copied ${other.name} in as a folder`,
+  );
 }
 
-// A synced profile can't include a set yet, so the blocker offers copying
-// it in, which is all that was asked.
-windowFixes.copySet = async (fix, id) => ({ done: await invokeResolving("copy_set", { id, set: fix.set }) });
-// Nor share a folder with another profile, so it's copied in instead.
+// A synced profile can't share its own folders with other profiles yet,
+// so the blocker offers copying the folder in, which is all that was asked.
 windowFixes.copyFolder = async (fix, id) => ({
   done: await invokeResolving("use_folder", {
     id,

@@ -409,6 +409,14 @@ impl Patchwork {
                 loaded.label()
             )));
         }
+        // Saving to a set drops the profile's own settings for the file,
+        // which would publish their removal to everyone.
+        if loaded.include(id).is_some_and(|i| i.personal) {
+            return Err(Error::invalid(format!(
+                "settings can't be saved in a set {} includes personally yet",
+                loaded.label()
+            )));
+        }
         if loaded.include(id).is_none_or(|i| i.linked.is_none()) {
             return Err(Error::invalid(format!(
                 "{} doesn't include the set {id}",
@@ -839,10 +847,13 @@ fn sets_editing(loaded: &Profile, path: &Dest) -> Vec<String> {
 }
 
 /// The sets `loaded` includes, for saving `path`'s settings in. Not its
-/// personal layer, which can't keep settings yet.
+/// personal layer or the sets it includes personally, which can't keep
+/// settings yet.
 fn config_sets(loaded: &Profile, path: &Dest) -> Vec<ConfigSet> {
     loaded
-        .shared_includes()
+        .includes
+        .iter()
+        .filter(|i| !i.personal)
         .filter_map(|i| i.linked.as_ref())
         .map(|l| ConfigSet {
             id: l.folder.id,
@@ -877,6 +888,7 @@ fn default_save_to(
             .includes
             .iter()
             .rev()
+            .filter(|i| !i.personal)
             .filter_map(|i| i.linked.as_ref())
             .find(|l| edits_in(&l.config, path).is_some())
     {

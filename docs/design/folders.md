@@ -352,14 +352,41 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      profile that arrives later gets its layer as soon as it does. The
      GUI says "Only on your computers" once linked ("Only on this
      computer" until then), and so does the CLI.
-   - Still to do: personal includes of shared sets; personal config edits (saving settings to
-     the personal layer is refused for now, since saving to a set drops
-     the profile's own, which would publish their removal); followed
+   - **Personal includes of shared sets.** A synced profile includes a
+     set in its personal layer (`include_set` and `use_folder` do it
+     themselves when the profile's synced; the `CopySet` blocker is
+     gone). The includes are kept in `personal.toml` (`[[include]]`,
+     `PERSONAL_SCHEMA` 2, saved as 1 while there are none), with the
+     layer's own place among them as an include of the profile's id so
+     ties keep their order (`Personal::includes`/`set_includes`). As
+     loaded, every include that's part of the layer has
+     `Include::personal`, which `is_personal`, the split lock,
+     `without` (which leaves out their config edits too) and the
+     save's split go by; deploy history keeps it. `includers` and
+     `stored_includes` read them too, so a set isn't settled away from
+     under one. A set only a synced profile still includes, personally,
+     stays a set rather than becoming an ordinary folder (which would go
+     to everyone). Stopping sharing it keeping its mods puts them in the
+     personal layer; going back with "copy" past a change to it does the
+     same, and so does it for the layer itself. Its config edits apply
+     but can't be saved to (as for the layer), and are dropped when it's
+     unlinked. A synced profile's own folders still can't become sets
+     (`CopyFolder`), and a profile that includes sets in its file still
+     can't start syncing (`UnlinkSets`). The sets themselves aren't
+     synced between linked computers yet (step 5): another computer gets
+     the include, and a `MissingSet` issue until it has the set. GUI:
+     the folder's marked "Only on your computers" next to "Shared with
+     N profiles", and "From another profile…" says so before adding.
+   - Still to do: personal config edits (saving settings to
+     the personal layer or a set it includes is refused for now, since
+     saving to a set drops the profile's own, which would publish their
+     removal); followed
      profiles' additions going to it (today they're `unshared_mods` in
      the profile itself); the client/server-side issue; and going back
      past a change to it, which asks what to do as for a changed shared
-     set (where "copy" would make its mods everyone's) rather than just
-     putting it back.
+     set (where "copy" now keeps them personal) rather than just putting
+     it back; and offering to include a profile's sets personally when it
+     starts syncing, as well as copying them in.
 4. **Optional folders** in synced profiles.
 5. **Sets synced between linked computers**, and exporting a set on its
    own.

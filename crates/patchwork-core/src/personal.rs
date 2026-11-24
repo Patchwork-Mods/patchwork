@@ -18,6 +18,25 @@
 //! # ProfileMods
 //! ```
 //!
+//! The person can include shared sets in it too: those includes are kept
+//! here rather than in the profile's file, so the sets' mods are only on
+//! their computers as well. With any, it's schema 2, and the layer's own
+//! place is an include among them (see [`Personal::includes`]):
+//!
+//! ```toml
+//! schema = 2
+//! game = "lethal-company"
+//!
+//! [[include]]
+//! set = "<the profile's id>"   # its own mods
+//! after = "SomeSharedMod"
+//!
+//! [[include]]
+//! set = "<a shared set's id>"
+//! after = "SomeSharedMod"
+//! disabled = ["Shaders"]
+//! ```
+//!
 //! Loading a profile includes it, so its mods show as a linked folder,
 //! "Personal", and everything that reads a profile sees them. Syncing
 //! leaves it out ([`without`]), and so does what's synced of the lockfile:
@@ -32,10 +51,16 @@ use uuid::Uuid;
 
 use crate::lock::{LockedMod, Lockfile, mod_key};
 use crate::profile::{Include, Profile, ProfileMod};
-use crate::set::Set;
+use crate::set::{Set, merge_config, own_config};
 
-/// The newest schema of `personal.toml` this build reads.
-pub const PERSONAL_SCHEMA: u32 = 1;
+/// The newest schema of `personal.toml` this build reads. Schema 2 added
+/// `include`; a layer that includes no sets is still saved as 1 (see
+/// [`Personal::saved_schema`]), so builds that would drop them don't open
+/// ones that do.
+pub const PERSONAL_SCHEMA: u32 = 2;
+
+/// The schema a personal layer that includes no sets is saved as.
+const SCHEMA_WITHOUT_INCLUDES: u32 = 1;
 
 /// What the personal layer's linked folder is called.
 pub const PERSONAL_NAME: &str = "Personal";
@@ -52,6 +77,12 @@ pub struct Personal {
     /// Its mods that are off, as [`Include::disabled`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled: Vec<String>,
+    /// The shared sets the person includes in the profile, in order. Once
+    /// there are any, the layer's own mods' place is among them, as an
+    /// include of the profile's own id, rather than `after` and
+    /// `disabled`. See [`Personal::includes`].
+    #[serde(default, rename = "include", skip_serializing_if = "Vec::is_empty")]
+    pub includes: Vec<Include>,
     /// In load order, as a set's are.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
@@ -64,7 +95,24 @@ impl Personal {
             game: game.to_owned(),
             after: None,
             disabled: Vec::new(),
+            includes: Vec::new(),
             mods: Vec::new(),
+        }
+    }
+
+    /// Whether there's nothing in the profile `id`'s layer: no mods of its
+    /// own, and no sets.
+    pub fn is_empty(&self, id: Uuid) -> bool {
+        self.mods.is_empty() && self.includes.iter().all(|i| i.set == id)
+    }
+
+    /// [`PERSONAL_SCHEMA`] if it includes sets, otherwise the schema from
+    /// before it could.
+    pub fn saved_schema(&self) -> u32 {
+        if self.includes.is_empty() {
+            SCHEMA_WITHOUT_INCLUDES
+        } else {
+            PERSONAL_SCHEMA
         }
     }
 
@@ -77,12 +125,53 @@ impl Personal {
         }
     }
 
-    /// The profile `id`'s include of it.
-    pub fn include(&self, id: Uuid) -> Include {
-        Include {
-            after: self.after.clone(),
-            disabled: self.disabled.clone(),
-            ..Include::new(id)
+    /// The profile `id`'s personal includes, in order: the sets included
+    /// personally, and the layer's own (the private set whose id is the
+    /// profile's) if it has mods, first unless it's been put among them.
+    pub fn includes(&self, id: Uuid) -> Vec<Include> {
+        let mut includes = self.includes.clone();
+        if !includes.iter().any(|i| i.set == id) {
+            includes.insert(
+                0,
+                Include {
+                    after: self.after.clone(),
+                    disabled: self.disabled.clone(),
+                    ..Include::new(id)
+                },
+            );
+        }
+        if self.mods.is_empty() {
+            includes.retain(|i| i.set != id);
+        }
+        for include in &mut includes {
+            include.personal = true;
+            include.linked = None;
+        }
+        includes
+    }
+
+    /// Keeps `includes` (as [`Personal::includes`] gives them) as the
+    /// profile `id`'s personal includes: the layer's own place in `after`
+    /// and `disabled` if there are no others, so it's saved as it was
+    /// before sets could be included, or among them if there are.
+    pub fn set_includes(&mut self, id: Uuid, includes: Vec<Include>) {
+        let includes: Vec<Include> = includes
+            .into_iter()
+            .map(|i| Include {
+                linked: None,
+                personal: false,
+                ..i
+            })
+            .collect();
+        if includes.iter().all(|i| i.set == id) {
+            let own = includes.into_iter().next();
+            self.after = own.as_ref().and_then(|i| i.after.clone());
+            self.disabled = own.map(|i| i.disabled).unwrap_or_default();
+            self.includes = Vec::new();
+        } else {
+            self.after = None;
+            self.disabled = Vec::new();
+            self.includes = includes;
         }
     }
 }
@@ -125,20 +214,31 @@ impl Layer {
             }
             personal.mods.push(m);
         }
+        for include in ours.personal.includes {
+            if !personal.includes.iter().any(|i| i.set == include.set) {
+                personal.includes.push(include);
+            }
+        }
         let mut locked = theirs.locked;
         let have: HashSet<String> = locked.iter().map(LockedMod::key).collect();
         locked.extend(ours.locked.into_iter().filter(|m| !have.contains(&m.key())));
-        let needed = reachable(personal.mods.iter().map(key), &locked);
-        locked.retain(|m| needed.contains(&m.key()));
+        // What the sets included need can't be told without them, so then
+        // it's left to the next lock to tidy.
+        if personal.includes.is_empty() {
+            let needed = reachable(personal.mods.iter().map(key), &locked);
+            locked.retain(|m| needed.contains(&m.key()));
+        }
         Layer { personal, locked }
     }
 }
 
-/// `loaded` without its personal layer: what's synced of it.
+/// `loaded` without its personal layer: what's synced of it. The config
+/// edits of sets included personally go with them.
 pub fn without(loaded: &Profile) -> Profile {
     let mut shared = loaded.clone();
     shared.mods.retain(|m| !loaded.is_personal(m));
-    shared.includes.retain(|i| i.set != loaded.id);
+    shared.includes.retain(|i| !i.personal);
+    merge_config(&mut shared, &own_config(loaded));
     shared
 }
 
@@ -249,7 +349,10 @@ mod tests {
     #[test]
     fn what_only_personal_mods_need_is_split_off() {
         let mut profile = Profile::new("g", "p");
-        profile.includes.push(Include::new(profile.id));
+        profile.includes.push(Include {
+            personal: true,
+            ..Include::new(profile.id)
+        });
         let mut mine = profile_mod("mine");
         mine.folder = Some(profile.id);
         profile.mods = vec![profile_mod("shared"), mine];
@@ -286,6 +389,40 @@ mod tests {
         );
         assert_eq!(without(&profile).mods.len(), 1);
         assert!(without(&profile).includes.is_empty());
+    }
+
+    #[test]
+    fn its_own_place_is_kept_among_the_sets_it_includes() {
+        let id = Uuid::new_v4();
+        let set = Uuid::new_v4();
+        let mut personal = Personal {
+            mods: vec![profile_mod("mine")],
+            ..Personal::new("g")
+        };
+        let at = |after: &str, set| Include {
+            after: Some(after.to_owned()),
+            ..Include::new(set)
+        };
+        // with no sets, it's kept as before there were any
+        personal.set_includes(id, vec![at("a", id)]);
+        assert_eq!(personal.after.as_deref(), Some("a"));
+        assert_eq!(personal.saved_schema(), 1);
+        let sets = |p: &Personal| p.includes(id).iter().map(|i| i.set).collect::<Vec<_>>();
+        assert_eq!(sets(&personal), [id]);
+        assert!(personal.includes(id).iter().all(|i| i.personal));
+
+        // with one, after its own mods
+        personal.set_includes(id, vec![at("a", set), at("a", id)]);
+        assert_eq!(personal.after, None);
+        assert_eq!(personal.saved_schema(), 2);
+        assert_eq!(sets(&personal), [set, id]);
+        assert!(!personal.is_empty(id));
+        // which aren't there once there are none
+        personal.mods.clear();
+        assert_eq!(sets(&personal), [set]);
+        assert!(!personal.is_empty(id));
+        personal.set_includes(id, Vec::new());
+        assert!(personal.is_empty(id));
     }
 
     #[test]

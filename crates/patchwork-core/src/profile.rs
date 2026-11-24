@@ -168,13 +168,21 @@ impl Profile {
         self.include(self.id)
     }
 
-    /// Whether `m` is in the profile's personal layer, so it's only on
-    /// this person's computers.
+    /// Whether `m` is in the profile's personal layer, or a set it
+    /// includes personally, so it's only on this person's computers.
     pub fn is_personal(&self, m: &ProfileMod) -> bool {
-        m.folder == Some(self.id) && self.personal().is_some()
+        m.folder
+            .is_some_and(|id| self.include(id).is_some_and(|i| i.personal))
     }
 
-    /// The includes of shared sets, leaving out the personal layer.
+    /// Whether anything in the profile is only on this person's computers:
+    /// a personal layer, or a set included personally.
+    pub fn has_personal(&self) -> bool {
+        self.includes.iter().any(|i| i.personal)
+    }
+
+    /// The includes of shared sets, leaving out the personal layer. Sets
+    /// included personally are among them.
     pub fn shared_includes(&self) -> impl Iterator<Item = &Include> {
         self.includes.iter().filter(|i| i.set != self.id)
     }
@@ -303,6 +311,13 @@ pub struct Include {
     /// saved; see [`crate::set::expand`].
     #[serde(skip)]
     pub linked: Option<Linked>,
+    /// Whether it's part of the profile's personal layer (see
+    /// [`crate::personal`]): the layer's own include, or a set included
+    /// only on this person's computers. Those are kept with the personal
+    /// layer rather than in the profile's file, so this is never saved
+    /// there.
+    #[serde(skip)]
+    pub personal: bool,
 }
 
 impl Include {
@@ -312,6 +327,7 @@ impl Include {
             after: None,
             disabled: Vec::new(),
             linked: None,
+            personal: false,
         }
     }
 }

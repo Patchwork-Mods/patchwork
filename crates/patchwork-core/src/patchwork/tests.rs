@@ -4814,40 +4814,74 @@ async fn a_profile_uses_another_profiles_folder_as_the_same_folder() {
 }
 
 #[tokio::test]
-async fn synced_profiles_only_copy_other_profiles_folders() {
+async fn synced_profiles_use_other_profiles_folders_personally() {
     let tmp = tempfile::tempdir().unwrap();
     let (pw, a, b) = two_profiles(tmp.path()).await;
     let qol = pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
     pw.start_sync(&b).unwrap();
     let others = pw.other_folders(&b).unwrap();
-    assert!(others[0].copy_only.is_some(), "{others:?}");
+    assert!(others[0].copy_only.is_none(), "{others:?}");
+    assert!(others[0].personal, "{others:?}");
     let from = FolderSource::Folder {
         profile: a.uuid,
         folder: qol.id,
     };
-    let err = pw.use_folder(&b, &from, true).unwrap_err();
-    let Some(crate::fix::Fix::CopyFolder { from: id, name, .. }) = err.fix() else {
-        panic!("{err:?}");
-    };
-    assert_eq!((id, name), (a.uuid.to_string(), "QOL".to_owned()));
-    // before anything changed
-    assert!(pw.sets("my-game").unwrap().is_empty());
-    assert!(pw.load_profile(&a).unwrap().includes.is_empty());
-    pw.use_folder(&b, &from, false).unwrap();
+    pw.use_folder(&b, &from, true).unwrap();
+    let set = pw.find_set("my-game", "QOL").unwrap();
+    // a shares it as ever, and b has it only here
+    assert!(
+        pw.load_profile(&a)
+            .unwrap()
+            .include(set.id)
+            .is_some_and(|i| !i.personal)
+    );
+    let loaded = pw.load_profile(&b).unwrap();
+    assert!(loaded.include(set.id).is_some_and(|i| i.personal));
     assert_eq!(mod_names(&pw, &b), ["d", "b"]);
+    assert!(loaded.is_personal(loaded.find("b").unwrap()));
+    let mut both = vec![a.clone(), b.clone()];
+    both.sort();
+    assert_eq!(pw.profiles_including(set.id).unwrap(), both);
+    // so nothing's published
+    assert!(pw.unsynced_changes(&b).unwrap().is_empty());
 
-    // nor can a synced profile's folder be used as the same one elsewhere
+    // a set only a synced profile includes, personally, stays a set
+    pw.unlink_set(&a, set.id, true).unwrap();
+    assert!(pw.load_set(set.id).unwrap().is_some());
+    assert_eq!(
+        pw.profiles_including(set.id).unwrap(),
+        std::slice::from_ref(&b)
+    );
+    // and stopping sharing it keeps its mods personal
+    pw.unlink_set(&b, set.id, true).unwrap();
+    assert!(pw.load_set(set.id).unwrap().is_none());
+    let loaded = pw.load_profile(&b).unwrap();
+    let m = loaded.find("b").unwrap();
+    assert!(loaded.is_personal(m));
+    assert_eq!(loaded.folder_of(m).unwrap().name, "Personal");
+    assert!(pw.unsynced_changes(&b).unwrap().is_empty());
+
+    // a synced profile's own folders can't be used as the same one
+    // elsewhere, since they go to everyone
+    pw.add_folder(&b, "Mine", &["d".to_owned()]).unwrap();
     let c = pw.create_profile("my-game", "c").unwrap();
-    let theirs = pw.load_profile(&b).unwrap().find_folder("QOL").unwrap().id;
+    let theirs = pw.load_profile(&b).unwrap().find_folder("Mine").unwrap().id;
     let from = FolderSource::Folder {
         profile: b.uuid,
         folder: theirs,
     };
+    let others = pw.other_folders(&c).unwrap();
+    let mine = others.iter().find(|f| f.name == "Mine").unwrap();
+    assert!(mine.copy_only.is_some() && !mine.personal, "{others:?}");
     let err = pw.use_folder(&c, &from, true).unwrap_err();
-    assert!(
-        matches!(err.fix(), Some(crate::fix::Fix::CopyFolder { .. })),
-        "{err:?}"
-    );
+    let Some(crate::fix::Fix::CopyFolder { from: id, name, .. }) = err.fix() else {
+        panic!("{err:?}");
+    };
+    assert_eq!((id, name), (b.uuid.to_string(), "Mine".to_owned()));
+    // before anything changed
+    assert!(pw.find_set("my-game", "Mine").is_err());
+    pw.use_folder(&c, &from, false).unwrap();
+    assert_eq!(mod_names(&pw, &c), ["d"]);
 }
 
 #[tokio::test]
@@ -4924,7 +4958,7 @@ async fn a_set_and_a_profile_with_the_same_mod_lock_it_once() {
 }
 
 #[tokio::test]
-async fn synced_profiles_copy_sets_in_rather_than_including_them() {
+async fn synced_profiles_include_sets_personally() {
     let tmp = tempfile::tempdir().unwrap();
     let (pw, a, b) = two_profiles(tmp.path()).await;
     pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
@@ -4940,23 +4974,67 @@ async fn synced_profiles_copy_sets_in_rather_than_including_them() {
         (vec![set.id.to_string()], vec!["QOL".to_owned()])
     );
 
-    // and a synced one can't include one, but can copy it in
+    // but a synced one includes it in its personal layer
     pw.start_sync(&b).unwrap();
-    let err = pw.include_set(&b, set.id, None).unwrap_err();
-    assert!(
-        matches!(err.fix(), Some(crate::fix::Fix::CopySet { .. })),
-        "{err:?}"
-    );
-    pw.copy_set(&b, set.id).unwrap();
+    pw.include_set(&b, set.id, None).unwrap();
     let loaded = pw.load_profile(&b).unwrap();
-    assert!(loaded.includes.is_empty());
-    let copied = loaded.find("b").unwrap();
-    assert_eq!(loaded.folder_of(copied).unwrap().name, "QOL");
-    assert!(!loaded.is_linked(copied));
-    // nor share one of its folders
-    assert!(pw.share_folder(&b, "QOL").is_err());
-    assert!(pw.load_profile(&b).unwrap().includes.is_empty());
-    pw.sync_entries(&b).unwrap();
+    assert!(loaded.include(set.id).is_some_and(|i| i.personal));
+    assert!(loaded.personal().is_none());
+    let m = loaded.find("b").unwrap();
+    assert!(loaded.is_linked(m) && loaded.is_personal(m));
+    assert_eq!(loaded.folder_of(m).unwrap().name, "QOL");
+    let stored = fs::read_to_string(pw.profile_file(&b)).unwrap();
+    assert!(!stored.contains("[[include]]"), "{stored}");
+    let personal = pw.profile_state_dir(&b).join("personal.toml");
+    let kept = fs::read_to_string(&personal).unwrap();
+    assert!(kept.contains("schema = 2"), "{kept}");
+    assert!(kept.contains(&set.id.to_string()), "{kept}");
+    assert!(pw.unsynced_changes(&b).unwrap().is_empty());
+
+    // its mods are locked apart from what's synced
+    pw.lock(&b, false).await.unwrap();
+    let shared = pw.load_shared_lock(&b).unwrap().unwrap();
+    assert!(!shared.mods.iter().any(|m| m.id == "b"));
+    assert!(
+        pw.load_lock(&b)
+            .unwrap()
+            .unwrap()
+            .mods
+            .iter()
+            .any(|m| m.id == "b")
+    );
+    let layer = pw.personal_layer(&b).unwrap().unwrap();
+    assert!(layer.personal.mods.is_empty());
+    assert_eq!(layer.personal.includes.len(), 1);
+    assert!(layer.locked.iter().any(|m| m.id == "b"));
+
+    // with personal mods of its own too, both keep their places
+    pw.set_personal(&b, &["d".to_owned()], true).unwrap();
+    assert_eq!(mod_names(&pw, &b), ["d", "b"]);
+    let loaded = pw.load_profile(&b).unwrap();
+    assert!(loaded.personal().is_some() && loaded.is_personal(loaded.find("d").unwrap()));
+    assert_eq!(
+        pw.personal_layer(&b)
+            .unwrap()
+            .unwrap()
+            .personal
+            .includes
+            .len(),
+        2
+    );
+
+    // a copy isn't synced, so it includes the set as its own
+    let copy = pw.duplicate_profile(&b, "copy").unwrap();
+    let loaded = pw.load_profile(&copy).unwrap();
+    assert!(loaded.include(set.id).is_some_and(|i| !i.personal));
+    assert!(!loaded.has_personal());
+    assert_eq!(pw.profiles_including(set.id).unwrap().len(), 3);
+
+    // and taking it out leaves just the personal mods
+    pw.unlink_set(&b, set.id, false).unwrap();
+    assert_eq!(mod_names(&pw, &b), ["d"]);
+    let kept = fs::read_to_string(&personal).unwrap();
+    assert!(kept.contains("schema = 1"), "{kept}");
 }
 
 #[tokio::test]

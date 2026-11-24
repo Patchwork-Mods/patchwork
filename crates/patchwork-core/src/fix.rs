@@ -187,10 +187,6 @@ pub enum Fix {
         sets: Vec<String>,
         names: Vec<String>,
     },
-    /// Copy the shared set `set` (by id, named `name`) into the profile
-    /// as an ordinary folder of its own, rather than including it; see
-    /// [`Patchwork::copy_set`](crate::Patchwork::copy_set).
-    CopySet { set: String, name: String },
     /// Copy the folder `folder` (by id, named `name`) of the profile `from`
     /// (by id, named `from_name`) in as an ordinary folder of the profile's
     /// own, rather than using the same folder in both; see
@@ -234,7 +230,7 @@ impl Fix {
                 "Copy it in as a folder".to_owned()
             }
             Fix::UnlinkSets { .. } => "Copy them in as folders".to_owned(),
-            Fix::CopySet { .. } | Fix::CopyFolder { .. } => "Copy it in as a folder".to_owned(),
+            Fix::CopyFolder { .. } => "Copy it in as a folder".to_owned(),
             Fix::GoBack { sets, .. } => match sets {
                 SetsThen::Restore => "Put them back as they were",
                 SetsThen::Copy => "Copy them in as they were",
@@ -264,7 +260,7 @@ impl Fix {
             Fix::ProfileSettings => "Opening profile settings…".to_owned(),
             Fix::SourceSettings { .. } => "Opening Settings…".to_owned(),
             Fix::UnlinkSets { names, .. } => format!("Copying in {}…", names.join(", ")),
-            Fix::CopySet { name, .. } | Fix::CopyFolder { name, .. } => {
+            Fix::CopyFolder { name, .. } => {
                 format!("Copying in {name}…")
             }
             Fix::GoBack { number: None, .. } => "Reverting…".to_owned(),
@@ -319,7 +315,6 @@ impl Fix {
                     .collect();
                 unlinks.join(" && ")
             }
-            Fix::CopySet { name, .. } => on(format!("set copy {}", quoted(name))),
             Fix::CopyFolder {
                 from_name, name, ..
             } => on(format!(

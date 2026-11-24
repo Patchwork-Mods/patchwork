@@ -84,14 +84,19 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                 };
                 let shared = if f.id == loaded.id {
                     format!(", only on {}", personal_place(pw))
-                } else if loaded.include(f.id).is_some() {
+                } else if let Some(include) = loaded.include(f.id) {
                     let others: Vec<String> = pw
                         .profiles_including(f.id)?
                         .iter()
                         .filter(|p| **p != profile)
                         .filter_map(|p| pw.load_profile(p).ok().map(|l| l.name))
                         .collect();
-                    format!(", shared with {}", others.join(", "))
+                    let only = if include.personal {
+                        format!(", only on {}", personal_place(pw))
+                    } else {
+                        String::new()
+                    };
+                    format!(", shared with {}{only}", others.join(", "))
                 } else {
                     String::new()
                 };
@@ -121,6 +126,14 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                 if let Some(why) = &f.copy_only {
                     println!("  can only be copied in: {why}");
                 }
+                if f.personal {
+                    println!(
+                        "  {} is synced, so used here it'd only be on {}; copy it in to share \
+                         it with everyone",
+                        loaded.label(),
+                        personal_place(pw)
+                    );
+                }
             }
         }
         FolderCommand::Use { folder, from, copy } => {
@@ -129,8 +142,13 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
             if copy {
                 println!("copied {} into {}", found.name, loaded.label());
             } else {
+                let only = if found.personal {
+                    format!(", only on {}", personal_place(pw))
+                } else {
+                    String::new()
+                };
                 println!(
-                    "{} now shares {} with {}",
+                    "{} now shares {} with {}{only}",
                     loaded.label(),
                     found.name,
                     found.profiles.join(", ")

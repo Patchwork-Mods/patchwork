@@ -104,15 +104,15 @@ impl Patchwork {
     }
 
     /// The profile and its lockfile as they are here, as entries. Its
-    /// personal layer is left out (see [`crate::personal`]), along with
-    /// what only that needs locked.
+    /// personal layer is left out (see [`crate::personal`]), with the sets
+    /// it includes personally and what only those need locked.
     pub fn sync_entries(&self, profile: &ProfileRef) -> Result<Entries> {
         let loaded = self.load_profile(profile)?;
-        if loaded.shared_includes().next().is_some() {
+        if loaded.includes.iter().any(|i| !i.personal) {
             return Err(sets_cant_sync(&loaded));
         }
         let lock = self.load_lock(profile)?;
-        if loaded.personal().is_none() {
+        if !loaded.has_personal() {
             return Ok(sync::to_entries(&loaded, lock.as_ref()));
         }
         let lock = lock.map(|lock| personal::split_lock(&loaded, lock).0);
@@ -483,7 +483,9 @@ fn is_in_profile(loaded: &Profile, key: &str) -> bool {
 /// everyone as the profile's own.
 fn sets_cant_sync(loaded: &Profile) -> Error {
     let (sets, names): (Vec<String>, Vec<String>) = loaded
-        .shared_includes()
+        .includes
+        .iter()
+        .filter(|i| !i.personal)
         .map(|i| {
             let name = i
                 .linked

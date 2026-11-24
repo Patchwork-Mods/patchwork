@@ -14,7 +14,9 @@ use crate::error::IoContext;
 use crate::fsutil;
 use crate::lock::Lockfile;
 use crate::personal::{self, Personal};
-use crate::profile::{PROFILE_SCHEMA, Profile, ProfileRef, SCHEMA_WITHOUT_INCLUDES, validate_name};
+use crate::profile::{
+    Include, PROFILE_SCHEMA, Profile, ProfileRef, SCHEMA_WITHOUT_INCLUDES, validate_name,
+};
 use crate::set;
 use crate::{Error, Result};
 
@@ -296,9 +298,10 @@ impl Patchwork {
         // Whatever an older schema had has been moved where it is now, so
         // it's saved as the current one (see `Profile::saved_schema`).
         loaded.schema = PROFILE_SCHEMA;
-        // its personal layer is included like a set (see `crate::personal`)
+        // its personal layer is included like a set, with the sets it
+        // includes personally (see `crate::personal`)
         if let Some(personal) = self.load_personal(profile)? {
-            loaded.includes.push(personal.include(profile.uuid));
+            loaded.includes.extend(personal.includes(profile.uuid));
         }
         let mut failed = None;
         set::expand(&mut loaded, |id| match self.load_set(id) {
@@ -333,11 +336,11 @@ impl Patchwork {
             value
         };
         let (mut stored, changed) = set::collapse(value);
-        let personal = stored
-            .includes
-            .iter()
-            .position(|i| i.set == profile.uuid)
-            .map(|at| stored.includes.remove(at));
+        // the personal layer's, and sets included personally, are kept with it
+        let personal: Vec<Include>;
+        (personal, stored.includes) = std::mem::take(&mut stored.includes)
+            .into_iter()
+            .partition(|i| i.personal || i.set == profile.uuid);
         stored.schema = stored.saved_schema();
         let mut personal_mods = None;
         for (id, mods) in changed {
@@ -359,26 +362,27 @@ impl Patchwork {
                 }
             }
         }
-        match personal {
-            Some(include) => {
-                let mut saved = self
-                    .load_personal(profile)?
-                    .unwrap_or_else(|| Personal::new(&value.game));
-                saved.after = include.after;
-                saved.disabled = include.disabled;
-                if let Some(mods) = personal_mods {
-                    saved.mods = mods;
-                }
-                self.save_personal(profile, &saved)?;
-            }
-            None => self.remove_personal(profile)?,
-        }
         let before = self.stored_includes(profile)?;
+        if personal.is_empty() {
+            self.remove_personal(profile)?;
+        } else {
+            let mut saved = self
+                .load_personal(profile)?
+                .unwrap_or_else(|| Personal::new(&value.game));
+            if !personal.iter().any(|i| i.set == profile.uuid) {
+                saved.mods = Vec::new();
+            }
+            if let Some(mods) = personal_mods {
+                saved.mods = mods;
+            }
+            saved.set_includes(profile.uuid, personal.clone());
+            self.save_personal(profile, &saved)?;
+        }
         fsutil::write_toml(&self.profile_file(profile), &stored)?;
         self.profile_changed(profile, false);
         // a set no longer shared is a folder again (see `settle_set`)
         for id in before {
-            if stored.include(id).is_none() {
+            if stored.include(id).is_none() && !personal.iter().any(|i| i.set == id) {
                 self.settle_set(id)?;
             }
         }
@@ -390,9 +394,9 @@ impl Patchwork {
     /// is what's synced.
     pub(super) fn save_lock(&self, profile: &ProfileRef, lock: &Lockfile) -> Result<()> {
         let loaded = self.load_profile(profile)?;
-        let (shared, mine) = match loaded.personal() {
-            Some(_) => personal::split_lock(&loaded, lock.clone()),
-            None => (lock.clone(), Vec::new()),
+        let (shared, mine) = match loaded.has_personal() {
+            true => personal::split_lock(&loaded, lock.clone()),
+            false => (lock.clone(), Vec::new()),
         };
         let mine = Lockfile {
             mods: mine,

@@ -39,11 +39,7 @@ impl Patchwork {
                     loaded.label()
                 )));
             }
-            loaded.includes.push(Include {
-                after: last_own(&loaded),
-                linked: Some(linked(&Personal::new(&loaded.game).set(loaded.id))),
-                ..Include::new(loaded.id)
-            });
+            loaded.includes.push(personal_include(&loaded));
         }
         let to = personal.then_some(loaded.id);
         let mut changed = false;
@@ -51,10 +47,8 @@ impl Patchwork {
             let m = loaded
                 .find(name)
                 .ok_or_else(|| no_such_mod(&loaded.label(), name))?;
-            if loaded.is_personal(m) == personal {
-                continue;
-            }
-            if personal && loaded.is_linked(m) {
+            let in_layer = m.folder == Some(loaded.id) && loaded.personal().is_some();
+            if loaded.is_linked(m) && !in_layer {
                 let set = loaded
                     .folder_of(m)
                     .map_or("a shared set", |f| f.name.as_str());
@@ -62,6 +56,9 @@ impl Patchwork {
                     "`{name}` is in {set}, which other profiles include; take it out of \
                      the set first"
                 )));
+            }
+            if in_layer == personal {
+                continue;
             }
             changed |= move_to_folder(&mut loaded, name, to)?;
         }
@@ -157,13 +154,13 @@ impl Patchwork {
     }
 
     /// Saves the profile's personal layer, or removes it once it has no
-    /// mods.
+    /// mods and includes no sets.
     pub(super) fn save_personal(&self, profile: &ProfileRef, personal: &Personal) -> Result<()> {
-        if personal.mods.is_empty() {
+        if personal.is_empty(profile.uuid) {
             return self.remove_personal(profile);
         }
         let mut personal = personal.clone();
-        personal.schema = PERSONAL_SCHEMA;
+        personal.schema = personal.saved_schema();
         fsutil::write_toml(&self.personal_file(profile), &personal)
     }
 
@@ -173,6 +170,20 @@ impl Patchwork {
             fs::remove_file(&path).at(&path)?;
         }
         Ok(())
+    }
+
+    /// The shared sets the profile includes personally, as stored.
+    pub(super) fn personal_sets(&self, profile: &ProfileRef) -> Result<Vec<Uuid>> {
+        Ok(self
+            .load_personal(profile)?
+            .map(|p| {
+                p.includes
+                    .into_iter()
+                    .map(|i| i.set)
+                    .filter(|set| *set != profile.uuid)
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     /// The personal layer of the profile whose id is `id`, as the private
@@ -241,9 +252,24 @@ impl Patchwork {
     }
 }
 
+/// An include of the profile's personal layer while it has no mods, to
+/// move some into, after the profile's own mods.
+pub(super) fn personal_include(loaded: &Profile) -> Include {
+    Include {
+        after: last_own(loaded),
+        linked: Some(linked(&Personal::new(&loaded.game).set(loaded.id))),
+        personal: true,
+        ..Include::new(loaded.id)
+    }
+}
+
 /// Makes the personal layer of `profile` (whose id was `id`) an ordinary
-/// folder of its own, for a copy of it that isn't synced.
+/// folder of its own, for a copy of it that isn't synced. The sets it
+/// included personally are the copy's own includes.
 pub(super) fn fold_personal(profile: &mut Profile, id: Uuid) {
+    for include in &mut profile.includes {
+        include.personal = false;
+    }
     let Some(at) = profile.includes.iter().position(|i| i.set == id) else {
         return;
     };

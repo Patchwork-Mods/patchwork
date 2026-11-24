@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use super::personal::personal_include;
 use super::{Patchwork, local};
 use crate::config::overlay;
 use crate::error::IoContext;
@@ -70,6 +71,9 @@ struct DeployedInclude {
     disabled: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     linked: Option<Linked>,
+    /// See [`Include::personal`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    personal: bool,
 }
 
 impl DeployedInclude {
@@ -79,6 +83,7 @@ impl DeployedInclude {
             after: include.after,
             disabled: include.disabled,
             linked: include.linked,
+            personal: include.personal,
         }
     }
 
@@ -87,6 +92,7 @@ impl DeployedInclude {
             after: self.after.clone(),
             disabled: self.disabled.clone(),
             linked,
+            personal: self.personal,
             ..Include::new(self.set)
         }
     }
@@ -390,6 +396,7 @@ impl Patchwork {
             &loaded.mods,
         );
         let mut includes = Vec::new();
+        let mut copied_personal = false;
         for include in &deployed.includes {
             let Some(then) = &include.linked else {
                 // missing then, so as it was
@@ -423,6 +430,22 @@ impl Patchwork {
                     self.save_set(&set)?;
                     includes.push(include.include(Some(then.clone())));
                 }
+                // Included personally (or the personal layer itself), it's
+                // copied into the personal layer, so its mods don't go to
+                // everyone. That can't keep settings yet, so its config
+                // edits don't come.
+                (SetsThen::Copy | SetsThen::Keep, _)
+                    if include.personal || include.set == loaded.id =>
+                {
+                    for m in loaded
+                        .mods
+                        .iter_mut()
+                        .filter(|m| m.folder == Some(include.set))
+                    {
+                        m.folder = Some(loaded.id);
+                    }
+                    copied_personal = true;
+                }
                 (SetsThen::Copy | SetsThen::Keep, set) => {
                     // its config edits are copied in too, under the profile's
                     if let Some(set) = set {
@@ -444,6 +467,9 @@ impl Patchwork {
             }
         }
         loaded.includes = includes;
+        if copied_personal && loaded.personal().is_none() {
+            loaded.includes.push(personal_include(&loaded));
+        }
         merge_config(&mut loaded, &own);
         loaded.ext = deployed.ext;
         self.save_lock(profile, &deployed.lock)?;
