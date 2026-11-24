@@ -12,6 +12,7 @@ mod config;
 mod daemon;
 mod deploy;
 mod deps;
+mod folder;
 mod game;
 mod launch;
 mod mods;
@@ -122,9 +123,15 @@ enum Command {
         #[arg(long, conflicts_with = "query")]
         load_order: bool,
     },
+    /// Group the profile's mods in folders, to show them together and turn
+    /// them on or off at once.
+    #[command(subcommand)]
+    Folder(folder::FolderCommand),
     /// Move a mod in the profile's order, which is the load order among
     /// mods with the same priority. Later mods win when two provide the
     /// same file; a mod's dependencies always load before it regardless.
+    /// A mod in a folder stays with the rest of it; `folder put` takes it
+    /// out.
     Move {
         name: String,
         #[command(flatten)]
@@ -418,6 +425,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Versions { name } => mods::versions(&pw, &cli.profile, name).await?,
         Command::Changelog { name, new } => mods::changelog(&pw, &cli.profile, name, new).await?,
         Command::List { query, load_order } => mods::list(&pw, &cli.profile, query, load_order)?,
+        Command::Folder(command) => folder::run(&pw, command, &cli.profile)?,
         Command::Move { name, to } => mods::move_mod(&pw, &cli.profile, name, to)?,
         Command::Deps { all } => deps::deps(&pw, &cli.profile, all)?,
         Command::SoftDeps { name, missing } => deps::soft_deps(&pw, &cli.profile, name, missing)?,

@@ -273,11 +273,18 @@ async function finish(save, list, before, name) {
  */
 async function saveMods(after, _before, name) {
   const p = state.profile;
-  const { id } = p;
   const shown = new Set(after);
   const old = p.mods.map((m) => m.name);
   let next = 0;
   const order = old.map((n) => (shown.has(n) ? after[next++] : n));
+  await saveOrder(p.id, old, order, name);
+}
+
+/**
+ * Saves profile `id`'s mods in the order of the names in `order`, from
+ * `old`, offering to undo it; `name` is what moved, for the status bar.
+ */
+export async function saveOrder(id, old, order, name) {
   let profile;
   try {
     await run("reorder_mods", { id, names: order });

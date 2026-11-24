@@ -49,6 +49,13 @@ pub struct Profile {
     /// get the game's default.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Groups of mods, for showing them together and turning them on or
+    /// off at once; a mod's [`ProfileMod::folder`] says which it's in. Each
+    /// folder's mods are kept next to each other in `mods` (see
+    /// [`Profile::group_folders`]), so a folder has a place in the load
+    /// order like a mod does.
+    #[serde(default, rename = "folder", skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<Folder>,
     /// In load order: later mods win when two provide the same file.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
@@ -73,6 +80,7 @@ impl Profile {
             name: name.to_owned(),
             hidden_tags: Vec::new(),
             env: BTreeMap::new(),
+            folders: Vec::new(),
             mods: Vec::new(),
             ext: ExtTables::new(),
             config: BTreeMap::new(),
@@ -94,6 +102,41 @@ impl Profile {
 
     pub fn find_mut(&mut self, name: &str) -> Option<&mut ProfileMod> {
         self.mods.iter_mut().find(|m| m.name == name)
+    }
+
+    /// The folder `query` names, by name (ignoring case) or by id.
+    pub fn find_folder(&self, query: &str) -> Result<&Folder, Error> {
+        self.folders
+            .iter()
+            .find(|f| f.name.eq_ignore_ascii_case(query) || f.id.to_string() == query)
+            .ok_or_else(|| no_such_folder(&self.label(), query))
+    }
+
+    /// The folder mod `m` is shown in: `None` if it isn't in one, or if
+    /// the profile doesn't have the folder it names (see [`ProfileMod::folder`]).
+    pub fn folder_of(&self, m: &ProfileMod) -> Option<&Folder> {
+        let id = m.folder?;
+        self.folders.iter().find(|f| f.id == id)
+    }
+
+    /// Puts each folder's mods next to each other, where the folder's
+    /// first mod is, keeping their order otherwise. Hand edits, syncs and
+    /// frontends' reorders can leave them apart.
+    pub fn group_folders(&mut self) {
+        if !self.mods.iter().any(|m| m.folder.is_some()) {
+            return;
+        }
+        let mut groups: Vec<(Option<Uuid>, Vec<ProfileMod>)> = Vec::new();
+        for m in self.mods.drain(..) {
+            match m.folder {
+                Some(id) => match groups.iter_mut().find(|(f, _)| *f == Some(id)) {
+                    Some((_, group)) => group.push(m),
+                    None => groups.push((Some(id), vec![m])),
+                },
+                None => groups.push((None, vec![m])),
+            }
+        }
+        self.mods = groups.into_iter().flat_map(|(_, group)| group).collect();
     }
 
     /// What each replaced dependency (see [`ProfileMod::replaces`]) is
@@ -125,6 +168,8 @@ struct ProfileFile {
     hidden_tags: Vec<String>,
     #[serde(default)]
     env: BTreeMap<String, String>,
+    #[serde(default, rename = "folder")]
+    folders: Vec<Folder>,
     #[serde(default, rename = "mod")]
     mods: Vec<ProfileMod>,
     #[serde(default)]
@@ -140,16 +185,38 @@ impl From<ProfileFile> for Profile {
     fn from(file: ProfileFile) -> Self {
         let mut ext = file.ext;
         upgrade_plugins(&mut ext, file.plugins);
-        Self {
+        let mut profile = Self {
             schema: file.schema,
             id: file.id,
             game: file.game,
             name: file.name,
             hidden_tags: file.hidden_tags,
             env: file.env,
+            folders: file.folders,
             mods: file.mods,
             ext,
             config: file.config,
+        };
+        profile.group_folders();
+        profile
+    }
+}
+
+/// A group of a profile's mods; see [`Profile::folders`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Folder {
+    /// Stays the same when it's renamed, so syncs agree on which folder a
+    /// mod is in.
+    pub id: Uuid,
+    /// Unique within the profile, ignoring case.
+    pub name: String,
+}
+
+impl Folder {
+    pub fn new(name: &str) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.to_owned(),
         }
     }
 }
@@ -214,6 +281,12 @@ pub struct ProfileMod {
     /// or picture. See [`crate::edits`].
     #[serde(default, skip_serializing_if = "ModEdits::is_empty")]
     pub edits: ModEdits,
+    /// The [`Folder`] it's in, by id. One the profile doesn't have (removed
+    /// on another machine while this one moved the mod into it, say) is
+    /// kept, since the folder may still be on its way, but the mod is
+    /// shown as not in a folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<Uuid>,
 }
 
 fn is_zero(n: &i32) -> bool {
@@ -244,6 +317,8 @@ struct ProfileModFile {
     ignores: Vec<String>,
     #[serde(default)]
     edits: ModEdits,
+    #[serde(default)]
+    folder: Option<Uuid>,
     /// Schema 2's FOMOD picks.
     #[serde(default)]
     fomod: Option<toml::Value>,
@@ -275,6 +350,7 @@ impl From<ProfileModFile> for ProfileMod {
             replaces: file.replaces,
             ignores: file.ignores,
             edits: file.edits,
+            folder: file.folder,
         }
     }
 }
@@ -325,6 +401,10 @@ pub(crate) fn no_such_mod(profile: &str, name: &str) -> Error {
     Error::invalid(format!("{profile} has no mod named `{name}`"))
 }
 
+pub(crate) fn no_such_folder(profile: &str, name: &str) -> Error {
+    Error::invalid(format!("{profile} has no folder named `{name}`"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +437,50 @@ mod tests {
         let saved = toml::to_string(&profile).unwrap();
         assert!(!saved.contains("[[mod.fomod]]"), "{saved}");
         assert!(saved.contains("[[mod.ext.fomod.picks]]"), "{saved}");
+    }
+
+    #[test]
+    fn a_folders_mods_are_put_together_on_load() {
+        let profile: Profile = toml::from_str(
+            r#"
+            schema = 3
+            id = "6c1d0f4e-6f53-4b8a-9d36-2b7e0c7f6a11"
+            game = "my-game"
+            name = "default"
+
+            [[folder]]
+            id = "0b6d3c4e-6f53-4b8a-9d36-2b7e0c7f6a11"
+            name = "QOL"
+
+            [[mod]]
+            name = "a"
+            source = "local"
+            id = "a"
+
+            [[mod]]
+            name = "b"
+            source = "local"
+            id = "b"
+            folder = "0b6d3c4e-6f53-4b8a-9d36-2b7e0c7f6a11"
+
+            [[mod]]
+            name = "c"
+            source = "local"
+            id = "c"
+
+            [[mod]]
+            name = "d"
+            source = "local"
+            id = "d"
+            folder = "0b6d3c4e-6f53-4b8a-9d36-2b7e0c7f6a11"
+            "#,
+        )
+        .unwrap();
+        let names: Vec<&str> = profile.mods.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["a", "b", "d", "c"]);
+        assert_eq!(profile.folder_of(&profile.mods[1]).unwrap().name, "QOL");
+        assert!(profile.folder_of(&profile.mods[0]).is_none());
+        assert_eq!(profile.find_folder("qol").unwrap().name, "QOL");
     }
 
     #[test]

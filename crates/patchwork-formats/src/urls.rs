@@ -110,6 +110,7 @@ impl ProfileFormat for UrlList {
                 seen: None,
                 ignores: Vec::new(),
                 edits: Default::default(),
+                folder: None,
             });
         }
         if mods.is_empty() {

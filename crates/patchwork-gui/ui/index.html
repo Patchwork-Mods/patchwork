@@ -241,6 +241,9 @@
 							<summary title="Move mods with some tags, like libraries, out of the way">Filter</summary>
 							<div class="menu-items"></div>
 						</details>
+						<!-- Folders group mods to show them together and turn them on or
+                 off at once; see folders.js. -->
+						<button type="button" id="new-folder" title="Group mods in a folder, to keep them together and turn them on or off at once">New folder</button>
 					</div>
 					<!-- Cards look like a source's search results; the list is denser,
                with rows that expand to show the rest. See setModsView() in
@@ -767,6 +770,22 @@
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Cancel</button>
 					<button type="submit" id="profile-name-submit" class="primary"></button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- Names a folder of mods, for making or renaming one; see folders.js. -->
+		<dialog id="folder-name-dialog">
+			<form id="folder-name-form" method="dialog" class="stack">
+				<h2 id="folder-name-title"></h2>
+				<label class="field">
+					<span>Name</span>
+					<input name="name" required autocomplete="off" maxlength="80">
+				</label>
+				<p id="folder-name-error" class="error" hidden></p>
+				<div class="row end">
+					<button type="button" value="cancel" formnovalidate>Cancel</button>
+					<button type="submit" id="folder-name-submit" class="primary"></button>
 				</div>
 			</form>
 		</dialog>

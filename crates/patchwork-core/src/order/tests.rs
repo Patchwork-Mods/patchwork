@@ -17,6 +17,7 @@ fn profile_mod(name: &str) -> ProfileMod {
         seen: None,
         ignores: Vec::new(),
         edits: Default::default(),
+        folder: None,
     }
 }
 

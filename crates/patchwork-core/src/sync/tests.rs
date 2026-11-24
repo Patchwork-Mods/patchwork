@@ -17,6 +17,7 @@ fn profile_mod(id: &str) -> ProfileMod {
         seen: None,
         ignores: Vec::new(),
         edits: Default::default(),
+        folder: None,
     }
 }
 
@@ -446,4 +447,42 @@ fn newer_formats_are_refused() {
 
     let err = from_entries(&Entries::new()).unwrap_err();
     assert!(err.to_string().contains("hasn't arrived"), "{err}");
+}
+
+#[test]
+fn folders_survive_the_trip_and_moves_made_at_once() {
+    let (mut a, mut b, mut clock) = pair(&["A", "B", "C", "D"]);
+    let ui = Folder::new("UI");
+    a.profile.folders.push(ui.clone());
+    a.profile.mods[0].folder = Some(ui.id);
+    sync(&mut a, &mut b, &mut clock);
+    assert_eq!(b.profile.folders, std::slice::from_ref(&ui));
+    assert_eq!(b.profile.mods[0].folder, Some(ui.id));
+
+    // each moves a different mod into the folder
+    a.profile.mods[3].folder = Some(ui.id);
+    b.profile.mods[2].folder = Some(ui.id);
+    sync(&mut a, &mut b, &mut clock);
+    // grouped where the folder's first mod is
+    assert_eq!(a.names(), ["A", "C", "D", "B"]);
+    assert_eq!(b.names(), a.names());
+
+    // removed on one side, it's gone on both; a mod still naming it
+    // is kept as it is
+    a.profile.folders.clear();
+    sync(&mut a, &mut b, &mut clock);
+    assert!(b.profile.folders.is_empty());
+    assert_eq!(b.profile.mods[0].folder, Some(ui.id));
+}
+
+#[test]
+fn folders_made_at_once_with_one_name_are_told_apart() {
+    let (mut a, mut b, mut clock) = pair(&["A"]);
+    a.profile.folders.push(Folder::new("UI"));
+    b.profile.folders.push(Folder::new("ui"));
+    sync(&mut a, &mut b, &mut clock);
+    let mut names: Vec<String> = a.profile.folders.iter().map(|f| f.name.clone()).collect();
+    names.sort();
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0].to_lowercase(), names[1].to_lowercase());
 }

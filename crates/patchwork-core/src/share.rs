@@ -19,7 +19,7 @@ use crate::game::GameDef;
 use crate::hash::ContentHash;
 use crate::links::Links;
 use crate::lock::Lockfile;
-use crate::profile::ProfileMod;
+use crate::profile::{Folder, ProfileMod};
 use crate::settings::Settings;
 use crate::source::{Source, SourceContext};
 use crate::{Error, Result};
@@ -44,6 +44,10 @@ pub struct SharedProfile {
     /// The profile's [`Profile::config`](crate::profile::Profile::config),
     /// or `None` like `hidden_tags`.
     pub config: Option<BTreeMap<Dest, Edits>>,
+    /// The profile's [`Profile::folders`](crate::profile::Profile::folders),
+    /// or `None` like `hidden_tags`. Formats that can't carry them leave
+    /// mods' `folder`s out too.
+    pub folders: Option<Vec<Folder>>,
     /// Only present on export when the format asks for it with
     /// [`ProfileFormat::needs_lock`].
     pub lock: Option<Lockfile>,

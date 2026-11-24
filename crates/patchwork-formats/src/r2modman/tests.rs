@@ -36,6 +36,7 @@ fn profile_mod(source: &str, id: &str, enabled: bool) -> ProfileMod {
         seen: None,
         ignores: Vec::new(),
         edits: Default::default(),
+        folder: None,
     }
 }
 

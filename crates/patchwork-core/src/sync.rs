@@ -17,6 +17,10 @@
 //! - `ext/<id>`: what extension `<id>` keeps for the profile (see
 //!   [`Profile::ext`]), so two extensions' changes made at once both
 //!   survive. What extensions keep for a mod is part of the mod's entry.
+//! - `folder/<id>`: a [`Folder`]'s name. Which folder a mod is in is part
+//!   of the mod's entry, so mods moved between folders at once all survive.
+//!   Older builds ignore these, and drop mods' folders when they change
+//!   them, which only changes how the list is shown.
 //! - `config/<path>`: the settings changed in the config file deployed to
 //!   `<path>` (see [`Profile::config`]), so changes to different files
 //!   made at once all survive
@@ -34,7 +38,8 @@
 //! that way, keeps track of who's syncing, and marks a document everyone's
 //! moved on from; they're ignored here.
 //!
-//! A mod, locked mod, extension's state or config file's settings that's been removed has `null` for its value; nothing
+//! A mod, locked mod, folder, extension's state or config file's settings
+//! that's been removed has `null` for its value; nothing
 //! is ever deleted outright, so a removal replaces older values like any
 //! other change.
 //!
@@ -57,7 +62,9 @@ use uuid::Uuid;
 
 use crate::deploy::Dest;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile};
-use crate::profile::{LEGACY_PLUGINS, PROFILE_SCHEMA, Profile, ProfileMod, upgrade_plugins};
+use crate::profile::{
+    Folder, LEGACY_PLUGINS, PROFILE_SCHEMA, Profile, ProfileMod, upgrade_plugins,
+};
 use crate::{Error, Result};
 
 /// The version of the entries' layout this build reads and writes. 2 moved
@@ -78,6 +85,7 @@ pub const LOCK: &str = "lock/";
 pub const LOCK_ENV: &str = "lock-env";
 pub const EXT: &str = "ext/";
 pub const CONFIG: &str = "config/";
+pub const FOLDER: &str = "folder/";
 /// Keys the sync layer keeps for itself.
 pub const FILE: &str = "file/";
 pub const PEER: &str = "peer/";
@@ -88,6 +96,11 @@ pub const REMOVED: &[u8] = b"null";
 #[derive(Serialize, Deserialize)]
 struct FormatEntry {
     format: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FolderEntry {
+    name: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -137,6 +150,12 @@ pub fn to_entries(profile: &Profile, lock: Option<&Lockfile>) -> Entries {
     for (path, edits) in &profile.config {
         entries.insert(format!("{CONFIG}{path}"), json(edits));
     }
+    for f in &profile.folders {
+        let entry = FolderEntry {
+            name: f.name.clone(),
+        };
+        entries.insert(format!("{FOLDER}{}", f.id), json(&entry));
+    }
     if let Some(lock) = lock {
         entries.insert(LOCK_ENV.to_owned(), json(&lock.game.env));
     }
@@ -156,11 +175,20 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
     let mut locked: HashMap<String, LockedMod> = HashMap::new();
     let mut ext = BTreeMap::new();
     let mut config = BTreeMap::new();
+    let mut folders = Vec::new();
     for key in entries.keys() {
         if let Some(path) = key.strip_prefix(CONFIG) {
             // A path this build can't read is someone else's business.
             if let (Ok(path), Some(edits)) = (path.parse::<Dest>(), decode(entries, key)?) {
                 config.insert(path, edits);
+            }
+        } else if let Some(id) = key.strip_prefix(FOLDER) {
+            // like config paths, an id this build can't read is skipped
+            if let (Ok(id), Some(entry)) = (id.parse(), decode::<FolderEntry>(entries, key)?) {
+                folders.push(Folder {
+                    id,
+                    name: entry.name,
+                });
             }
         } else if let Some(id) = key.strip_prefix(EXT) {
             if let Some(state) = decode(entries, key)? {
@@ -191,17 +219,20 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
         upgrade_plugins(&mut ext, decode(entries, PLUGINS)?.unwrap_or_default());
     }
 
-    let profile = Profile {
+    let mut profile = Profile {
         schema: PROFILE_SCHEMA,
         id: meta.id,
         game: meta.game.clone(),
         name: meta.name,
         hidden_tags: meta.hidden_tags,
         env: meta.env,
+        folders: dedupe_folder_names(folders),
         mods: dedupe_names(ordered),
         ext,
         config,
     };
+    // two machines' moves can leave a folder's mods apart
+    profile.group_folders();
     let env = decode(entries, LOCK_ENV)?.unwrap_or_default();
     let lock = (!locked.is_empty()).then(|| Lockfile {
         schema: LOCK_SCHEMA,
@@ -227,6 +258,7 @@ pub fn changes(base: &Entries, now: &Entries) -> Vec<(String, Vec<u8>)> {
                     || k.starts_with(LOCK)
                     || k.starts_with(EXT)
                     || k.starts_with(CONFIG)
+                    || k.starts_with(FOLDER)
                     || *k == PLUGINS)
                     && v.as_slice() != REMOVED
                     && !now.contains_key(*k)
@@ -312,6 +344,23 @@ pub(crate) fn dedupe_names(mods: Vec<ProfileMod>) -> Vec<ProfileMod> {
                 n += 1;
             }
             m
+        })
+        .collect()
+}
+
+/// Folder names have to be unique within a profile too, ignoring case.
+fn dedupe_folder_names(folders: Vec<Folder>) -> Vec<Folder> {
+    let mut taken: HashSet<String> = HashSet::new();
+    folders
+        .into_iter()
+        .map(|mut f| {
+            let base = f.name.clone();
+            let mut n = 2;
+            while !taken.insert(f.name.to_lowercase()) {
+                f.name = format!("{base} {n}");
+                n += 1;
+            }
+            f
         })
         .collect()
 }

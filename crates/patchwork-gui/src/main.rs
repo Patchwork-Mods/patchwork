@@ -39,7 +39,7 @@ use patchwork_core::matching::{self, ModText};
 use patchwork_core::options::Answer;
 use patchwork_core::order::{self, SortKey};
 use patchwork_core::paths::Paths;
-use patchwork_core::profile::{ProfileMod, ProfileRef};
+use patchwork_core::profile::{Folder, ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{FileChoice, ModSpec, SourceFile};
@@ -239,6 +239,8 @@ struct ProfileDetail {
     dependencies: Vec<UiDependency>,
     /// Mods with any of these tags go in the Mods tab's hidden section.
     hidden_tags: Vec<String>,
+    /// Groups of mods; each mod's `folder` says which it's in.
+    folders: Vec<Folder>,
     /// The game's ordered lists (see [`patchwork_core::list`]), each on a
     /// tab of its own.
     lists: Vec<ListInfo>,
@@ -674,6 +676,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let lookup = pw.lookup(&loaded).map_err(msg)?;
     let name = loaded.name.clone();
     let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
+    let folders = std::mem::take(&mut loaded.folders);
     let load_index: HashMap<String, usize> = order::load_order(&loaded.mods)
         .into_iter()
         .enumerate()
@@ -742,6 +745,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         mods,
         dependencies,
         hidden_tags,
+        folders,
         lists,
         has_config,
         actions,
@@ -1216,6 +1220,71 @@ fn rollback_profile(app: State<'_, App>, id: String, number: u32) -> CmdResult<P
 #[tauri::command]
 fn remove_mod(app: State<'_, App>, id: String, name: String) -> CmdResult<()> {
     app.pw.remove_mod(&profile_ref(&id)?, &name).map_err(msg)
+}
+
+/// Makes a folder called `name` with `mods` in it, where the first of
+/// them is.
+#[tauri::command]
+fn add_folder(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    mods: Vec<String>,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .add_folder(&profile_ref(&id)?, &name, &mods)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+#[tauri::command]
+fn rename_folder(
+    app: State<'_, App>,
+    id: String,
+    folder: String,
+    name: String,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .rename_folder(&profile_ref(&id)?, &folder, &name)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Removes a folder, leaving its mods where they are.
+#[tauri::command]
+fn remove_folder(app: State<'_, App>, id: String, folder: String) -> CmdResult<ProfileDetail> {
+    app.pw
+        .remove_folder(&profile_ref(&id)?, &folder)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Puts a mod in a folder (by id), or with none takes it out of its own.
+#[tauri::command]
+fn set_mod_folder(
+    app: State<'_, App>,
+    id: String,
+    name: String,
+    folder: Option<String>,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .set_mod_folder(&profile_ref(&id)?, &name, folder.as_deref())
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Turns all of a folder's mods on or off.
+#[tauri::command]
+fn set_folder_enabled(
+    app: State<'_, App>,
+    id: String,
+    folder: String,
+    enabled: bool,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .set_folder_enabled(&profile_ref(&id)?, &folder, enabled)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
 }
 
 #[tauri::command]
@@ -2481,6 +2550,11 @@ fn main() {
             profile_history,
             rollback_profile,
             set_hidden_tags,
+            add_folder,
+            rename_folder,
+            remove_folder,
+            set_mod_folder,
+            set_folder_enabled,
             sort_mods,
             reorder_mods,
             list,

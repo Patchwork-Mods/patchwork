@@ -291,6 +291,16 @@ impl Patchwork {
     }
 
     pub(super) fn save_profile(&self, profile: &ProfileRef, value: &Profile) -> Result<()> {
+        // a reorder may have taken a folder's mods apart
+        let grouped;
+        let value = if value.mods.iter().any(|m| m.folder.is_some()) {
+            let mut copy = value.clone();
+            copy.group_folders();
+            grouped = copy;
+            &grouped
+        } else {
+            value
+        };
         fsutil::write_toml(&self.profile_file(profile), value)?;
         self.profile_changed(profile, false);
         Ok(())

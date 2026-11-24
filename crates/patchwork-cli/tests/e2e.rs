@@ -1239,3 +1239,47 @@ fn tools_run_through_patchwork_are_captured_and_loaded() {
     assert!(game.join("Data/Patch.esp").exists());
     assert!(read(appdata.join("plugins.txt")).contains("Patch.esp"));
 }
+
+#[test]
+fn folders_group_mods_and_travel_with_zips() {
+    let alice = Env::new();
+    alice.run(&["profile", "new", "lethal-company/main"]);
+    for name in ["First", "Second", "Third"] {
+        let local = alice.path(&format!("{name}.zip"));
+        write_zip(&local, &[(&format!("plugins/{name}.dll"), name)]);
+        alice.run(&["add", local.to_str().unwrap()]);
+    }
+    alice.run(&["folder", "add", "Client QOL", "Third"]);
+    alice.run(&["folder", "put", "First", "client qol"]);
+    alice.run(&["folder", "off", "Client QOL"]);
+    let list = alice.run(&["list"]);
+    let lines: Vec<&str> = list.lines().collect();
+    assert!(lines[0].contains("Second"), "{list}");
+    assert!(
+        lines[1].contains("[ ] Third") && lines[1].ends_with("in Client QOL"),
+        "{list}"
+    );
+    assert!(
+        lines[2].contains("[ ] First") && lines[2].ends_with("in Client QOL"),
+        "{list}"
+    );
+    let err = alice.fails(&["folder", "add", "client qol"]);
+    assert!(err.contains("already has a folder"), "{err}");
+
+    let export = alice.path("main.zip");
+    alice.run(&["profile", "export", "-o", export.to_str().unwrap()]);
+    let bob = Env::new();
+    bob.run(&["profile", "import", export.to_str().unwrap()]);
+    let folders = bob.run(&["folder", "list"]);
+    assert_eq!(
+        folders,
+        "Client QOL (2 mods, 2 disabled)\n  Third\n  First\n"
+    );
+
+    bob.run(&["folder", "remove", "Client QOL"]);
+    assert_eq!(
+        bob.run(&["folder", "list"]),
+        "lethal-company/main has no folders\n"
+    );
+    assert!(!bob.run(&["list"]).contains(" in "));
+}

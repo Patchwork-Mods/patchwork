@@ -898,6 +898,7 @@ async fn a_pinned_mod_is_told_only_about_versions_not_yet_seen() {
         replaces: Vec::new(),
         ignores: Vec::new(),
         edits: Default::default(),
+        folder: None,
     });
     pw.save_profile(&profile, &loaded).unwrap();
     let lookup = pw.lookup(&loaded).unwrap();
@@ -1451,6 +1452,7 @@ fn duplicating_a_profile_copies_its_mods_and_lockfile() {
         seen: None,
         ignores: Vec::new(),
         edits: Default::default(),
+        folder: None,
     });
     loaded.hidden_tags = vec!["library".to_owned()];
     pw.save_profile(&profile, &loaded).unwrap();
@@ -1503,6 +1505,7 @@ fn priorities_change_the_load_order_but_not_the_list() {
             seen: None,
             ignores: Vec::new(),
             edits: Default::default(),
+            folder: None,
         });
     }
     pw.save_profile(&profile, &loaded).unwrap();
@@ -1665,6 +1668,7 @@ async fn profiles_from_before_local_mod_ids_are_migrated() {
         seen: None,
         ignores: Vec::new(),
         edits: Default::default(),
+        folder: None,
     };
     let locked = |path: &Path, hash| LockedMod {
         name: path.file_stem().unwrap().to_string_lossy().into_owned(),
@@ -4331,4 +4335,82 @@ fn detecting_games_sets_up_found_ones_and_moves_gone_ones() {
     let again = pw.detect_games(&Locator::default());
     assert!(again.added.is_empty() && again.moved.is_empty());
     assert_eq!(again.missing, ["gone"]);
+}
+
+#[test]
+fn folders_keep_their_mods_together() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let mut loaded = pw.load_profile(&profile).unwrap();
+    for name in ["a", "b", "c", "d", "e"] {
+        loaded.mods.push(ProfileMod {
+            name: name.to_owned(),
+            source: "local".to_owned(),
+            id: name.to_owned(),
+            version: None,
+            enabled: true,
+            priority: 0,
+            game_versions: None,
+            ext: Default::default(),
+            replaces: Vec::new(),
+            seen: None,
+            ignores: Vec::new(),
+            edits: Default::default(),
+            folder: None,
+        });
+    }
+    pw.save_profile(&profile, &loaded).unwrap();
+    let names = || -> Vec<String> {
+        let loaded = pw.load_profile(&profile).unwrap();
+        loaded.mods.iter().map(|m| m.name.clone()).collect()
+    };
+
+    // a new folder goes where the first of its mods is
+    let qol = pw
+        .add_folder(&profile, " QOL ", &["b".to_owned(), "d".to_owned()])
+        .unwrap();
+    assert_eq!(qol.name, "QOL");
+    assert_eq!(names(), ["a", "b", "d", "c", "e"]);
+    let taken = pw.add_folder(&profile, "qol", &[]).unwrap_err();
+    assert!(taken.to_string().contains("already has"), "{taken}");
+    assert!(pw.add_folder(&profile, "  ", &[]).is_err());
+
+    // moved in, a mod goes to the folder's end
+    pw.set_mod_folder(&profile, "e", Some("qol")).unwrap();
+    assert_eq!(names(), ["a", "b", "d", "e", "c"]);
+    // taken out, to just after it
+    pw.set_mod_folder(&profile, "b", None).unwrap();
+    assert_eq!(names(), ["a", "d", "e", "b", "c"]);
+
+    // a reorder that takes a folder apart is put back together
+    let order = ["d", "a", "b", "c", "e"].map(str::to_owned);
+    pw.reorder_mods(&profile, &order).unwrap();
+    assert_eq!(names(), ["d", "e", "a", "b", "c"]);
+
+    pw.set_folder_enabled(&profile, "QOL", false).unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    let off: Vec<&str> = loaded
+        .mods
+        .iter()
+        .filter(|m| !m.enabled)
+        .map(|m| m.name.as_str())
+        .collect();
+    assert_eq!(off, ["d", "e"]);
+
+    pw.rename_folder(&profile, &qol.id.to_string(), "Client QOL")
+        .unwrap();
+    // renaming to its own name, in another case, is fine
+    pw.rename_folder(&profile, "client qol", "Client qol")
+        .unwrap();
+    pw.remove_folder(&profile, "Client qol").unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    assert!(loaded.folders.is_empty());
+    assert!(loaded.mods.iter().all(|m| m.folder.is_none()));
+    assert_eq!(names(), ["d", "e", "a", "b", "c"]);
+    assert!(pw.remove_folder(&profile, "Client qol").is_err());
 }

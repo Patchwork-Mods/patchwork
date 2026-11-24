@@ -22,6 +22,7 @@ import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
 import { showChangelog } from "./changelog.js";
 import { dragHandle, dragging } from "./reorder.js";
+import { arrange, folderButton, folderSection, refreshFolder, saveTop } from "./folders.js";
 import { conflictMark } from "./conflicts.js";
 import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
 import { requirementsList, requirementsMark } from "./requirements.js";
@@ -533,7 +534,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
   setExpanded(expandedRows.has(key));
 
   row.append(
-    movable && dragHandle(m),
+    movable && modHandle(m, movable),
     head,
     update,
     // the chip is left of the cog, so while it's hidden its space runs into
@@ -588,12 +589,19 @@ function rowDetails(m, item, onRemove) {
       "div",
       { class: "row-actions" },
       editButton(m),
+      folderButton(m, iconAction),
       changelogButton(m),
       gameVersionsButton(m),
       iconAction(trashIcon(), "Remove", { class: "danger", title: `Remove ${m.name}`, onclick: onRemove }),
     ),
   ];
 }
+
+/**
+ * The handle to drag a mod by: `movable` is true for one in a list of mods,
+ * or how to save the list it's in, for the top level of one with folders.
+ */
+const modHandle = (m, movable) => dragHandle(m, typeof movable === "function" ? { save: movable } : undefined);
 
 /** The list popped up by hovering or focusing a mod's tags or ties icon, if one is up. */
 let markPopup = null;
@@ -833,7 +841,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
     { class: m.enabled ? "result mod-card" : "result mod-card disabled", "data-name": m.name },
     cover,
     sheet,
-    movable && dragHandle(m),
+    movable && modHandle(m, movable),
     h(
       "button",
       {
@@ -891,6 +899,7 @@ function cardMore(m, item, settings) {
       "div",
       { class: "card-actions" },
       editButton(m),
+      folderButton(m, iconAction),
       settings,
       changelogButton(m),
       gameVersionsButton(m),
@@ -1084,6 +1093,8 @@ async function toggleMod(m, input) {
   if (onOff) onOff.textContent = enabled ? "On" : "Off";
   showProfile(profile, { keepMods: true });
   renderHiddenCount();
+  const folder = item.parentElement?.closest(".mod-folder");
+  if (folder) refreshFolder(folder);
   // dependencies only disabled mods need show as disabled too
   renderDependencies(modQuery());
   if (item.isConnected) $("#tab-mods").scrollTop += item.getBoundingClientRect().top - top;
@@ -1107,11 +1118,13 @@ export async function renderMods(mods) {
   summaryViews.clear();
   updateNotes.clear();
   const view = modsView === "cards" ? modCard : modRow;
-  const item = (m) =>
+  // search results come best match first, and the load order isn't what's
+  // rearranged; nor is it with folders shown in it
+  const arranged = !query && !loadOrder;
+  const folders = arranged && state.profile.folders.length > 0;
+  const item = (m, movable = arranged) =>
     view(m, {
-      // search results come best match first, and the load order isn't
-      // what's rearranged
-      movable: !query && !loadOrder,
+      movable,
       onToggle: (e) => toggleMod(m, e.target),
       onRemove: async () => {
         if (!(await confirmRemove(m))) return;
@@ -1135,9 +1148,17 @@ export async function renderMods(mods) {
   hiddenMods = shown.filter(isHidden);
   const layout = modsView === "cards" ? "result-grid" : "mod-list";
   $("#mods").className = layout;
-  $("#mods").replaceChildren(...shown.filter((m) => !isHidden(m)).map(item));
+  $("#mods").replaceChildren(
+    ...(folders
+      ? arrange(shown, isHidden).map((block) =>
+          block.mod
+            ? item(block.mod, saveTop)
+            : folderSection(block, { item: (m) => item(m), layout, movable: true }),
+        )
+      : shown.filter((m) => !isHidden(m)).map((m) => item(m))),
+  );
   $("#hidden-mods-list").className = layout;
-  $("#hidden-mods-list").replaceChildren(...hiddenMods.map(item));
+  $("#hidden-mods-list").replaceChildren(...hiddenMods.map((m) => item(m)));
   $("#hidden-mods").hidden = !hiddenMods.length;
   renderHiddenCount();
   $("#mods-empty").hidden = shown.length > 0;

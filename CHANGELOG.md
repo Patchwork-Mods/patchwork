@@ -3,6 +3,10 @@
 Each release's section is its GitHub release notes and what the app's update
 dialog shows, so the heading has to match the version being released.
 
+## 0.3.2
+
+- Added Folders to the mod list
+
 ## 0.3.1
 
 Did a lot of improvements for increasing clarity and easy of use from the GUI.

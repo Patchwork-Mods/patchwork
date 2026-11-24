@@ -60,6 +60,7 @@ impl ProfileFormat for Archive {
             name: shared.name.clone().unwrap_or_default(),
             hidden_tags: shared.hidden_tags.clone().unwrap_or_default(),
             env: Default::default(),
+            folders: shared.folders.clone().unwrap_or_default(),
             mods: shared.mods.clone(),
             ext: shared.ext.clone().unwrap_or_default(),
             config: shared.config.clone().unwrap_or_default(),
@@ -133,6 +134,7 @@ impl ProfileFormat for Archive {
             hidden_tags: Some(profile.hidden_tags),
             ext: Some(profile.ext),
             config: Some(profile.config),
+            folders: Some(profile.folders),
             lock,
             ..Default::default()
         };

@@ -1073,6 +1073,7 @@ impl Patchwork {
             seen: None,
             ignores: Vec::new(),
             edits: Default::default(),
+            folder: None,
         };
         loaded.mods.push(added.clone());
         self.save_profile(profile, &loaded)?;
@@ -1376,6 +1377,8 @@ impl Patchwork {
             }
         }
         order::sort_mods(&mut loaded.mods, keys, tag_order, &facts);
+        // as saving would leave them: each folder where its first mod sorts
+        loaded.group_folders();
         Ok(loaded.mods)
     }
 
@@ -2592,6 +2595,7 @@ impl Patchwork {
             hidden_tags: Some(loaded.hidden_tags),
             ext: Some(loaded.ext),
             config: Some(loaded.config),
+            folders: Some(loaded.folders),
             ..Default::default()
         };
         if format.needs_lock() {
@@ -2785,6 +2789,9 @@ impl Patchwork {
         profile.mods = dedupe_names(shared.mods);
         if let Some(tags) = shared.hidden_tags {
             profile.hidden_tags = tags;
+        }
+        if let Some(folders) = shared.folders {
+            profile.folders = folders;
         }
         if let Some(config) = shared.config {
             profile.config = config;
@@ -3624,6 +3631,7 @@ mod capture;
 mod checks;
 mod config;
 mod extensions;
+mod folders;
 mod history;
 mod instances;
 mod lists;

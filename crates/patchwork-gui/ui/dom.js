@@ -196,6 +196,10 @@ function strokeIcon(...paths) {
   return svg;
 }
 
+/** A folder, for groups of mods. */
+export const folderIcon = () =>
+  strokeIcon("M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z");
+
 /** A pencil, for editing how a mod is shown. */
 export const pencilIcon = () =>
   strokeIcon("M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z", "M15 5l4 4");

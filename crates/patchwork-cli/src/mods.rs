@@ -9,7 +9,7 @@ use patchwork_core::edits;
 use patchwork_core::follow::{Follows, set_followed};
 use patchwork_core::lock::mod_key;
 use patchwork_core::order::{self, SortKey};
-use patchwork_core::profile::ProfileMod;
+use patchwork_core::profile::{Profile, ProfileMod};
 use patchwork_core::search::{SearchQuery, SortBy};
 use patchwork_core::source::{FileChoice, ModSpec};
 
@@ -97,9 +97,11 @@ fn compact(n: u64) -> String {
 
 /// Numbered, so positions can be given to `move --to`.
 /// Prints mods numbered by their places in the load order, which are given
-/// as indices, with `ids` saying what to show for their ids.
+/// as indices, with `ids` saying what to show for their ids, and the folder
+/// each is in from `profile`.
 pub(crate) fn print_mods<'a>(
     mods: impl IntoIterator<Item = (usize, &'a ProfileMod)>,
+    profile: &Profile,
     ids: impl Fn(&ProfileMod) -> String,
 ) {
     let mods: Vec<_> = mods.into_iter().collect();
@@ -121,8 +123,12 @@ pub(crate) fn print_mods<'a>(
             0 => String::new(),
             p => format!("  priority {p}"),
         };
+        let folder = profile
+            .folder_of(m)
+            .map(|f| format!("  in {}", f.name))
+            .unwrap_or_default();
         println!(
-            "{:>width$}. [{mark}] {}  ({}:{}{version}){priority}",
+            "{:>width$}. [{mark}] {}  ({}:{}{version}){priority}{folder}",
             i + 1,
             m.name,
             m.source,
@@ -495,16 +501,17 @@ pub(crate) fn list(
     if loaded.mods.is_empty() {
         println!("{} has no mods", loaded.label());
     } else if load_order {
-        print_mods(order::load_order(&loaded.mods).into_iter().enumerate(), ids);
+        let order = order::load_order(&loaded.mods);
+        print_mods(order.into_iter().enumerate(), &loaded, ids);
     } else if query.is_empty() {
-        print_mods(loaded.mods.iter().enumerate(), ids);
+        print_mods(loaded.mods.iter().enumerate(), &loaded, ids);
     } else {
         let query = query.join(" ");
         let found = pw.find_mods(&profile, &query)?;
         if found.is_empty() {
             println!("no mods in {} match \"{query}\"", loaded.label());
         }
-        print_mods(found.iter().map(|(i, m)| (*i, m)), ids);
+        print_mods(found.iter().map(|(i, m)| (*i, m)), &loaded, ids);
     }
     Ok(())
 }
@@ -585,11 +592,11 @@ pub(crate) struct Sort {
 /// `patchwork sort`.
 pub(crate) async fn sort(pw: &Patchwork, explicit: &Option<String>, args: Sort) -> Result<()> {
     let Sort { by, tags, dry_run } = args;
-    let (profile, _) = selected(pw, explicit)?;
+    let (profile, loaded) = selected(pw, explicit)?;
     let sorted = pw.sorted_mods(&profile, &by, &tags).await?;
     // only for showing ids, so a broken one isn't an error here
     let lock = pw.load_lock(&profile).ok().flatten();
-    print_mods(sorted.iter().enumerate(), |m| {
+    print_mods(sorted.iter().enumerate(), &loaded, |m| {
         pw.display_id(lock.as_ref(), m)
     });
     if !dry_run {
