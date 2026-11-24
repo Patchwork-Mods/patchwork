@@ -982,7 +982,7 @@ function confirmRemove(m) {
   const dialog = $("#remove-dialog");
   const folder = folderOf(m);
   $("#remove-summary").textContent = folder?.linked && !folder.personal
-    ? `Remove ${m.name} from the shared folder ${folder.name}? It's taken out of the set, so it leaves ${
+    ? `Remove ${m.name} from the shared folder ${folder.name}? The folder's shared, so it leaves ${
         folder.alsoIn.length ? `${state.profile.label} and ${folder.alsoIn.join(", ")}` : state.profile.label
       }. Its files leave the game on the next deploy.`
     : `Remove ${m.name} from ${state.profile.label}? Its files leave the game on the next deploy.`;

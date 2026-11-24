@@ -1,5 +1,6 @@
 //! `patchwork set`: shared sets of mods that several profiles include,
-//! each shown in them as a linked folder.
+//! each shown in them as a linked folder. They're made by `patchwork folder
+//! use`, and go once only one profile has them.
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -11,11 +12,6 @@ use crate::common::selected;
 pub(crate) enum SetCommand {
     /// List the game's sets, and which profiles include each.
     List,
-    /// Make an empty set for the profile's game.
-    New { name: String },
-    /// Turn one of the profile's folders into a set, which the profile then
-    /// includes as a linked folder, so other profiles can include it too.
-    Share { folder: String },
     /// Include a set in the profile, as a linked folder. Changing what's in
     /// it changes the set, for every profile that includes it; only turning
     /// its mods on or off is the profile's own.
@@ -30,7 +26,8 @@ pub(crate) enum SetCommand {
     /// rather than including it, so changing them doesn't change the set.
     Copy { set: String },
     /// Stop the profile including a set. Its mods stay as an ordinary
-    /// folder of the profile's own, unless `--remove`.
+    /// folder of the profile's own, unless `--remove`. A set only one
+    /// profile has left is that one's own folder again.
     Unlink {
         set: String,
         /// Take the set's mods out of the profile too.
@@ -39,7 +36,8 @@ pub(crate) enum SetCommand {
     },
     /// Rename a set, for every profile that includes it.
     Rename { set: String, name: String },
-    /// Delete a set. No profile can still include it.
+    /// Delete a set left over from before sets went once no profile had
+    /// them. No profile can still include it.
     Remove { set: String },
 }
 
@@ -73,17 +71,6 @@ pub(crate) fn run(pw: &Patchwork, command: SetCommand, explicit: &Option<String>
                     println!("    included by {}", including.join(", "));
                 }
             }
-        }
-        SetCommand::New { name } => {
-            let set = pw.create_set(game, &name)?;
-            println!("made set {}", set.name);
-        }
-        SetCommand::Share { folder } => {
-            let set = pw.share_folder(&profile, &folder)?;
-            println!(
-                "{} is now a set; include it in other profiles with `patchwork set include`",
-                set.name
-            );
         }
         SetCommand::Include { set, after } => {
             let set = pw.find_set(game, &set)?;

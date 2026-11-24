@@ -9,25 +9,19 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::Patchwork;
-use crate::config::{overlay, same_dest};
+use crate::ConfigFileInfo;
+use crate::config::{FileEdits, overlay, same_dest};
 use crate::error::IoContext;
 use crate::fix::Fix;
 use crate::fsutil;
 use crate::lock::mod_key;
-use crate::profile::{Folder, Include, Linked, Profile, ProfileRef};
-use crate::set::{SET_SCHEMA, Set, merge_config, own_config, unused_name};
+use crate::profile::{Folder, Include, Linked, Profile, ProfileMod, ProfileRef};
+use crate::set::{
+    FolderSource, OtherFolder, SET_SCHEMA, Set, merge_config, own_config, unused_name,
+};
 use crate::{Error, Result};
 
 impl Patchwork {
-    /// Makes an empty set called `name` for `game`.
-    pub fn create_set(&self, game: &str, name: &str) -> Result<Set> {
-        self.registry().game(game)?;
-        let name = self.set_name(game, name, None)?;
-        let set = Set::new(game, &name);
-        self.save_set(&set)?;
-        Ok(set)
-    }
-
     /// The set of `game` that `query` names, by name (ignoring case) or by
     /// id.
     pub fn find_set(&self, game: &str, query: &str) -> Result<Set> {
@@ -48,7 +42,9 @@ impl Patchwork {
         Ok(())
     }
 
-    /// Removes a set no profile includes.
+    /// Removes a set no profile includes. Sets go by themselves once none
+    /// does (see [`Patchwork::settle_set`]); this is for ones left over
+    /// from before they did.
     pub fn remove_set(&self, id: Uuid) -> Result<()> {
         let set = self.load_set(id)?.ok_or_else(|| no_such_set(id))?;
         if let Some(including) = self.includers()?.remove(&id) {
@@ -67,7 +63,8 @@ impl Patchwork {
     /// then includes in its place, so other profiles can include it too.
     /// Mods that are off stay off in this profile. The settings the profile
     /// changes in its mods' config files go with them, if the game's set up
-    /// to find which those are.
+    /// to find which those are. It's how [`Patchwork::use_folder`] starts
+    /// using one of a profile's own folders in another.
     pub fn share_folder(&self, profile: &ProfileRef, folder: &str) -> Result<Set> {
         // First, since it can read settings changed in game back in.
         let files = self.config_files(profile).unwrap_or_default();
@@ -82,31 +79,15 @@ impl Patchwork {
                 loaded.label()
             )));
         }
-        let mut set = Set::new(
-            &loaded.game,
-            &self.set_name(&loaded.game, &found.name, None)?,
-        );
+        let name = self.set_name(&loaded.game, &found.name, None)?;
+        let (mut set, own) = folder_as_set(&loaded, &found, &files);
+        set.name = name;
         for m in loaded
             .mods
             .iter_mut()
             .filter(|m| m.folder == Some(found.id))
         {
             m.folder = Some(set.id);
-            let mut copy = m.clone();
-            copy.enabled = true;
-            copy.folder = None;
-            set.mods.push(copy);
-        }
-        let mut own = own_config(&loaded);
-        for f in &files {
-            if f.owner
-                .as_deref()
-                .is_some_and(|o| set.mods.iter().any(|m| m.name == o))
-                && let Some(path) = own.keys().find(|p| same_dest(p, &f.path)).cloned()
-                && let Some(edits) = own.remove(&path)
-            {
-                set.config.insert(path, edits);
-            }
         }
         loaded.folders.retain(|f| f.id != found.id);
         loaded.includes.push(Include {
@@ -119,6 +100,198 @@ impl Patchwork {
         self.save_set(&set)?;
         self.save_profile(profile, &loaded)?;
         Ok(set)
+    }
+
+    /// The folders of the game's other profiles that `profile` could use
+    /// too (see [`Patchwork::use_folder`]), by name: their own folders, and
+    /// the sets they include that it doesn't, each once. Sets no profile
+    /// includes, left over from before they went once none did, are there
+    /// too.
+    pub fn other_folders(&self, profile: &ProfileRef) -> Result<Vec<OtherFolder>> {
+        let loaded = self.load_profile(profile)?;
+        let synced = self.is_synced(profile);
+        let keys: HashSet<String> = loaded
+            .mods
+            .iter()
+            .filter(|m| !loaded.is_linked(m))
+            .map(|m| mod_key(&m.source, &m.id))
+            .collect();
+        let already = |mods: &[ProfileMod]| -> Vec<String> {
+            mods.iter()
+                .filter(|m| keys.contains(&mod_key(&m.source, &m.id)))
+                .map(|m| m.name.clone())
+                .collect()
+        };
+        let synced_here = synced.then(|| {
+            format!(
+                "{} is synced, and synced profiles can't share folders with other profiles yet",
+                loaded.name
+            )
+        });
+        let mut found = Vec::new();
+        let mut sets: HashMap<Uuid, usize> = HashMap::new();
+        for (other_ref, other) in self.profiles()? {
+            if other.game != loaded.game || other_ref == *profile {
+                continue;
+            }
+            let copy_only = synced_here.clone().or_else(|| {
+                self.is_synced(&other_ref).then(|| {
+                    format!(
+                        "{} is synced, and synced profiles can't share folders with other \
+                         profiles yet",
+                        other.name
+                    )
+                })
+            });
+            for folder in &other.folders {
+                let mods: Vec<ProfileMod> = other
+                    .mods
+                    .iter()
+                    .filter(|m| m.folder == Some(folder.id))
+                    .cloned()
+                    .collect();
+                found.push(OtherFolder {
+                    source: FolderSource::Folder {
+                        profile: other_ref.uuid,
+                        folder: folder.id,
+                    },
+                    name: folder.name.clone(),
+                    mods: mods.iter().map(|m| m.name.clone()).collect(),
+                    profiles: vec![other.name.clone()],
+                    already: already(&mods),
+                    copy_only: copy_only.clone(),
+                });
+            }
+            for include in other.shared_includes() {
+                let Some(set) = &include.linked else { continue };
+                if loaded.include(include.set).is_some() {
+                    continue;
+                }
+                match sets.get(&include.set) {
+                    Some(&at) => found[at].profiles.push(other.name.clone()),
+                    None => {
+                        sets.insert(include.set, found.len());
+                        found.push(set_folder(&set.folder, &set.mods, already, &synced_here));
+                        found.last_mut().expect("just pushed").profiles = vec![other.name.clone()];
+                    }
+                }
+            }
+        }
+        for set in self.sets(&loaded.game)? {
+            if !sets.contains_key(&set.id) && loaded.include(set.id).is_none() {
+                let folder = Folder {
+                    id: set.id,
+                    name: set.name.clone(),
+                };
+                found.push(set_folder(&folder, &set.mods, already, &synced_here));
+            }
+        }
+        for f in &mut found {
+            f.profiles.sort_by_key(|p| p.to_lowercase());
+        }
+        found.sort_by(|a, b| {
+            (a.name.to_lowercase(), &a.profiles).cmp(&(b.name.to_lowercase(), &b.profiles))
+        });
+        Ok(found)
+    }
+
+    /// Has the profile use a folder another profile of its game has (see
+    /// [`Patchwork::other_folders`]), after its own mods. With `link`, it's
+    /// the same folder in both: changing what's in it changes it in every
+    /// profile that has it, which makes one of a profile's own folders a
+    /// set. Otherwise it's copied in as an ordinary folder of the profile's
+    /// own. Its config edits come with it either way.
+    pub fn use_folder(
+        &self,
+        profile: &ProfileRef,
+        source: &FolderSource,
+        link: bool,
+    ) -> Result<()> {
+        match *source {
+            FolderSource::Set { set } if link => {
+                self.include_set(profile, set, None)?;
+                // a set left over from before is this profile's alone now
+                self.settle_set(set)
+            }
+            FolderSource::Set { set } => self.copy_set(profile, set),
+            FolderSource::Folder {
+                profile: from,
+                folder,
+            } => {
+                let from = ProfileRef { uuid: from };
+                if from == *profile {
+                    return Err(Error::invalid("that's this profile's own folder"));
+                }
+                let source = self.load_profile(&from)?;
+                let loaded = self.load_profile(profile)?;
+                if source.game != loaded.game {
+                    return Err(Error::invalid(format!(
+                        "{} is a profile for {}, not {}",
+                        source.label(),
+                        source.game,
+                        loaded.game
+                    )));
+                }
+                let Some(found) = source.folders.iter().find(|f| f.id == folder) else {
+                    return Err(Error::invalid(format!(
+                        "{} has no folder of its own with id {folder}",
+                        source.label()
+                    )));
+                };
+                if !link {
+                    let files = self.config_files(&from).unwrap_or_default();
+                    let (set, _) = folder_as_set(&source, found, &files);
+                    return self.copy_set_in(profile, set);
+                }
+                let synced = [&from, profile]
+                    .into_iter()
+                    .find(|p| self.is_synced(p))
+                    .map(|p| if p == profile { &loaded } else { &source });
+                if let Some(synced) = synced {
+                    return Err(Error::blocked(
+                        format!(
+                            "{} is synced, and synced profiles can't share folders with other \
+                             profiles yet",
+                            synced.label()
+                        ),
+                        "Synced profiles can't share folders yet",
+                        format!(
+                            "{} is synced with other computers or people, and sharing folders \
+                             between profiles isn't supported for synced ones yet. {} can be \
+                             copied in as an ordinary folder of {}'s own instead; changing it \
+                             won't change {}'s.",
+                            synced.name, found.name, loaded.name, source.name
+                        ),
+                        Fix::CopyFolder {
+                            from: from.uuid.to_string(),
+                            from_name: source.name.clone(),
+                            folder: folder.to_string(),
+                            name: found.name.clone(),
+                        },
+                    ));
+                }
+                let set = self.share_folder(&from, &folder.to_string())?;
+                self.include_set(profile, set.id, None)
+            }
+        }
+    }
+
+    /// A set is for sharing a folder, so once only one profile includes
+    /// the set `id` it's an ordinary folder of that profile's own again,
+    /// and once none does it goes. Runs whenever a profile stops including
+    /// one.
+    pub(super) fn settle_set(&self, id: Uuid) -> Result<()> {
+        let dir = self.paths.sets().join(id.to_string());
+        // a personal layer, or one that's gone already
+        if !self.set_file(id).is_file() {
+            return Ok(());
+        }
+        match self.includers()?.remove(&id).unwrap_or_default().as_slice() {
+            [] => fs::remove_dir_all(&dir).at(&dir),
+            // saving it settles the set again, with none left
+            [(only, _)] => self.unlink_set(only, id, true),
+            _ => Ok(()),
+        }
     }
 
     /// Has the profile include the set `id`, after its own mod `after`
@@ -184,8 +357,15 @@ impl Patchwork {
     /// own, after its own mods, rather than including it. Its config edits
     /// are copied in too, under the profile's own.
     pub fn copy_set(&self, profile: &ProfileRef, id: Uuid) -> Result<()> {
-        let mut loaded = self.load_profile(profile)?;
         let set = self.load_set(id)?.ok_or_else(|| no_such_set(id))?;
+        self.copy_set_in(profile, set)
+    }
+
+    /// Copies `set`'s mods and config edits into the profile, as
+    /// [`Patchwork::copy_set`] does. The profile's own mods and settings
+    /// win over the set's.
+    fn copy_set_in(&self, profile: &ProfileRef, set: Set) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
         if set.game != loaded.game {
             return Err(Error::invalid(format!(
                 "{} is a set for {}, not {}",
@@ -338,14 +518,6 @@ impl Patchwork {
     /// Every set some profile includes, with those profiles and their
     /// labels, read as they're stored (without loading their sets).
     pub fn includers(&self) -> Result<HashMap<Uuid, Vec<(ProfileRef, String)>>> {
-        /// Just what's needed of a stored profile.
-        #[derive(Deserialize)]
-        struct Includes {
-            game: String,
-            name: String,
-            #[serde(default, rename = "include")]
-            includes: Vec<Include>,
-        }
         let mut found: HashMap<Uuid, Vec<(ProfileRef, String)>> = HashMap::new();
         let Ok(entries) = fs::read_dir(self.paths.profiles()) else {
             return Ok(found);
@@ -371,13 +543,75 @@ impl Patchwork {
         Ok(found)
     }
 
+    /// The sets the profile includes, as it's stored (without its personal
+    /// layer, which isn't kept there); none if it hasn't been saved.
+    pub(super) fn stored_includes(&self, profile: &ProfileRef) -> Result<Vec<Uuid>> {
+        let stored = fsutil::read_toml::<Includes>(&self.profile_file(profile))?;
+        Ok(stored
+            .map(|s| s.includes.into_iter().map(|i| i.set).collect())
+            .unwrap_or_default())
+    }
+
     fn set_file(&self, id: Uuid) -> PathBuf {
         self.paths.sets().join(id.to_string()).join("set.toml")
     }
 }
 
+/// Just what's needed of a stored profile to know which sets it includes.
+#[derive(Deserialize)]
+struct Includes {
+    game: String,
+    name: String,
+    #[serde(default, rename = "include")]
+    includes: Vec<Include>,
+}
+
 fn no_such_set(id: Uuid) -> Error {
     Error::invalid(format!("there's no set with id {id}"))
+}
+
+/// `folder` of `profile` (as loaded) as a set of the same name: its mods,
+/// on and in no folder, and the settings the profile changes in their
+/// config files (those of `files` they own). Also gives the profile's own
+/// settings left once those are taken out.
+fn folder_as_set(profile: &Profile, folder: &Folder, files: &[ConfigFileInfo]) -> (Set, FileEdits) {
+    let mut set = Set::new(&profile.game, &folder.name);
+    for m in profile.mods.iter().filter(|m| m.folder == Some(folder.id)) {
+        let mut copy = m.clone();
+        copy.enabled = true;
+        copy.folder = None;
+        set.mods.push(copy);
+    }
+    let mut own = own_config(profile);
+    for f in files {
+        if f.owner
+            .as_deref()
+            .is_some_and(|o| set.mods.iter().any(|m| m.name == o))
+            && let Some(path) = own.keys().find(|p| same_dest(p, &f.path)).cloned()
+            && let Some(edits) = own.remove(&path)
+        {
+            set.config.insert(path, edits);
+        }
+    }
+    (set, own)
+}
+
+/// A set, named and with the mods `folder` and `mods` give, for
+/// [`Patchwork::other_folders`]; with no profiles yet.
+fn set_folder(
+    folder: &Folder,
+    mods: &[ProfileMod],
+    already: impl Fn(&[ProfileMod]) -> Vec<String>,
+    copy_only: &Option<String>,
+) -> OtherFolder {
+    OtherFolder {
+        source: FolderSource::Set { set: folder.id },
+        name: folder.name.clone(),
+        mods: mods.iter().map(|m| m.name.clone()).collect(),
+        profiles: Vec::new(),
+        already: already(mods),
+        copy_only: copy_only.clone(),
+    }
 }
 
 /// What an include of `set` remembers of it when it's just been loaded.

@@ -77,6 +77,39 @@ impl Set {
     }
 }
 
+/// Where a folder another profile has comes from, to use it in one more
+/// (see [`Patchwork::use_folder`](crate::Patchwork::use_folder)).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum FolderSource {
+    /// A set, which each profile that has it shows as a linked folder.
+    Set { set: Uuid },
+    /// One of a profile's own folders, which becomes a set once a second
+    /// profile uses it.
+    Folder { profile: Uuid, folder: Uuid },
+}
+
+/// A folder of the game's other profiles that a profile could use too,
+/// from [`Patchwork::other_folders`](crate::Patchwork::other_folders).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtherFolder {
+    #[serde(flatten)]
+    pub source: FolderSource,
+    pub name: String,
+    /// Its mods' names, in order.
+    pub mods: Vec<String>,
+    /// The names of the profiles that have it. Empty for a set left over
+    /// from before sets went once no profile had them.
+    pub profiles: Vec<String>,
+    /// Its mods the profile already has of its own, whose own entries win
+    /// over the folder's.
+    pub already: Vec<String>,
+    /// Why it can only be copied in rather than used as the same folder,
+    /// if it can't be.
+    pub copy_only: Option<String>,
+}
+
 /// The settings `profile`'s sets change in config files, as loaded: a
 /// later include's over an earlier one's.
 pub fn sets_config(profile: &Profile) -> FileEdits {

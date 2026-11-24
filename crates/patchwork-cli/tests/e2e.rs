@@ -1294,17 +1294,26 @@ fn shared_sets_are_linked_folders_in_each_profile() {
         env.run(&["add", local.to_str().unwrap()]);
     }
     env.run(&["folder", "add", "Client QOL", "First"]);
-    env.run(&["set", "share", "client qol"]);
+
+    env.run(&["profile", "new", "lethal-company/other"]);
+    env.run(&["profile", "use", "lethal-company/main"]);
+    let other = ["--profile", "lethal-company/other"];
+    let others = env.run(&[&other[..], &["folder", "others"]].concat());
+    assert!(
+        others.contains("Client QOL (1 mods, from main)"),
+        "{others}"
+    );
+    env.run(&[&other[..], &["folder", "use", "client qol"]].concat());
     let list = env.run(&["list"]);
     assert!(
         list.contains("First") && list.contains("in Client QOL (shared)"),
         "{list}"
     );
-
-    env.run(&["profile", "new", "lethal-company/other"]);
-    env.run(&["profile", "use", "lethal-company/main"]);
-    let other = ["--profile", "lethal-company/other"];
-    env.run(&[&other[..], &["set", "include", "Client QOL"]].concat());
+    assert!(
+        env.run(&["folder", "list"]).contains("shared with other"),
+        "{}",
+        env.run(&["folder", "list"])
+    );
     env.run(&[&other[..], &["disable", "First"]].concat());
     let list = env.run(&[&other[..], &["list"]].concat());
     assert!(list.contains("[ ] First"), "{list}");
@@ -1332,11 +1341,10 @@ fn shared_sets_are_linked_folders_in_each_profile() {
     assert!(err.contains("unlink it"), "{err}");
     env.run(&[&other[..], &["set", "unlink", "Client QOL", "--remove"]].concat());
     assert!(!env.run(&[&other[..], &["list"]].concat()).contains("First"));
-    env.run(&["set", "unlink", "Client QOL"]);
+    // with only main left, it's main's own folder again
     assert_eq!(
         env.run(&["folder", "list"]),
         "Client QOL (1 mods)\n  First\n"
     );
-    env.run(&["set", "remove", "Client QOL"]);
     assert_eq!(env.run(&["set", "list"]), "lethal-company has no sets\n");
 }

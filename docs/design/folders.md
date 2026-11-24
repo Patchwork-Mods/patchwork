@@ -31,7 +31,9 @@ Three different things get called "folders" here, and they're kept apart:
 2. **Shared sets**: a list of mods that lives outside any profile and that
    several profiles **include**. Changing the set changes every profile that
    includes it. In a profile, an included set shows as a **linked folder**,
-   so there's one idea to learn: it's a folder, and this one is linked.
+   so there's one idea to learn: it's a folder, and this one is in more
+   profiles than one. Users never make a set as such: they use another
+   profile's folder in this one too, and the set is how that's kept.
 3. **Layers** of a synced profile: **required** (everyone has them and
    they must match), **optional** (published to everyone, and each person
    opts in) and **personal** (only the person and their linked computers).
@@ -145,6 +147,11 @@ disabled = ["SomeMod"]   # this profile's only override
 - Where it goes in the order: the include is a block, the same as a folder.
 - A set is for one game. Exporting a set on its own (as a zip like a
   profile's) is a later addition.
+- **A set only exists while it's shared.** A folder is kept in its
+  profile's own file until a second profile uses it; then it becomes a set
+  that both include. Once only one profile includes a set, it's that
+  profile's own folder again, and once none does it's gone (see "Folders
+  in more profiles than one" below).
 
 ## 3. Layers on synced profiles
 
@@ -232,15 +239,14 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
    - **Exports** turn each linked folder into an ordinary folder.
    - **GUI**: `ProfileDetail::folders` has the linked folders too, after
      the profile's own, each with `linked` and `alsoIn` (the other
-     profiles that include its set). A linked folder is marked "Shared
-     with N profiles" and its menu has Rename shared folder…, Unlink
-     (keeping its mods) and Remove from this profile; an own folder's has
-     Share with other profiles. Add shared folder (beside New folder)
-     lists the game's sets to add (include) or copy in, and deletes ones no
-     profile includes. Removing a linked folder's mod, or taking it out of
-     the folder, says it leaves the set. A synced profile can't share a
-     folder (a plain error); including a set in one is the `CopySet`
-     blocker, whose window fix copies it in and is done.
+     profiles that include its set, by name). A linked folder is marked
+     "Shared with N profiles" and its menu has Rename…, Stop sharing
+     (keeping its mods) and Remove from this profile. Removing a linked
+     folder's mod, or taking it out of the folder, says it leaves every
+     profile that has it. (Superseded: this step first had a separate
+     Add shared folder button listing the game's sets, and Share with
+     other profiles on each folder; see "Folders in more profiles than
+     one".)
    - **A set's own config edits** (`[config."<file>"]` in `set.toml`,
      saved as `SET_SCHEMA` 2 only when there are any, so older builds
      don't open and drop them). Loading merges them into the profile's
@@ -273,6 +279,35 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      folder into a set, include, unlink) and the CLI; lock, deploy and
      history with their blockers; exports and the sync blocker; GUI;
      sets' config edits.
+   - **Folders in more profiles than one** (reworked after the rest of
+     step 2, so sets aren't a second idea next to folders):
+     - **One way in.** The Mods tab's Add folder button has New folder…
+       and From another profile…, which lists the folders of the game's
+       other profiles (`other_folders`): their own folders, and the sets
+       they include that this profile doesn't, each once with every
+       profile that has it. Each can be added as the same folder (linked)
+       or copied in as this profile's own (`use_folder` with a
+       `FolderSource` and `link`). The list says which of its mods the
+       profile has already (its own entries win) and, for synced
+       profiles, why a folder can only be copied in.
+     - **Sets are made and removed by themselves.** Using another
+       profile's own folder linked shares it there (`share_folder`) and
+       includes it here. Whenever a profile stops including a set
+       (`save_profile` compares what it stored before, and
+       `remove_profile`), `settle_set` turns a set only one profile still
+       includes into that profile's own folder (`unlink_set` keeping its
+       mods and config edits) and deletes one none includes. Going back
+       with "restore" can still put back a set only one profile includes;
+       it settles the next time one stops including it.
+     - **Synced profiles**: using a folder linked when either profile is
+       synced is the `CopyFolder` blocker, whose fix copies it in (a
+       window fix that's done, like `CopySet`).
+     - **CLI**: `patchwork folder others` lists them, `patchwork folder
+       use <folder> [--from <profile>] [--copy]` uses one. `set new` and
+       `set share` are gone; `set remove` is for sets left over from
+       before sets went by themselves, which the list shows as in no
+       profile (adding one linked settles it into the profile's own).
+
 3. **Personal layer** on synced profiles, with the split lock. *Under
    way.* As built so far:
    - **It's a private set.** The personal layer is kept like a shared set

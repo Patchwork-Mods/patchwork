@@ -2329,8 +2329,7 @@ body.dragging-mod .drag-handle {
   transform: translateX(7px);
 }
 
-#new-folder,
-#add-set {
+#new-folder {
   font-size: 12px;
   padding: 2px 10px;
 }
@@ -2350,8 +2349,8 @@ body.dragging-mod .drag-handle {
   border-color: color-mix(in srgb, var(--pw-accent) 45%, var(--pw-border));
 }
 
-/* A set in the Add a shared folder dialog: its name and buttons, then
-   what's in it and where it's used. */
+/* A folder in the Add a folder from another profile dialog: its name and
+   buttons, then what's in it and where it's from. */
 .set-head {
   display: flex;
   align-items: center;

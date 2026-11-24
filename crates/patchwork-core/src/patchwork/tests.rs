@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering::SeqCst;
 
 use super::*;
 use crate::relpath::RelPath;
+use crate::set::FolderSource;
 use crate::source::SoftDependency;
 
 fn known_summary(latest: &str, fetched: &str) -> KnownSummary {
@@ -4733,16 +4734,22 @@ async fn shared_folders_carry_their_mods_config_edits() {
     let plan = pw.plan_deploy(&b).await.unwrap();
     assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 
-    // unlinked without its mods, its settings go; with them, they stay
+    // unlinked without its mods, its settings go; and with only `a` left,
+    // the set's its own folder again, its settings with it
     pw.unlink_set(&b, set.id, false).unwrap();
     assert!(pw.load_profile(&b).unwrap().config.is_empty());
-    pw.unlink_set(&a, set.id, true).unwrap();
     let in_a = pw.load_profile(&a).unwrap();
+    assert!(in_a.includes.is_empty());
     assert_eq!(in_a.config[&fast]["speed"]["level"], Value::Int(4));
     assert_eq!(in_a.config[&own]["video"]["fov"], Value::Int(7));
 
     // copied in, they're the profile's own, under what it has
-    pw.copy_set(&b, set.id).unwrap();
+    let folder = in_a.find_folder("QOL").unwrap().id;
+    let from = FolderSource::Folder {
+        profile: a.uuid,
+        folder,
+    };
+    pw.use_folder(&b, &from, false).unwrap();
     assert_eq!(
         pw.load_profile(&b).unwrap().config[&fast]["speed"]["level"],
         Value::Int(4)
@@ -4750,29 +4757,138 @@ async fn shared_folders_carry_their_mods_config_edits() {
 }
 
 #[tokio::test]
-async fn a_set_is_unlinked_before_it_is_removed() {
+async fn a_profile_uses_another_profiles_folder_as_the_same_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    let qol = pw
+        .add_folder(&a, "QOL", &["b".to_owned(), "c".to_owned()])
+        .unwrap();
+    let others = pw.other_folders(&b).unwrap();
+    let from = FolderSource::Folder {
+        profile: a.uuid,
+        folder: qol.id,
+    };
+    assert_eq!(others.len(), 1, "{others:?}");
+    assert_eq!(others[0].source, from);
+    assert_eq!(others[0].mods, ["b", "c"]);
+    assert_eq!(others[0].profiles, ["a"]);
+    assert!(others[0].already.is_empty());
+    assert_eq!(others[0].copy_only, None);
+    // none of its own
+    assert!(pw.other_folders(&a).unwrap().is_empty());
+
+    pw.use_folder(&b, &from, true).unwrap();
+    let set = pw.find_set("my-game", "QOL").unwrap();
+    for p in [&a, &b] {
+        let loaded = pw.load_profile(p).unwrap();
+        assert!(loaded.is_linked(loaded.find("c").unwrap()), "{p}");
+    }
+    assert_eq!(mod_names(&pw, &b), ["d", "b", "c"]);
+    // in it already, so there's nothing more to use
+    assert!(pw.other_folders(&b).unwrap().is_empty());
+
+    // a third profile sees the set once, with both that have it, and
+    // which of its mods it has already
+    let c = pw.create_profile("my-game", "c").unwrap();
+    let b_mod = ModSpec {
+        source: "versioned".to_owned(),
+        id: "b".to_owned(),
+        version: None,
+    };
+    pw.add_mod(&c, b_mod, None, true).await.unwrap();
+    let others = pw.other_folders(&c).unwrap();
+    assert_eq!(others.len(), 1, "{others:?}");
+    assert_eq!(others[0].source, FolderSource::Set { set: set.id });
+    assert_eq!(others[0].profiles, ["a", "b"]);
+    assert_eq!(others[0].already, ["b"]);
+
+    // or copies it in, which leaves it as it is
+    pw.use_folder(&c, &others[0].source, false).unwrap();
+    let loaded = pw.load_profile(&c).unwrap();
+    assert!(loaded.includes.is_empty());
+    assert_eq!(
+        loaded.folder_of(loaded.find("c").unwrap()).unwrap().name,
+        "QOL"
+    );
+    assert_eq!(pw.profiles_including(set.id).unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn synced_profiles_only_copy_other_profiles_folders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    let qol = pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
+    pw.start_sync(&b).unwrap();
+    let others = pw.other_folders(&b).unwrap();
+    assert!(others[0].copy_only.is_some(), "{others:?}");
+    let from = FolderSource::Folder {
+        profile: a.uuid,
+        folder: qol.id,
+    };
+    let err = pw.use_folder(&b, &from, true).unwrap_err();
+    let Some(crate::fix::Fix::CopyFolder { from: id, name, .. }) = err.fix() else {
+        panic!("{err:?}");
+    };
+    assert_eq!((id, name), (a.uuid.to_string(), "QOL".to_owned()));
+    // before anything changed
+    assert!(pw.sets("my-game").unwrap().is_empty());
+    assert!(pw.load_profile(&a).unwrap().includes.is_empty());
+    pw.use_folder(&b, &from, false).unwrap();
+    assert_eq!(mod_names(&pw, &b), ["d", "b"]);
+
+    // nor can a synced profile's folder be used as the same one elsewhere
+    let c = pw.create_profile("my-game", "c").unwrap();
+    let theirs = pw.load_profile(&b).unwrap().find_folder("QOL").unwrap().id;
+    let from = FolderSource::Folder {
+        profile: b.uuid,
+        folder: theirs,
+    };
+    let err = pw.use_folder(&c, &from, true).unwrap_err();
+    assert!(
+        matches!(err.fix(), Some(crate::fix::Fix::CopyFolder { .. })),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_set_only_one_profile_includes_is_its_own_folder_again() {
     let tmp = tempfile::tempdir().unwrap();
     let (pw, a, b) = two_profiles(tmp.path()).await;
     pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
     let set = pw.share_folder(&a, "QOL").unwrap();
     pw.include_set(&b, set.id, None).unwrap();
+    pw.set_enabled(&b, "b", false).unwrap();
     assert!(pw.remove_set(set.id).is_err());
-    // keeping a copy as the profile's own folder
+    // unlinked from `a`, keeping a copy as its own folder
     pw.unlink_set(&a, set.id, true).unwrap();
-    let loaded = pw.load_profile(&a).unwrap();
+    let own = |p: &ProfileRef| {
+        let loaded = pw.load_profile(p).unwrap();
+        let m = loaded.find("b").unwrap();
+        assert!(!loaded.is_linked(m));
+        assert!(loaded.includes.is_empty());
+        (loaded.folder_of(m).unwrap().name.clone(), m.enabled)
+    };
     assert_eq!(mod_names(&pw, &a), ["a", "b", "c"]);
-    let kept = loaded.find("b").unwrap();
-    assert!(!loaded.is_linked(kept));
-    assert_eq!(loaded.folder_of(kept).unwrap().name, "QOL");
+    assert_eq!(own(&a), ("QOL".to_owned(), true));
     assert!(
         fs::read_to_string(pw.profile_file(&a))
             .unwrap()
             .contains("schema = 3")
     );
-    // or not
+    // and `b`, the only one left, has it as its own too, as it was there
+    assert_eq!(own(&b), ("QOL".to_owned(), false));
+    assert!(pw.sets("my-game").unwrap().is_empty());
+
+    // as when the profile's deleted instead
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    pw.include_set(&b, set.id, None).unwrap();
+    pw.remove_profile(&a).unwrap();
+    assert_eq!(own(&b).0, "QOL");
+    assert!(pw.sets("my-game").unwrap().is_empty());
+
+    // and taken out of the last profile that has it, it's gone
+    let set = pw.share_folder(&b, "QOL").unwrap();
     pw.unlink_set(&b, set.id, false).unwrap();
-    assert_eq!(mod_names(&pw, &b), ["d"]);
-    pw.remove_set(set.id).unwrap();
     assert!(pw.sets("my-game").unwrap().is_empty());
 }
 
@@ -4894,12 +5010,11 @@ async fn going_back_asks_what_to_do_with_sets_changed_since() {
     pw.go_back(&a, None, Some(crate::fix::SetsThen::Copy))
         .unwrap();
     assert_eq!(priority(&a), (0, false));
-    assert_eq!(priority(&b), (5, true));
+    // which leaves the set only in `b`, so it's `b`'s own folder now
+    assert_eq!(priority(&b), (5, false));
     assert!(pw.load_profile(&a).unwrap().includes.is_empty());
-    assert_eq!(
-        pw.profiles_including(set.id).unwrap(),
-        std::slice::from_ref(&b)
-    );
+    assert!(pw.profiles_including(set.id).unwrap().is_empty());
+    assert!(pw.sets("my-game").unwrap().is_empty());
 }
 
 #[tokio::test]

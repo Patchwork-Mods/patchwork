@@ -42,6 +42,7 @@ use patchwork_core::order::{self, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Folder, ProfileMod, ProfileRef};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
+use patchwork_core::set::{FolderSource, OtherFolder};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{FileChoice, ModSpec, SourceFile};
 use patchwork_core::{
@@ -294,26 +295,12 @@ struct UiFolder {
     /// set's, so changing that changes every profile that includes it.
     linked: bool,
     /// For a linked folder, the other profiles that include its set, by
-    /// label.
+    /// name (they're all the same game's).
     also_in: Vec<String>,
     /// Whether it's the profile's personal layer (see
     /// [`patchwork_core::personal`]): a linked folder whose mods stay on
     /// this person's computers.
     personal: bool,
-}
-
-/// One of a game's shared sets, for picking one to include.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UiSet {
-    id: String,
-    name: String,
-    /// Its mods' names, in order.
-    mods: Vec<String>,
-    /// Whether the profile it was listed for includes it already.
-    included: bool,
-    /// The profiles that include it, by label.
-    included_by: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -729,7 +716,10 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|(p, _)| *p != r)
-                .map(|(_, label)| label)
+                .map(|(_, label)| match label.split_once('/') {
+                    Some((_, name)) => name.to_owned(),
+                    None => label,
+                })
                 .collect();
             UiFolder {
                 folder: f.clone(),
@@ -1381,36 +1371,24 @@ fn set_folder_enabled(
     profile_detail(&app.pw, id)
 }
 
-/// The shared sets of the profile's game, for including one.
+/// The folders of the game's other profiles, for using one in this one
+/// too.
 #[tauri::command]
-fn game_sets(app: State<'_, App>, id: String) -> CmdResult<Vec<UiSet>> {
-    let r = profile_ref(&id)?;
-    let loaded = app.pw.load_profile(&r).map_err(msg)?;
-    let mut includers = app.pw.includers().map_err(msg)?;
-    let sets = app.pw.sets(&loaded.game).map_err(msg)?;
-    Ok(sets
-        .into_iter()
-        .map(|set| UiSet {
-            id: set.id.to_string(),
-            name: set.name,
-            mods: set.mods.into_iter().map(|m| m.name).collect(),
-            included: loaded.include(set.id).is_some(),
-            included_by: includers
-                .remove(&set.id)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(_, label)| label)
-                .collect(),
-        })
-        .collect())
+fn other_folders(app: State<'_, App>, id: String) -> CmdResult<Vec<OtherFolder>> {
+    app.pw.other_folders(&profile_ref(&id)?).map_err(msg)
 }
 
-/// Turns one of the profile's folders into a shared set, which it then
-/// includes as a linked folder.
+/// Uses a folder another profile has in this one too: the same folder
+/// with `link`, otherwise a copy of its own.
 #[tauri::command]
-fn share_folder(app: State<'_, App>, id: String, folder: String) -> CmdResult<ProfileDetail> {
+fn use_folder(
+    app: State<'_, App>,
+    id: String,
+    source: FolderSource,
+    link: bool,
+) -> CmdResult<ProfileDetail> {
     app.pw
-        .share_folder(&profile_ref(&id)?, &folder)
+        .use_folder(&profile_ref(&id)?, &source, link)
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
@@ -1446,13 +1424,6 @@ fn unlink_set(
         .unlink_set(&profile_ref(&id)?, blockers::parse_set(&set)?, keep)
         .map_err(msg)?;
     profile_detail(&app.pw, id)
-}
-
-/// Deletes a shared set that no profile includes.
-#[tauri::command]
-fn remove_set(app: State<'_, App>, set: String) -> CmdResult<()> {
-    app.pw.remove_set(blockers::parse_set(&set)?).map_err(msg)?;
-    Ok(())
 }
 
 #[tauri::command]
@@ -2726,12 +2697,11 @@ fn main() {
             set_mod_folder,
             set_personal,
             set_folder_enabled,
-            game_sets,
-            share_folder,
+            other_folders,
+            use_folder,
             include_set,
             copy_set,
             unlink_set,
-            remove_set,
             sort_mods,
             reorder_mods,
             list,

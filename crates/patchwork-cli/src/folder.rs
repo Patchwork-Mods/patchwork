@@ -1,8 +1,9 @@
 //! `patchwork folder`: groups of the profile's mods.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Subcommand;
 use patchwork_core::Patchwork;
+use patchwork_core::set::OtherFolder;
 
 use crate::common::selected;
 
@@ -17,7 +18,25 @@ pub(crate) enum FolderCommand {
         /// Mods to put in it.
         mods: Vec<String>,
     },
-    /// Rename a folder.
+    /// List the folders of the game's other profiles, which `use` can add
+    /// to this one.
+    Others,
+    /// Use a folder another profile of the game has in this one too, as the
+    /// same folder: adding, removing or reordering its mods changes it in
+    /// every profile that has it, while turning them on or off is each
+    /// profile's own.
+    Use {
+        folder: String,
+        /// The profile it's from, by name, if more than one has a folder
+        /// called that.
+        #[arg(long)]
+        from: Option<String>,
+        /// Copy its mods in as a folder of this profile's own instead, which
+        /// changes apart from the other's.
+        #[arg(long)]
+        copy: bool,
+    },
+    /// Rename a folder. A shared one is renamed in every profile that has it.
     Rename { folder: String, name: String },
     /// Remove a folder. Its mods stay in the profile, where they are.
     Remove { folder: String },
@@ -64,16 +83,58 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                     String::new()
                 };
                 let shared = if f.id == loaded.id {
-                    ", only on this computer"
+                    ", only on this computer".to_owned()
                 } else if loaded.include(f.id).is_some() {
-                    ", a shared set"
+                    let others: Vec<String> = pw
+                        .profiles_including(f.id)?
+                        .iter()
+                        .filter(|p| **p != profile)
+                        .filter_map(|p| pw.load_profile(p).ok().map(|l| l.name))
+                        .collect();
+                    format!(", shared with {}", others.join(", "))
                 } else {
-                    ""
+                    String::new()
                 };
                 println!("{} ({} mods{off}{shared})", f.name, mods.len());
                 for m in mods {
                     println!("  {}", m.name);
                 }
+            }
+        }
+        FolderCommand::Others => {
+            let others = pw.other_folders(&profile)?;
+            if others.is_empty() {
+                println!("{}'s other profiles have no folders", loaded.game);
+            }
+            for f in others {
+                println!("{} ({} mods, {})", f.name, f.mods.len(), whose(&f));
+                for m in &f.mods {
+                    println!("  {m}");
+                }
+                if !f.already.is_empty() {
+                    println!(
+                        "  {} has {} of its own already",
+                        loaded.label(),
+                        f.already.join(", ")
+                    );
+                }
+                if let Some(why) = &f.copy_only {
+                    println!("  can only be copied in: {why}");
+                }
+            }
+        }
+        FolderCommand::Use { folder, from, copy } => {
+            let found = other_folder(pw.other_folders(&profile)?, &folder, from.as_deref())?;
+            pw.use_folder(&profile, &found.source, !copy)?;
+            if copy {
+                println!("copied {} into {}", found.name, loaded.label());
+            } else {
+                println!(
+                    "{} now shares {} with {}",
+                    loaded.label(),
+                    found.name,
+                    found.profiles.join(", ")
+                );
             }
         }
         FolderCommand::Add { name, mods } => {
@@ -113,6 +174,38 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
         }
     }
     Ok(())
+}
+
+/// Where a folder another profile has is, for listing it.
+fn whose(f: &OtherFolder) -> String {
+    match f.profiles.as_slice() {
+        [] => "in no profile".to_owned(),
+        [one] => format!("from {one}"),
+        all => format!("shared by {}", all.join(", ")),
+    }
+}
+
+/// The folder of `others` called `name`, from the profile `from` if given.
+fn other_folder(others: Vec<OtherFolder>, name: &str, from: Option<&str>) -> Result<OtherFolder> {
+    let mut found: Vec<OtherFolder> = others
+        .into_iter()
+        .filter(|f| f.name.eq_ignore_ascii_case(name))
+        .filter(|f| from.is_none_or(|from| f.profiles.iter().any(|p| p.eq_ignore_ascii_case(from))))
+        .collect();
+    match found.len() {
+        0 => match from {
+            Some(from) => bail!("{from} has no folder named `{name}` to use here"),
+            None => bail!("no other profile has a folder named `{name}` to use here"),
+        },
+        1 => Ok(found.remove(0)),
+        _ => {
+            let all: Vec<String> = found.iter().map(whose).collect();
+            bail!(
+                "more than one profile has a folder named `{name}` ({}); say which with --from",
+                all.join("; ")
+            )
+        }
+    }
 }
 
 /// `mods` and "is" or "are".

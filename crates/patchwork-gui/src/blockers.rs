@@ -13,6 +13,7 @@ use std::path::Path;
 
 use patchwork_core::deploy::DeployTarget;
 use patchwork_core::fix::{Blocker, Fix, ProfileName};
+use patchwork_core::set::FolderSource;
 use serde::{Serialize, Serializer};
 use serde_json::json;
 use tauri::{AppHandle, State};
@@ -155,6 +156,17 @@ pub async fn apply_fix(
             }
         }
         Fix::CopySet { set, .. } => app.pw.copy_set(&profile()?, parse_set(&set)?)?,
+        Fix::CopyFolder { from, folder, .. } => {
+            let parse = |id: &str| -> CmdResult<uuid::Uuid> {
+                id.parse()
+                    .map_err(|_| format!("`{id}` isn't a profile's or folder's id").into())
+            };
+            let source = FolderSource::Folder {
+                profile: parse(&from)?,
+                folder: parse(&folder)?,
+            };
+            app.pw.use_folder(&profile()?, &source, false)?
+        }
         Fix::ForgetSet { set } => app.pw.unlink_set(&profile()?, parse_set(&set)?, false)?,
         Fix::Deploy
         | Fix::GoBack { .. }

@@ -112,7 +112,8 @@ impl Patchwork {
     }
 
     /// Removes the profile and everything kept with it: its lockfile and
-    /// what was recorded when it was deployed.
+    /// what was recorded when it was deployed. The sets it included are
+    /// settled (see [`Patchwork::settle_set`]).
     /// Its mods have to be undeployed first, so they aren't left in the game
     /// with nothing keeping track of them. If it was the current profile,
     /// there's no current profile afterwards.
@@ -151,6 +152,10 @@ impl Patchwork {
         }
         // so that it stops being synced, rather than coming back
         self.profile_changed(profile, false);
+        // a set it shared with just one other profile is that one's own now
+        for include in loaded.shared_includes() {
+            self.settle_set(include.set)?;
+        }
         Ok(())
     }
 
@@ -313,7 +318,9 @@ impl Patchwork {
     /// mods to its file, and the mods of the sets it includes to those
     /// sets, if they've changed (see [`set::collapse`]). Its personal
     /// layer is saved to its own file, or removed if the profile no longer
-    /// includes it.
+    /// includes it. A set it no longer includes is settled (see
+    /// [`Patchwork::settle_set`]): one only one profile still includes
+    /// becomes that profile's own folder.
     pub(super) fn save_profile(&self, profile: &ProfileRef, value: &Profile) -> Result<()> {
         // a reorder may have taken a folder's mods apart
         let grouped;
@@ -366,8 +373,15 @@ impl Patchwork {
             }
             None => self.remove_personal(profile)?,
         }
+        let before = self.stored_includes(profile)?;
         fsutil::write_toml(&self.profile_file(profile), &stored)?;
         self.profile_changed(profile, false);
+        // a set no longer shared is a folder again (see `settle_set`)
+        for id in before {
+            if stored.include(id).is_none() {
+                self.settle_set(id)?;
+            }
+        }
         Ok(())
     }
 
