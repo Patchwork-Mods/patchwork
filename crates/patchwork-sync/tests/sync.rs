@@ -96,19 +96,23 @@ async fn a_profile_and_its_local_mods_reach_the_other_machine() {
     // a change on b goes to a
     b.set_enabled(&profile, "Folder", true).unwrap();
     b.move_mod(&profile, "Folder", &Position::Top).unwrap();
-    let b_run = b_node.sync_once(&b, Duration::from_secs(5));
-    let a_run = a_node.sync_once(&a, TIMEOUT);
-    let (b_out, a_out) = tokio::join!(b_run, a_run);
-    b_out.unwrap();
-    let a_out = a_out.unwrap();
-    assert!(
-        a_out[0].applied.as_ref().is_some_and(|x| x.changed),
-        "{a_out:?}"
-    );
-    let loaded = a.load_profile(&profile).unwrap();
-    let names: Vec<_> = loaded.mods.iter().map(|m| m.name.as_str()).collect();
-    assert_eq!(names, ["Folder", "Cool"]);
-    assert!(loaded.mods[0].enabled);
+    let a_has_it = || {
+        a.load_profile(&profile).is_ok_and(|p| {
+            let names: Vec<_> = p.mods.iter().map(|m| m.name.as_str()).collect();
+            names == ["Folder", "Cool"] && p.mods[0].enabled
+        })
+    };
+    // one sync can be over before all of it's through, so a syncs until
+    // it is
+    let a_syncs = async {
+        while !a_has_it() {
+            a_node.sync_once(&a, TIMEOUT).await.unwrap();
+        }
+    };
+    let both = async { tokio::join!(running_until(&b_node, &b, a_has_it), a_syncs) };
+    tokio::time::timeout(TIMEOUT * 2, both)
+        .await
+        .expect("timed out");
 
     a_node.shutdown().await.unwrap();
     b_node.shutdown().await.unwrap();

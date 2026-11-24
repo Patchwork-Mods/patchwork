@@ -177,9 +177,30 @@ impl Patchwork {
     /// here (see [`Patchwork::unshared_mods`]), and whatever the sharer
     /// changed since the last sync wins over them.
     pub fn apply_synced(&self, entries: &Entries, writable: bool) -> Result<Applied> {
+        let applied = self.apply_entries(entries, writable, true)?;
+        Ok(applied.expect("a missing profile is created"))
+    }
+
+    /// As [`Patchwork::apply_synced`], but only for a profile that's here:
+    /// `None` if it isn't, as when it's been removed since it was last
+    /// synced, so that the sync doesn't bring it back.
+    pub fn update_synced(&self, entries: &Entries, writable: bool) -> Result<Option<Applied>> {
+        self.apply_entries(entries, writable, false)
+    }
+
+    fn apply_entries(
+        &self,
+        entries: &Entries,
+        writable: bool,
+        create: bool,
+    ) -> Result<Option<Applied>> {
         let incoming = sync::from_entries(entries)?;
         let profile = incoming.profile.reference();
+        let _removing = self.removing.lock().unwrap();
         let exists = self.profile_file(&profile).is_file();
+        if !exists && !create {
+            return Ok(None);
+        }
 
         let mut unpublished = match self.sync_base(&profile)? {
             Some(base) if exists => {
@@ -220,12 +241,12 @@ impl Patchwork {
             self.save_synced(&profile, &synced.profile, &lock)?;
         }
         self.save_sync_base(&profile, entries)?;
-        Ok(Applied {
+        Ok(Some(Applied {
             profile,
             created: !exists,
             changed,
             unpublished,
-        })
+        }))
     }
 
     fn save_synced(&self, profile: &ProfileRef, loaded: &Profile, lock: &Lockfile) -> Result<()> {

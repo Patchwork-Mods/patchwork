@@ -120,6 +120,7 @@ impl Patchwork {
     /// with nothing keeping track of them. If it was the current profile,
     /// there's no current profile afterwards.
     pub fn remove_profile(&self, profile: &ProfileRef) -> Result<()> {
+        let removing = self.removing.lock().unwrap();
         let loaded = self.load_profile(profile)?;
         let target = self.deploy_target(&loaded)?;
         let deployed = self.deploy_state(&target)?.profile;
@@ -152,6 +153,7 @@ impl Patchwork {
         } else if forgotten {
             fsutil::write_toml(&self.paths.state_file(), &state)?;
         }
+        drop(removing);
         // so that it stops being synced, rather than coming back
         self.profile_changed(profile, false);
         // a set it shared with just one other profile is that one's own now

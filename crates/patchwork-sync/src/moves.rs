@@ -23,21 +23,24 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use futures_util::future::{BoxFuture, join_all};
+use futures_util::{Stream, StreamExt};
 use iroh::endpoint::{Connection, VarInt};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh::{Endpoint, EndpointAddr, PublicKey};
 use iroh_docs::api::Doc;
 use iroh_docs::api::protocol::ShareMode;
+use iroh_docs::engine::LiveEvent;
 use iroh_docs::{CapabilityKind, DocTicket};
 use patchwork_core::Patchwork;
 use patchwork_core::profile::ProfileRef;
+use patchwork_core::sync::Entries;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::{
     Addresses, DEVICE_PROFILE, MOVED, Node, Outcome, PEER, SYNC_TIMEOUT, SyncedProfile, Watched,
-    files, ticket, wait_for_sync,
+    files, ticket,
 };
 
 /// The protocol a machine tells another where a profile's document moved
@@ -63,6 +66,10 @@ const ANSWER_WITHIN: Duration = Duration::from_secs(90);
 /// How long a machine stays in a document it's left after marking it
 /// [`MOVED`], so others online then hear it.
 const MOVED_GRACE: Duration = Duration::from_secs(3);
+
+/// How long to wait before trying again to sync a document just moved
+/// to, after an attempt failed.
+const RETRY_SYNC_AFTER: Duration = Duration::from_millis(200);
 
 /// The most a notice or its answer can be.
 const MAX_MESSAGE: usize = 64 * 1024;
@@ -417,10 +424,10 @@ impl Node {
         }
 
         // it has to be the same profile before the old document's left
+        let nodes = ticket.nodes.clone();
         let (new, events) = self.docs.import_and_subscribe(ticket).await?;
         let new = self.keep(new).await?;
-        wait_for_sync(events, SYNC_TIMEOUT).await;
-        let entries = self.read_entries(&new).await?;
+        let entries = self.first_sync(&new, events, nodes).await?;
         if entries.is_empty() {
             self.forget_doc(to).await?;
             bail!("nothing arrived from it within {}s", SYNC_TIMEOUT.as_secs());
@@ -441,6 +448,39 @@ impl Node {
             .collect();
         let outcome = self.move_to(pw, &synced, &old, new, to_tell).await?;
         Ok((Answer::Moved, Some(outcome)))
+    }
+
+    /// What's in `doc`, just joined from `nodes`, once it's arrived, waiting
+    /// up to [`SYNC_TIMEOUT`]. Whoever moved syncs the new document with
+    /// this machine as it tells it, and syncs started from both ends at
+    /// once can fail, so one that fails before anything arrived is tried
+    /// again.
+    async fn first_sync(
+        &self,
+        doc: &Doc,
+        events: impl Stream<Item = Result<LiveEvent>>,
+        nodes: Vec<EndpointAddr>,
+    ) -> Result<Entries> {
+        let mut events = std::pin::pin!(events);
+        let wait = async {
+            let mut synced = false;
+            while let Some(event) = events.next().await {
+                match event? {
+                    LiveEvent::SyncFinished(e) if e.result.is_ok() => synced = true,
+                    LiveEvent::SyncFinished(_) if self.read_entries(doc).await?.is_empty() => {
+                        tokio::time::sleep(RETRY_SYNC_AFTER).await;
+                        doc.start_sync(nodes.clone()).await?;
+                    }
+                    LiveEvent::PendingContentReady if synced => break,
+                    _ => {}
+                }
+            }
+            anyhow::Ok(())
+        };
+        if let Ok(result) = tokio::time::timeout(SYNC_TIMEOUT, wait).await {
+            result?;
+        }
+        self.read_entries(doc).await
     }
 
     /// Notices for the machines `synced` still has to tell of its move, but

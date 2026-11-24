@@ -634,6 +634,7 @@ impl Node {
     /// it did anything for.
     async fn sync_devices(&self, pw: &Patchwork, doc: &Doc) -> Result<Vec<Outcome>> {
         let entries = self.read_entries(doc).await?;
+        let keys = self.keys(doc).await?;
         let synced = self.synced()?;
         for (key, value) in &entries {
             let Some(uuid) = key.strip_prefix(DEVICE_PROFILE) else {
@@ -656,8 +657,9 @@ impl Node {
         }
         for (profile, _) in pw.profiles()? {
             let key = format!("{DEVICE_PROFILE}{}", profile.uuid);
-            // removed ones stay removed
-            if entries.contains_key(&key) {
+            // removed ones stay removed, even before word of it has
+            // all arrived, rather than being put back over it
+            if keys.contains(&key) {
                 continue;
             }
             let writable = self.synced_profile(&profile)?.is_none_or(|s| s.writable);
@@ -768,8 +770,10 @@ impl Node {
             }
             let doc = self.open(&synced).await?;
             self.watch(Watched::Profile(synced.profile), &doc).await?;
-            self.start(&doc).await?;
+            // what's changed here goes out first, so the first sync takes
+            // it rather than it waiting on gossip
             on_sync(self.sync_profile(pw, &synced).await);
+            self.start(&doc).await?;
         }
         loop {
             let watched = tokio::select! {
@@ -940,7 +944,15 @@ impl Node {
         if entries.is_empty() {
             return Ok(Outcome::nothing(synced.reference()));
         }
-        let applied = pw.apply_synced(&entries, synced.writable)?;
+        let applied = if synced.arrived {
+            // removed here meanwhile, so it's left rather than brought back
+            let Some(applied) = pw.update_synced(&entries, synced.writable)? else {
+                return Ok(Outcome::nothing(synced.reference()));
+            };
+            applied
+        } else {
+            pw.apply_synced(&entries, synced.writable)?
+        };
         if !synced.arrived {
             self.remember(SyncedProfile {
                 arrived: true,
@@ -1044,6 +1056,19 @@ impl Node {
             }
         }
         Ok(entries)
+    }
+
+    /// Every key in `doc`, including ones whose content hasn't arrived.
+    async fn keys(&self, doc: &Doc) -> Result<HashSet<String>> {
+        let mut keys = HashSet::new();
+        let stream = doc.get_many(Query::single_latest_per_key().build()).await?;
+        let mut stream = std::pin::pin!(stream);
+        while let Some(entry) = stream.next().await {
+            if let Some(key) = entry_key(entry?.key()) {
+                keys.insert(key.to_owned());
+            }
+        }
+        Ok(keys)
     }
 
     async fn open(&self, synced: &SyncedProfile) -> Result<Doc> {

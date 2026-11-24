@@ -362,6 +362,7 @@ impl Builder {
             fetching_versions: Mutex::default(),
             local_origins: Mutex::default(),
             changed: broadcast::channel(CHANGES_BUFFERED).0,
+            removing: Mutex::default(),
             _lock: lock,
         };
         patchwork.migrate_profiles()?;
@@ -431,6 +432,9 @@ pub struct Patchwork {
     /// Told about every change to a profile or its lockfile; see
     /// [`Patchwork::watch_profiles`].
     changed: broadcast::Sender<ProfileChange>,
+    /// Held while a profile's removed or saved from a sync, so a sync
+    /// underway can't bring back a profile removed meanwhile.
+    removing: Mutex<()>,
     _lock: StateLock,
 }
 
