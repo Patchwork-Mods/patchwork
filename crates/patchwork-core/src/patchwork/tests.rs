@@ -3915,8 +3915,11 @@ format = "test.kv""#,
             ]),
         )]
     };
-    assert!(pw.set_config(&profile, &fast, Some(&set(11))).is_err());
-    pw.set_config(&profile, &fast, Some(&set(5))).unwrap();
+    assert!(
+        pw.set_config(&profile, &fast, Some(&set(11)), None)
+            .is_err()
+    );
+    pw.set_config(&profile, &fast, Some(&set(5)), None).unwrap();
     let saved = &pw.load_profile(&profile).unwrap().config;
     assert_eq!(saved.len(), 1);
     assert_eq!(
@@ -3943,10 +3946,11 @@ format = "test.kv""#,
             BTreeMap::from([("fov".to_owned(), Value::Int(n))]),
         )]
     };
-    pw.set_config(&profile, &own, Some(&fov(9))).unwrap();
+    pw.set_config(&profile, &own, Some(&fov(9)), None).unwrap();
     // spelled another way, it's the same file
     let shouting: Dest = "CONFIG/GAME.CFG".parse().unwrap();
-    pw.set_config(&profile, &shouting, Some(&fov(8))).unwrap();
+    pw.set_config(&profile, &shouting, Some(&fov(8)), None)
+        .unwrap();
     assert_eq!(pw.load_profile(&profile).unwrap().config.len(), 2);
 
     let plan = pw.plan_deploy(&profile).await.unwrap();
@@ -3994,7 +3998,7 @@ format = "test.kv""#,
     // forgetting a file's settings puts the file back as it was, and
     // what the game had changed in it isn't read back again
     fs::write(game.join("config/game.cfg"), "[video]\nfov = 2\n").unwrap();
-    pw.set_config(&profile, &own, None).unwrap();
+    pw.set_config(&profile, &own, None, None).unwrap();
     assert_eq!(pw.load_profile(&profile).unwrap().config.len(), 1);
     pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
     assert_eq!(
@@ -4601,6 +4605,148 @@ async fn a_shared_folder_is_one_set_for_every_profile_that_includes_it() {
         "Client QOL"
     );
     assert!(pw.remove_folder(&b, "Client QOL").is_err());
+}
+
+#[tokio::test]
+async fn shared_folders_carry_their_mods_config_edits() {
+    use crate::deploy::Dest;
+    use crate::options::{Answer, Value};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let packed = tmp.path().join("mods/Fast");
+    fs::create_dir_all(packed.join("config")).unwrap();
+    fs::write(packed.join("config/fast.cfg"), "[speed]\nlevel = 1\n").unwrap();
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
+        .source(LocalFiles)
+        .deployer(AsPacked)
+        .extension(KeyValuesExtension)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "as-packed");
+    def.config = vec![toml::from_str("files = \"config/**/*.cfg\"\nformat = \"test.kv\"").unwrap()];
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(game.join("config")).unwrap();
+    fs::write(game.join("config/game.cfg"), "[video]\nfov = 5\n").unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let game = game.canonicalize().unwrap();
+    let fast: Dest = "config/fast.cfg".parse().unwrap();
+    let own: Dest = "config/game.cfg".parse().unwrap();
+    let level = |n: i64| {
+        vec![Answer::values(
+            "speed",
+            BTreeMap::from([("level".to_owned(), Value::Int(n))]),
+        )]
+    };
+    let fov = |n: i64| {
+        vec![Answer::values(
+            "video",
+            BTreeMap::from([("fov".to_owned(), Value::Int(n))]),
+        )]
+    };
+    let shown = |p: &ProfileRef| match pw.config_form(p, &fast, None).unwrap().form.pages[0].groups
+        [0]
+    .fields()[0]
+        .value
+    {
+        Value::Int(n) => n,
+        ref other => panic!("{other:?}"),
+    };
+
+    let a = pw.create_profile("my-game", "a").unwrap();
+    pw.add_mod(&a, local_spec(&packed), None, true)
+        .await
+        .unwrap();
+    pw.lock(&a, false).await.unwrap();
+    pw.set_config(&a, &fast, Some(&level(5)), None).unwrap();
+    pw.set_config(&a, &own, Some(&fov(7)), None).unwrap();
+    pw.add_folder(&a, "QOL", &["Fast".to_owned()]).unwrap();
+
+    // sharing the folder takes its mod's settings with it, not the rest
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    assert_eq!(set.config.len(), 1, "{:?}", set.config);
+    let set_file = pw.paths.sets().join(set.id.to_string()).join("set.toml");
+    assert!(fs::read_to_string(set_file).unwrap().contains("schema = 2"));
+    let stored = fs::read_to_string(pw.profile_file(&a)).unwrap();
+    assert!(!stored.contains("speed"), "{stored}");
+    assert!(stored.contains("video"), "{stored}");
+    assert_eq!(shown(&a), 5);
+
+    let b = pw.create_profile("my-game", "b").unwrap();
+    pw.include_set(&b, set.id, None).unwrap();
+    pw.lock(&b, false).await.unwrap();
+    let view = pw.config_form(&b, &fast, None).unwrap();
+    assert_eq!(view.save_to, SaveTo::Set(set.id));
+    assert_eq!(view.shared.len(), 1);
+    assert!(!view.own);
+    assert_eq!(shown(&b), 5);
+    let files = pw.config_files(&b).unwrap();
+    assert_eq!(files.iter().find(|f| f.path == fast).unwrap().sets, ["QOL"]);
+
+    // in the profile alone, it's only that profile's
+    pw.set_config(&b, &fast, Some(&level(6)), Some(SaveTo::Profile))
+        .unwrap();
+    assert_eq!((shown(&a), shown(&b)), (5, 6));
+    assert!(pw.config_form(&b, &fast, None).unwrap().shared[0].overridden);
+    // back to the file's own value is still the profile's
+    pw.set_config(&b, &fast, Some(&level(1)), Some(SaveTo::Profile))
+        .unwrap();
+    assert_eq!((shown(&a), shown(&b)), (5, 1));
+    // forgetting it goes back to the set's
+    pw.set_config(&b, &fast, None, Some(SaveTo::Profile))
+        .unwrap();
+    assert_eq!(shown(&b), 5);
+
+    // by default it goes to the set, for both, and the profile's own
+    // change to the file goes with it
+    pw.set_config(&b, &fast, Some(&level(6)), Some(SaveTo::Profile))
+        .unwrap();
+    pw.set_config(&b, &fast, Some(&level(3)), None).unwrap();
+    assert_eq!((shown(&a), shown(&b)), (3, 3));
+    assert!(!pw.config_form(&b, &fast, None).unwrap().own);
+
+    pw.apply(&pw.plan_deploy(&a).await.unwrap()).unwrap();
+    assert_eq!(
+        fs::read_to_string(game.join("config/fast.cfg")).unwrap(),
+        "[speed]\nlevel = 3\n"
+    );
+    // settings changed in game are the profile's own
+    fs::write(game.join("config/fast.cfg"), "[speed]\nlevel = 8\n").unwrap();
+    assert_eq!((shown(&a), shown(&b)), (8, 3));
+    assert_eq!(
+        pw.load_set(set.id).unwrap().unwrap().config[&fast]["speed"]["level"],
+        Value::Int(3)
+    );
+
+    // going back keeps config edits as they are: the set's aren't copied
+    // into the profile, and the profile's own stay its own
+    pw.set_config(&a, &fast, Some(&level(4)), None).unwrap();
+    pw.revert(&a).unwrap();
+    assert_eq!(shown(&a), 4);
+    let stored = fs::read_to_string(pw.profile_file(&a)).unwrap();
+    assert!(!stored.contains("speed"), "{stored}");
+    assert!(stored.contains("video"), "{stored}");
+
+    // with its mod off, the set's settings are no reason to warn
+    pw.set_enabled(&b, "Fast", false).unwrap();
+    pw.lock(&b, false).await.unwrap();
+    let plan = pw.plan_deploy(&b).await.unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+
+    // unlinked without its mods, its settings go; with them, they stay
+    pw.unlink_set(&b, set.id, false).unwrap();
+    assert!(pw.load_profile(&b).unwrap().config.is_empty());
+    pw.unlink_set(&a, set.id, true).unwrap();
+    let in_a = pw.load_profile(&a).unwrap();
+    assert_eq!(in_a.config[&fast]["speed"]["level"], Value::Int(4));
+    assert_eq!(in_a.config[&own]["video"]["fov"], Value::Int(7));
+
+    // copied in, they're the profile's own, under what it has
+    pw.copy_set(&b, set.id).unwrap();
+    assert_eq!(
+        pw.load_profile(&b).unwrap().config[&fast]["speed"]["level"],
+        Value::Int(4)
+    );
 }
 
 #[tokio::test]

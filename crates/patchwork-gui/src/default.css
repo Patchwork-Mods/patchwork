@@ -2896,6 +2896,17 @@ dialog::backdrop {
   padding: 2px 0;
 }
 
+.options-shared {
+  display: block;
+  font-size: 0.85em;
+}
+
+.options-save-to {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .options-field textarea {
   grid-column: 1 / -1;
   resize: vertical;

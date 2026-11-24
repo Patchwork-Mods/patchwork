@@ -3662,7 +3662,7 @@ mod sets;
 mod sync;
 
 pub use capture::{Captured, ToolRan};
-pub use config::{ConfigFileInfo, ConfigView};
+pub use config::{ConfigFileInfo, ConfigSet, ConfigView, SaveTo, SharedSetting};
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use lists::ListInfo;
 pub use options::{ModOptionsInfo, ModOptionsView};

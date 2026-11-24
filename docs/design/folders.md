@@ -1,7 +1,7 @@
 # Folders, shared sets and layered profiles
 
-Status (2026-11-24): step 1 (folders inside a profile) is done and step 2
-(shared sets) is in progress; the rest is a proposal. Where what gets built differs from this, the notes under
+Status (2026-11-24): steps 1 (folders inside a profile) and 2 (shared
+sets) are done; the rest is a proposal. Where what gets built differs from this, the notes under
 each step in "Order of work" say so, and those notes win.
 
 ## The problem
@@ -194,8 +194,7 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
    the GUI files a mod from the folder button on each mod (not its menu),
    and deploy history keeps folders (see "History" above).
 2. **Shared sets as linked folders**: local only, no syncing of sets.
-   *In progress*: core, CLI and GUI are done; sets' config edits are
-   left. As built:
+   *Done.* As built:
    - **Loading expands, saving splits.** `load_profile` gives the profile
      with each set's mods in its block, as a linked folder (the mods'
      `folder` is the set's id), the profile's `disabled` applied as their
@@ -241,8 +240,34 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      the folder, says it leaves the set. A synced profile can't share a
      folder (a plain error); including a set in one is the `CopySet`
      blocker, whose window fix copies it in and is done.
-   - **A set's own config edits** come after the rest; until then config
-     edits stay in the profile.
+   - **A set's own config edits** (`[config."<file>"]` in `set.toml`,
+     saved as `SET_SCHEMA` 2 only when there are any, so older builds
+     don't open and drop them). Loading merges them into the profile's
+     `config` like the mods: a later include's over an earlier one's, the
+     profile's own over all of them, setting by setting. Saving keeps as
+     the profile's own only settings that aren't what its sets give
+     (`set::own_config`), so saving a profile never changes a set's config.
+     A set's config changes only by saving to it: `set_config` takes where
+     to (`SaveTo`), by default the set whose linked folder the file's mod
+     is in (or the set that alone changes it), else the profile. Saving
+     to a set saves the whole form there and drops the profile's own
+     changes to that file, since the form showed them. Saving to the
+     profile keeps a value even when it's the file's own, if a set has it
+     otherwise. Forgetting the profile's own goes back to the sets'.
+     - Settings changed in game are read back as the profile's own.
+     - Deploying doesn't warn about a missing file that only sets change
+       (its mod can be off in this profile).
+     - Sharing a folder moves the profile's edits to its mods' files into
+       the set (if the game's set up to tell which those are). Unlinking
+       keeping the mods, copying a set in and going back with "copy"
+       make the set's edits the profile's own, under its own. Unlinking
+       without them drops them.
+     - Deploy history doesn't keep config edits, so going back leaves them
+       as they are and they don't make going back a blocker.
+     - The CLI's `settings` has `--to profile|<folder>` and says where each
+       setting comes from. The GUI's settings dialog has a "Save changes
+       in" choice and marks settings "From <set>" or "Changed here, over
+       <set>". The Config tab badges files a set changes.
    - Order: core model and expanding/splitting; editing (sets, turning a
      folder into a set, include, unlink) and the CLI; lock, deploy and
      history with their blockers; exports and the sync blocker; GUI;

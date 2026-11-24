@@ -79,6 +79,15 @@ function renderConfig() {
             f.mod ?? f.owner,
           ),
         f.edited && h("span", { class: "badge config-edited" }, f.missing ? "Not there" : "Changed"),
+        f.sets?.length > 0 &&
+          h(
+            "span",
+            {
+              class: "badge",
+              title: `Its settings are changed in the shared ${f.sets.length > 1 ? "folders" : "folder"} ${f.sets.join(", ")}, for every profile that includes ${f.sets.length > 1 ? "them" : "it"}`,
+            },
+            f.sets.join(", "),
+          ),
         f.edited &&
           f.missing &&
           h(

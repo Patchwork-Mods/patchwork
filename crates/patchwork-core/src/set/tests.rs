@@ -156,3 +156,74 @@ fn profiles_without_includes_keep_the_old_schema() {
     assert!(saved.contains("[[include]]"), "{saved}");
     assert!(saved.contains("after = \"a\""), "{saved}");
 }
+
+fn edits(pairs: &[(&str, &str, i64)]) -> crate::config::FileEdits {
+    let mut all = crate::config::FileEdits::new();
+    for (path, field, n) in pairs {
+        all.entry(path.parse().unwrap())
+            .or_default()
+            .entry("g".to_owned())
+            .or_default()
+            .insert((*field).to_owned(), crate::options::Value::Int(*n));
+    }
+    all
+}
+
+#[test]
+fn a_sets_config_is_under_the_profiles_and_saving_keeps_them_apart() {
+    let mut qol = set("QOL", &["x"]);
+    qol.config = edits(&[
+        ("a.cfg", "zoom", 2),
+        ("a.cfg", "size", 1),
+        ("b.cfg", "on", 1),
+    ]);
+    let mut ui = set("UI", &["u"]);
+    ui.config = edits(&[("A.CFG", "size", 4)]);
+    let mut p = profile(&["a"], &[(&qol, None), (&ui, None)]);
+    p.config = edits(&[("a.cfg", "zoom", 9), ("c.cfg", "own", 3)]);
+    let mut p = expanded(p, &[&qol, &ui]);
+
+    // a later set's over an earlier one's, the profile's over both; the
+    // same file spelled another way is the same file
+    assert_eq!(
+        p.config,
+        edits(&[
+            ("a.cfg", "zoom", 9),
+            ("a.cfg", "size", 4),
+            ("b.cfg", "on", 1),
+            ("c.cfg", "own", 3)
+        ])
+    );
+    let (stored, changed) = collapse(&p);
+    assert_eq!(
+        stored.config,
+        edits(&[("a.cfg", "zoom", 9), ("c.cfg", "own", 3)])
+    );
+    assert!(changed.is_empty());
+
+    // changing a set's setting in the profile is the profile's own; one
+    // that's what the sets give isn't
+    p.config
+        .get_mut(&"b.cfg".parse().unwrap())
+        .unwrap()
+        .get_mut("g")
+        .unwrap()
+        .insert("on".to_owned(), crate::options::Value::Int(0));
+    p.config.remove(&"c.cfg".parse().unwrap());
+    p.config
+        .get_mut(&"a.cfg".parse().unwrap())
+        .unwrap()
+        .get_mut("g")
+        .unwrap()
+        .insert("zoom".to_owned(), crate::options::Value::Int(2));
+    let (stored, _) = collapse(&p);
+    assert_eq!(stored.config, edits(&[("b.cfg", "on", 0)]));
+}
+
+#[test]
+fn a_set_is_saved_as_schema_1_unless_it_has_config() {
+    let mut s = set("QOL", &["x"]);
+    assert_eq!(s.saved_schema(), 1);
+    s.config = edits(&[("a.cfg", "zoom", 2)]);
+    assert_eq!(s.saved_schema(), SET_SCHEMA);
+}

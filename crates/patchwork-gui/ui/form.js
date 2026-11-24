@@ -5,7 +5,9 @@
 // core), since picks can show or hide later pages and change what can be
 // picked. Nothing's saved until the last page's Save. Nothing here knows
 // what the choices are for; it draws the form core hands it: groups of items
-// to pick, or of fields to set.
+// to pick, or of fields to set. A config file's settings can come from the
+// shared folders (sets) the profile includes, and changes can be saved in
+// one of those instead of the profile, for every profile that includes it.
 
 import { $, h } from "./dom.js";
 import { colorPicker } from "./colorpick.js";
@@ -56,6 +58,7 @@ export async function showOptions(m, options) {
   preview(null);
   $("#options-warnings").replaceChildren();
   $("#options-summary").textContent = "";
+  $("#options-save-to").hidden = true;
   $("#options-next").disabled = true;
   $("#options-back").disabled = true;
   $("#options-dialog").showModal();
@@ -71,6 +74,9 @@ export async function showConfig(file) {
     name,
     path: file.path,
     title: "Settings",
+    // where changes are saved: "profile" or a set's id; core's pick until
+    // the first load
+    to: null,
     answers: null,
     view: null,
     page: 0,
@@ -82,6 +88,7 @@ export async function showConfig(file) {
   preview(null);
   $("#options-warnings").replaceChildren();
   $("#options-summary").textContent = "";
+  $("#options-save-to").hidden = true;
   $("#options-next").disabled = true;
   $("#options-back").disabled = true;
   $("#options-dialog").showModal();
@@ -110,6 +117,7 @@ async function load(answers) {
   if (seq !== loads || cur !== open) return;
   for (const [path, src] of Object.entries(view.pictures)) cur.pictures.set(path, src);
   cur.view = view;
+  if (cur.path && cur.to == null) cur.to = view.saveTo === "profile" ? "profile" : view.saveTo.set;
   cur.answers = view.form.answers;
   cur.page = Math.max(0, Math.min(cur.page, view.form.pages.length - 1));
   render();
@@ -161,18 +169,62 @@ function render() {
   const summary = form.summary ? `${form.summary} ` : "";
   $("#options-summary").textContent =
     view.saved || open.path ? summary : `${summary}Until you save, deploys use the defaults.`;
+  renderSaveTo();
   $("#options-back").disabled = at === 0;
   // A form of one page, like a config file's, has nowhere to go back to.
   $("#options-back").hidden = pages.length <= 1;
   const last = at >= pages.length - 1;
   $("#options-next").textContent = last ? "Save" : "Next";
   $("#options-next").disabled = false;
-  $("#options-reset").hidden = !view.saved;
-  $("#options-reset").textContent = open.path ? "Undo all changes" : "Use defaults";
-  $("#options-reset").title = open.path
-    ? "Forget the settings changed in this file, and deploy it as it is"
-    : "Forget the options picked, and deploy with the defaults";
+  renderReset();
 }
+
+/** The shared set changes are saved in, if they're saved in one. */
+const savingIn = () =>
+  open.path && open.to !== "profile" ? open.view.sets.find((s) => s.id === open.to) : null;
+
+/** The Save changes in choice, for a config file when the profile includes
+ * shared folders. */
+function renderSaveTo() {
+  const { view } = open;
+  const sets = open.path ? view.sets : [];
+  $("#options-save-to").hidden = !sets.length;
+  if (!sets.length) return;
+  $("#options-save-to-select").replaceChildren(
+    h("option", { value: "profile", selected: open.to === "profile" }, "This profile only"),
+    ...sets.map((s) =>
+      h("option", { value: s.id, selected: open.to === s.id }, `${s.name} (shared folder)`),
+    ),
+  );
+  $("#options-save-to").title = savingIn()
+    ? `Saved in ${savingIn().name}, for every profile that includes it`
+    : "Saved in this profile only, over what its shared folders have";
+}
+
+/** Undo all changes, for what's saved where changes are being saved. */
+function renderReset() {
+  const { view } = open;
+  const set = savingIn();
+  $("#options-reset").hidden = open.path ? !(set ? set.edited : view.own) : !view.saved;
+  $("#options-reset").textContent = open.path ? "Undo all changes" : "Use defaults";
+  $("#options-reset").title = !open.path
+    ? "Forget the options picked, and deploy with the defaults"
+    : set
+      ? `Forget the settings ${set.name} changes in this file, for every profile that includes it`
+      : view.sets.length
+        ? "Forget the settings this profile changes in this file, keeping its shared folders'"
+        : "Forget the settings changed in this file, and deploy it as it is";
+}
+
+$("#options-save-to-select").addEventListener("change", (e) => {
+  if (!open?.view) return;
+  open.to = e.target.value;
+  renderSaveTo();
+  renderReset();
+});
+
+/** Where `set_config` saves, as core takes it. */
+const saveTo = (to) => (to === "profile" ? "profile" : { set: to });
 
 /** A group's items, as radio buttons or checkboxes. */
 function groupView(group, index) {
@@ -257,6 +309,9 @@ function fieldsView(group) {
       const key = JSON.stringify([group.id, field.id]);
       const control = fieldControl(field, set, key);
       const toggle = field.type === "toggle";
+      const shared = open.path
+        ? open.view.shared.find((s) => s.group === group.id && s.field === field.id)
+        : null;
       return h(
         "label",
         {
@@ -265,7 +320,17 @@ function fieldsView(group) {
           onfocusin: () => preview(field),
         },
         toggle && control,
-        h("span", {}, field.title),
+        h(
+          "span",
+          {},
+          field.title,
+          shared &&
+            h(
+              "small",
+              { class: "options-shared muted" },
+              shared.overridden ? `Changed here, over ${shared.set}` : `From ${shared.set}`,
+            ),
+        ),
         !toggle && control,
       );
     }),
@@ -385,9 +450,11 @@ $("#options-next").addEventListener("click", async () => {
   }
   await save(
     open.answers,
-    open.path
-      ? `Saved ${open.name}'s settings; deploy to apply them`
-      : `Saved ${open.name}'s ${open.title.toLowerCase()} options`,
+    !open.path
+      ? `Saved ${open.name}'s ${open.title.toLowerCase()} options`
+      : savingIn()
+        ? `Saved ${open.name}'s settings in ${savingIn().name}; deploy to apply them`
+        : `Saved ${open.name}'s settings; deploy to apply them`,
   );
 });
 
@@ -402,11 +469,11 @@ $("#options-reset").addEventListener("click", () =>
 
 /** Saves `answers` (or forgets them, if null) and closes the dialog. */
 async function save(answers, message) {
-  const { id, name, options, path } = open;
+  const { id, name, options, path, to } = open;
   $("#options-next").disabled = true;
   try {
     const profile = path
-      ? await run("set_config", { id, path, answers })
+      ? await run("set_config", { id, path, answers, to: saveTo(to) })
       : await run("set_mod_options", { id, name, options, answers });
     $("#options-dialog").close();
     if (state.profile?.id === id) {

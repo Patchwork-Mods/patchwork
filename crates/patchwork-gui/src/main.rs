@@ -46,7 +46,7 @@ use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{FileChoice, ModSpec, SourceFile};
 use patchwork_core::{
     ConfigFileInfo, ConfigView, DeployStatus, GameInstall, HistoryEntry, ImportOptions, ListInfo,
-    ModOptionsInfo, ModOptionsView, Patchwork,
+    ModOptionsInfo, ModOptionsView, Patchwork, SaveTo,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -1627,17 +1627,19 @@ async fn config_form(
 }
 
 /// Saves `answers` as the settings changed in the config file deployed to
-/// `path`, or with `None` forgets them.
+/// `path`, or with `None` forgets them, in the profile or the shared set
+/// `to` says (by default, the view's `saveTo`).
 #[tauri::command]
 fn set_config(
     app: State<'_, App>,
     id: String,
     path: String,
     answers: Option<Vec<Answer>>,
+    to: Option<SaveTo>,
 ) -> CmdResult<ProfileDetail> {
     let path: Dest = path.parse().map_err(msg)?;
     app.pw
-        .set_config(&profile_ref(&id)?, &path, answers.as_deref())
+        .set_config(&profile_ref(&id)?, &path, answers.as_deref(), to)
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }

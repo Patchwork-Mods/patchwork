@@ -255,6 +255,61 @@ pub fn changed(before: &Edits, now: &Edits) -> Edits {
     changed
 }
 
+/// Settings changed in config files, by where each file is deployed.
+pub type FileEdits = BTreeMap<Dest, Edits>;
+
+/// Whether `a` and `b` are the same file: config files are matched
+/// ignoring case, since mods rarely agree on it.
+pub fn same_dest(a: &Dest, b: &Dest) -> bool {
+    a.root == b.root && a.path.as_str().eq_ignore_ascii_case(b.path.as_str())
+}
+
+/// What `edits` changes in the file deployed to `path`, if anything.
+pub fn edits_in<'a>(edits: &'a FileEdits, path: &Dest) -> Option<&'a Edits> {
+    edits
+        .iter()
+        .find(|(p, _)| same_dest(p, path))
+        .map(|(_, edits)| edits)
+}
+
+/// Puts `top`'s settings over `base`'s, setting by setting; a file both
+/// have keeps `base`'s spelling.
+pub fn overlay(base: &mut FileEdits, top: &FileEdits) {
+    for (path, edits) in top {
+        let key = base
+            .keys()
+            .find(|p| same_dest(p, path))
+            .cloned()
+            .unwrap_or_else(|| path.clone());
+        let into = base.entry(key).or_default();
+        for (group, values) in edits {
+            into.entry(group.clone())
+                .or_default()
+                .extend(values.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+    }
+}
+
+/// The settings in `all` that `base` hasn't got, or has otherwise.
+pub fn beyond(all: &FileEdits, base: &FileEdits) -> FileEdits {
+    let mut left = FileEdits::new();
+    for (path, edits) in all {
+        let under = edits_in(base, path);
+        for (group, values) in edits {
+            for (id, value) in values {
+                if under.and_then(|e| e.get(group)?.get(id)) != Some(value) {
+                    left.entry(path.clone())
+                        .or_default()
+                        .entry(group.clone())
+                        .or_default()
+                        .insert(id.clone(), value.clone());
+                }
+            }
+        }
+    }
+    left
+}
+
 mod one_or_many {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

@@ -308,6 +308,11 @@ pub struct Linked {
     /// The set's mods as they were loaded, to tell whether it's changed.
     #[serde(default, rename = "mod")]
     pub(crate) mods: Vec<ProfileMod>,
+    /// The set's config edits as they were loaded, which the profile's own
+    /// are told apart from. Deploy history doesn't keep them, as it doesn't
+    /// keep the profile's.
+    #[serde(skip)]
+    pub(crate) config: crate::config::FileEdits,
     /// The set's mods left out because the profile has the same mod, by
     /// where they are in the set, so saving keeps them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

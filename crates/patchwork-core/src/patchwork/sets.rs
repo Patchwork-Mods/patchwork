@@ -9,12 +9,13 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::Patchwork;
+use crate::config::{overlay, same_dest};
 use crate::error::IoContext;
 use crate::fix::Fix;
 use crate::fsutil;
 use crate::lock::mod_key;
 use crate::profile::{Folder, Include, Linked, Profile, ProfileRef};
-use crate::set::{SET_SCHEMA, Set, unused_name};
+use crate::set::{SET_SCHEMA, Set, merge_config, own_config, unused_name};
 use crate::{Error, Result};
 
 impl Patchwork {
@@ -64,8 +65,12 @@ impl Patchwork {
 
     /// Turns one of the profile's folders into a set, which the profile
     /// then includes in its place, so other profiles can include it too.
-    /// Mods that are off stay off in this profile.
+    /// Mods that are off stay off in this profile. The settings the profile
+    /// changes in its mods' config files go with them, if the game's set up
+    /// to find which those are.
     pub fn share_folder(&self, profile: &ProfileRef, folder: &str) -> Result<Set> {
+        // First, since it can read settings changed in game back in.
+        let files = self.config_files(profile).unwrap_or_default();
         let mut loaded = self.load_profile(profile)?;
         let found = loaded.find_folder(folder)?.clone();
         if loaded.include(found.id).is_some() {
@@ -92,6 +97,17 @@ impl Patchwork {
             copy.folder = None;
             set.mods.push(copy);
         }
+        let mut own = own_config(&loaded);
+        for f in &files {
+            if f.owner
+                .as_deref()
+                .is_some_and(|o| set.mods.iter().any(|m| m.name == o))
+                && let Some(path) = own.keys().find(|p| same_dest(p, &f.path)).cloned()
+                && let Some(edits) = own.remove(&path)
+            {
+                set.config.insert(path, edits);
+            }
+        }
         loaded.folders.retain(|f| f.id != found.id);
         loaded.includes.push(Include {
             // where an empty folder goes; otherwise where its mods are
@@ -99,6 +115,7 @@ impl Patchwork {
             linked: Some(linked(&set)),
             ..Include::new(set.id)
         });
+        merge_config(&mut loaded, &own);
         self.save_set(&set)?;
         self.save_profile(profile, &loaded)?;
         Ok(set)
@@ -164,7 +181,8 @@ impl Patchwork {
     }
 
     /// Copies the set `id` into the profile as an ordinary folder of its
-    /// own, after its own mods, rather than including it.
+    /// own, after its own mods, rather than including it. Its config edits
+    /// are copied in too, under the profile's own.
     pub fn copy_set(&self, profile: &ProfileRef, id: Uuid) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
         let set = self.load_set(id)?.ok_or_else(|| no_such_set(id))?;
@@ -193,12 +211,15 @@ impl Patchwork {
             loaded.mods.push(m);
         }
         loaded.folders.push(folder);
+        let mut own = set.config;
+        overlay(&mut own, &own_config(&loaded));
+        merge_config(&mut loaded, &own);
         self.save_profile(profile, &loaded)
     }
 
-    /// Stops the profile including the set `id`. With `keep`, its mods stay
-    /// in the profile as its own, in an ordinary folder named like the
-    /// set; otherwise they go.
+    /// Stops the profile including the set `id`. With `keep`, its mods (and
+    /// config edits) stay in the profile as its own, in an ordinary folder
+    /// named like the set; otherwise they go.
     pub fn unlink_set(&self, profile: &ProfileRef, id: Uuid, keep: bool) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
         let Some(at) = loaded.includes.iter().position(|i| i.set == id) else {
@@ -207,7 +228,12 @@ impl Patchwork {
                 loaded.label()
             )));
         };
+        let own = own_config(&loaded);
         let include = loaded.includes.remove(at);
+        if !keep {
+            merge_config(&mut loaded, &own);
+        }
+        // kept, they're the profile's own once it doesn't include the set
         if keep && let Some(linked) = &include.linked {
             let folder = Folder::new(&folder_name(&loaded, &linked.folder.name));
             for m in loaded.mods.iter_mut().filter(|m| m.folder == Some(id)) {
@@ -256,9 +282,19 @@ impl Patchwork {
         Ok(Some(set))
     }
 
+    /// Saves a set whose config edits have changed, for every profile that
+    /// includes it.
+    pub(super) fn save_set_config(&self, set: &Set) -> Result<()> {
+        self.save_set(set)?;
+        for profile in self.profiles_including(set.id)? {
+            self.profile_changed(&profile, false);
+        }
+        Ok(())
+    }
+
     pub(super) fn save_set(&self, set: &Set) -> Result<()> {
         let mut set = set.clone();
-        set.schema = SET_SCHEMA;
+        set.schema = set.saved_schema();
         fsutil::write_toml(&self.set_file(set.id), &set)
     }
 
@@ -347,6 +383,7 @@ fn linked(set: &Set) -> Linked {
             name: set.name.clone(),
         },
         mods: set.mods.clone(),
+        config: set.config.clone(),
         shadowed: Vec::new(),
         renamed: Vec::new(),
     }

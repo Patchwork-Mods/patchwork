@@ -17,6 +17,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use super::{Patchwork, local};
+use crate::config::overlay;
 use crate::error::IoContext;
 use crate::ext::ExtTables;
 use crate::fix::{Blocker, Fix, SetsThen};
@@ -25,7 +26,7 @@ use crate::hash::ContentHash;
 use crate::list::ListEntry;
 use crate::lock::{Lockfile, mod_key};
 use crate::profile::{Folder, Include, Linked, Profile, ProfileMod, ProfileRef, upgrade_plugins};
-use crate::set::Set;
+use crate::set::{Set, merge_config, own_config};
 use crate::sync::dedupe_folder_names;
 use crate::{Error, Result};
 
@@ -353,6 +354,9 @@ impl Patchwork {
         sets: Option<SetsThen>,
     ) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
+        // History doesn't keep config edits, so the profile's own stay as
+        // they are, and its sets' are as they are now.
+        let mut own = own_config(&loaded);
         // each set as it is now, for those included then
         let mut now: HashMap<uuid::Uuid, Option<Set>> = HashMap::new();
         for include in &deployed.includes {
@@ -397,11 +401,18 @@ impl Patchwork {
             match (sets, set) {
                 // Its mods are as they were; split back up against the set
                 // as it was, nothing's saved to it, so it stays as it is.
-                (_, Some(_)) if !changed => includes.push(include.include(Some(then.clone()))),
-                (SetsThen::Keep, Some(_)) => includes.push(include.include(Some(then.clone()))),
+                (_, Some(set)) if !changed => includes.push(include.include(Some(Linked {
+                    config: set.config,
+                    ..then.clone()
+                }))),
+                (SetsThen::Keep, Some(set)) => includes.push(include.include(Some(Linked {
+                    config: set.config,
+                    ..then.clone()
+                }))),
                 // against the set as it is, so it's saved as it was
                 (SetsThen::Restore, Some(set)) => includes.push(include.include(Some(Linked {
                     mods: set.mods,
+                    config: set.config,
                     ..then.clone()
                 }))),
                 // gone since, so it's made again
@@ -412,7 +423,13 @@ impl Patchwork {
                     self.save_set(&set)?;
                     includes.push(include.include(Some(then.clone())));
                 }
-                (SetsThen::Copy | SetsThen::Keep, _) => {
+                (SetsThen::Copy | SetsThen::Keep, set) => {
+                    // its config edits are copied in too, under the profile's
+                    if let Some(set) = set {
+                        let mut copied = set.config;
+                        overlay(&mut copied, &own);
+                        own = copied;
+                    }
                     let folder = Folder::new(&then.folder.name);
                     for m in loaded
                         .mods
@@ -427,6 +444,7 @@ impl Patchwork {
             }
         }
         loaded.includes = includes;
+        merge_config(&mut loaded, &own);
         loaded.ext = deployed.ext;
         self.save_lock(profile, &deployed.lock)?;
         self.save_profile(profile, &loaded)

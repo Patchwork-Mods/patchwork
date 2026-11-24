@@ -9,17 +9,30 @@
 //! profile. Saving splits it back up ([`collapse`]): the profile keeps its
 //! own mods and each include's place and `disabled`, and the sets whose
 //! mods changed are saved with them.
+//!
+//! A set's config edits are merged in the same way: as loaded, a profile's
+//! `config` has its sets' settings (a later set's over an earlier one's)
+//! with its own over them, setting by setting. Saving keeps as the
+//! profile's own only the settings that aren't what its sets give, so
+//! saving a profile never changes a set's config; that's done on purpose,
+//! with [`crate::Patchwork::set_config`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::config::{FileEdits, beyond, overlay};
 use crate::lock::mod_key;
 use crate::profile::{Folder, Linked, Profile, ProfileMod};
 
-/// The schema sets are saved with.
-pub const SET_SCHEMA: u32 = 1;
+/// The newest schema of sets this build reads. Schema 2 added `config`; a
+/// set without config edits is still saved as 1 (see [`Set::saved_schema`]),
+/// so builds that would drop them don't open sets that have them.
+pub const SET_SCHEMA: u32 = 2;
+
+/// The schema a set with no config edits is saved as.
+const SCHEMA_WITHOUT_CONFIG: u32 = 1;
 
 /// A list of mods several profiles of a game can include.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -35,6 +48,10 @@ pub struct Set {
     /// folder.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
+    /// Settings the set changes in config files, as a profile's
+    /// [`config`](Profile::config) does. A profile's own win over them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub config: FileEdits,
 }
 
 impl Set {
@@ -45,8 +62,43 @@ impl Set {
             game: game.to_owned(),
             name: name.to_owned(),
             mods: Vec::new(),
+            config: BTreeMap::new(),
         }
     }
+
+    /// [`SET_SCHEMA`] if it changes config files, otherwise the schema from
+    /// before sets could.
+    pub fn saved_schema(&self) -> u32 {
+        if self.config.is_empty() {
+            SCHEMA_WITHOUT_CONFIG
+        } else {
+            SET_SCHEMA
+        }
+    }
+}
+
+/// The settings `profile`'s sets change in config files, as loaded: a
+/// later include's over an earlier one's.
+pub fn sets_config(profile: &Profile) -> FileEdits {
+    let mut config = FileEdits::new();
+    for linked in profile.includes.iter().filter_map(|i| i.linked.as_ref()) {
+        overlay(&mut config, &linked.config);
+    }
+    config
+}
+
+/// The settings `profile` (as loaded) changes in config files itself:
+/// those that aren't what its sets give them.
+pub fn own_config(profile: &Profile) -> FileEdits {
+    beyond(&profile.config, &sets_config(profile))
+}
+
+/// Sets `profile`'s config to `own` over what its sets change, as
+/// [`expand`] does.
+pub fn merge_config(profile: &mut Profile, own: &FileEdits) {
+    let mut config = sets_config(profile);
+    overlay(&mut config, own);
+    profile.config = config;
 }
 
 /// Puts the mods of the sets `profile` includes among its own, as it's
@@ -76,6 +128,7 @@ pub fn expand(profile: &mut Profile, mut set: impl FnMut(Uuid) -> Option<Set>) {
                     name: set.name.clone(),
                 },
                 mods: set.mods.clone(),
+                config: set.config.clone(),
                 shadowed: Vec::new(),
                 renamed: Vec::new(),
             };
@@ -128,6 +181,8 @@ pub fn expand(profile: &mut Profile, mut set: impl FnMut(Uuid) -> Option<Set>) {
     }
     mods.extend(last.iter().flat_map(take));
     profile.mods = mods;
+    let own = std::mem::take(&mut profile.config);
+    merge_config(profile, &own);
 }
 
 /// A name based on `name` that isn't in `taken`.
@@ -144,12 +199,14 @@ pub(crate) fn unused_name(name: &str, taken: &HashSet<String>) -> String {
 /// Splits an expanded profile (see [`expand`]) back into the profile as
 /// it's stored and, for each set whose mods have changed, its mods now.
 /// Mods in a set's linked folder are the set's, anywhere in the profile;
-/// moving one out of it moves it out of the set.
+/// moving one out of it moves it out of the set. Config edits that are
+/// what the sets give are left out; see [`own_config`].
 pub fn collapse(profile: &Profile) -> (Profile, Vec<(Uuid, Vec<ProfileMod>)>) {
     let mut stored = profile.clone();
     if profile.includes.is_empty() {
         return (stored, Vec::new());
     }
+    stored.config = own_config(profile);
     let linked: HashSet<Uuid> = profile
         .includes
         .iter()

@@ -4,11 +4,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::{Patchwork, deploy_order, not_installed};
 use crate::config::{
-    self, ConfigContext, ConfigDefs, ConfigFormat, Contents, Edits, answers, checked_edits,
+    self, ConfigContext, ConfigDefs, ConfigFormat, Contents, Edits, FileEdits, answers,
+    checked_edits, edits_in, overlay, same_dest,
 };
 use crate::deploy::{
     self, DeployContext, DeployState, DeployTarget, Dest, GameFiles, Resolved, ResolvedRoots,
@@ -22,6 +24,7 @@ use crate::hash::ContentHash;
 use crate::options::{Answer, Form, GroupKind, Page};
 use crate::profile::{Profile, ProfileRef};
 use crate::relpath::RelPath;
+use crate::set::{merge_config, own_config};
 use crate::{Error, Result, fsutil};
 
 /// A config file whose settings can be changed, from
@@ -44,11 +47,47 @@ pub struct ConfigFileInfo {
     /// in the game's folders, the only mod named like its title or file
     /// name (BepInEx names them by plugin GUID, like `com.author.name`).
     pub owner: Option<String>,
-    /// Whether the profile changes any of its settings.
+    /// Whether the profile changes any of its settings, itself or
+    /// through a set it includes.
     pub edited: bool,
+    /// The shared sets the profile includes that change its settings, by
+    /// name.
+    pub sets: Vec<String>,
     /// The profile changes its settings, but it isn't there (yet), so
     /// they aren't applied.
     pub missing: bool,
+}
+
+/// Where changes to a profile's config file settings are saved: in the
+/// profile, or in a shared set it includes, for every profile that does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SaveTo {
+    Profile,
+    Set(Uuid),
+}
+
+/// A shared set a config file's settings can be saved in, from
+/// [`ConfigView::sets`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigSet {
+    pub id: Uuid,
+    pub name: String,
+    /// Whether it changes any of the file's settings.
+    pub edited: bool,
+}
+
+/// A setting a shared set changes, from [`ConfigView::shared`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedSetting {
+    pub group: String,
+    pub field: String,
+    /// The set's name; the last to change it, if more than one does.
+    pub set: String,
+    /// The profile changes it too, so its own value is used.
+    pub overridden: bool,
 }
 
 /// A config file's settings as a frontend shows them, from
@@ -60,8 +99,19 @@ pub struct ConfigView {
     pub format: String,
     #[serde(rename = "mod")]
     pub from: Option<String>,
-    /// Whether the profile changes any of its settings.
+    /// Whether the profile changes any of its settings, itself or through
+    /// a set it includes.
     pub saved: bool,
+    /// Whether the profile changes any of its settings itself.
+    pub own: bool,
+    /// The sets the profile includes, which its settings can be saved in
+    /// instead of the profile.
+    pub sets: Vec<ConfigSet>,
+    /// Where saving puts them unless told otherwise: the set whose linked
+    /// folder the file's mod is in, or else the profile.
+    pub save_to: SaveTo,
+    /// The settings that come from the sets.
+    pub shared: Vec<SharedSetting>,
     /// One page of groups of fields. Its `answers` are only the settings
     /// that are changed.
     pub form: Form,
@@ -129,6 +179,7 @@ impl Patchwork {
                 from: base.from.clone(),
                 owner,
                 edited: edits_for(&loaded, path).is_some(),
+                sets: sets_editing(&loaded, path),
                 missing: false,
             });
         }
@@ -146,6 +197,7 @@ impl Patchwork {
                     from: None,
                     owner: owner_by_name(&loaded, path, None),
                     edited: true,
+                    sets: sets_editing(&loaded, path),
                     missing: true,
                 });
             }
@@ -170,6 +222,7 @@ impl Patchwork {
         let game = &registry.game(&loaded.game)?.value;
         let setup = self.config_setup(game)?;
         let (path, format, base, contents) = self.config_contents(&loaded, &setup, path)?;
+        let save_to = default_save_to(&loaded, &path, Some(&base), contents.title.as_deref());
         let saved = edits_for(&loaded, &path).cloned();
         let wanted = match answers {
             Some(answers) => edits_of(answers),
@@ -200,11 +253,36 @@ impl Patchwork {
             })
             .collect();
         let changed = kept.values().map(BTreeMap::len).sum::<usize>();
+        let own = own_config(&loaded);
+        let own = edits_in(&own, &path);
+        let mut shared = Vec::new();
+        for include in &loaded.includes {
+            let Some(linked) = &include.linked else {
+                continue;
+            };
+            for (group, values) in edits_in(&linked.config, &path).into_iter().flatten() {
+                for field in values.keys() {
+                    // a later set's wins
+                    shared.retain(|s: &SharedSetting| !(s.group == *group && s.field == *field));
+                    shared.push(SharedSetting {
+                        group: group.clone(),
+                        field: field.clone(),
+                        set: linked.folder.name.clone(),
+                        overridden: own
+                            .is_some_and(|o| o.get(group).is_some_and(|v| v.contains_key(field))),
+                    });
+                }
+            }
+        }
         Ok(ConfigView {
             path: path.clone(),
             format,
             from: base.from,
             saved: saved.is_some(),
+            own: own.is_some(),
+            sets: config_sets(&loaded, &path),
+            save_to,
+            shared,
             form: Form {
                 title: contents.title.unwrap_or_else(|| file_name.to_owned()),
                 pages: vec![Page {
@@ -224,39 +302,115 @@ impl Patchwork {
 
     /// Saves `answers` as the settings `profile` changes in the config file
     /// deployed to `path`, or with `None` forgets them, so it's deployed as
-    /// it is. Only settings that differ from what the file has are kept.
-    /// Values are checked against their settings first.
+    /// its sets (if any) have it. Only settings that differ from what the
+    /// file (and its sets) have are kept. Values are checked against their
+    /// settings first.
+    ///
+    /// `to` says where they're kept (by default, see [`ConfigView::save_to`]).
+    /// Saved to a shared set, they're the set's for every profile that
+    /// includes it, and the profile stops changing the file's settings
+    /// itself, since `answers` are all of them, as the profile has them.
     pub fn set_config(
         &self,
         profile: &ProfileRef,
         path: &Dest,
         answers: Option<&[Answer]>,
+        to: Option<SaveTo>,
     ) -> Result<()> {
         // So that settings changed in game don't come back afterwards.
         self.read_back_for(profile)?;
         let mut loaded = self.load_profile(profile)?;
+        let registry = self.registry();
+        let game = &registry.game(&loaded.game)?.value;
+        let mut own = own_config(&loaded);
         let Some(answers) = answers else {
-            let before = loaded.config.len();
-            loaded.config.retain(|p, _| !same_dest(p, path));
-            if loaded.config.len() != before {
-                self.save_profile(profile, &loaded)?;
+            let to = match to {
+                Some(to) => to,
+                None => self
+                    .config_setup(game)
+                    .and_then(|setup| self.config_contents(&loaded, &setup, path))
+                    .map(|(path, _, base, contents)| {
+                        default_save_to(&loaded, &path, Some(&base), contents.title.as_deref())
+                    })
+                    // one that isn't there
+                    .unwrap_or_else(|_| default_save_to(&loaded, path, None, None)),
+            };
+            match to {
+                SaveTo::Profile => {
+                    let before = own.len();
+                    own.retain(|p, _| !same_dest(p, path));
+                    if own.len() != before {
+                        merge_config(&mut loaded, &own);
+                        self.save_profile(profile, &loaded)?;
+                    }
+                }
+                SaveTo::Set(id) => {
+                    let mut set = self.included_set(&loaded, id)?;
+                    let before = set.config.len();
+                    set.config.retain(|p, _| !same_dest(p, path));
+                    if set.config.len() != before {
+                        self.save_set_config(&set)?;
+                    }
+                }
             }
             return Ok(());
         };
-        let registry = self.registry();
-        let game = &registry.game(&loaded.game)?.value;
         let setup = self.config_setup(game)?;
-        let (path, _, _, contents) = self.config_contents(&loaded, &setup, path)?;
+        let (path, _, base, contents) = self.config_contents(&loaded, &setup, path)?;
         let (kept, problems) = checked_edits(&contents, &edits_of(answers));
         if !problems.is_empty() {
             return Err(Error::invalid(problems.join("; ")));
         }
-        let edits = config::changed(&contents.values(), &kept);
-        loaded.config.retain(|p, _| !same_dest(p, &path));
-        if !edits.is_empty() {
-            loaded.config.insert(path, edits);
+        let to = to.unwrap_or_else(|| {
+            default_save_to(&loaded, &path, Some(&base), contents.title.as_deref())
+        });
+        // What it'd be without what's being saved: the file, with the sets'
+        // changes (but the one saved to) over it.
+        let mut under = FileEdits::from([(path.clone(), contents.values())]);
+        for linked in loaded.includes.iter().filter_map(|i| i.linked.as_ref()) {
+            if to != SaveTo::Set(linked.folder.id) {
+                overlay(&mut under, &linked.config);
+            }
         }
+        let edits = config::changed(&under[&path], &kept);
+        own.retain(|p, _| !same_dest(p, &path));
+        match to {
+            SaveTo::Profile => {
+                if !edits.is_empty() {
+                    own.insert(path, edits);
+                }
+            }
+            SaveTo::Set(id) => {
+                let mut set = self.included_set(&loaded, id)?;
+                set.config.retain(|p, _| !same_dest(p, &path));
+                if !edits.is_empty() {
+                    set.config.insert(path, edits);
+                }
+                self.save_set_config(&set)?;
+                if let Some(linked) = loaded
+                    .includes
+                    .iter_mut()
+                    .find(|i| i.set == id)
+                    .and_then(|i| i.linked.as_mut())
+                {
+                    linked.config = set.config;
+                }
+            }
+        }
+        merge_config(&mut loaded, &own);
         self.save_profile(profile, &loaded)
+    }
+
+    /// The set `id`, if `loaded` includes it.
+    fn included_set(&self, loaded: &Profile, id: Uuid) -> Result<crate::set::Set> {
+        if loaded.include(id).is_none_or(|i| i.linked.is_none()) {
+            return Err(Error::invalid(format!(
+                "{} doesn't include the set {id}",
+                loaded.label()
+            )));
+        }
+        self.load_set(id)?
+            .ok_or_else(|| Error::invalid(format!("there's no set with id {id}")))
     }
 
     /// Reads settings the game changed in config files deployed to
@@ -389,6 +543,7 @@ impl Patchwork {
             .join("config")
             .join(inputs.to_string());
         let all_roots = roots.roots();
+        let own = own_config(loaded);
         let mut added = Vec::new();
         for (path, edits) in &loaded.config {
             let Some(def) = setup.defs.find(path) else {
@@ -403,6 +558,9 @@ impl Patchwork {
                 Some(p) => (p.dst.clone(), p.src.clone(), p.mod_name.clone()),
                 None => match original(&all_roots, prev, path)? {
                     Some(src) => (path.clone(), src, String::new()),
+                    // Only the profile's own: a set's can be for a mod
+                    // that's off in this profile.
+                    None if edits_in(&own, path).is_none() => continue,
                     None => {
                         warnings.push(format!(
                             "{path} isn't there yet, so the settings the profile changes in it \
@@ -660,11 +818,64 @@ fn original(roots: &Roots, state: &DeployState, dest: &Dest) -> Result<Option<Pa
 /// What `loaded` changes in the file deployed to `path`, matched ignoring
 /// case, since mods rarely agree on it.
 fn edits_for<'a>(loaded: &'a Profile, path: &Dest) -> Option<&'a Edits> {
+    edits_in(&loaded.config, path)
+}
+
+/// The names of the sets `loaded` includes that change settings in `path`.
+fn sets_editing(loaded: &Profile, path: &Dest) -> Vec<String> {
     loaded
-        .config
+        .includes
         .iter()
-        .find(|(p, _)| same_dest(p, path))
-        .map(|(_, edits)| edits)
+        .filter_map(|i| i.linked.as_ref())
+        .filter(|l| edits_in(&l.config, path).is_some())
+        .map(|l| l.folder.name.clone())
+        .collect()
+}
+
+/// The sets `loaded` includes, for saving `path`'s settings in.
+fn config_sets(loaded: &Profile, path: &Dest) -> Vec<ConfigSet> {
+    loaded
+        .includes
+        .iter()
+        .filter_map(|i| i.linked.as_ref())
+        .map(|l| ConfigSet {
+            id: l.folder.id,
+            name: l.folder.name.clone(),
+            edited: edits_in(&l.config, path).is_some(),
+        })
+        .collect()
+}
+
+/// Where changes to `path`'s settings go unless said otherwise: the set
+/// whose linked folder its mod is in (the one whose copy it is, or that
+/// it's named like), as editing the folder's mods changes the set.
+/// Otherwise the profile, unless only a set changes its settings now.
+fn default_save_to(
+    loaded: &Profile,
+    path: &Dest,
+    base: Option<&Base>,
+    title: Option<&str>,
+) -> SaveTo {
+    let owner = base
+        .and_then(|b| b.from.clone())
+        .or_else(|| owner_by_name(loaded, path, title));
+    if let Some(m) = owner.as_deref().and_then(|name| loaded.find(name))
+        && loaded.is_linked(m)
+        && let Some(id) = m.folder
+    {
+        return SaveTo::Set(id);
+    }
+    if edits_in(&own_config(loaded), path).is_none()
+        && let Some(linked) = loaded
+            .includes
+            .iter()
+            .rev()
+            .filter_map(|i| i.linked.as_ref())
+            .find(|l| edits_in(&l.config, path).is_some())
+    {
+        return SaveTo::Set(linked.folder.id);
+    }
+    SaveTo::Profile
 }
 
 /// The one mod in `profile` named like the config file at `path` or its
@@ -699,10 +910,6 @@ fn owner_by_name(profile: &Profile, path: &Dest, title: Option<&str>) -> Option<
     });
     let found = matching.next()?;
     matching.next().is_none().then(|| found.name.clone())
-}
-
-fn same_dest(a: &Dest, b: &Dest) -> bool {
-    a.root == b.root && a.path.as_str().eq_ignore_ascii_case(b.path.as_str())
 }
 
 /// `answers`' values as edits; their picks mean nothing for config files.

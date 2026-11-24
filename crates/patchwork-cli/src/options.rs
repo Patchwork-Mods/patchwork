@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use patchwork_core::deploy::Dest;
 use patchwork_core::options::{Answer, Field, FieldKind, Form, ItemState, Pick, Value};
 use patchwork_core::profile::ProfileRef;
-use patchwork_core::{ConfigFileInfo, ConfigView, ModOptionsView, Patchwork};
+use patchwork_core::{ConfigFileInfo, ConfigView, ModOptionsView, Patchwork, SaveTo};
 
 use crate::common::selected;
 
@@ -197,6 +197,9 @@ pub(crate) fn print_config_file(f: &ConfigFileInfo) {
     } else if let Some(m) = &f.owner {
         about.push(format!("for {m}"));
     }
+    if !f.sets.is_empty() {
+        about.push(format!("changed in {}", f.sets.join(", ")));
+    }
     if f.missing {
         about.push("not there, so its changes aren't applied".to_owned());
     } else if f.edited {
@@ -221,10 +224,30 @@ pub(crate) fn print_config(view: &ConfigView) {
     if let Some(summary) = &form.summary {
         println!("{summary}");
     }
+    for s in &view.shared {
+        if s.overridden {
+            println!(
+                "{}/{}: changed in {}, and in this profile",
+                s.group, s.field, s.set
+            );
+        } else {
+            println!("{}/{}: from {}", s.group, s.field, s.set);
+        }
+    }
+    let to = match view.save_to {
+        SaveTo::Profile => "the profile".to_owned(),
+        SaveTo::Set(id) => view.sets.iter().find(|s| s.id == id).map_or_else(
+            || "a shared folder".to_owned(),
+            |s| format!("the shared folder {}", s.name),
+        ),
+    };
     if view.saved {
-        println!("Deploying applies the changes; `--reset` forgets them.");
+        println!("Deploying applies the changes; `--reset` forgets those in {to}.");
     } else {
         println!("Change settings with --set SETTING=VALUE; deploying applies them.");
+    }
+    if !view.sets.is_empty() {
+        println!("Changes are saved in {to}; `--to` saves them elsewhere.");
     }
     for warning in &form.warnings {
         eprintln!("warning: {warning}");
@@ -395,9 +418,15 @@ pub(crate) struct Settings {
     /// more than one group has it. Repeat for more; they're saved.
     #[arg(long = "set", value_name = "SETTING=VALUE", requires = "file")]
     sets: Vec<String>,
-    /// Forget the settings changed in the file, so it's deployed as it is.
+    /// Forget the settings changed in the file, so it's deployed as it is
+    /// (or as the shared folders the profile includes have it).
     #[arg(long, requires = "file", conflicts_with = "sets")]
     reset: bool,
+    /// Where --set and --reset save: `profile`, or a shared folder the
+    /// profile includes, by name, for every profile that includes it. By
+    /// default it's the shared folder the file's mod is in, if it's in one.
+    #[arg(long, value_name = "PROFILE|FOLDER", requires = "file")]
+    to: Option<String>,
 }
 
 /// `patchwork settings`.
@@ -407,8 +436,24 @@ pub(crate) fn settings(pw: &Patchwork, explicit: &Option<String>, args: Settings
         of,
         sets,
         reset,
+        to,
     } = args;
     let (profile, _) = selected(pw, explicit)?;
+    let to = match to.as_deref() {
+        None => None,
+        Some(to) if to.eq_ignore_ascii_case("profile") => Some(SaveTo::Profile),
+        Some(name) => {
+            let loaded = pw.load_profile(&profile)?;
+            let folder = loaded.find_folder(name)?;
+            if loaded.include(folder.id).is_none() {
+                bail!(
+                    "{} isn't a shared folder; settings go in the profile or a shared folder it includes",
+                    folder.name
+                );
+            }
+            Some(SaveTo::Set(folder.id))
+        }
+    };
     let files = pw.config_files(&profile)?;
     let Some(file) = file else {
         let shown: Vec<_> = files
@@ -425,7 +470,7 @@ pub(crate) fn settings(pw: &Patchwork, explicit: &Option<String>, args: Settings
     };
     let path = find_config_file(&files, &file)?;
     if reset {
-        pw.set_config(&profile, &path, None)?;
+        pw.set_config(&profile, &path, None, to)?;
     } else if !sets.is_empty() {
         let mut answers = pw.config_form(&profile, &path, None)?.form.answers;
         for set in &sets {
@@ -438,7 +483,7 @@ pub(crate) fn settings(pw: &Patchwork, explicit: &Option<String>, args: Settings
                 None => answers.push(Answer::values(group, [(field, value)].into())),
             }
         }
-        pw.set_config(&profile, &path, Some(&answers))?;
+        pw.set_config(&profile, &path, Some(&answers), to)?;
     }
     print_config(&pw.config_form(&profile, &path, None)?);
     Ok(())
