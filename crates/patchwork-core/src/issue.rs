@@ -95,6 +95,9 @@ pub enum IssueKind {
     /// is the [`Blocker`](crate::fix::Blocker)'s; downloading them again
     /// shows the whole of it, with what clears it.
     DownloadBlocked { title: String },
+    /// The profile includes a shared set that isn't on this machine:
+    /// removed, or the profile came from another one.
+    MissingSet { set: String },
     /// What an extension's [`Check`](crate::check::Check) found.
     Check {
         /// The check's id, `<extension>.<check>`.

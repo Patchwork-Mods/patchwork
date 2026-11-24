@@ -19,11 +19,13 @@ use serde::{Deserialize, Serialize};
 use super::{Patchwork, local};
 use crate::error::IoContext;
 use crate::ext::ExtTables;
+use crate::fix::{Blocker, Fix, SetsThen};
 use crate::fsutil;
 use crate::hash::ContentHash;
 use crate::list::ListEntry;
 use crate::lock::{Lockfile, mod_key};
-use crate::profile::{Folder, Profile, ProfileMod, ProfileRef, upgrade_plugins};
+use crate::profile::{Folder, Include, Linked, Profile, ProfileMod, ProfileRef, upgrade_plugins};
+use crate::set::Set;
 use crate::sync::dedupe_folder_names;
 use crate::{Error, Result};
 
@@ -40,6 +42,11 @@ pub(super) struct Deployed {
     /// going back. Left out by versions from before there were folders.
     #[serde(default, rename = "folder", skip_serializing_if = "Vec::is_empty")]
     folders: Vec<Folder>,
+    /// The shared sets the profile included, each as it was then, so going
+    /// back can tell whether it's changed since. Its mods are in `mods`,
+    /// like the profile's own.
+    #[serde(default, rename = "include", skip_serializing_if = "Vec::is_empty")]
+    includes: Vec<DeployedInclude>,
     #[serde(default, rename = "mod")]
     mods: Vec<ProfileMod>,
     /// Saved before profile schema 3, which moved it into `ext`.
@@ -51,7 +58,56 @@ pub(super) struct Deployed {
     lock: Lockfile,
 }
 
+/// An [`Include`] in a [`Deployed`], with the set as it was then (`None`
+/// if it couldn't be found).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeployedInclude {
+    set: uuid::Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    after: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    disabled: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    linked: Option<Linked>,
+}
+
+impl DeployedInclude {
+    fn of(include: Include) -> Self {
+        Self {
+            set: include.set,
+            after: include.after,
+            disabled: include.disabled,
+            linked: include.linked,
+        }
+    }
+
+    fn include(&self, linked: Option<Linked>) -> Include {
+        Include {
+            after: self.after.clone(),
+            disabled: self.disabled.clone(),
+            linked,
+            ..Include::new(self.set)
+        }
+    }
+}
+
 impl Deployed {
+    fn of(loaded: Profile, lock: Lockfile, deployed_at: Option<Timestamp>) -> Self {
+        Self {
+            deployed_at,
+            folders: loaded.folders,
+            includes: loaded
+                .includes
+                .into_iter()
+                .map(DeployedInclude::of)
+                .collect(),
+            mods: loaded.mods,
+            plugins: Vec::new(),
+            ext: loaded.ext,
+            lock,
+        }
+    }
+
     /// Whether the two would deploy the same thing; when they happened
     /// doesn't matter, nor which folders the mods are in (only how the list
     /// is shown, like hidden tags). Folders' places in the load order do
@@ -156,14 +212,7 @@ impl Patchwork {
             return Ok(());
         };
         let loaded = self.load_profile(profile)?;
-        let deployed = Deployed {
-            deployed_at: Some(Timestamp::now()),
-            folders: loaded.folders,
-            mods: loaded.mods,
-            plugins: Vec::new(),
-            ext: loaded.ext,
-            lock,
-        };
+        let deployed = Deployed::of(loaded, lock, Some(Timestamp::now()));
         fsutil::write_toml(&self.deployed_file(profile), &deployed)?;
 
         let numbers = self.history_numbers(profile)?;
@@ -194,14 +243,7 @@ impl Patchwork {
             return Ok(None);
         };
         let loaded = self.load_profile(profile)?;
-        Ok(Some(Deployed {
-            deployed_at: None,
-            folders: loaded.folders,
-            mods: loaded.mods,
-            plugins: Vec::new(),
-            ext: loaded.ext,
-            lock,
-        }))
+        Ok(Some(Deployed::of(loaded, lock, None)))
     }
 
     /// Whether the profile's mods or their locked versions have changed
@@ -221,13 +263,34 @@ impl Patchwork {
     /// Puts the profile's mods and lockfile back how they were when it was
     /// last deployed, undoing everything done to it since. Nothing in the
     /// game changes; the profile just matches what's deployed again.
+    ///
+    /// If a shared set the profile included then has changed since, it's
+    /// a blocker whose fixes say what to do with it; see
+    /// [`Patchwork::go_back`].
     pub fn revert(&self, profile: &ProfileRef) -> Result<()> {
-        let deployed = self.load_deployed(profile)?.ok_or_else(|| {
-            Error::invalid(format!(
-                "{profile} hasn't been deployed, so there's nothing to revert to"
-            ))
-        })?;
-        self.restore(profile, deployed)
+        self.go_back(profile, None, None)
+    }
+
+    /// Goes back to the profile's last deploy (`number` `None`, like
+    /// [`Patchwork::revert`]) or deploy `number` of its history (like
+    /// [`Patchwork::rollback`]). The shared sets it included then that have
+    /// changed since are done with as `sets` says; with `None`, that's a
+    /// blocker if there are any.
+    pub fn go_back(
+        &self,
+        profile: &ProfileRef,
+        number: Option<u32>,
+        sets: Option<SetsThen>,
+    ) -> Result<()> {
+        let then = match number {
+            Some(number) => self.history_entry(profile, number)?,
+            None => self.load_deployed(profile)?.ok_or_else(|| {
+                Error::invalid(format!(
+                    "{profile} hasn't been deployed, so there's nothing to revert to"
+                ))
+            })?,
+        };
+        self.restore(profile, then, number, sets)
     }
 
     /// The deploys kept in the profile's history, oldest first.
@@ -260,8 +323,7 @@ impl Patchwork {
     /// `number` of its [`Patchwork::history`]. Like [`Patchwork::revert`],
     /// nothing in the game changes until it's deployed.
     pub fn rollback(&self, profile: &ProfileRef, number: u32) -> Result<()> {
-        let then = self.history_entry(profile, number)?;
-        self.restore(profile, then)
+        self.go_back(profile, Some(number), None)
     }
 
     /// What [`Patchwork::rollback`] to deploy `number` would change.
@@ -283,14 +345,88 @@ impl Patchwork {
         }
     }
 
-    fn restore(&self, profile: &ProfileRef, deployed: Deployed) -> Result<()> {
+    fn restore(
+        &self,
+        profile: &ProfileRef,
+        deployed: Deployed,
+        number: Option<u32>,
+        sets: Option<SetsThen>,
+    ) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
-        loaded.mods = refile(&loaded.mods, deployed.mods);
+        // each set as it is now, for those included then
+        let mut now: HashMap<uuid::Uuid, Option<Set>> = HashMap::new();
+        for include in &deployed.includes {
+            now.insert(include.set, self.load_set(include.set)?);
+        }
+        let changed: Vec<&Linked> = deployed
+            .includes
+            .iter()
+            .filter_map(|i| {
+                let then = i.linked.as_ref()?;
+                let same = now[&i.set].as_ref().is_some_and(|s| s.mods == then.mods);
+                (!same).then_some(then)
+            })
+            .collect();
+        let sets = match sets {
+            Some(sets) => sets,
+            None if changed.is_empty() => SetsThen::Keep,
+            None => return Err(sets_changed(&loaded, &changed, number)),
+        };
+
+        let linked: HashSet<uuid::Uuid> = loaded
+            .includes
+            .iter()
+            .map(|i| i.set)
+            .chain(deployed.includes.iter().map(|i| i.set))
+            .collect();
+        loaded.mods = refile(&loaded.mods, deployed.mods, &linked);
         loaded.folders = restored_folders(
             std::mem::take(&mut loaded.folders),
             deployed.folders,
             &loaded.mods,
         );
+        let mut includes = Vec::new();
+        for include in &deployed.includes {
+            let Some(then) = &include.linked else {
+                // missing then, so as it was
+                includes.push(include.include(None));
+                continue;
+            };
+            let set = now.remove(&include.set).flatten();
+            let changed = set.as_ref().is_none_or(|s| s.mods != then.mods);
+            match (sets, set) {
+                // Its mods are as they were; split back up against the set
+                // as it was, nothing's saved to it, so it stays as it is.
+                (_, Some(_)) if !changed => includes.push(include.include(Some(then.clone()))),
+                (SetsThen::Keep, Some(_)) => includes.push(include.include(Some(then.clone()))),
+                // against the set as it is, so it's saved as it was
+                (SetsThen::Restore, Some(set)) => includes.push(include.include(Some(Linked {
+                    mods: set.mods,
+                    ..then.clone()
+                }))),
+                // gone since, so it's made again
+                (SetsThen::Restore, None) => {
+                    let mut set = Set::new(&loaded.game, &then.folder.name);
+                    set.id = include.set;
+                    set.mods = then.mods.clone();
+                    self.save_set(&set)?;
+                    includes.push(include.include(Some(then.clone())));
+                }
+                (SetsThen::Copy | SetsThen::Keep, _) => {
+                    let folder = Folder::new(&then.folder.name);
+                    for m in loaded
+                        .mods
+                        .iter_mut()
+                        .filter(|m| m.folder == Some(include.set))
+                    {
+                        m.folder = Some(folder.id);
+                    }
+                    loaded.folders.push(folder);
+                    loaded.folders = dedupe_folder_names(std::mem::take(&mut loaded.folders));
+                }
+            }
+        }
+        loaded.includes = includes;
         loaded.ext = deployed.ext;
         self.save_lock(profile, &deployed.lock)?;
         self.save_profile(profile, &loaded)
@@ -470,9 +606,18 @@ fn same_but_folder(a: &ProfileMod, b: &ProfileMod) -> bool {
 /// mods together can: the deploy's filing was in that order. Mods that
 /// have kept their place since are seen to first, so a mod that moved into
 /// a folder is the one taken back out of it.
-fn refile(now: &[ProfileMod], then: Vec<ProfileMod>) -> Vec<ProfileMod> {
+///
+/// Mods in a set's linked folder (one of `linked`), then or now, are left
+/// as they were then: which folder they're in is which set they're in.
+fn refile(
+    now: &[ProfileMod],
+    then: Vec<ProfileMod>,
+    linked: &HashSet<uuid::Uuid>,
+) -> Vec<ProfileMod> {
+    let is_linked = |m: &ProfileMod| m.folder.is_some_and(|f| linked.contains(&f));
     let filed: HashMap<(&str, &str), Option<uuid::Uuid>> = now
         .iter()
+        .filter(|m| !is_linked(m))
         .map(|m| ((m.source.as_str(), m.id.as_str()), m.folder))
         .collect();
     let in_order = |mods: &[ProfileMod]| {
@@ -489,6 +634,9 @@ fn refile(now: &[ProfileMod], then: Vec<ProfileMod>) -> Vec<ProfileMod> {
     let unmoved = kept_places(now, &mods);
     let (first, moved): (Vec<usize>, Vec<usize>) = (0..mods.len()).partition(|&i| unmoved[i]);
     for i in first.into_iter().chain(moved) {
+        if is_linked(&mods[i]) {
+            continue;
+        }
         let key = (mods[i].source.as_str(), mods[i].id.as_str());
         let Some(&folder) = filed.get(&key) else {
             continue;
@@ -609,4 +757,42 @@ fn toml_eq<T: Serialize>(a: &T, b: &T) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
+}
+
+/// The blocker for going back to a deploy (`number`, or the last one) of
+/// `profile` when the shared sets `changed` (as they were then) have
+/// changed since.
+fn sets_changed(profile: &Profile, changed: &[&Linked], number: Option<u32>) -> Error {
+    let names: Vec<&str> = changed.iter().map(|l| l.folder.name.as_str()).collect();
+    let names = names.join(", ");
+    let deploy = match number {
+        Some(n) => format!("deploy #{n}"),
+        None => "the last deploy".to_owned(),
+    };
+    let (it, they) = if changed.len() == 1 {
+        ("set", "it")
+    } else {
+        ("sets", "them")
+    };
+    let fixes = [SetsThen::Restore, SetsThen::Copy, SetsThen::Keep]
+        .into_iter()
+        .map(|sets| Fix::GoBack { number, sets })
+        .collect();
+    Error::blocked_by(
+        format!(
+            "the shared {it} {names} that {} included at {deploy} changed since",
+            profile.label()
+        ),
+        Blocker::with_fixes(
+            format!("Shared {it} changed since {deploy}"),
+            format!(
+                "{names} changed since {deploy}. Putting {they} back as {they} were changes \
+                 {they} for every profile that includes {they}. Copying {they} in as {they} \
+                 were makes ordinary folders of {}'s own instead, and keeping {they} as \
+                 {they} are goes back for everything else.",
+                profile.label()
+            ),
+            fixes,
+        ),
+    )
 }

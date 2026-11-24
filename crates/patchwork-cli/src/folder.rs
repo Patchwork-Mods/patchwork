@@ -37,10 +37,10 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
     let (profile, loaded) = selected(pw, explicit)?;
     match command {
         FolderCommand::List => {
-            if loaded.folders.is_empty() {
+            if loaded.all_folders().next().is_none() {
                 println!("{} has no folders", loaded.label());
             }
-            for f in &loaded.folders {
+            for f in loaded.all_folders() {
                 let mods: Vec<_> = loaded
                     .mods
                     .iter()
@@ -52,7 +52,12 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                 } else {
                     String::new()
                 };
-                println!("{} ({} mods{off})", f.name, mods.len());
+                let shared = if loaded.include(f.id).is_some() {
+                    ", a shared set"
+                } else {
+                    ""
+                };
+                println!("{} ({} mods{off}{shared})", f.name, mods.len());
                 for m in mods {
                     println!("  {}", m.name);
                 }

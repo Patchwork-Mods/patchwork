@@ -4500,3 +4500,266 @@ fn folders_keep_their_mods_together() {
     assert_eq!(names(), ["d", "e", "a", "b", "c"]);
     assert!(pw.remove_folder(&profile, "Client qol").is_err());
 }
+
+/// A [`Versioned`] game with two profiles, `a` with mods `a`, `b` and `c`,
+/// and `b` with mod `d`.
+async fn two_profiles(tmp: &Path) -> (Patchwork, ProfileRef, ProfileRef) {
+    let dir = tmp.join("mods");
+    fs::create_dir_all(&dir).unwrap();
+    let source = std::sync::Arc::new(Versioned {
+        dir,
+        version: std::sync::Mutex::new("1.0".to_owned()),
+    });
+    let pw = Patchwork::builder(Paths::rooted(tmp))
+        .source(SharedSource(source))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    let spec = |id: &str| ModSpec {
+        source: "versioned".to_owned(),
+        id: id.to_owned(),
+        version: None,
+    };
+    let a = pw.create_profile("my-game", "a").unwrap();
+    for id in ["a", "b", "c"] {
+        pw.add_mod(&a, spec(id), None, true).await.unwrap();
+    }
+    let b = pw.create_profile("my-game", "b").unwrap();
+    pw.add_mod(&b, spec("d"), None, true).await.unwrap();
+    (pw, a, b)
+}
+
+fn mod_names(pw: &Patchwork, profile: &ProfileRef) -> Vec<String> {
+    let loaded = pw.load_profile(profile).unwrap();
+    loaded.mods.iter().map(|m| m.name.clone()).collect()
+}
+
+#[tokio::test]
+async fn a_shared_folder_is_one_set_for_every_profile_that_includes_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    pw.add_folder(&a, "QOL", &["b".to_owned(), "c".to_owned()])
+        .unwrap();
+    pw.set_enabled(&a, "b", false).unwrap();
+    // saved as before there were sets until one's included
+    let file = || fs::read_to_string(pw.profile_file(&a)).unwrap();
+    assert!(file().contains("schema = 3"), "{}", file());
+
+    let set = pw.share_folder(&a, "qol").unwrap();
+    assert_eq!(set.name, "QOL");
+    assert!(file().contains("schema = 4"), "{}", file());
+    assert!(file().contains("[[include]]"), "{}", file());
+    let loaded = pw.load_profile(&a).unwrap();
+    assert_eq!(mod_names(&pw, &a), ["a", "b", "c"]);
+    assert!(loaded.folders.is_empty());
+    let b_mod = loaded.find("b").unwrap();
+    assert_eq!(loaded.folder_of(b_mod).unwrap().name, "QOL");
+    assert!(loaded.is_linked(b_mod));
+    assert!(!b_mod.enabled, "still off in the profile that had it off");
+    assert_eq!(pw.find_set("my-game", "qol").unwrap().mods.len(), 2);
+
+    pw.include_set(&b, set.id, None).unwrap();
+    assert_eq!(mod_names(&pw, &b), ["d", "b", "c"]);
+    assert!(pw.load_profile(&b).unwrap().find("b").unwrap().enabled);
+    assert_eq!(pw.profiles_including(set.id).unwrap().len(), 2);
+    // locked with the set's mods
+    let lock = pw.lock(&b, false).await.unwrap();
+    let mut locked: Vec<&str> = lock.mods.iter().map(|m| m.name.as_str()).collect();
+    locked.sort();
+    assert_eq!(locked, ["b", "c", "d"]);
+
+    // turning one off is only for that profile; anything else is the set's
+    pw.set_enabled(&b, "c", false).unwrap();
+    pw.set_priority(&b, "c", 3).unwrap();
+    let in_a = pw.load_profile(&a).unwrap();
+    assert!(in_a.find("c").unwrap().enabled);
+    assert_eq!(in_a.find("c").unwrap().priority, 3);
+
+    // filing a mod in the linked folder puts it in the set, for both
+    pw.set_mod_folder(&b, "d", Some("QOL")).unwrap();
+    assert_eq!(mod_names(&pw, &a), ["a", "b", "c", "d"]);
+    assert_eq!(mod_names(&pw, &b), ["b", "c", "d"]);
+
+    // renaming the linked folder renames the set; removing it isn't how
+    pw.rename_folder(&b, "QOL", "Client QOL").unwrap();
+    let in_a = pw.load_profile(&a).unwrap();
+    assert_eq!(
+        in_a.folder_of(in_a.find("b").unwrap()).unwrap().name,
+        "Client QOL"
+    );
+    assert!(pw.remove_folder(&b, "Client QOL").is_err());
+}
+
+#[tokio::test]
+async fn a_set_is_unlinked_before_it_is_removed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    pw.include_set(&b, set.id, None).unwrap();
+    assert!(pw.remove_set(set.id).is_err());
+    // keeping a copy as the profile's own folder
+    pw.unlink_set(&a, set.id, true).unwrap();
+    let loaded = pw.load_profile(&a).unwrap();
+    assert_eq!(mod_names(&pw, &a), ["a", "b", "c"]);
+    let kept = loaded.find("b").unwrap();
+    assert!(!loaded.is_linked(kept));
+    assert_eq!(loaded.folder_of(kept).unwrap().name, "QOL");
+    assert!(
+        fs::read_to_string(pw.profile_file(&a))
+            .unwrap()
+            .contains("schema = 3")
+    );
+    // or not
+    pw.unlink_set(&b, set.id, false).unwrap();
+    assert_eq!(mod_names(&pw, &b), ["d"]);
+    pw.remove_set(set.id).unwrap();
+    assert!(pw.sets("my-game").unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_set_and_a_profile_with_the_same_mod_lock_it_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    pw.add_folder(&a, "QOL", &["a".to_owned(), "b".to_owned()])
+        .unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    pw.add_mod(
+        &b,
+        ModSpec {
+            source: "versioned".to_owned(),
+            id: "a".to_owned(),
+            version: None,
+        },
+        None,
+        true,
+    )
+    .await
+    .unwrap();
+    pw.include_set(&b, set.id, Some("d")).unwrap();
+    // the profile's own `a` wins
+    assert_eq!(mod_names(&pw, &b), ["d", "b", "a"]);
+    let loaded = pw.load_profile(&b).unwrap();
+    assert!(!loaded.is_linked(loaded.find("a").unwrap()));
+    let lock = pw.lock(&b, false).await.unwrap();
+    assert_eq!(lock.mods.len(), 3);
+    // and the set keeps its own
+    pw.set_enabled(&b, "b", false).unwrap();
+    assert_eq!(pw.find_set("my-game", "QOL").unwrap().mods.len(), 2);
+}
+
+#[tokio::test]
+async fn synced_profiles_copy_sets_in_rather_than_including_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+
+    // one that includes a set can't start syncing
+    let err = pw.start_sync(&a).unwrap_err();
+    let Some(crate::fix::Fix::UnlinkSets { sets, names }) = err.fix() else {
+        panic!("{err:?}");
+    };
+    assert_eq!(
+        (sets, names),
+        (vec![set.id.to_string()], vec!["QOL".to_owned()])
+    );
+
+    // and a synced one can't include one, but can copy it in
+    pw.start_sync(&b).unwrap();
+    let err = pw.include_set(&b, set.id, None).unwrap_err();
+    assert!(
+        matches!(err.fix(), Some(crate::fix::Fix::CopySet { .. })),
+        "{err:?}"
+    );
+    pw.copy_set(&b, set.id).unwrap();
+    let loaded = pw.load_profile(&b).unwrap();
+    assert!(loaded.includes.is_empty());
+    let copied = loaded.find("b").unwrap();
+    assert_eq!(loaded.folder_of(copied).unwrap().name, "QOL");
+    assert!(!loaded.is_linked(copied));
+    pw.sync_entries(&b).unwrap();
+}
+
+#[tokio::test]
+async fn going_back_asks_what_to_do_with_sets_changed_since() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    pw.include_set(&b, set.id, None).unwrap();
+    pw.apply(&pw.plan_deploy(&a).await.unwrap()).unwrap();
+    assert!(!pw.has_changes(&a).unwrap());
+
+    // changed from the other profile
+    pw.set_priority(&b, "b", 3).unwrap();
+    assert!(pw.has_changes(&a).unwrap());
+    let err = pw.revert(&a).unwrap_err();
+    let fixes = err.blocker().unwrap().fixes;
+    assert_eq!(fixes.len(), 3, "{fixes:?}");
+    assert_eq!(
+        fixes[0],
+        crate::fix::Fix::GoBack {
+            number: None,
+            sets: crate::fix::SetsThen::Restore
+        }
+    );
+    let priority = |p: &ProfileRef| {
+        let loaded = pw.load_profile(p).unwrap();
+        let m = loaded.find("b").unwrap();
+        (m.priority, loaded.is_linked(m))
+    };
+
+    // keeping it as it is
+    pw.set_enabled(&a, "c", false).unwrap();
+    pw.go_back(&a, None, Some(crate::fix::SetsThen::Keep))
+        .unwrap();
+    assert!(pw.load_profile(&a).unwrap().find("c").unwrap().enabled);
+    assert_eq!(priority(&a), (3, true));
+
+    // putting it back, for both
+    pw.go_back(&a, None, Some(crate::fix::SetsThen::Restore))
+        .unwrap();
+    assert_eq!(priority(&a), (0, true));
+    assert_eq!(priority(&b), (0, true));
+    assert!(!pw.has_changes(&a).unwrap());
+
+    // copying it in as it was
+    pw.set_priority(&b, "b", 5).unwrap();
+    pw.go_back(&a, None, Some(crate::fix::SetsThen::Copy))
+        .unwrap();
+    assert_eq!(priority(&a), (0, false));
+    assert_eq!(priority(&b), (5, true));
+    assert!(pw.load_profile(&a).unwrap().includes.is_empty());
+    assert_eq!(
+        pw.profiles_including(set.id).unwrap(),
+        std::slice::from_ref(&b)
+    );
+}
+
+#[tokio::test]
+async fn a_missing_set_is_an_issue_until_its_include_goes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, _) = two_profiles(tmp.path()).await;
+    pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    fs::remove_dir_all(pw.paths().sets().join(set.id.to_string())).unwrap();
+    assert_eq!(mod_names(&pw, &a), ["a", "c"]);
+    let issues = pw.issues(&a).unwrap();
+    let missing = issues
+        .iter()
+        .find(|i| matches!(i.kind, crate::issue::IssueKind::MissingSet { .. }))
+        .unwrap();
+    let Some(crate::fix::Fix::ForgetSet { set: id }) = &missing.fix else {
+        panic!("{missing:?}");
+    };
+    // kept until then, in case it comes back
+    pw.set_enabled(&a, "c", false).unwrap();
+    assert_eq!(pw.load_profile(&a).unwrap().includes.len(), 1);
+    pw.unlink_set(&a, id.parse().unwrap(), false).unwrap();
+    assert!(pw.load_profile(&a).unwrap().includes.is_empty());
+}

@@ -27,10 +27,14 @@ impl Patchwork {
     }
 
     /// Renames the folder `folder` names (see [`Profile::find_folder`]).
+    /// A linked folder's set is renamed, for every profile that includes it.
     pub fn rename_folder(&self, profile: &ProfileRef, folder: &str, name: &str) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
         let id = loaded.find_folder(folder)?.id;
         let name = folder_name(&loaded, name, Some(id))?;
+        if loaded.include(id).is_some() {
+            return self.rename_set(id, &name);
+        }
         let f = loaded.folders.iter_mut().find(|f| f.id == id);
         f.expect("just found").name = name;
         self.save_profile(profile, &loaded)
@@ -39,7 +43,14 @@ impl Patchwork {
     /// Removes a folder. Its mods stay where they are, in no folder.
     pub fn remove_folder(&self, profile: &ProfileRef, folder: &str) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
-        let id = loaded.find_folder(folder)?.id;
+        let found = loaded.find_folder(folder)?;
+        let id = found.id;
+        if loaded.include(id).is_some() {
+            return Err(Error::invalid(format!(
+                "{} is a shared set; unlink it instead",
+                found.name
+            )));
+        }
         loaded.folders.retain(|f| f.id != id);
         for m in loaded.mods.iter_mut().filter(|m| m.folder == Some(id)) {
             m.folder = None;
@@ -104,8 +115,7 @@ fn folder_name(profile: &Profile, name: &str, except: Option<Uuid>) -> Result<St
         return Err(Error::invalid("a folder needs a name"));
     }
     let taken = profile
-        .folders
-        .iter()
+        .all_folders()
         .any(|f| Some(f.id) != except && f.name.eq_ignore_ascii_case(name));
     if taken {
         return Err(Error::invalid(format!(

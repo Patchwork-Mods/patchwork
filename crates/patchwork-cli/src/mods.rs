@@ -125,7 +125,10 @@ pub(crate) fn print_mods<'a>(
         };
         let folder = profile
             .folder_of(m)
-            .map(|f| format!("  in {}", f.name))
+            .map(|f| match profile.include(f.id) {
+                Some(_) => format!("  in {} (shared)", f.name),
+                None => format!("  in {}", f.name),
+            })
             .unwrap_or_default();
         println!(
             "{:>width$}. [{mark}] {}  ({}:{}{version}){priority}{folder}",

@@ -5,8 +5,18 @@
 // Revert button undoes the rollback like any other change.
 
 import { $, h } from "./dom.js";
-import { run, state, status } from "./state.js";
+import { invokeResolving, run, state, status, windowFixes } from "./state.js";
 import { showProfile } from "./profile.js";
+
+// Going back when shared sets have changed since: the blocker's fixes are
+// the choices, and each goes back with it rather than trying again.
+windowFixes.goBack = async (fix, id) => {
+  const done =
+    fix.number == null
+      ? await invokeResolving("revert_profile", { id, sets: fix.sets })
+      : await invokeResolving("rollback_profile", { id, number: fix.number, sets: fix.sets });
+  return { done };
+};
 
 const when = (at) =>
   at

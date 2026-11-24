@@ -17,8 +17,13 @@ use crate::list::ListEntry;
 /// directory, `<game>/<name>`. Schema 3 moved the plugin load order
 /// (`[[plugin]]`) and mods' FOMOD picks (`[[mod.fomod]]`) into extensions'
 /// state, so builds that would drop extensions' state don't open profiles
-/// that have it.
-pub const PROFILE_SCHEMA: u32 = 3;
+/// that have it. Schema 4 added `[[include]]`s of shared sets; a profile
+/// that doesn't include one is still saved as 3 (see [`Profile::saved_schema`]).
+pub const PROFILE_SCHEMA: u32 = 4;
+
+/// The schema a profile with no includes is saved as, so builds from
+/// before sets still open it.
+pub const SCHEMA_WITHOUT_INCLUDES: u32 = 3;
 
 /// Where schema 2's plugin load order went: the Bethesda extension's
 /// `plugins` list.
@@ -56,6 +61,11 @@ pub struct Profile {
     /// order like a mod does.
     #[serde(default, rename = "folder", skip_serializing_if = "Vec::is_empty")]
     pub folders: Vec<Folder>,
+    /// The shared sets (see [`crate::set`]) the profile includes. As
+    /// loaded, their mods are in `mods` as linked folders; see
+    /// [`crate::set::expand`].
+    #[serde(default, rename = "include", skip_serializing_if = "Vec::is_empty")]
+    pub includes: Vec<Include>,
     /// In load order: later mods win when two provide the same file.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
@@ -81,6 +91,7 @@ impl Profile {
             hidden_tags: Vec::new(),
             env: BTreeMap::new(),
             folders: Vec::new(),
+            includes: Vec::new(),
             mods: Vec::new(),
             ext: ExtTables::new(),
             config: BTreeMap::new(),
@@ -104,10 +115,30 @@ impl Profile {
         self.mods.iter_mut().find(|m| m.name == name)
     }
 
-    /// The folder `query` names, by name (ignoring case) or by id.
+    /// The schema the profile is saved as: [`PROFILE_SCHEMA`] if it
+    /// includes a set, otherwise the one from before there were sets.
+    pub fn saved_schema(&self) -> u32 {
+        if self.includes.is_empty() {
+            SCHEMA_WITHOUT_INCLUDES
+        } else {
+            PROFILE_SCHEMA
+        }
+    }
+
+    /// The profile's own folders, then the linked folders of the sets it
+    /// includes (those that could be found).
+    pub fn all_folders(&self) -> impl Iterator<Item = &Folder> {
+        self.folders.iter().chain(
+            self.includes
+                .iter()
+                .filter_map(|i| Some(&i.linked.as_ref()?.folder)),
+        )
+    }
+
+    /// The folder `query` names, by name (ignoring case) or by id; a
+    /// linked one too.
     pub fn find_folder(&self, query: &str) -> Result<&Folder, Error> {
-        self.folders
-            .iter()
+        self.all_folders()
             .find(|f| f.name.eq_ignore_ascii_case(query) || f.id.to_string() == query)
             .ok_or_else(|| no_such_folder(&self.label(), query))
     }
@@ -116,7 +147,18 @@ impl Profile {
     /// the profile doesn't have the folder it names (see [`ProfileMod::folder`]).
     pub fn folder_of(&self, m: &ProfileMod) -> Option<&Folder> {
         let id = m.folder?;
-        self.folders.iter().find(|f| f.id == id)
+        self.all_folders().find(|f| f.id == id)
+    }
+
+    /// The include of the set whose linked folder is `id`, if it's one.
+    pub fn include(&self, id: Uuid) -> Option<&Include> {
+        self.includes.iter().find(|i| i.set == id)
+    }
+
+    /// Whether `m` comes from a set the profile includes, rather than
+    /// being the profile's own.
+    pub fn is_linked(&self, m: &ProfileMod) -> bool {
+        m.folder.is_some_and(|id| self.include(id).is_some())
     }
 
     /// Puts each folder's mods next to each other, where the folder's
@@ -170,6 +212,8 @@ struct ProfileFile {
     env: BTreeMap<String, String>,
     #[serde(default, rename = "folder")]
     folders: Vec<Folder>,
+    #[serde(default, rename = "include")]
+    includes: Vec<Include>,
     #[serde(default, rename = "mod")]
     mods: Vec<ProfileMod>,
     #[serde(default)]
@@ -193,6 +237,7 @@ impl From<ProfileFile> for Profile {
             hidden_tags: file.hidden_tags,
             env: file.env,
             folders: file.folders,
+            includes: file.includes,
             mods: file.mods,
             ext,
             config: file.config,
@@ -219,6 +264,58 @@ impl Folder {
             name: name.to_owned(),
         }
     }
+}
+
+/// A shared set a profile includes; see [`Profile::includes`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Include {
+    /// The set's id.
+    pub set: Uuid,
+    /// The profile's own mod the set's mods come after; `None` for before
+    /// all of them. One that names a mod the profile doesn't have puts
+    /// them last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    /// The set's mods (by their names in the set) that are off in this
+    /// profile. It's the only thing a profile changes about a set for
+    /// itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
+    /// The set as it was loaded, `None` if it couldn't be found. Never
+    /// saved; see [`crate::set::expand`].
+    #[serde(skip)]
+    pub linked: Option<Linked>,
+}
+
+impl Include {
+    pub fn new(set: Uuid) -> Self {
+        Self {
+            set,
+            after: None,
+            disabled: Vec::new(),
+            linked: None,
+        }
+    }
+}
+
+/// What expanding an [`Include`] needs to remember to split the profile
+/// back up when it's saved. Deploy history keeps it too, as the set was
+/// at the deploy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Linked {
+    /// The set's linked folder: its id and name.
+    pub folder: Folder,
+    /// The set's mods as they were loaded, to tell whether it's changed.
+    #[serde(default, rename = "mod")]
+    pub(crate) mods: Vec<ProfileMod>,
+    /// The set's mods left out because the profile has the same mod, by
+    /// where they are in the set, so saving keeps them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) shadowed: Vec<(usize, ProfileMod)>,
+    /// Mods shown under another name because the profile already uses
+    /// theirs, as (shown, in the set).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) renamed: Vec<(String, String)>,
 }
 
 /// Puts schema 2's plugin load order where it's kept now (see

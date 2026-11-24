@@ -1283,3 +1283,60 @@ fn folders_group_mods_and_travel_with_zips() {
     );
     assert!(!bob.run(&["list"]).contains(" in "));
 }
+
+#[test]
+fn shared_sets_are_linked_folders_in_each_profile() {
+    let env = Env::new();
+    env.run(&["profile", "new", "lethal-company/main"]);
+    for name in ["First", "Second"] {
+        let local = env.path(&format!("{name}.zip"));
+        write_zip(&local, &[(&format!("plugins/{name}.dll"), name)]);
+        env.run(&["add", local.to_str().unwrap()]);
+    }
+    env.run(&["folder", "add", "Client QOL", "First"]);
+    env.run(&["set", "share", "client qol"]);
+    let list = env.run(&["list"]);
+    assert!(
+        list.contains("First") && list.contains("in Client QOL (shared)"),
+        "{list}"
+    );
+
+    env.run(&["profile", "new", "lethal-company/other"]);
+    env.run(&["profile", "use", "lethal-company/main"]);
+    let other = ["--profile", "lethal-company/other"];
+    env.run(&[&other[..], &["set", "include", "Client QOL"]].concat());
+    env.run(&[&other[..], &["disable", "First"]].concat());
+    let list = env.run(&[&other[..], &["list"]].concat());
+    assert!(list.contains("[ ] First"), "{list}");
+    // only off in the other profile
+    assert!(env.run(&["list"]).contains("[x] First"));
+    let sets = env.run(&["set", "list"]);
+    assert!(sets.contains("* Client QOL (1 mods)"), "{sets}");
+    assert!(
+        sets.contains("lethal-company/main, lethal-company/other")
+            || sets.contains("lethal-company/other, lethal-company/main"),
+        "{sets}"
+    );
+
+    // an export has it as an ordinary folder
+    let export = env.path("main.zip");
+    env.run(&["profile", "export", "-o", export.to_str().unwrap()]);
+    let bob = Env::new();
+    bob.run(&["profile", "import", export.to_str().unwrap()]);
+    assert_eq!(
+        bob.run(&["folder", "list"]),
+        "Client QOL (1 mods)\n  First\n"
+    );
+
+    let err = env.fails(&["set", "remove", "Client QOL"]);
+    assert!(err.contains("unlink it"), "{err}");
+    env.run(&[&other[..], &["set", "unlink", "Client QOL", "--remove"]].concat());
+    assert!(!env.run(&[&other[..], &["list"]].concat()).contains("First"));
+    env.run(&["set", "unlink", "Client QOL"]);
+    assert_eq!(
+        env.run(&["folder", "list"]),
+        "Client QOL (1 mods)\n  First\n"
+    );
+    env.run(&["set", "remove", "Client QOL"]);
+    assert_eq!(env.run(&["set", "list"]), "lethal-company has no sets\n");
+}

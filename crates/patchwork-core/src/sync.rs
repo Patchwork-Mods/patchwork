@@ -227,6 +227,8 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
         hidden_tags: meta.hidden_tags,
         env: meta.env,
         folders: dedupe_folder_names(folders),
+        // synced profiles can't include sets yet
+        includes: Vec::new(),
         mods: dedupe_names(ordered),
         ext,
         config,

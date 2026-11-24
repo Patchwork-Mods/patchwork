@@ -101,6 +101,12 @@ impl Paths {
         self.data.join("profiles")
     }
 
+    /// Shared sets of mods that profiles include, `sets/<id>/set.toml`;
+    /// see [`crate::set`].
+    pub fn sets(&self) -> PathBuf {
+        self.data.join("sets")
+    }
+
     /// What only this machine knows about each profile, `profile-state/<id>/`:
     /// what was deployed from it here, and when.
     pub fn profile_state(&self) -> PathBuf {

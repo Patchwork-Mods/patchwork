@@ -13,7 +13,8 @@ use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::fsutil;
 use crate::lock::Lockfile;
-use crate::profile::{PROFILE_SCHEMA, Profile, ProfileRef, validate_name};
+use crate::profile::{PROFILE_SCHEMA, Profile, ProfileRef, SCHEMA_WITHOUT_INCLUDES, validate_name};
+use crate::set;
 use crate::{Error, Result};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -208,7 +209,7 @@ impl Patchwork {
                 };
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let id = Uuid::new_v4();
-                table.insert("schema".into(), (PROFILE_SCHEMA as i64).into());
+                table.insert("schema".into(), (SCHEMA_WITHOUT_INCLUDES as i64).into());
                 table.insert("id".into(), id.to_string().into());
                 table.insert("name".into(), name.clone().into());
                 let profile_ref = ProfileRef { uuid: id };
@@ -285,11 +286,25 @@ impl Patchwork {
             });
         }
         // Whatever an older schema had has been moved where it is now, so
-        // it's saved as the current one, which older builds won't open.
+        // it's saved as the current one (see `Profile::saved_schema`).
         loaded.schema = PROFILE_SCHEMA;
-        Ok(loaded)
+        let mut failed = None;
+        set::expand(&mut loaded, |id| match self.load_set(id) {
+            Ok(found) => found,
+            Err(e) => {
+                failed.get_or_insert(e);
+                None
+            }
+        });
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(loaded),
+        }
     }
 
+    /// Saves a profile as [`Patchwork::load_profile`] gives it: its own
+    /// mods to its file, and the mods of the sets it includes to those
+    /// sets, if they've changed (see [`set::collapse`]).
     pub(super) fn save_profile(&self, profile: &ProfileRef, value: &Profile) -> Result<()> {
         // a reorder may have taken a folder's mods apart
         let grouped;
@@ -301,7 +316,24 @@ impl Patchwork {
         } else {
             value
         };
-        fsutil::write_toml(&self.profile_file(profile), value)?;
+        let (mut stored, changed) = set::collapse(value);
+        stored.schema = stored.saved_schema();
+        for (id, mods) in changed {
+            let mut found = self.load_set(id)?.ok_or_else(|| {
+                Error::invalid(format!(
+                    "the set {id} that {} includes is gone",
+                    value.label()
+                ))
+            })?;
+            found.mods = mods;
+            self.save_set(&found)?;
+            for other in self.profiles_including(id)? {
+                if other != *profile {
+                    self.profile_changed(&other, false);
+                }
+            }
+        }
+        fsutil::write_toml(&self.profile_file(profile), &stored)?;
         self.profile_changed(profile, false);
         Ok(())
     }

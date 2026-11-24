@@ -6,6 +6,7 @@ dialog shows, so the heading has to match the version being released.
 ## 0.3.2
 
 - Added Folders to the mod list
+  - Folders can be shared between a game's profiles
 
 ## 0.3.1
 

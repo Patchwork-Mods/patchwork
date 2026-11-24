@@ -112,6 +112,8 @@ export async function invokeResolving(command, args) {
       tried.add(key(choice));
       status(choice.doing);
       const retry = await applyFix(choice, id);
+      // the fix did what was asked itself
+      if (retry && typeof retry === "object") return retry.done;
       if (!retry) throw new Error(`Cancelled: ${blocker.title}`);
     }
   }
@@ -121,7 +123,9 @@ export async function invokeResolving(command, args) {
  * How the window applies the fixes main.rs can't, by the fix's type (see
  * core's fix.rs): functions taking the fix and the profile id, resolving to
  * whether what it was for can be tried again. The modules with the UI each
- * one needs put them here.
+ * one needs put them here. One that does what was asked itself (like
+ * going back to a deploy with a choice the command didn't have) resolves
+ * to `{ done }`, which is what the command gives instead.
  */
 export const windowFixes = {};
 

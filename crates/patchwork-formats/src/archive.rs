@@ -53,7 +53,7 @@ impl ProfileFormat for Archive {
     }
 
     async fn export(&self, _ctx: &FormatContext<'_>, shared: &SharedProfile) -> Result<Vec<u8>> {
-        let profile = Profile {
+        let mut profile = Profile {
             schema: PROFILE_SCHEMA,
             id: shared.id.unwrap_or_else(Uuid::new_v4),
             game: shared.game.clone().unwrap_or_default(),
@@ -61,10 +61,14 @@ impl ProfileFormat for Archive {
             hidden_tags: shared.hidden_tags.clone().unwrap_or_default(),
             env: Default::default(),
             folders: shared.folders.clone().unwrap_or_default(),
+            includes: Vec::new(),
             mods: shared.mods.clone(),
             ext: shared.ext.clone().unwrap_or_default(),
             config: shared.config.clone().unwrap_or_default(),
         };
+        // the oldest schema that has everything in it, so older builds can
+        // import it
+        profile.schema = profile.saved_schema();
         let zip_error = |e: zip::result::ZipError| error(e.to_string());
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default().large_file(true);

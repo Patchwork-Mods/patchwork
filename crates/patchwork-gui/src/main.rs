@@ -28,6 +28,7 @@ use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget, Dest, Ro
 use patchwork_core::edits::{self, FieldInfo, FieldValue};
 use patchwork_core::environment::GameEnv;
 use patchwork_core::event::{Event, Reporter, Silent};
+use patchwork_core::fix::SetsThen;
 use patchwork_core::follow::Follows;
 use patchwork_core::game::{DeployerSpec, GameDef, LinkMethod};
 use patchwork_core::issue::Issue;
@@ -1195,10 +1196,18 @@ fn set_priority(
     profile_detail(&app.pw, id)
 }
 
-/// Undoes every change made to the profile since it was last deployed.
+/// Undoes every change made to the profile since it was last deployed,
+/// doing as `sets` says with shared sets changed since (a blocker if
+/// there are any and it's left out).
 #[tauri::command]
-fn revert_profile(app: State<'_, App>, id: String) -> CmdResult<ProfileDetail> {
-    app.pw.revert(&profile_ref(&id)?).map_err(msg)?;
+fn revert_profile(
+    app: State<'_, App>,
+    id: String,
+    sets: Option<SetsThen>,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .go_back(&profile_ref(&id)?, None, sets)
+        .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
 
@@ -1210,10 +1219,18 @@ fn profile_history(app: State<'_, App>, id: String) -> CmdResult<Vec<HistoryEntr
     Ok(history)
 }
 
-/// Puts the profile back how it was at deploy `number` of its history.
+/// Puts the profile back how it was at deploy `number` of its history,
+/// with `sets` as for [`revert_profile`].
 #[tauri::command]
-fn rollback_profile(app: State<'_, App>, id: String, number: u32) -> CmdResult<ProfileDetail> {
-    app.pw.rollback(&profile_ref(&id)?, number).map_err(msg)?;
+fn rollback_profile(
+    app: State<'_, App>,
+    id: String,
+    number: u32,
+    sets: Option<SetsThen>,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .go_back(&profile_ref(&id)?, Some(number), sets)
+        .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
 

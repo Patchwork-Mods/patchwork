@@ -48,6 +48,7 @@ pub mod profile;
 pub mod registry;
 pub mod relpath;
 pub mod search;
+pub mod set;
 pub mod settings;
 pub mod share;
 pub mod source;

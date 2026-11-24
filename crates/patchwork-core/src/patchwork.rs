@@ -28,7 +28,7 @@ use crate::fix::Fix;
 use crate::fsutil::{self, StateLock};
 use crate::game::{GAME_SCHEMA, GameDef, LinkMethod, validate_game_id};
 use crate::hash::ContentHash;
-use crate::issue::Issue;
+use crate::issue::{Issue, IssueKind, Severity};
 use crate::launch::{self, Launch, LaunchOption};
 use crate::list::{List, OrderedList};
 use crate::locate::{self, Found, Locator};
@@ -2023,6 +2023,23 @@ impl Patchwork {
             }
             None => Vec::new(),
         };
+        for include in loaded.includes.iter().filter(|i| i.linked.is_none()) {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                mods: Vec::new(),
+                message: format!(
+                    "{} includes a shared set that isn't on this computer ({})",
+                    loaded.label(),
+                    include.set
+                ),
+                kind: IssueKind::MissingSet {
+                    set: include.set.to_string(),
+                },
+                fix: Some(Fix::ForgetSet {
+                    set: include.set.to_string(),
+                }),
+            });
+        }
         {
             let registry = self.registry();
             let def = &registry.game(&loaded.game)?.value;
@@ -2587,6 +2604,9 @@ impl Patchwork {
                 format.id()
             )));
         }
+        // linked folders go as ordinary ones; whoever imports it doesn't
+        // have the sets
+        let folders = loaded.all_folders().cloned().collect();
         let mut shared = SharedProfile {
             game: Some(loaded.game.clone()),
             name: Some(loaded.name.clone()),
@@ -2595,7 +2615,7 @@ impl Patchwork {
             hidden_tags: Some(loaded.hidden_tags),
             ext: Some(loaded.ext),
             config: Some(loaded.config),
-            folders: Some(loaded.folders),
+            folders: Some(folders),
             ..Default::default()
         };
         if format.needs_lock() {
@@ -3638,6 +3658,7 @@ mod lists;
 mod local;
 mod options;
 mod profiles;
+mod sets;
 mod sync;
 
 pub use capture::{Captured, ToolRan};

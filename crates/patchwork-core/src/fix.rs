@@ -103,6 +103,30 @@ pub struct ProfileName {
     pub label: String,
 }
 
+/// What going back to a deploy (a revert or a rollback) does with the
+/// shared sets that have changed since.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SetsThen {
+    /// Put them back as they were, for every profile that includes them.
+    Restore,
+    /// Copy them in as they were, as ordinary folders of the profile's own.
+    Copy,
+    /// Keep them as they are, going back for the rest.
+    Keep,
+}
+
+impl SetsThen {
+    /// As the CLI's `--sets` takes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SetsThen::Restore => "restore",
+            SetsThen::Copy => "copy",
+            SetsThen::Keep => "keep",
+        }
+    }
+}
+
 /// Something that clears a [`Blocker`] or deals with an issue. Fixes about
 /// "the profile" are about the one the command that failed was working on;
 /// the rest say what they're about.
@@ -156,6 +180,26 @@ pub enum Fix {
     /// Open Settings at `source`'s settings (its API key, say), named
     /// `name`, to fill in something it needs. Only a frontend can do this.
     SourceSettings { source: String, name: String },
+    /// Stop the profile including the shared sets `sets` (by id, named
+    /// `names`), keeping their mods as ordinary folders of its own; see
+    /// [`Patchwork::unlink_set`](crate::Patchwork::unlink_set).
+    UnlinkSets {
+        sets: Vec<String>,
+        names: Vec<String>,
+    },
+    /// Copy the shared set `set` (by id, named `name`) into the profile
+    /// as an ordinary folder of its own, rather than including it; see
+    /// [`Patchwork::copy_set`](crate::Patchwork::copy_set).
+    CopySet { set: String, name: String },
+    /// Go back to the profile's last deploy (`number` `None`) or deploy
+    /// `number` of its history, doing as `sets` says with the shared sets
+    /// that have changed since; see
+    /// [`Patchwork::go_back`](crate::Patchwork::go_back). Frontends show
+    /// the profile it's gone back to rather than trying again.
+    GoBack { number: Option<u32>, sets: SetsThen },
+    /// Stop the profile including the set `set` (by id), which can't be
+    /// found; see [`IssueKind::MissingSet`](crate::issue::IssueKind::MissingSet).
+    ForgetSet { set: String },
 }
 
 impl Fix {
@@ -176,6 +220,18 @@ impl Fix {
             Fix::UpdatePatchwork => "Update Patchwork".to_owned(),
             Fix::ProfileSettings => "Open profile settings".to_owned(),
             Fix::SourceSettings { .. } => "Open Settings".to_owned(),
+            Fix::UnlinkSets { names, .. } if names.len() == 1 => {
+                "Copy it in as a folder".to_owned()
+            }
+            Fix::UnlinkSets { .. } => "Copy them in as folders".to_owned(),
+            Fix::CopySet { .. } => "Copy it in as a folder".to_owned(),
+            Fix::GoBack { sets, .. } => match sets {
+                SetsThen::Restore => "Put them back as they were",
+                SetsThen::Copy => "Copy them in as they were",
+                SetsThen::Keep => "Keep them as they are",
+            }
+            .to_owned(),
+            Fix::ForgetSet { .. } => "Stop including it".to_owned(),
         }
     }
 
@@ -197,6 +253,11 @@ impl Fix {
             Fix::UpdatePatchwork => "Updating Patchwork…".to_owned(),
             Fix::ProfileSettings => "Opening profile settings…".to_owned(),
             Fix::SourceSettings { .. } => "Opening Settings…".to_owned(),
+            Fix::UnlinkSets { names, .. } => format!("Copying in {}…", names.join(", ")),
+            Fix::CopySet { name, .. } => format!("Copying in {name}…"),
+            Fix::GoBack { number: None, .. } => "Reverting…".to_owned(),
+            Fix::GoBack { .. } => "Rolling back…".to_owned(),
+            Fix::ForgetSet { .. } => "Removing the missing set…".to_owned(),
         }
     }
 
@@ -239,6 +300,19 @@ impl Fix {
             Fix::SourceSettings { source, .. } => {
                 format!("patchwork config set {source}.api_key <key>")
             }
+            Fix::UnlinkSets { names, .. } => {
+                let unlinks: Vec<_> = names
+                    .iter()
+                    .map(|n| on(format!("set unlink {}", quoted(n))))
+                    .collect();
+                unlinks.join(" && ")
+            }
+            Fix::CopySet { name, .. } => on(format!("set copy {}", quoted(name))),
+            Fix::GoBack { number, sets } => {
+                let number = number.map(|n| format!(" {n}")).unwrap_or_default();
+                on(format!("rollback{number} --sets {}", sets.as_str()))
+            }
+            Fix::ForgetSet { set } => on(format!("set unlink {set}")),
         }
     }
 }

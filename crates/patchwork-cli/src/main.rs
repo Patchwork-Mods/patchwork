@@ -19,6 +19,7 @@ mod mods;
 mod options;
 mod profile;
 mod selfupdate;
+mod set;
 mod sync;
 
 use crate::common::MoveTo;
@@ -127,6 +128,10 @@ enum Command {
     /// them on or off at once.
     #[command(subcommand)]
     Folder(folder::FolderCommand),
+    /// Shared sets: lists of mods several profiles of a game include, each
+    /// shown in them as a linked folder.
+    #[command(subcommand)]
+    Set(set::SetCommand),
     /// Move a mod in the profile's order, which is the load order among
     /// mods with the same priority. Later mods win when two provide the
     /// same file; a mod's dependencies always load before it regardless.
@@ -270,6 +275,12 @@ enum Command {
         /// Show what would change without changing anything.
         #[arg(long)]
         dry_run: bool,
+        /// What to do with shared sets the profile included then that have
+        /// changed since: put them back as they were, for every profile
+        /// that includes them; copy them in as they were, as folders of
+        /// the profile's own; or keep them as they are.
+        #[arg(long, value_enum)]
+        sets: Option<deploy::Sets>,
     },
     /// Start the profile's game, deploying the profile first if it isn't
     /// deployed as it is now.
@@ -426,6 +437,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Changelog { name, new } => mods::changelog(&pw, &cli.profile, name, new).await?,
         Command::List { query, load_order } => mods::list(&pw, &cli.profile, query, load_order)?,
         Command::Folder(command) => folder::run(&pw, command, &cli.profile)?,
+        Command::Set(command) => set::run(&pw, command, &cli.profile)?,
         Command::Move { name, to } => mods::move_mod(&pw, &cli.profile, name, to)?,
         Command::Deps { all } => deps::deps(&pw, &cli.profile, all)?,
         Command::SoftDeps { name, missing } => deps::soft_deps(&pw, &cli.profile, name, missing)?,
@@ -448,9 +460,11 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Capture { name } => deploy::capture(&pw, &cli.profile, name).await?,
         Command::Tool(args) => deploy::tool(&pw, &cli.profile, args).await?,
         Command::History => deploy::history(&pw, &cli.profile)?,
-        Command::Rollback { number, dry_run } => {
-            deploy::rollback(&pw, &cli.profile, number, dry_run)?
-        }
+        Command::Rollback {
+            number,
+            dry_run,
+            sets,
+        } => deploy::rollback(&pw, &cli.profile, number, dry_run, sets)?,
         Command::Launch(args) => launch::launch(&pw, &cli.profile, args).await?,
         Command::Undeploy { game, dry_run } => deploy::undeploy(&pw, &cli.profile, game, dry_run)?,
         Command::Provide { name, file } => mods::provide(&pw, &cli.profile, name, file).await?,

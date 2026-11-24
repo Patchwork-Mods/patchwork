@@ -148,7 +148,16 @@ pub async fn apply_fix(
                 .map_err(lock_msg(&handle))?;
         }
         Fix::Sync => crate::sync::wait_for_files(&handle, &profile()?).await?,
+        Fix::UnlinkSets { sets, .. } => {
+            let r = profile()?;
+            for set in sets {
+                app.pw.unlink_set(&r, parse_set(&set)?, true)?;
+            }
+        }
+        Fix::CopySet { set, .. } => app.pw.copy_set(&profile()?, parse_set(&set)?)?,
+        Fix::ForgetSet { set } => app.pw.unlink_set(&profile()?, parse_set(&set)?, false)?,
         Fix::Deploy
+        | Fix::GoBack { .. }
         | Fix::ChooseGamePath { .. }
         | Fix::UpdatePatchwork
         | Fix::ProfileSettings
@@ -157,6 +166,12 @@ pub async fn apply_fix(
         }
     }
     Ok(())
+}
+
+/// A set's id, as a fix gives it.
+fn parse_set(id: &str) -> CmdResult<uuid::Uuid> {
+    id.parse()
+        .map_err(|_| format!("`{id}` isn't a set's id").into())
 }
 
 /// What [`Fix::Undeploy`] would take out, for the blocker's dialog to list

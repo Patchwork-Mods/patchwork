@@ -19,7 +19,7 @@ use super::Patchwork;
 use super::local::{LOCAL, not_here};
 use crate::error::{ArtifactChanged, IoContext};
 use crate::event::Event;
-use crate::fix::Blocker;
+use crate::fix::{Blocker, Fix};
 use crate::fsutil;
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
@@ -105,6 +105,9 @@ impl Patchwork {
     /// The profile and its lockfile as they are here, as entries.
     pub fn sync_entries(&self, profile: &ProfileRef) -> Result<Entries> {
         let loaded = self.load_profile(profile)?;
+        if !loaded.includes.is_empty() {
+            return Err(sets_cant_sync(&loaded));
+        }
         let lock = self.load_lock(profile)?;
         Ok(sync::to_entries(&loaded, lock.as_ref()))
     }
@@ -429,6 +432,11 @@ impl Patchwork {
         Ok(by_blocker)
     }
 
+    /// Whether `profile` is synced (shared or followed).
+    pub(super) fn is_synced(&self, profile: &ProfileRef) -> bool {
+        self.sync_base_file(profile).is_file()
+    }
+
     fn sync_base(&self, profile: &ProfileRef) -> Result<Option<Entries>> {
         let base: Option<SyncBase> = fsutil::read_json(&self.sync_base_file(profile))?;
         Ok(base.map(|b| {
@@ -458,4 +466,37 @@ impl Patchwork {
 /// than something they depend on.
 fn is_in_profile(loaded: &Profile, key: &str) -> bool {
     loaded.mods.iter().any(|m| mod_key(&m.source, &m.id) == key)
+}
+
+/// Synced profiles can't include shared sets yet: their mods would go to
+/// everyone as the profile's own.
+fn sets_cant_sync(loaded: &Profile) -> Error {
+    let (sets, names): (Vec<String>, Vec<String>) = loaded
+        .includes
+        .iter()
+        .map(|i| {
+            let name = i
+                .linked
+                .as_ref()
+                .map_or_else(|| i.set.to_string(), |l| l.folder.name.clone());
+            (i.set.to_string(), name)
+        })
+        .unzip();
+    Error::blocked(
+        format!(
+            "{} includes shared sets ({}), which can't be synced yet",
+            loaded.label(),
+            names.join(", ")
+        ),
+        "Shared sets can't be synced yet",
+        format!(
+            "{} includes {}, and syncing shared sets isn't supported yet. \
+             Copying them in makes each linked folder an ordinary folder of this \
+             profile's own, which syncs like the rest. The sets stay as they are \
+             for other profiles.",
+            loaded.label(),
+            names.join(", ")
+        ),
+        Fix::UnlinkSets { sets, names },
+    )
 }

@@ -1,7 +1,7 @@
 # Folders, shared sets and layered profiles
 
-Status (2026-11-24): step 1 (folders inside a profile) is done; the rest
-is a proposal. Where what gets built differs from this, the notes under
+Status (2026-11-24): step 1 (folders inside a profile) is done and step 2
+(shared sets) is in progress; the rest is a proposal. Where what gets built differs from this, the notes under
 each step in "Order of work" say so, and those notes win.
 
 ## The problem
@@ -194,6 +194,48 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
    the GUI files a mod from the folder button on each mod (not its menu),
    and deploy history keeps folders (see "History" above).
 2. **Shared sets as linked folders**: local only, no syncing of sets.
+   *In progress*: core, CLI and the GUI's blockers are done; the GUI's
+   linked folders and sets' config edits are left. As built:
+   - **Loading expands, saving splits.** `load_profile` gives the profile
+     with each set's mods in its block, as a linked folder (the mods'
+     `folder` is the set's id), the profile's `disabled` applied as their
+     `enabled`, and a set's mod left out where the profile has the same
+     mod. `save_profile` splits it back: the profile's own mods, each
+     include's place and `disabled`, and the mods of any set that changed,
+     saved to the set. So the code that reads a profile sees everything
+     it installs, and editing a mod in a linked folder edits the set,
+     with no code of its own. A set's mod whose name the profile already
+     uses is shown renamed ("Minimap (Client QOL)") and saved by its own
+     name.
+   - **Where an include goes**: `[[include]] after = "<mod>"`, the
+     profile's own mod it comes after (none: first). One that names a mod
+     the profile no longer has goes last.
+   - **Schema**: `PROFILE_SCHEMA` is 4, but a profile is only saved as 4
+     when it includes a set, so older builds still open the rest (and
+     zips, which never include sets). A set's file has its own
+     `SET_SCHEMA`.
+   - **Going back** (revert, rollback) to a deploy whose sets have
+     changed since is a blocker: put the set back as it was (changing the
+     other profiles that include it), copy the old one in as a folder, or
+     keep the set as it is (`Fix::GoBack`, `rollback --sets`). Each deploy
+     keeps its sets as they were. A fix that picks one goes back itself,
+     so the GUI's window fix resolves to `{ done }` rather than retrying.
+   - **A missing set** (removed, or the profile came from another
+     computer) is a `MissingSet` issue, whose fix stops including it. The
+     include is kept until then, in case the set comes back.
+   - **A set that doesn't suit the profile** (a Fabric set in a Forge
+     profile) needs nothing of its own: its mods get the usual
+     `IncompatibleEnv` issues, and turning them off is the profile's own.
+   - **Synced profiles** can't include a set yet (a blocker whose fix,
+     `CopySet`, copies it in as a folder), and one that includes a set
+     can't sync (`UnlinkSets`). Including sets in synced profiles is step 3.
+   - **Exports** turn each linked folder into an ordinary folder.
+   - **A set's own config edits** come after the rest; until then config
+     edits stay in the profile.
+   - Order: core model and expanding/splitting; editing (sets, turning a
+     folder into a set, include, unlink) and the CLI; lock, deploy and
+     history with their blockers; exports and the sync blocker; GUI;
+     sets' config edits.
 3. **Personal layer** on synced profiles, with the split lock.
 4. **Optional folders** in synced profiles.
 5. **Sets synced between linked computers**, and exporting a set on its

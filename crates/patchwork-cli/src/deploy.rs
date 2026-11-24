@@ -9,6 +9,7 @@ use patchwork_core::action::ActionReport;
 use patchwork_core::cancel::Cancel;
 use patchwork_core::capture::ToolOutput;
 use patchwork_core::deploy::{Check, DeployOp, DeployPlan, DeployTarget};
+use patchwork_core::fix::SetsThen;
 use patchwork_core::list::List;
 use patchwork_core::profile::ProfileRef;
 use patchwork_core::{DeployStatus, Patchwork};
@@ -549,12 +550,31 @@ pub(crate) fn history(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
     Ok(())
 }
 
+/// `patchwork rollback --sets`; see [`SetsThen`].
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub(crate) enum Sets {
+    Restore,
+    Copy,
+    Keep,
+}
+
+impl From<Sets> for SetsThen {
+    fn from(sets: Sets) -> Self {
+        match sets {
+            Sets::Restore => SetsThen::Restore,
+            Sets::Copy => SetsThen::Copy,
+            Sets::Keep => SetsThen::Keep,
+        }
+    }
+}
+
 /// `patchwork rollback`.
 pub(crate) fn rollback(
     pw: &Patchwork,
     explicit: &Option<String>,
     number: Option<u32>,
     dry_run: bool,
+    sets: Option<Sets>,
 ) -> Result<()> {
     let (profile, loaded) = selected(pw, explicit)?;
     let number = match number {
@@ -573,7 +593,7 @@ pub(crate) fn rollback(
         println!("{change}");
     }
     if !dry_run {
-        pw.rollback(&profile, number)?;
+        pw.go_back(&profile, Some(number), sets.map(SetsThen::from))?;
         println!(
             "rolled {} back to deploy #{number}; run `patchwork deploy` to apply it",
             loaded.label()
