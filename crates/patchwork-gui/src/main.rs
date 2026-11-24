@@ -240,8 +240,9 @@ struct ProfileDetail {
     dependencies: Vec<UiDependency>,
     /// Mods with any of these tags go in the Mods tab's hidden section.
     hidden_tags: Vec<String>,
-    /// Groups of mods; each mod's `folder` says which it's in.
-    folders: Vec<Folder>,
+    /// Groups of mods, the profile's own then the linked folders of the
+    /// shared sets it includes; each mod's `folder` says which it's in.
+    folders: Vec<UiFolder>,
     /// The game's ordered lists (see [`patchwork_core::list`]), each on a
     /// tab of its own.
     lists: Vec<ListInfo>,
@@ -278,6 +279,34 @@ struct ProfileDetail {
     /// What it picks about the game it runs, where it's deployed to, and
     /// so on, for the profile settings dialog.
     setup: setup::ProfileSetup,
+}
+
+/// A folder of the profile's mods, as the Mods tab shows it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiFolder {
+    #[serde(flatten)]
+    folder: Folder,
+    /// Whether it's a shared set's linked folder: what's in it is the
+    /// set's, so changing that changes every profile that includes it.
+    linked: bool,
+    /// For a linked folder, the other profiles that include its set, by
+    /// label.
+    also_in: Vec<String>,
+}
+
+/// One of a game's shared sets, for picking one to include.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiSet {
+    id: String,
+    name: String,
+    /// Its mods' names, in order.
+    mods: Vec<String>,
+    /// Whether the profile it was listed for includes it already.
+    included: bool,
+    /// The profiles that include it, by label.
+    included_by: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -677,7 +706,29 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let lookup = pw.lookup(&loaded).map_err(msg)?;
     let name = loaded.name.clone();
     let hidden_tags = std::mem::take(&mut loaded.hidden_tags);
-    let folders = std::mem::take(&mut loaded.folders);
+    let mut includers = if loaded.includes.is_empty() {
+        HashMap::new()
+    } else {
+        pw.includers().map_err(msg)?
+    };
+    let folders = loaded
+        .all_folders()
+        .map(|f| {
+            let linked = loaded.include(f.id).is_some();
+            let also_in = includers
+                .remove(&f.id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(p, _)| *p != r)
+                .map(|(_, label)| label)
+                .collect();
+            UiFolder {
+                folder: f.clone(),
+                linked,
+                also_in,
+            }
+        })
+        .collect();
     let load_index: HashMap<String, usize> = order::load_order(&loaded.mods)
         .into_iter()
         .enumerate()
@@ -1302,6 +1353,80 @@ fn set_folder_enabled(
         .set_folder_enabled(&profile_ref(&id)?, &folder, enabled)
         .map_err(msg)?;
     profile_detail(&app.pw, id)
+}
+
+/// The shared sets of the profile's game, for including one.
+#[tauri::command]
+fn game_sets(app: State<'_, App>, id: String) -> CmdResult<Vec<UiSet>> {
+    let r = profile_ref(&id)?;
+    let loaded = app.pw.load_profile(&r).map_err(msg)?;
+    let mut includers = app.pw.includers().map_err(msg)?;
+    let sets = app.pw.sets(&loaded.game).map_err(msg)?;
+    Ok(sets
+        .into_iter()
+        .map(|set| UiSet {
+            id: set.id.to_string(),
+            name: set.name,
+            mods: set.mods.into_iter().map(|m| m.name).collect(),
+            included: loaded.include(set.id).is_some(),
+            included_by: includers
+                .remove(&set.id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect(),
+        })
+        .collect())
+}
+
+/// Turns one of the profile's folders into a shared set, which it then
+/// includes as a linked folder.
+#[tauri::command]
+fn share_folder(app: State<'_, App>, id: String, folder: String) -> CmdResult<ProfileDetail> {
+    app.pw
+        .share_folder(&profile_ref(&id)?, &folder)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Includes the shared set `set` in the profile, after its own mods.
+#[tauri::command]
+fn include_set(app: State<'_, App>, id: String, set: String) -> CmdResult<ProfileDetail> {
+    app.pw
+        .include_set(&profile_ref(&id)?, blockers::parse_set(&set)?, None)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Copies the shared set `set` into the profile as a folder of its own.
+#[tauri::command]
+fn copy_set(app: State<'_, App>, id: String, set: String) -> CmdResult<ProfileDetail> {
+    app.pw
+        .copy_set(&profile_ref(&id)?, blockers::parse_set(&set)?)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Stops the profile including the set `set`, keeping its mods as a
+/// folder of the profile's own if `keep`.
+#[tauri::command]
+fn unlink_set(
+    app: State<'_, App>,
+    id: String,
+    set: String,
+    keep: bool,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .unlink_set(&profile_ref(&id)?, blockers::parse_set(&set)?, keep)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Deletes a shared set that no profile includes.
+#[tauri::command]
+fn remove_set(app: State<'_, App>, set: String) -> CmdResult<()> {
+    app.pw.remove_set(blockers::parse_set(&set)?).map_err(msg)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -2572,6 +2697,12 @@ fn main() {
             remove_folder,
             set_mod_folder,
             set_folder_enabled,
+            game_sets,
+            share_folder,
+            include_set,
+            copy_set,
+            unlink_set,
+            remove_set,
             sort_mods,
             reorder_mods,
             list,

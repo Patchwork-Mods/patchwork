@@ -1,7 +1,7 @@
 //! Shared sets (see [`crate::set`]): where they're kept, and which profiles
 //! include them.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -50,12 +50,8 @@ impl Patchwork {
     /// Removes a set no profile includes.
     pub fn remove_set(&self, id: Uuid) -> Result<()> {
         let set = self.load_set(id)?.ok_or_else(|| no_such_set(id))?;
-        let including = self.profiles_including(id)?;
-        if !including.is_empty() {
-            let labels: Vec<String> = including
-                .iter()
-                .map(|p| Ok(self.load_profile(p)?.label()))
-                .collect::<Result<_>>()?;
+        if let Some(including) = self.includers()?.remove(&id) {
+            let labels: Vec<&str> = including.iter().map(|(_, l)| l.as_str()).collect();
             return Err(Error::invalid(format!(
                 "{} is still included by {}; unlink it from them first",
                 set.name,
@@ -74,6 +70,12 @@ impl Patchwork {
         let found = loaded.find_folder(folder)?.clone();
         if loaded.include(found.id).is_some() {
             return Err(Error::invalid(format!("{} is already a set", found.name)));
+        }
+        if self.is_synced(profile) {
+            return Err(Error::invalid(format!(
+                "{} is synced, and synced profiles can't share folders as sets yet",
+                loaded.label()
+            )));
         }
         let mut set = Set::new(
             &loaded.game,
@@ -283,13 +285,27 @@ impl Patchwork {
     /// The profiles that include the set `id`, read as they're stored
     /// (without loading their sets).
     pub fn profiles_including(&self, id: Uuid) -> Result<Vec<ProfileRef>> {
+        Ok(self
+            .includers()?
+            .remove(&id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(profile, _)| profile)
+            .collect())
+    }
+
+    /// Every set some profile includes, with those profiles and their
+    /// labels, read as they're stored (without loading their sets).
+    pub fn includers(&self) -> Result<HashMap<Uuid, Vec<(ProfileRef, String)>>> {
         /// Just what's needed of a stored profile.
         #[derive(Deserialize)]
         struct Includes {
+            game: String,
+            name: String,
             #[serde(default, rename = "include")]
             includes: Vec<Include>,
         }
-        let mut found = Vec::new();
+        let mut found: HashMap<Uuid, Vec<(ProfileRef, String)>> = HashMap::new();
         let Ok(entries) = fs::read_dir(self.paths.profiles()) else {
             return Ok(found);
         };
@@ -300,11 +316,17 @@ impl Patchwork {
             let Some(stored) = fsutil::read_toml::<Includes>(&self.profile_file(&profile))? else {
                 continue;
             };
-            if stored.includes.iter().any(|i| i.set == id) {
-                found.push(profile);
+            let label = format!("{}/{}", stored.game, stored.name);
+            for include in stored.includes {
+                found
+                    .entry(include.set)
+                    .or_default()
+                    .push((profile.clone(), label.clone()));
             }
         }
-        found.sort();
+        for profiles in found.values_mut() {
+            profiles.sort();
+        }
         Ok(found)
     }
 

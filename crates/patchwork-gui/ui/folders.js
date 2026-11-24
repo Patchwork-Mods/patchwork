@@ -3,9 +3,13 @@
 // as one, with its mods inside it; the load order and search results stay
 // flat. A folder's mods are always next to each other in the profile, so it
 // has one place in the load order.
+//
+// A shared set (see set.rs) shows as a linked folder: what's in it is the
+// set's, so adding, removing or moving its mods changes every profile that
+// includes it, while turning them on or off is this profile's own.
 
 import { $, chevronIcon, folderIcon, h } from "./dom.js";
-import { errorText, invoke, run, state, status } from "./state.js";
+import { errorText, invoke, invokeResolving, run, state, status, windowFixes } from "./state.js";
 import { showProfile } from "./profile.js";
 import { dragHandle, saveOrder } from "./reorder.js";
 
@@ -28,6 +32,10 @@ const TOKEN = "folder:";
 
 /** The folder `m` is shown in, if it's in one the profile has. */
 export const folderOf = (m) => state.profile.folders.find((f) => f.id === m.folder);
+
+/** Where else a linked folder's set is, for telling the user. */
+const elsewhere = (folder) =>
+  folder.alsoIn.length ? `every profile that includes it (${folder.alsoIn.join(", ")})` : "the set";
 
 /**
  * `mods` (in the profile's order) as the Mods tab shows them: each mod not
@@ -95,7 +103,9 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
   const empty = h(
     "p",
     { class: "folder-empty muted" },
-    "Empty. Put mods in it from the folder button on each mod.",
+    folder.linked
+      ? "Empty. Mods put in it from the folder button on each mod go into the shared set."
+      : "Empty. Put mods in it from the folder button on each mod.",
   );
   const toggle = h("input", {
     type: "checkbox",
@@ -108,7 +118,10 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
     { type: "button", class: "expand", "aria-label": `Show the mods in ${folder.name}` },
     chevronIcon(),
   );
-  const section = h("li", { class: "mod-folder", "data-name": TOKEN + folder.id });
+  const section = h("li", {
+    class: folder.linked ? "mod-folder linked" : "mod-folder",
+    "data-name": TOKEN + folder.id,
+  });
   const setOpen = (open) => {
     section.classList.toggle("collapsed", !open);
     arrow.setAttribute("aria-expanded", String(open));
@@ -121,22 +134,45 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
     setOpen(opening);
   };
   arrow.addEventListener("click", flip);
+  const items = folder.linked
+    ? [
+        { label: "Rename shared folder…", run: () => renameFolder(folder) },
+        "-",
+        { label: "Unlink, keeping its mods here", run: () => unlink(folder, true) },
+        { label: "Remove from this profile", danger: true, run: () => unlink(folder, false) },
+      ]
+    : [
+        { label: "Rename…", run: () => renameFolder(folder) },
+        { label: "Share with other profiles", run: () => share(folder) },
+        "-",
+        { label: "Remove folder", danger: true, run: () => removeFolder(folder) },
+      ];
   const menu = h(
     "button",
     {
       type: "button",
       class: "folder-menu",
-      title: "Rename or remove this folder",
+      title: folder.linked ? "Rename or unlink this shared folder" : "Rename, share or remove this folder",
       "aria-label": `${folder.name} options`,
       "aria-haspopup": "menu",
-      onclick: (e) =>
-        popupMenu(e.currentTarget, [
-          { label: "Rename…", run: () => renameFolder(folder) },
-          { label: "Remove folder", danger: true, run: () => removeFolder(folder) },
-        ]),
+      onclick: (e) => popupMenu(e.currentTarget, items),
     },
     "⋯",
   );
+  const shared =
+    folder.linked &&
+    h(
+      "span",
+      {
+        class: "badge folder-shared",
+        title: folder.alsoIn.length
+          ? `Shared with ${folder.alsoIn.join(", ")}. Changing what's in it changes it there too; turning its mods on or off is this profile's own.`
+          : "A shared set no other profile includes yet. Add it to them with Add shared folder.",
+      },
+      folder.alsoIn.length
+        ? `Shared with ${folder.alsoIn.length} ${folder.alsoIn.length === 1 ? "profile" : "profiles"}`
+        : "Shared",
+    );
   section.append(
     h(
       "div",
@@ -152,6 +188,7 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
         { class: "folder-title", onclick: flip },
         folderIcon(),
         h("span", { class: "folder-name" }, folder.name),
+        shared,
         h("span", { class: "folder-count muted" }),
       ),
       h(
@@ -224,8 +261,14 @@ export function folderButton(m, iconAction) {
       const own = folderOf(m);
       const others = state.profile.folders.filter((f) => f !== own);
       popupMenu(e.currentTarget, [
-        ...others.map((f) => ({ label: `Move to ${f.name}`, run: () => moveTo(m, f) })),
-        own && { label: `Take out of ${own.name}`, run: () => moveTo(m, null) },
+        ...others.map((f) => ({
+          label: f.linked ? `Move to ${f.name} (shared)` : `Move to ${f.name}`,
+          run: () => moveTo(m, f),
+        })),
+        own && {
+          label: own.linked ? `Take out of ${own.name} and the set` : `Take out of ${own.name}`,
+          run: () => moveTo(m, null),
+        },
         (others.length > 0 || own) && "-",
         { label: "New folder…", run: () => newFolder([m.name]) },
       ]);
@@ -245,7 +288,7 @@ async function moveTo(m, folder) {
 
 /** Asks for a name and makes a folder with `mods` in it. */
 export function newFolder(mods = []) {
-  askFolderName("New folder", "Create", "", async (name) => {
+  askFolderName("New folder", "Create", "", null, async (name) => {
     const id = state.profile.id;
     const profile = await invoke("add_folder", { id, name, mods });
     // it's shown open, even if one of that name was closed before
@@ -257,11 +300,32 @@ export function newFolder(mods = []) {
 }
 
 function renameFolder(folder) {
-  askFolderName(`Rename ${folder.name}`, "Rename", folder.name, async (name) => {
+  const note = folder.linked && `It's renamed in ${elsewhere(folder)}.`;
+  askFolderName(`Rename ${folder.name}`, "Rename", folder.name, note, async (name) => {
     const profile = await invoke("rename_folder", { id: state.profile.id, folder: folder.id, name });
     showProfile(profile);
     status(`Renamed ${folder.name} to ${name}`);
   });
+}
+
+/** Makes the folder a shared set, which the profile then includes. */
+async function share(folder) {
+  showProfile(await run("share_folder", { id: state.profile.id, folder: folder.id }));
+  status(`${folder.name} is shared now; add it to other profiles from their Add shared folder`);
+}
+
+/**
+ * Stops the profile including a linked folder's set, its mods staying as
+ * an ordinary folder if `keep`. The set is left as it is.
+ */
+async function unlink(folder, keep) {
+  const profile = await run("unlink_set", { id: state.profile.id, set: folder.id, keep });
+  showProfile(profile);
+  status(
+    keep
+      ? `${folder.name}'s mods are this profile's own now; the shared set is as it was`
+      : `Took ${folder.name} out of this profile; add it again from Add shared folder`,
+  );
 }
 
 async function removeFolder(folder) {
@@ -277,11 +341,13 @@ async function removeFolder(folder) {
 const nameForm = $("#folder-name-form");
 let nameAction = null;
 
-function askFolderName(title, submit, value, action) {
+function askFolderName(title, submit, value, note, action) {
   nameForm.reset();
   nameAction = action;
   $("#folder-name-title").textContent = title;
   $("#folder-name-submit").textContent = submit;
+  $("#folder-name-note").textContent = note || "";
+  $("#folder-name-note").hidden = !note;
   $("#folder-name-error").hidden = true;
   nameForm.elements.name.value = value;
   $("#folder-name-dialog").showModal();
@@ -309,6 +375,109 @@ nameForm.addEventListener("submit", async (e) => {
 });
 
 $("#new-folder").addEventListener("click", () => newFolder());
+
+// Add a shared folder: the game's sets, to include in the profile as a
+// linked folder or copy in as one of its own. Ones no profile includes can
+// be deleted.
+
+$("#add-set").addEventListener("click", () => showSets().catch(() => {}));
+
+async function showSets() {
+  const sets = await run("game_sets", { id: state.profile.id });
+  $("#sets-error").hidden = true;
+  $("#sets-list").replaceChildren(
+    ...(sets.length
+      ? sets.map(setRow)
+      : [
+          h(
+            "li",
+            { class: "muted" },
+            "There are no shared folders for this game yet. To make one, pick Share with other profiles from a folder's ⋯ menu.",
+          ),
+        ]),
+  );
+  const dialog = $("#sets-dialog");
+  if (!dialog.open) dialog.showModal();
+}
+
+function setRow(set) {
+  const count = `${set.mods.length} ${set.mods.length === 1 ? "mod" : "mods"}`;
+  const act = (label, work, attrs = {}) =>
+    h("button", { type: "button", ...attrs, onclick: () => work().catch(() => {}) }, label);
+  const remove = act(
+    "Delete",
+    async () => {
+      // a second click to be sure, since it can't be undone
+      if (!remove.dataset.sure) {
+        remove.dataset.sure = "1";
+        remove.textContent = "Delete for good?";
+        return;
+      }
+      await setAction(() => invoke("remove_set", { set: set.id }));
+      status(`Deleted the shared folder ${set.name}`);
+      await showSets();
+    },
+    { class: "danger-text", title: "No profile includes it, so it can be deleted" },
+  );
+  return h(
+    "li",
+    {},
+    h(
+      "div",
+      { class: "set-head" },
+      h("b", {}, set.name),
+      h("span", { class: "muted" }, count),
+      h(
+        "span",
+        { class: "set-actions" },
+        set.included
+          ? h("span", { class: "muted" }, "In this profile")
+          : [
+              !set.includedBy.length && remove,
+              act("Copy in", () => addSet(set, "copy_set"), {
+                title: "Copy its mods in as a folder of this profile's own, which won't change the set",
+              }),
+              act("Add", () => addSet(set, "include_set"), {
+                class: "primary",
+                title: "Include it as a linked folder, which changes with the set",
+              }),
+            ],
+      ),
+    ),
+    h(
+      "p",
+      { class: "set-info muted" },
+      set.mods.length ? set.mods.join(", ") : "Empty",
+      h("br"),
+      set.includedBy.length ? `In ${set.includedBy.join(", ")}` : "Not in any profile",
+    ),
+  );
+}
+
+/** Runs `work` for the sets dialog, its error shown in the dialog. */
+async function setAction(work) {
+  try {
+    return await work();
+  } catch (e) {
+    $("#sets-error").textContent = errorText(e);
+    $("#sets-error").hidden = false;
+    throw e;
+  }
+}
+
+/** Includes or copies in `set` (`command` is include_set or copy_set). */
+async function addSet(set, command) {
+  // closed first: a synced profile can't include one, which is a blocker
+  $("#sets-dialog").close();
+  const profile = await run(command, { id: state.profile.id, set: set.id });
+  setCollapsed(set.id, false);
+  showProfile(profile);
+  status(command === "copy_set" ? `Copied ${set.name} in as a folder` : `Added the shared folder ${set.name}`);
+}
+
+// A synced profile can't include a set yet, so the blocker offers copying
+// it in, which is all that was asked.
+windowFixes.copySet = async (fix, id) => ({ done: await invokeResolving("copy_set", { id, set: fix.set }) });
 
 // A menu popped up under a button, on the page itself so a card can't clip
 // it. `items` are `{ label, run, danger }`, "-" for a line between, or

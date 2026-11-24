@@ -168,8 +168,8 @@ pub async fn apply_fix(
     Ok(())
 }
 
-/// A set's id, as a fix gives it.
-fn parse_set(id: &str) -> CmdResult<uuid::Uuid> {
+/// A set's id, as a fix or the window gives it.
+pub(crate) fn parse_set(id: &str) -> CmdResult<uuid::Uuid> {
     id.parse()
         .map_err(|_| format!("`{id}` isn't a set's id").into())
 }

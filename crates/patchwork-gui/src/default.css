@@ -2329,9 +2329,44 @@ body.dragging-mod .drag-handle {
   transform: translateX(7px);
 }
 
-#new-folder {
+#new-folder,
+#add-set {
   font-size: 12px;
   padding: 2px 10px;
+}
+
+/* A shared set's linked folder: marked as shared, its mods' line in the
+   accent colour. */
+.folder-shared {
+  flex: none;
+  font-weight: normal;
+}
+
+.mod-folder.linked>.mod-list {
+  border-left-color: var(--pw-accent);
+}
+
+.result-grid>.mod-folder.linked {
+  border-color: color-mix(in srgb, var(--pw-accent) 45%, var(--pw-border));
+}
+
+/* A set in the Add a shared folder dialog: its name and buttons, then
+   what's in it and where it's used. */
+.set-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.set-head .set-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.set-info {
+  margin: 4px 0 0;
+  font-size: 12px;
 }
 
 /* A disabled mod fades out, all but its switch so it's easy to turn back on. */

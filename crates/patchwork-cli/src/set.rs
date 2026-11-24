@@ -52,12 +52,14 @@ pub(crate) fn run(pw: &Patchwork, command: SetCommand, explicit: &Option<String>
             if sets.is_empty() {
                 println!("{game} has no sets");
             }
+            let mut includers = pw.includers()?;
             for set in sets {
-                let including: Vec<String> = pw
-                    .profiles_including(set.id)?
-                    .iter()
-                    .map(|p| Ok(pw.load_profile(p)?.label()))
-                    .collect::<Result<_>>()?;
+                let including: Vec<String> = includers
+                    .remove(&set.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_, label)| label)
+                    .collect();
                 let mark = if loaded.include(set.id).is_some() {
                     '*'
                 } else {

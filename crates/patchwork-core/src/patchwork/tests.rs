@@ -4563,6 +4563,18 @@ async fn a_shared_folder_is_one_set_for_every_profile_that_includes_it() {
     assert_eq!(mod_names(&pw, &b), ["d", "b", "c"]);
     assert!(pw.load_profile(&b).unwrap().find("b").unwrap().enabled);
     assert_eq!(pw.profiles_including(set.id).unwrap().len(), 2);
+    let mut labels: Vec<String> = pw.includers().unwrap()[&set.id]
+        .iter()
+        .map(|(_, label)| label.clone())
+        .collect();
+    labels.sort();
+    assert_eq!(
+        labels,
+        [
+            pw.load_profile(&a).unwrap().label(),
+            pw.load_profile(&b).unwrap().label()
+        ]
+    );
     // locked with the set's mods
     let lock = pw.lock(&b, false).await.unwrap();
     let mut locked: Vec<&str> = lock.mods.iter().map(|m| m.name.as_str()).collect();
@@ -4679,6 +4691,9 @@ async fn synced_profiles_copy_sets_in_rather_than_including_them() {
     let copied = loaded.find("b").unwrap();
     assert_eq!(loaded.folder_of(copied).unwrap().name, "QOL");
     assert!(!loaded.is_linked(copied));
+    // nor share one of its folders
+    assert!(pw.share_folder(&b, "QOL").is_err());
+    assert!(pw.load_profile(&b).unwrap().includes.is_empty());
     pw.sync_entries(&b).unwrap();
 }
 

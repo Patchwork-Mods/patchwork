@@ -194,8 +194,8 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
    the GUI files a mod from the folder button on each mod (not its menu),
    and deploy history keeps folders (see "History" above).
 2. **Shared sets as linked folders**: local only, no syncing of sets.
-   *In progress*: core, CLI and the GUI's blockers are done; the GUI's
-   linked folders and sets' config edits are left. As built:
+   *In progress*: core, CLI and GUI are done; sets' config edits are
+   left. As built:
    - **Loading expands, saving splits.** `load_profile` gives the profile
      with each set's mods in its block, as a linked folder (the mods'
      `folder` is the set's id), the profile's `disabled` applied as their
@@ -230,6 +230,17 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      `CopySet`, copies it in as a folder), and one that includes a set
      can't sync (`UnlinkSets`). Including sets in synced profiles is step 3.
    - **Exports** turn each linked folder into an ordinary folder.
+   - **GUI**: `ProfileDetail::folders` has the linked folders too, after
+     the profile's own, each with `linked` and `alsoIn` (the other
+     profiles that include its set). A linked folder is marked "Shared
+     with N profiles" and its menu has Rename shared folder…, Unlink
+     (keeping its mods) and Remove from this profile; an own folder's has
+     Share with other profiles. Add shared folder (beside New folder)
+     lists the game's sets to add (include) or copy in, and deletes ones no
+     profile includes. Removing a linked folder's mod, or taking it out of
+     the folder, says it leaves the set. A synced profile can't share a
+     folder (a plain error); including a set in one is the `CopySet`
+     blocker, whose window fix copies it in and is done.
    - **A set's own config edits** come after the rest; until then config
      edits stay in the profile.
    - Order: core model and expanding/splitting; editing (sets, turning a

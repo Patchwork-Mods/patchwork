@@ -244,6 +244,7 @@
 						<!-- Folders group mods to show them together and turn them on or
                  off at once; see folders.js. -->
 						<button type="button" id="new-folder" title="Group mods in a folder, to keep them together and turn them on or off at once">New folder</button>
+						<button type="button" id="add-set" title="Add a folder shared with the game's other profiles">Add shared folder</button>
 					</div>
 					<!-- Cards look like a source's search results; the list is denser,
                with rows that expand to show the rest. See setModsView() in
@@ -782,10 +783,29 @@
 					<span>Name</span>
 					<input name="name" required autocomplete="off" maxlength="80">
 				</label>
+				<p id="folder-name-note" class="muted" hidden></p>
 				<p id="folder-name-error" class="error" hidden></p>
 				<div class="row end">
 					<button type="button" value="cancel" formnovalidate>Cancel</button>
 					<button type="submit" id="folder-name-submit" class="primary"></button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- The game's shared sets, to include one in the profile as a linked
+		     folder or copy it in; see folders.js. -->
+		<dialog id="sets-dialog">
+			<form method="dialog" class="stack">
+				<h2>Add a shared folder</h2>
+				<p class="muted">
+					A shared folder is a set of mods that several of a game's profiles include. Adding, removing or
+					reordering its mods changes it in all of them; turning them on or off is each profile's own.
+					Copying one in makes it an ordinary folder of this profile instead.
+				</p>
+				<ul id="sets-list" class="history"></ul>
+				<p id="sets-error" class="error" hidden></p>
+				<div class="row end">
+					<button value="close" autofocus>Close</button>
 				</div>
 			</form>
 		</dialog>

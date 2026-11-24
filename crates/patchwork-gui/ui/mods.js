@@ -22,7 +22,7 @@ import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
 import { showChangelog } from "./changelog.js";
 import { dragHandle, dragging } from "./reorder.js";
-import { arrange, folderButton, folderSection, refreshFolder, saveTop } from "./folders.js";
+import { arrange, folderButton, folderOf, folderSection, refreshFolder, saveTop } from "./folders.js";
 import { conflictMark } from "./conflicts.js";
 import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
 import { requirementsList, requirementsMark } from "./requirements.js";
@@ -980,8 +980,12 @@ export function fillUpdate(el, m, onVersion) {
 /** Asks before taking a mod out of the profile; resolves to whether to go ahead. */
 function confirmRemove(m) {
   const dialog = $("#remove-dialog");
-  $("#remove-summary").textContent =
-    `Remove ${m.name} from ${state.profile.label}? Its files leave the game on the next deploy.`;
+  const folder = folderOf(m);
+  $("#remove-summary").textContent = folder?.linked
+    ? `Remove ${m.name} from the shared folder ${folder.name}? It's taken out of the set, so it leaves ${
+        folder.alsoIn.length ? `${state.profile.label} and ${folder.alsoIn.join(", ")}` : state.profile.label
+      }. Its files leave the game on the next deploy.`
+    : `Remove ${m.name} from ${state.profile.label}? Its files leave the game on the next deploy.`;
   dialog.returnValue = "";
   dialog.showModal();
   return new Promise((resolve) =>
