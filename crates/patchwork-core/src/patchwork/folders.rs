@@ -31,6 +31,9 @@ impl Patchwork {
     pub fn rename_folder(&self, profile: &ProfileRef, folder: &str, name: &str) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
         let id = loaded.find_folder(folder)?.id;
+        if id == loaded.id {
+            return Err(personal_folder(&loaded));
+        }
         let name = folder_name(&loaded, name, Some(id))?;
         if loaded.include(id).is_some() {
             return self.rename_set(id, &name);
@@ -45,6 +48,9 @@ impl Patchwork {
         let mut loaded = self.load_profile(profile)?;
         let found = loaded.find_folder(folder)?;
         let id = found.id;
+        if id == loaded.id {
+            return Err(personal_folder(&loaded));
+        }
         if loaded.include(id).is_some() {
             return Err(Error::invalid(format!(
                 "{} is a shared set; unlink it instead",
@@ -71,24 +77,10 @@ impl Patchwork {
             .map(|f| loaded.find_folder(f))
             .transpose()?
             .map(|f| f.id);
-        let from = loaded
-            .mods
-            .iter()
-            .position(|m| m.name == name)
-            .ok_or_else(|| no_such_mod(&loaded.label(), name))?;
-        if loaded.mods[from].folder == id {
-            return Ok(());
+        if move_to_folder(&mut loaded, name, id)? {
+            self.save_profile(profile, &loaded)?;
         }
-        let mut moving = loaded.mods.remove(from);
-        // after the last mod of the folder it's going into, or taken out,
-        // of the one it was in; where it was if there's none
-        let after = id.or(moving.folder);
-        moving.folder = id;
-        let to = after
-            .and_then(|f| loaded.mods.iter().rposition(|m| m.folder == Some(f)))
-            .map_or(from, |last| last + 1);
-        loaded.mods.insert(to, moving);
-        self.save_profile(profile, &loaded)
+        Ok(())
     }
 
     /// Turns all of a folder's mods on or off.
@@ -105,6 +97,40 @@ impl Patchwork {
         }
         self.save_profile(profile, &loaded)
     }
+}
+
+/// The personal layer's folder (see [`crate::personal`]) isn't one to
+/// rename or remove: it's there while it has mods.
+fn personal_folder(loaded: &Profile) -> Error {
+    Error::invalid(format!(
+        "{}'s personal mods are always in {}; move them out to share them",
+        loaded.label(),
+        crate::personal::PERSONAL_NAME
+    ))
+}
+
+/// Puts mod `name` in folder `id`, at its end, or with `None` takes it out
+/// of the folder it's in, to just after it. Returns whether that changed
+/// anything.
+pub(super) fn move_to_folder(loaded: &mut Profile, name: &str, id: Option<Uuid>) -> Result<bool> {
+    let from = loaded
+        .mods
+        .iter()
+        .position(|m| m.name == name)
+        .ok_or_else(|| no_such_mod(&loaded.label(), name))?;
+    if loaded.mods[from].folder == id {
+        return Ok(false);
+    }
+    let mut moving = loaded.mods.remove(from);
+    // after the last mod of the folder it's going into, or taken out,
+    // of the one it was in; where it was if there's none
+    let after = id.or(moving.folder);
+    moving.folder = id;
+    let to = after
+        .and_then(|f| loaded.mods.iter().rposition(|m| m.folder == Some(f)))
+        .map_or(from, |last| last + 1);
+    loaded.mods.insert(to, moving);
+    Ok(true)
 }
 
 /// `name` trimmed, if it isn't blank and no folder of `profile` but

@@ -256,6 +256,9 @@ struct ProfileDetail {
     /// The names of mods added here to a profile this computer follows,
     /// which whoever shares it doesn't have.
     unshared: Vec<String>,
+    /// Whether it's synced with other computers or people, so its mods
+    /// can be kept personal (see [`patchwork_core::personal`]).
+    synced: bool,
     /// Where the profile is deployed to, if that's been set up: the game's
     /// folder, or its instance (which always is).
     install: Option<String>,
@@ -293,6 +296,10 @@ struct UiFolder {
     /// For a linked folder, the other profiles that include its set, by
     /// label.
     also_in: Vec<String>,
+    /// Whether it's the profile's personal layer (see
+    /// [`patchwork_core::personal`]): a linked folder whose mods stay on
+    /// this person's computers.
+    personal: bool,
 }
 
 /// One of a game's shared sets, for picking one to include.
@@ -684,10 +691,12 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         })
         .collect();
     let issues = pw.issues(&r).map_err(msg)?;
-    let following = patchwork_sync::synced_profiles(&pw.paths().sync())
+    let syncing = patchwork_sync::synced_profiles(&pw.paths().sync())
         .unwrap_or_default()
         .into_iter()
-        .any(|s| s.profile == r.uuid && !s.writable);
+        .find(|s| s.profile == r.uuid);
+    let synced = syncing.is_some();
+    let following = syncing.is_some_and(|s| !s.writable);
     let unshared = if following {
         pw.unshared_mods(&r).map_err(msg)?
     } else {
@@ -726,6 +735,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                 folder: f.clone(),
                 linked,
                 also_in,
+                personal: f.id == loaded.id,
             }
         })
         .collect();
@@ -803,6 +813,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         actions,
         issues,
         unshared,
+        synced,
         id,
         install,
         deployed_files,
@@ -1337,6 +1348,21 @@ fn set_mod_folder(
 ) -> CmdResult<ProfileDetail> {
     app.pw
         .set_mod_folder(&profile_ref(&id)?, &name, folder.as_deref())
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
+/// Moves mods into the profile's personal layer, or with `personal` false
+/// back out of it to be synced to everyone.
+#[tauri::command]
+fn set_personal(
+    app: State<'_, App>,
+    id: String,
+    names: Vec<String>,
+    personal: bool,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .set_personal(&profile_ref(&id)?, &names, personal)
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
@@ -2698,6 +2724,7 @@ fn main() {
             rename_folder,
             remove_folder,
             set_mod_folder,
+            set_personal,
             set_folder_enabled,
             game_sets,
             share_folder,

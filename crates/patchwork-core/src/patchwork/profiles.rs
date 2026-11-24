@@ -13,6 +13,7 @@ use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::fsutil;
 use crate::lock::Lockfile;
+use crate::personal::{self, Personal};
 use crate::profile::{PROFILE_SCHEMA, Profile, ProfileRef, SCHEMA_WITHOUT_INCLUDES, validate_name};
 use crate::set;
 use crate::{Error, Result};
@@ -78,6 +79,8 @@ impl Patchwork {
     /// to.
     pub fn duplicate_profile(&self, profile: &ProfileRef, name: &str) -> Result<ProfileRef> {
         let mut copy = self.load_profile(profile)?;
+        // the copy isn't synced, so its personal mods are its own
+        super::personal::fold_personal(&mut copy, profile.uuid);
         copy.id = Uuid::new_v4();
         copy.name = name.to_owned();
         self.check_new_name(&copy)?;
@@ -288,6 +291,10 @@ impl Patchwork {
         // Whatever an older schema had has been moved where it is now, so
         // it's saved as the current one (see `Profile::saved_schema`).
         loaded.schema = PROFILE_SCHEMA;
+        // its personal layer is included like a set (see `crate::personal`)
+        if let Some(personal) = self.load_personal(profile)? {
+            loaded.includes.push(personal.include(profile.uuid));
+        }
         let mut failed = None;
         set::expand(&mut loaded, |id| match self.load_set(id) {
             Ok(found) => found,
@@ -304,7 +311,9 @@ impl Patchwork {
 
     /// Saves a profile as [`Patchwork::load_profile`] gives it: its own
     /// mods to its file, and the mods of the sets it includes to those
-    /// sets, if they've changed (see [`set::collapse`]).
+    /// sets, if they've changed (see [`set::collapse`]). Its personal
+    /// layer is saved to its own file, or removed if the profile no longer
+    /// includes it.
     pub(super) fn save_profile(&self, profile: &ProfileRef, value: &Profile) -> Result<()> {
         // a reorder may have taken a folder's mods apart
         let grouped;
@@ -317,8 +326,18 @@ impl Patchwork {
             value
         };
         let (mut stored, changed) = set::collapse(value);
+        let personal = stored
+            .includes
+            .iter()
+            .position(|i| i.set == profile.uuid)
+            .map(|at| stored.includes.remove(at));
         stored.schema = stored.saved_schema();
+        let mut personal_mods = None;
         for (id, mods) in changed {
+            if id == profile.uuid {
+                personal_mods = Some(mods);
+                continue;
+            }
             let mut found = self.load_set(id)?.ok_or_else(|| {
                 Error::invalid(format!(
                     "the set {id} that {} includes is gone",
@@ -333,13 +352,40 @@ impl Patchwork {
                 }
             }
         }
+        match personal {
+            Some(include) => {
+                let mut saved = self
+                    .load_personal(profile)?
+                    .unwrap_or_else(|| Personal::new(&value.game));
+                saved.after = include.after;
+                saved.disabled = include.disabled;
+                if let Some(mods) = personal_mods {
+                    saved.mods = mods;
+                }
+                self.save_personal(profile, &saved)?;
+            }
+            None => self.remove_personal(profile)?,
+        }
         fsutil::write_toml(&self.profile_file(profile), &stored)?;
         self.profile_changed(profile, false);
         Ok(())
     }
 
+    /// Saves the profile's lockfile. What only its personal layer needs
+    /// goes in a lockfile of its own (see [`personal::split_lock`]), so the lockfile
+    /// is what's synced.
     pub(super) fn save_lock(&self, profile: &ProfileRef, lock: &Lockfile) -> Result<()> {
-        fsutil::write_toml(&self.lock_file(profile), lock)?;
+        let loaded = self.load_profile(profile)?;
+        let (shared, mine) = match loaded.personal() {
+            Some(_) => personal::split_lock(&loaded, lock.clone()),
+            None => (lock.clone(), Vec::new()),
+        };
+        let mine = Lockfile {
+            mods: mine,
+            ..shared.clone()
+        };
+        fsutil::write_toml(&self.lock_file(profile), &shared)?;
+        self.save_personal_lock(profile, &mine)?;
         self.profile_changed(profile, false);
         Ok(())
     }

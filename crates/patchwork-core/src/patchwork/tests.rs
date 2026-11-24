@@ -4924,3 +4924,155 @@ async fn a_missing_set_is_an_issue_until_its_include_goes() {
     pw.unlink_set(&a, id.parse().unwrap(), false).unwrap();
     assert!(pw.load_profile(&a).unwrap().includes.is_empty());
 }
+
+/// A [`WithDependencies`] game, at version 1.0 until it's changed, with a
+/// profile that has `lib` and `other`.
+async fn with_dependencies(tmp: &Path) -> (Patchwork, std::sync::Arc<Versioned>, ProfileRef) {
+    let (pw, source) = dependencies_game(tmp);
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    for id in ["lib", "other"] {
+        pw.add_mod(&profile, deps_spec(id), None, true)
+            .await
+            .unwrap();
+    }
+    (pw, source, profile)
+}
+
+/// A [`WithDependencies`] game, at version 1.0 until it's changed.
+fn dependencies_game(tmp: &Path) -> (Patchwork, std::sync::Arc<Versioned>) {
+    let dir = tmp.join("mods");
+    fs::create_dir_all(&dir).unwrap();
+    let source = std::sync::Arc::new(Versioned {
+        dir,
+        version: std::sync::Mutex::new("1.0".to_owned()),
+    });
+    let pw = Patchwork::builder(Paths::rooted(&tmp.join("pw")))
+        .source(WithDependencies(source.clone()))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    pw.add_game(new_game("my-game", "none")).unwrap();
+    (pw, source)
+}
+
+fn deps_spec(id: &str) -> ModSpec {
+    ModSpec {
+        source: "deps".to_owned(),
+        id: id.to_owned(),
+        version: None,
+    }
+}
+
+#[tokio::test]
+async fn personal_mods_stay_here_and_lock_on_top_of_whats_shared() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, source, profile) = with_dependencies(tmp.path()).await;
+    let mine = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+    // a profile that isn't synced has nothing to keep apart
+    assert!(pw.set_personal(&profile, &mine(&["lib"]), true).is_err());
+    pw.lock(&profile, false).await.unwrap();
+    pw.start_sync(&profile).unwrap();
+
+    pw.add_mod(&profile, deps_spec("mine"), None, false)
+        .await
+        .unwrap();
+    pw.set_personal(&profile, &mine(&["mine"]), true).unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    let m = loaded.find("mine").unwrap();
+    assert!(loaded.is_personal(m) && !m.enabled);
+    assert_eq!(loaded.folder_of(m).unwrap().name, "Personal");
+    assert!(!loaded.is_personal(loaded.find("lib").unwrap()));
+    // it's in its own file, not the profile's
+    let stored = fs::read_to_string(pw.profile_file(&profile)).unwrap();
+    assert!(!stored.contains("mine"), "{stored}");
+    assert!(stored.contains("schema = 3"), "{stored}");
+    // and it can't be renamed or removed like a folder
+    assert!(pw.rename_folder(&profile, "Personal", "Mine").is_err());
+    assert!(pw.remove_folder(&profile, "Personal").is_err());
+
+    // so there's nothing to publish, or to say isn't shared
+    assert!(pw.unsynced_changes(&profile).unwrap().is_empty());
+    assert!(pw.unshared_mods(&profile).unwrap().is_empty());
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lock.mods.len(), 4);
+    assert!(pw.unsynced_changes(&profile).unwrap().is_empty());
+    let stored = fs::read_to_string(pw.lock_file(&profile)).unwrap();
+    assert!(!stored.contains("mine"), "{stored}");
+    let entries = pw.sync_entries(&profile).unwrap();
+    assert!(!entries.keys().any(|k| k.contains("mine")));
+
+    // what arrives from elsewhere leaves it be
+    let mut doc = entries;
+    let other = dependencies_game(&tmp.path().join("other")).0;
+    other.apply_synced(&doc, true).unwrap();
+    other
+        .set_hidden_tags(&profile, &["library".to_owned()])
+        .unwrap();
+    doc.extend(other.unsynced_changes(&profile).unwrap());
+    pw.apply_synced(&doc, true).unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    assert_eq!(loaded.hidden_tags, ["library"]);
+    assert!(loaded.is_personal(loaded.find("mine").unwrap()));
+    let lock = pw.load_lock(&profile).unwrap().unwrap();
+    assert!(lock.mods.iter().any(|m| m.id == "mine"));
+
+    // a personal mod can't move what's shared to a newer version
+    *source.version.lock().unwrap() = "2.0".to_owned();
+    pw.add_mod(&profile, deps_spec("app"), None, true)
+        .await
+        .unwrap();
+    pw.set_personal(&profile, &mine(&["app"]), true).unwrap();
+    let names = |pw: &Patchwork| mod_names(pw, &profile);
+    assert_eq!(names(&pw), ["lib", "other", "mine", "app"]);
+    let err = pw.lock(&profile, false).await.unwrap_err();
+    let Some(crate::fix::Fix::RemoveMods { names }) = err.fix() else {
+        panic!("{err:?}");
+    };
+    assert_eq!(names, ["app"]);
+    let lib = |pw: &Patchwork| {
+        let lock = pw.load_lock(&profile).unwrap().unwrap();
+        let lib = lock.mods.iter().find(|m| m.id == "lib").unwrap();
+        lib.version.clone().unwrap()
+    };
+    assert_eq!(lib(&pw), "1.0");
+
+    // shared, it can
+    pw.set_personal(&profile, &mine(&["app"]), false).unwrap();
+    pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lib(&pw), "2.0");
+    assert!(
+        pw.unsynced_changes(&profile)
+            .unwrap()
+            .iter()
+            .any(|(k, _)| k == "mod/deps:app")
+    );
+
+    // a copy isn't synced, so they're its own
+    let copy = pw.duplicate_profile(&profile, "copy").unwrap();
+    let loaded = pw.load_profile(&copy).unwrap();
+    let m = loaded.find("mine").unwrap();
+    assert!(!loaded.is_linked(m));
+    assert_eq!(loaded.folder_of(m).unwrap().name, "Personal");
+    assert_eq!(pw.load_lock(&copy).unwrap().unwrap().mods.len(), 5);
+
+    // and taking the last one out leaves no personal layer
+    pw.set_personal(&profile, &mine(&["mine"]), false).unwrap();
+    let loaded = pw.load_profile(&profile).unwrap();
+    assert!(loaded.personal().is_none());
+    assert!(
+        !pw.profile_state_dir(&profile)
+            .join("personal.toml")
+            .exists()
+    );
+    pw.lock(&profile, false).await.unwrap();
+    assert!(
+        !pw.profile_state_dir(&profile)
+            .join("personal.lock")
+            .exists()
+    );
+    assert!(
+        fs::read_to_string(pw.lock_file(&profile))
+            .unwrap()
+            .contains("mine")
+    );
+}

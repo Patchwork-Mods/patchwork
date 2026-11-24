@@ -1,7 +1,8 @@
 # Folders, shared sets and layered profiles
 
 Status (2026-11-24): steps 1 (folders inside a profile) and 2 (shared
-sets) are done; the rest is a proposal. Where what gets built differs from this, the notes under
+sets) are done, and step 3 (the personal layer) is under way; the rest is
+a proposal. Where what gets built differs from this, the notes under
 each step in "Order of work" say so, and those notes win.
 
 ## The problem
@@ -272,7 +273,45 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      folder into a set, include, unlink) and the CLI; lock, deploy and
      history with their blockers; exports and the sync blocker; GUI;
      sets' config edits.
-3. **Personal layer** on synced profiles, with the split lock.
+3. **Personal layer** on synced profiles, with the split lock. *Under
+   way.* As built so far:
+   - **It's a private set.** The personal layer is kept like a shared set
+     that only its profile includes, whose id is the profile's own, in
+     `profile-state/<id>/personal.toml` (its mods, and the include's
+     `after` and `disabled`). Loading includes it, so its mods show as a
+     linked folder, "Personal", and everything that reads a profile sees
+     them; saving writes it back there, never to `profile.toml`, and
+     removes the file once it has no mods. `load_set`/`save_set` take a
+     profile's id to mean its personal layer, so going back and the
+     expanding and splitting of step 2 work on it unchanged.
+   - **Only synced profiles get one** (`set_personal`, `folder personal
+     <mods>` / `folder publish <mods>`, and the GUI's folder button: Keep
+     on this computer only / Share with everyone). Moving a mod in
+     publishes its removal for everyone else; moving it out publishes
+     it. A shared set's mod can't be made personal. The Personal folder
+     can't be renamed or removed; it goes when its last mod does.
+     Duplicating a profile turns it into an ordinary folder.
+   - **Syncing leaves it out**: `sync_entries` gives the profile without
+     it (`personal::without`), so a follower's personal mods aren't
+     `unshared_mods` either, and what arrives never touches it.
+   - **The split lock**: what only personal mods lead to is kept in
+     `personal.lock` beside it (`personal::split_lock` on `save_lock`,
+     merged back by `load_lock`), so `profile.lock` stays what's synced.
+     Locking does the shared mods first, then the personal ones on top
+     (`lock_layer`), which can't relock anything the shared lock has. A
+     personal mod needing a newer version of one of those is a blocker
+     whose fix removes it.
+   - Still to do: syncing the personal layer between linked computers
+     (the devices document, like `follows.toml`), until which it's on
+     one computer and the GUI says "Only on this computer"; personal
+     includes of shared sets; personal config edits (saving settings to
+     the personal layer is refused for now, since saving to a set drops
+     the profile's own, which would publish their removal); followed
+     profiles' additions going to it (today they're `unshared_mods` in
+     the profile itself); the client/server-side issue; and going back
+     past a change to it, which asks what to do as for a changed shared
+     set (where "copy" would make its mods everyone's) rather than just
+     putting it back.
 4. **Optional folders** in synced profiles.
 5. **Sets synced between linked computers**, and exporting a set on its
    own.

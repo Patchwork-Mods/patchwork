@@ -44,6 +44,7 @@ pub mod options;
 pub mod order;
 pub mod packaging;
 pub mod paths;
+pub mod personal;
 pub mod profile;
 pub mod registry;
 pub mod relpath;

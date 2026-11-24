@@ -1845,7 +1845,11 @@ impl Patchwork {
                 supported: LOCK_SCHEMA,
             });
         }
-        Ok(lock)
+        // with what only its personal layer needs (see `crate::personal`)
+        Ok(crate::personal::merge_lock(
+            lock,
+            self.load_personal_lock(profile)?,
+        ))
     }
 
     /// Resolves every mod in the profile (enabled or not) and its
@@ -1940,37 +1944,38 @@ impl Patchwork {
             .map(|(key, m)| (key.clone(), m.clone()))
             .collect();
 
-        let (lock, unmet) = loop {
-            let (mods, resolved) = self.resolve_mods(&loaded, &previous, &known).await?;
-            let lock = Lockfile {
-                schema: LOCK_SCHEMA,
-                game: LockedGame {
-                    id: loaded.game.clone(),
-                    env: picks.clone(),
-                },
-                mods,
-            };
-            let unmet = self.unmet_requirements(&lock);
-            // Unpinned mods kept from the old lockfile might just be stale,
-            // so resolve those again. Each pass drops at least one, so this
-            // ends.
-            let stale: Vec<String> = lock
+        // The shared mods first, then the personal layer's on top of them,
+        // which can't change what the shared ones are locked to (see
+        // `crate::personal`).
+        let (shared, personal): (Vec<&ProfileMod>, Vec<&ProfileMod>) =
+            loaded.mods.iter().partition(|m| !loaded.is_personal(m));
+        let game = LockedGame {
+            id: loaded.game.clone(),
+            env: picks,
+        };
+        let (mut lock, mut unmet) = self
+            .lock_layer(&loaded, &shared, &[], &game, &mut previous, &known)
+            .await?;
+        if !personal.is_empty() {
+            let fixed = std::mem::take(&mut lock.mods);
+            (lock, unmet) = self
+                .lock_layer(&loaded, &personal, &fixed, &game, &mut previous, &known)
+                .await?;
+            let fixed: HashSet<String> = fixed.iter().map(LockedMod::key).collect();
+            let mine: HashSet<&str> = lock
                 .mods
                 .iter()
-                .filter(|m| {
-                    m.requested.is_none()
-                        && !resolved.contains(&m.key())
-                        && unmet.iter().any(|u| u.dependency_key == m.key())
-                })
-                .map(|m| m.key())
+                .filter(|m| !fixed.contains(&m.key()))
+                .map(|m| m.name.as_str())
                 .collect();
-            if stale.is_empty() {
-                break (lock, unmet);
+            let blocked: Vec<&UnmetRequirement> = unmet
+                .iter()
+                .filter(|u| mine.contains(u.name.as_str()) && fixed.contains(&u.dependency_key))
+                .collect();
+            if !blocked.is_empty() {
+                return Err(personal_needs_newer(&loaded, &blocked));
             }
-            for key in stale {
-                previous.remove(&key);
-            }
-        };
+        }
         for u in unmet {
             self.reporter.report(Event::Warning(u.to_string()));
         }
@@ -1989,6 +1994,53 @@ impl Patchwork {
         }
         self.save_lock(profile, &lock)?;
         Ok(lock)
+    }
+
+    /// Locks `roots` (some of `loaded`'s mods) and their dependencies on
+    /// top of `fixed`, which stay as they're locked: their dependencies
+    /// that `fixed` has aren't locked again. Returns the lockfile with
+    /// `fixed` first, and the requirements it doesn't meet.
+    async fn lock_layer(
+        &self,
+        loaded: &Profile,
+        roots: &[&ProfileMod],
+        fixed: &[LockedMod],
+        game: &LockedGame,
+        previous: &mut HashMap<String, LockedMod>,
+        known: &HashMap<String, LockedMod>,
+    ) -> Result<(Lockfile, Vec<UnmetRequirement>)> {
+        let fixed_keys: HashSet<String> = fixed.iter().map(LockedMod::key).collect();
+        loop {
+            let (mods, resolved) = self
+                .resolve_mods(loaded, roots, &fixed_keys, previous, known)
+                .await?;
+            let lock = Lockfile {
+                schema: LOCK_SCHEMA,
+                game: game.clone(),
+                mods: fixed.iter().cloned().chain(mods).collect(),
+            };
+            let unmet = self.unmet_requirements(&lock);
+            // Unpinned mods kept from the old lockfile might just be stale,
+            // so resolve those again. Each pass drops at least one, so this
+            // ends.
+            let stale: Vec<String> = lock
+                .mods
+                .iter()
+                .filter(|m| {
+                    m.requested.is_none()
+                        && !fixed_keys.contains(&m.key())
+                        && !resolved.contains(&m.key())
+                        && unmet.iter().any(|u| u.dependency_key == m.key())
+                })
+                .map(|m| m.key())
+                .collect();
+            if stale.is_empty() {
+                return Ok((lock, unmet));
+            }
+            for key in stale {
+                previous.remove(&key);
+            }
+        }
     }
 
     /// Requirements in `lock` that the locked versions don't meet.
@@ -2132,8 +2184,9 @@ impl Patchwork {
         Ok(issues)
     }
 
-    /// One pass of [`Patchwork::lock`]: walks the profile's mods and their
-    /// dependencies, reusing entries from `previous` where it can. Also
+    /// One pass of [`Patchwork::lock`]: walks `roots` (some of the
+    /// profile's mods) and their dependencies, reusing entries from
+    /// `previous` where it can and leaving out those in `fixed`. Also
     /// returns the keys of the mods it had to resolve.
     ///
     /// `known` is the whole old lockfile, even when updating: a mod that
@@ -2145,11 +2198,12 @@ impl Patchwork {
     async fn resolve_mods(
         &self,
         loaded: &Profile,
+        roots: &[&ProfileMod],
+        fixed: &HashSet<String>,
         previous: &HashMap<String, LockedMod>,
         known: &HashMap<String, LockedMod>,
     ) -> Result<(Vec<LockedMod>, HashSet<String>)> {
-        let mut level: Vec<(ModSpec, Option<String>)> = loaded
-            .mods
+        let mut level: Vec<(ModSpec, Option<String>)> = roots
             .iter()
             .map(|m| {
                 let spec = ModSpec {
@@ -2161,7 +2215,8 @@ impl Patchwork {
             })
             .collect();
         let replacements = loaded.replacements();
-        let mut seen = HashSet::new();
+        // what's already locked, and stays as it is
+        let mut seen = fixed.clone();
         let mut resolved_keys = HashSet::new();
         let mut mods = Vec::new();
         let mut pending = Vec::new();
@@ -3608,6 +3663,33 @@ fn deploy_inputs(
 
 /// Tells the user that mod `name` lists `unsure` (by name) but its source
 /// doesn't say whether it needs them.
+/// Personal mods (see [`crate::personal`]) need newer versions of what
+/// the shared profile has locked than it has, which they can't change.
+fn personal_needs_newer(loaded: &Profile, unmet: &[&UnmetRequirement]) -> Error {
+    let mut names: Vec<String> = unmet.iter().map(|u| u.name.clone()).collect();
+    names.sort();
+    names.dedup();
+    let needs: Vec<String> = unmet.iter().map(|u| u.to_string()).collect();
+    let (them, it) = match names.len() {
+        1 => (format!("`{}`", names[0]), "it"),
+        _ => ("they".to_owned(), "them"),
+    };
+    Error::blocked(
+        format!(
+            "{} (personal mods can't change what {} shares)",
+            needs.join("; "),
+            loaded.label()
+        ),
+        "A personal mod needs a newer version",
+        format!(
+            "{}. Personal mods go on top of what everyone shares, so {them} can't change              the versions it's locked to. Remove {it}, or ask whoever shares {} to update.",
+            needs.join(". "),
+            loaded.label()
+        ),
+        Fix::RemoveMods { names },
+    )
+}
+
 fn unsure_dependencies_notice(name: &str, unsure: &[String]) -> String {
     let (what, them) = match unsure {
         [one] => (format!("`{one}`"), "it"),
@@ -3657,6 +3739,7 @@ mod instances;
 mod lists;
 mod local;
 mod options;
+mod personal;
 mod profiles;
 mod sets;
 mod sync;

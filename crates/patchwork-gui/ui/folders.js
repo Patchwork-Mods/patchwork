@@ -7,6 +7,10 @@
 // A shared set (see set.rs) shows as a linked folder: what's in it is the
 // set's, so adding, removing or moving its mods changes every profile that
 // includes it, while turning them on or off is this profile's own.
+//
+// A synced profile's personal mods (see personal.rs) show as a linked
+// folder too, Personal, whose mods stay on this computer rather than going
+// to everyone. It's there while it has mods, so it has no menu.
 
 import { $, chevronIcon, folderIcon, h } from "./dom.js";
 import { errorText, invoke, invokeResolving, run, state, status, windowFixes } from "./state.js";
@@ -134,7 +138,9 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
     setOpen(opening);
   };
   arrow.addEventListener("click", flip);
-  const items = folder.linked
+  const items = folder.personal
+    ? []
+    : folder.linked
     ? [
         { label: "Rename shared folder…", run: () => renameFolder(folder) },
         "-",
@@ -147,7 +153,7 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
         "-",
         { label: "Remove folder", danger: true, run: () => removeFolder(folder) },
       ];
-  const menu = h(
+  const menu = items.length > 0 && h(
     "button",
     {
       type: "button",
@@ -159,8 +165,16 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
     },
     "⋯",
   );
-  const shared =
-    folder.linked &&
+  const shared = folder.personal
+    ? h(
+        "span",
+        {
+          class: "badge folder-shared",
+          title: "These mods stay on this computer: they aren't synced to anyone the profile's shared with, or to your other computers yet.",
+        },
+        "Only on this computer",
+      )
+    : folder.linked &&
     h(
       "span",
       {
@@ -259,18 +273,27 @@ export function folderButton(m, iconAction) {
     "aria-haspopup": "menu",
     onclick: (e) => {
       const own = folderOf(m);
-      const others = state.profile.folders.filter((f) => f !== own);
+      const others = state.profile.folders.filter((f) => f !== own && !f.personal);
+      // a synced profile's mods can be kept to this person's own computers,
+      // unless they're a shared set's
+      const personal = own?.personal
+        ? { label: "Share with everyone", run: () => setPersonal(m, false) }
+        : state.profile.synced &&
+          !own?.linked && { label: "Keep on this computer only", run: () => setPersonal(m, true) };
       popupMenu(e.currentTarget, [
         ...others.map((f) => ({
           label: f.linked ? `Move to ${f.name} (shared)` : `Move to ${f.name}`,
           run: () => moveTo(m, f),
         })),
-        own && {
-          label: own.linked ? `Take out of ${own.name} and the set` : `Take out of ${own.name}`,
-          run: () => moveTo(m, null),
-        },
-        (others.length > 0 || own) && "-",
+        own &&
+          !own.personal && {
+            label: own.linked ? `Take out of ${own.name} and the set` : `Take out of ${own.name}`,
+            run: () => moveTo(m, null),
+          },
+        (others.length > 0 || (own && !own.personal)) && "-",
         { label: "New folder…", run: () => newFolder([m.name]) },
+        personal && "-",
+        personal,
       ]);
     },
   });
@@ -284,6 +307,17 @@ async function moveTo(m, folder) {
   });
   showProfile(profile);
   status(folder ? `Put ${m.name} in ${folder.name}` : `Took ${m.name} out of its folder`);
+}
+
+/** Moves `m` into the profile's personal mods, or with `personal` false out of them. */
+async function setPersonal(m, personal) {
+  const profile = await run("set_personal", { id: state.profile.id, names: [m.name], personal });
+  showProfile(profile);
+  status(
+    personal
+      ? `${m.name} stays on this computer now; it isn't synced to anyone else`
+      : `${m.name} is synced to everyone now`,
+  );
 }
 
 /** Asks for a name and makes a folder with `mods` in it. */

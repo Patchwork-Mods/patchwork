@@ -403,6 +403,12 @@ impl Patchwork {
 
     /// The set `id`, if `loaded` includes it.
     fn included_set(&self, loaded: &Profile, id: Uuid) -> Result<crate::set::Set> {
+        if id == loaded.id {
+            return Err(Error::invalid(format!(
+                "{}'s personal mods can't keep settings of their own yet",
+                loaded.label()
+            )));
+        }
         if loaded.include(id).is_none_or(|i| i.linked.is_none()) {
             return Err(Error::invalid(format!(
                 "{} doesn't include the set {id}",
@@ -832,11 +838,11 @@ fn sets_editing(loaded: &Profile, path: &Dest) -> Vec<String> {
         .collect()
 }
 
-/// The sets `loaded` includes, for saving `path`'s settings in.
+/// The sets `loaded` includes, for saving `path`'s settings in. Not its
+/// personal layer, which can't keep settings yet.
 fn config_sets(loaded: &Profile, path: &Dest) -> Vec<ConfigSet> {
     loaded
-        .includes
-        .iter()
+        .shared_includes()
         .filter_map(|i| i.linked.as_ref())
         .map(|l| ConfigSet {
             id: l.folder.id,
@@ -861,6 +867,7 @@ fn default_save_to(
         .or_else(|| owner_by_name(loaded, path, title));
     if let Some(m) = owner.as_deref().and_then(|name| loaded.find(name))
         && loaded.is_linked(m)
+        && !loaded.is_personal(m)
         && let Some(id) = m.folder
     {
         return SaveTo::Set(id);

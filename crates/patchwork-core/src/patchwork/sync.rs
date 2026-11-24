@@ -23,6 +23,7 @@ use crate::fix::{Blocker, Fix};
 use crate::fsutil;
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
+use crate::personal;
 use crate::profile::{Profile, ProfileRef};
 use crate::sync::{self, Entries};
 use crate::{Error, Result};
@@ -102,14 +103,20 @@ impl Patchwork {
         });
     }
 
-    /// The profile and its lockfile as they are here, as entries.
+    /// The profile and its lockfile as they are here, as entries. Its
+    /// personal layer is left out (see [`crate::personal`]), along with
+    /// what only that needs locked.
     pub fn sync_entries(&self, profile: &ProfileRef) -> Result<Entries> {
         let loaded = self.load_profile(profile)?;
-        if !loaded.includes.is_empty() {
+        if loaded.shared_includes().next().is_some() {
             return Err(sets_cant_sync(&loaded));
         }
         let lock = self.load_lock(profile)?;
-        Ok(sync::to_entries(&loaded, lock.as_ref()))
+        if loaded.personal().is_none() {
+            return Ok(sync::to_entries(&loaded, lock.as_ref()));
+        }
+        let lock = lock.map(|lock| personal::split_lock(&loaded, lock).0);
+        Ok(sync::to_entries(&personal::without(&loaded), lock.as_ref()))
     }
 
     /// Starts keeping track of what's synced of `profile`, from the profile
@@ -147,12 +154,16 @@ impl Patchwork {
         let loaded = self.load_profile(profile)?;
         Ok(loaded
             .mods
-            .into_iter()
+            .iter()
             .filter(|m| {
+                // they're kept here on purpose
+                if loaded.is_personal(m) {
+                    return false;
+                }
                 let key = format!("{}{}", sync::MOD, crate::lock::mod_key(&m.source, &m.id));
                 base.get(&key).is_none_or(|v| v.as_slice() == sync::REMOVED)
             })
-            .map(|m| m.name)
+            .map(|m| m.name.clone())
             .collect())
     }
 
@@ -472,8 +483,7 @@ fn is_in_profile(loaded: &Profile, key: &str) -> bool {
 /// everyone as the profile's own.
 fn sets_cant_sync(loaded: &Profile) -> Error {
     let (sets, names): (Vec<String>, Vec<String>) = loaded
-        .includes
-        .iter()
+        .shared_includes()
         .map(|i| {
             let name = i
                 .linked

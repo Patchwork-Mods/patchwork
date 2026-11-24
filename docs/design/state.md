@@ -32,6 +32,9 @@ and `<data>` are the platform's usual config and data directories, such as
   the last 50 deploys that changed something, for `rollback`
 - `<data>/profile-state/<id>/synced.json`: the profile as it was at the
   last sync, so local changes can be told apart from remote ones
+- `<data>/profile-state/<id>/personal.toml` and `personal.lock`: a synced
+  profile's personal layer, mods kept here rather than synced, and what
+  only they need locked (see `folders.md`)
 - `<data>/sets/<id>/set.toml`: shared sets, lists of mods that several
   of a game's profiles include (see `folders.md`)
 - `<data>/local-mods.toml`: where each local mod was added from. A local

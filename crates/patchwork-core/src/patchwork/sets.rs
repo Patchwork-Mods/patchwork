@@ -265,11 +265,13 @@ impl Patchwork {
         Ok(name.to_owned())
     }
 
-    /// The set with id `id`, if there is one.
+    /// The set with id `id`, if there is one. A profile's id gives its
+    /// personal layer (see [`crate::personal`]), the private set only it
+    /// includes.
     pub fn load_set(&self, id: Uuid) -> Result<Option<Set>> {
         let path = self.set_file(id);
         let Some(set) = fsutil::read_toml::<Set>(&path)? else {
-            return Ok(None);
+            return self.load_personal_set(id);
         };
         if set.schema > SET_SCHEMA {
             return Err(Error::Schema {
@@ -293,6 +295,9 @@ impl Patchwork {
     }
 
     pub(super) fn save_set(&self, set: &Set) -> Result<()> {
+        if self.save_personal_set(set)? {
+            return Ok(());
+        }
         let mut set = set.clone();
         set.schema = set.saved_schema();
         fsutil::write_toml(&self.set_file(set.id), &set)
@@ -376,7 +381,7 @@ fn no_such_set(id: Uuid) -> Error {
 }
 
 /// What an include of `set` remembers of it when it's just been loaded.
-fn linked(set: &Set) -> Linked {
+pub(super) fn linked(set: &Set) -> Linked {
     Linked {
         folder: Folder {
             id: set.id,
@@ -390,7 +395,7 @@ fn linked(set: &Set) -> Linked {
 }
 
 /// The last of the profile's own mods (not a set's).
-fn last_own(profile: &Profile) -> Option<String> {
+pub(super) fn last_own(profile: &Profile) -> Option<String> {
     profile
         .mods
         .iter()
@@ -400,7 +405,7 @@ fn last_own(profile: &Profile) -> Option<String> {
 }
 
 /// `name`, or a numbered one if a folder of `profile` already has it.
-fn folder_name(profile: &Profile, name: &str) -> String {
+pub(super) fn folder_name(profile: &Profile, name: &str) -> String {
     (1..)
         .map(|n| match n {
             1 => name.to_owned(),

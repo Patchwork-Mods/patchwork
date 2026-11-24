@@ -27,6 +27,17 @@ pub(crate) enum FolderCommand {
         name: String,
         folder: Option<String>,
     },
+    /// Keep mods of a synced profile on this computer: they go in its
+    /// Personal folder, and aren't synced to anyone else.
+    Personal {
+        #[arg(required = true)]
+        mods: Vec<String>,
+    },
+    /// Move personal mods back into what's synced, for everyone.
+    Publish {
+        #[arg(required = true)]
+        mods: Vec<String>,
+    },
     /// Enable every mod in a folder.
     On { folder: String },
     /// Disable every mod in a folder.
@@ -52,7 +63,9 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                 } else {
                     String::new()
                 };
-                let shared = if loaded.include(f.id).is_some() {
+                let shared = if f.id == loaded.id {
+                    ", only on this computer"
+                } else if loaded.include(f.id).is_some() {
                     ", a shared set"
                 } else {
                     ""
@@ -82,6 +95,14 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                 None => println!("took {name} out of its folder"),
             }
         }
+        FolderCommand::Personal { mods } => {
+            pw.set_personal(&profile, &mods, true)?;
+            println!("{} only on this computer now", is_are(&mods));
+        }
+        FolderCommand::Publish { mods } => {
+            pw.set_personal(&profile, &mods, false)?;
+            println!("{} synced to everyone now", is_are(&mods));
+        }
         FolderCommand::On { folder } => {
             pw.set_folder_enabled(&profile, &folder, true)?;
             println!("enabled the mods in {folder}");
@@ -92,4 +113,12 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
         }
     }
     Ok(())
+}
+
+/// `mods` and "is" or "are".
+fn is_are(mods: &[String]) -> String {
+    match mods {
+        [one] => format!("{one} is"),
+        _ => format!("{} are", mods.join(", ")),
+    }
 }

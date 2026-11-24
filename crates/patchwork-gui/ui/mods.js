@@ -981,7 +981,7 @@ export function fillUpdate(el, m, onVersion) {
 function confirmRemove(m) {
   const dialog = $("#remove-dialog");
   const folder = folderOf(m);
-  $("#remove-summary").textContent = folder?.linked
+  $("#remove-summary").textContent = folder?.linked && !folder.personal
     ? `Remove ${m.name} from the shared folder ${folder.name}? It's taken out of the set, so it leaves ${
         folder.alsoIn.length ? `${state.profile.label} and ${folder.alsoIn.join(", ")}` : state.profile.label
       }. Its files leave the game on the next deploy.`

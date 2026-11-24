@@ -161,6 +161,24 @@ impl Profile {
         m.folder.is_some_and(|id| self.include(id).is_some())
     }
 
+    /// The include of the profile's personal layer (see
+    /// [`crate::personal`]), if it has one: the private set whose id is
+    /// the profile's own.
+    pub fn personal(&self) -> Option<&Include> {
+        self.include(self.id)
+    }
+
+    /// Whether `m` is in the profile's personal layer, so it's only on
+    /// this person's computers.
+    pub fn is_personal(&self, m: &ProfileMod) -> bool {
+        m.folder == Some(self.id) && self.personal().is_some()
+    }
+
+    /// The includes of shared sets, leaving out the personal layer.
+    pub fn shared_includes(&self) -> impl Iterator<Item = &Include> {
+        self.includes.iter().filter(|i| i.set != self.id)
+    }
+
     /// Puts each folder's mods next to each other, where the folder's
     /// first mod is, keeping their order otherwise. Hand edits, syncs and
     /// frontends' reorders can leave them apart.
