@@ -5,6 +5,9 @@ dialog shows, so the heading has to match the version being released.
 
 ## 0.3.1
 
+Did a lot of improvements for increasing clarity and easy of use from the GUI.
+Also added a few new custom themes for games with distinct UI styles
+
 - Fixed Nexus links
 - Added Hollow Knight and ModLinks support
 - Added ability for themes to declare options
