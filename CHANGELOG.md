@@ -8,6 +8,7 @@ dialog shows, so the heading has to match the version being released.
 - Added Folders to the mod list
   - Folders can be shared between a game's profiles
   - Shared folders carry their mods' config settings
+  - You can keep personal folders of mods to not share
 
 ## 0.3.1
 

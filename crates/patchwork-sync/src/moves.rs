@@ -278,7 +278,7 @@ impl Node {
         }
         self.write(&new, known).await?;
         self.announce(&new).await?;
-        files::publish(self, pw, &new, profile).await?;
+        files::publish(self, pw, &new, &files::shared(pw, profile)?).await?;
         let to_tell = staying.iter().map(|p| p.id.to_string()).collect();
         self.move_to(pw, &synced, &old, new, to_tell).await?;
         let moved = self

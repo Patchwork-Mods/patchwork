@@ -336,10 +336,23 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      (`lock_layer`), which can't relock anything the shared lock has. A
      personal mod needing a newer version of one of those is a blocker
      whose fix removes it.
-   - Still to do: syncing the personal layer between linked computers
-     (the devices document, like `follows.toml`), until which it's on
-     one computer and the GUI says "Only on this computer"; personal
-     includes of shared sets; personal config edits (saving settings to
+   - **Linked computers** keep it in step through the devices document
+     (patchwork-sync's `personal`): each profile's layer and what only it
+     needs locked is one entry, `personal/<profile id>` (a
+     `personal::Layer` as JSON, or removed), and the newest wins, like
+     `follows.toml`. What it was when last in step is kept in
+     `<data>/sync/personal/<id>`, so a change here is told from one that
+     arrived. The first time, a computer that already had personal mods
+     for the profile adds them to what's there (`Layer::merge`) rather
+     than losing them. Taking it (`apply_personal`) replaces this
+     computer's layer and lockfile and downloads what's new, without
+     locking. Its local mods' files go in the devices document too, and
+     a profile's document now only gets its shared mods' files
+     (`load_shared_lock`), so friends never get personal ones. A
+     profile that arrives later gets its layer as soon as it does. The
+     GUI says "Only on your computers" once linked ("Only on this
+     computer" until then), and so does the CLI.
+   - Still to do: personal includes of shared sets; personal config edits (saving settings to
      the personal layer is refused for now, since saving to a set drops
      the profile's own, which would publish their removal); followed
      profiles' additions going to it (today they're `unshared_mods` in

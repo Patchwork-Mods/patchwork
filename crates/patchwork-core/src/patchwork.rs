@@ -1833,6 +1833,16 @@ impl Patchwork {
     // Locking
 
     pub fn load_lock(&self, profile: &ProfileRef) -> Result<Option<Lockfile>> {
+        // with what only its personal layer needs (see `crate::personal`)
+        Ok(crate::personal::merge_lock(
+            self.load_shared_lock(profile)?,
+            self.load_personal_lock(profile)?,
+        ))
+    }
+
+    /// The profile's lockfile without what only its personal layer needs
+    /// (see [`crate::personal`]): what's synced with everyone.
+    pub fn load_shared_lock(&self, profile: &ProfileRef) -> Result<Option<Lockfile>> {
         let path = self.lock_file(profile);
         let lock: Option<Lockfile> = fsutil::read_toml(&path)?;
         if let Some(lock) = &lock
@@ -1845,11 +1855,7 @@ impl Patchwork {
                 supported: LOCK_SCHEMA,
             });
         }
-        // with what only its personal layer needs (see `crate::personal`)
-        Ok(crate::personal::merge_lock(
-            lock,
-            self.load_personal_lock(profile)?,
-        ))
+        Ok(lock)
     }
 
     /// Resolves every mod in the profile (enabled or not) and its

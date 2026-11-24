@@ -12,7 +12,7 @@
 // it, it's that one's own folder again.
 //
 // A synced profile's personal mods (see personal.rs) show as a linked
-// folder too, Personal, whose mods stay on this computer rather than going
+// folder too, Personal, whose mods stay on this person's computers rather than going
 // to everyone. It's there while it has mods, so it has no menu.
 
 import { $, chevronIcon, folderIcon, h } from "./dom.js";
@@ -172,9 +172,11 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
         "span",
         {
           class: "badge folder-shared",
-          title: "These mods stay on this computer: they aren't synced to anyone the profile's shared with, or to your other computers yet.",
+          title: state.profile.devicesLinked
+            ? "These mods go to your linked computers, but not to anyone else the profile's shared with."
+            : "These mods stay on this computer: they aren't synced to anyone the profile's shared with. Link your other computers in Settings to have them there too.",
         },
-        "Only on this computer",
+        state.profile.devicesLinked ? "Only on your computers" : "Only on this computer",
       )
     : folder.linked &&
     h(
@@ -281,7 +283,7 @@ export function folderButton(m, iconAction) {
       const personal = own?.personal
         ? { label: "Share with everyone", run: () => setPersonal(m, false) }
         : state.profile.synced &&
-          !own?.linked && { label: "Keep on this computer only", run: () => setPersonal(m, true) };
+          !own?.linked && { label: `Keep on ${where()} only`, run: () => setPersonal(m, true) };
       popupMenu(e.currentTarget, [
         ...others.map((f) => ({
           label: f.linked ? `Move to ${f.name} (shared)` : `Move to ${f.name}`,
@@ -311,13 +313,18 @@ async function moveTo(m, folder) {
   status(folder ? `Put ${m.name} in ${folder.name}` : `Took ${m.name} out of its folder`);
 }
 
+/** Where the profile's personal mods are kept: this computer, or all of the person's linked ones. */
+function where() {
+  return state.profile.devicesLinked ? "your computers" : "this computer";
+}
+
 /** Moves `m` into the profile's personal mods, or with `personal` false out of them. */
 async function setPersonal(m, personal) {
   const profile = await run("set_personal", { id: state.profile.id, names: [m.name], personal });
   showProfile(profile);
   status(
     personal
-      ? `${m.name} stays on this computer now; it isn't synced to anyone else`
+      ? `${m.name} stays on ${where()} now; it isn't synced to anyone else`
       : `${m.name} is synced to everyone now`,
   );
 }

@@ -33,8 +33,9 @@ and `<data>` are the platform's usual config and data directories, such as
 - `<data>/profile-state/<id>/synced.json`: the profile as it was at the
   last sync, so local changes can be told apart from remote ones
 - `<data>/profile-state/<id>/personal.toml` and `personal.lock`: a synced
-  profile's personal layer, mods kept here rather than synced, and what
-  only they need locked (see `folders.md`)
+  profile's personal layer, mods kept here and on linked computers rather
+  than synced with everyone, and what only they need locked (see
+  `folders.md`)
 - `<data>/sets/<id>/set.toml`: shared sets, lists of mods that several
   of a game's profiles include (see `folders.md`)
 - `<data>/local-mods.toml`: where each local mod was added from. A local
@@ -60,6 +61,8 @@ and `<data>` are the platform's usual config and data directories, such as
   nicknames the user gave other machines (`names.toml`, never synced),
   the followed mods as of the last sync with linked computers
   (`follows.toml`, to tell changes made here from ones that arrived),
+  each profile's personal layer as of the last sync with them
+  (`personal/<id>`, likewise),
   iroh's data, and what the daemon synced while the app was closed
   (`missed.json`)
 

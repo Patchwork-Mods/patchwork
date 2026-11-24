@@ -36,19 +36,28 @@ struct Manifest {
     files: Vec<String>,
 }
 
-/// Puts the files of `profile`'s local mods that this machine has, and the
-/// document doesn't yet, in the document. Returns how many it put there.
+/// What's locked of `profile` for everyone, whose local mods' files go in
+/// its document; its personal layer's go in the devices document instead
+/// (see [`crate::personal`]).
+pub(crate) fn shared(pw: &Patchwork, profile: &ProfileRef) -> Result<Vec<LockedMod>> {
+    Ok(pw
+        .load_shared_lock(profile)?
+        .map(|l| l.mods)
+        .unwrap_or_default())
+}
+
+/// Puts the files of the local mods in `mods` (what's locked of a profile,
+/// or of its personal layer for the devices document) that this machine
+/// has, and the document doesn't yet, in the document. Returns how many it
+/// put there.
 pub(crate) async fn publish(
     node: &Node,
     pw: &Patchwork,
     doc: &Doc,
-    profile: &ProfileRef,
+    mods: &[LockedMod],
 ) -> Result<usize> {
-    let Some(lock) = pw.load_lock(profile)? else {
-        return Ok(0);
-    };
     let mut sent = 0;
-    for m in lock.mods.iter().filter(|m| is_local(m)) {
+    for m in mods.iter().filter(|m| is_local(m)) {
         let Some(path) = pw.stored_file(m) else {
             continue;
         };
@@ -80,18 +89,24 @@ pub(crate) async fn publish(
     Ok(sent)
 }
 
-/// Puts the files of `profile`'s local mods that this machine is missing
-/// into its store, from the document, as far as they've arrived. Returns
-/// how many it got; ones that weren't what was locked are warned about.
+/// Puts the files of `profile`'s local mods that this machine is missing,
+/// of those in `mods`, into its store, from the document, as far as
+/// they've arrived. Returns how many it got; ones that weren't what was
+/// locked are warned about.
 pub(crate) async fn receive(
     node: &Node,
     pw: &Patchwork,
     doc: &Doc,
     profile: &ProfileRef,
+    mods: &[LockedMod],
     warnings: &mut Vec<String>,
 ) -> Result<usize> {
     let mut received = 0;
-    for m in pw.missing_local_files(profile)? {
+    let missing = pw.missing_local_files(profile)?;
+    for m in missing
+        .into_iter()
+        .filter(|m| mods.iter().any(|o| o.hash == m.hash))
+    {
         let scratch = std::path::absolute(node.scratch().join(m.hash.to_string()))?;
         remove(&scratch)?;
         let got = if m.format == ArtifactFormat::Dir {

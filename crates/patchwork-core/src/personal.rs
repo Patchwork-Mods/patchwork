@@ -1,7 +1,8 @@
 //! The personal layer of a synced profile: mods a person adds on top of a
 //! profile they share with friends or follow, which stay with them rather
-//! than going to everyone (see `docs/design/folders.md`). It isn't synced
-//! between their own linked computers yet, so for now it's on one.
+//! than going to everyone (see `docs/design/folders.md`). It follows them
+//! to their own linked computers, as a [`Layer`] (patchwork-sync's
+//! `personal`), but never goes to anyone else.
 //!
 //! It's kept like a shared set (see [`crate::set`]) that only its profile
 //! includes, whose id is the profile's own, in
@@ -83,6 +84,53 @@ impl Personal {
             disabled: self.disabled.clone(),
             ..Include::new(id)
         }
+    }
+}
+
+/// A profile's personal layer with what only it needs locked, as it's
+/// kept in step between the person's own computers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Layer {
+    pub personal: Personal,
+    /// What `personal.lock` has: the locked mods only it needs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locked: Vec<LockedMod>,
+}
+
+impl Layer {
+    /// As it's put in the devices document. The same layer always gives
+    /// the same bytes, so they tell whether it's changed.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // nothing in it can fail to serialize
+        serde_json::to_vec(self).unwrap_or_default()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> serde_json::Result<Self> {
+        serde_json::from_slice(bytes)
+    }
+
+    /// Two computers' layers for one profile that have never been in step
+    /// (each had personal mods before they were linked): `theirs`, with
+    /// the mods only `ours` has after its own, so neither loses any.
+    pub fn merge(theirs: Layer, ours: Layer) -> Layer {
+        let key = |m: &ProfileMod| mod_key(&m.source, &m.id);
+        let mut personal = theirs.personal;
+        let keys: HashSet<String> = personal.mods.iter().map(key).collect();
+        for m in ours.personal.mods {
+            if keys.contains(&key(&m)) {
+                continue;
+            }
+            if ours.personal.disabled.contains(&m.name) && !personal.disabled.contains(&m.name) {
+                personal.disabled.push(m.name.clone());
+            }
+            personal.mods.push(m);
+        }
+        let mut locked = theirs.locked;
+        let have: HashSet<String> = locked.iter().map(LockedMod::key).collect();
+        locked.extend(ours.locked.into_iter().filter(|m| !have.contains(&m.key())));
+        let needed = reachable(personal.mods.iter().map(key), &locked);
+        locked.retain(|m| needed.contains(&m.key()));
+        Layer { personal, locked }
     }
 }
 
@@ -238,5 +286,50 @@ mod tests {
         );
         assert_eq!(without(&profile).mods.len(), 1);
         assert!(without(&profile).includes.is_empty());
+    }
+
+    #[test]
+    fn merging_layers_keeps_both_computers_mods() {
+        let layer = |ids: &[&str], disabled: &[&str], locked: Vec<LockedMod>| Layer {
+            personal: Personal {
+                disabled: disabled.iter().map(|d| d.to_string()).collect(),
+                mods: ids.iter().map(|id| profile_mod(id)).collect(),
+                ..Personal::new("g")
+            },
+            locked,
+        };
+        let theirs = layer(
+            &["a", "both"],
+            &[],
+            vec![
+                locked("a", &[]),
+                locked("both", &["lib"]),
+                locked("lib", &[]),
+            ],
+        );
+        let ours = layer(
+            &["both", "b"],
+            &["b"],
+            vec![
+                locked("both", &[]),
+                locked("b", &["own-lib"]),
+                locked("own-lib", &[]),
+                locked("gone", &[]),
+            ],
+        );
+        let merged = Layer::merge(theirs, ours);
+        let names: Vec<&str> = merged
+            .personal
+            .mods
+            .iter()
+            .map(|m| m.name.as_str())
+            .collect();
+        assert_eq!(names, ["a", "both", "b"]);
+        assert_eq!(merged.personal.disabled, ["b"]);
+        let ids: Vec<&str> = merged.locked.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["a", "both", "lib", "b", "own-lib"]);
+
+        let bytes = merged.to_bytes();
+        assert_eq!(Layer::from_bytes(&bytes).unwrap().to_bytes(), bytes);
     }
 }

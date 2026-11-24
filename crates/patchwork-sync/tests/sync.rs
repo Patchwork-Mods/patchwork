@@ -325,6 +325,81 @@ async fn linked_computers_follow_the_same_mods() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn personal_mods_go_to_linked_computers_but_not_to_friends() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mods = tmp.path().join("mods");
+    fs::create_dir_all(&mods).unwrap();
+    fs::write(mods.join("Shared.pak"), "shared bytes").unwrap();
+    fs::write(mods.join("Mine.pak"), "my bytes").unwrap();
+
+    let a = patchwork(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    a.add_mod(&profile, local(&mods.join("Shared.pak")), None, true)
+        .await
+        .unwrap();
+    a.lock(&profile, false).await.unwrap();
+    let a_node = node(&a).await;
+    let b = patchwork(&tmp.path().join("b"));
+    let b_node = node(&b).await;
+    let ticket = a_node.link_devices(&a).await.unwrap();
+    b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
+
+    // linked, so it's synced, and can have personal mods
+    a.add_mod(&profile, local(&mods.join("Mine.pak")), None, true)
+        .await
+        .unwrap();
+    a.set_personal(&profile, &["Mine".to_owned()], true)
+        .unwrap();
+    a.lock(&profile, false).await.unwrap();
+
+    let personal = |pw: &Patchwork| {
+        pw.load_profile(&profile)
+            .ok()
+            .and_then(|p| p.find("Mine").map(|m| p.is_personal(m)))
+    };
+    let steps = async {
+        // b gets it as personal, with its file, ready to deploy
+        until(|| personal(&b) == Some(true)).await;
+        until(|| {
+            b.load_lock(&profile)
+                .unwrap()
+                .is_some_and(|l| l.mods.iter().any(|m| m.name == "Mine"))
+                && b.missing_local_files(&profile).unwrap().is_empty()
+        })
+        .await;
+        assert!(b.unsynced_changes(&profile).unwrap().is_empty());
+
+        // a friend gets the profile without it
+        let c = patchwork(&tmp.path().join("c"));
+        let c_node = node(&c).await;
+        let shared = a_node
+            .share(&a, &profile, true, Addresses::Included)
+            .await
+            .unwrap();
+        c_node.join(&c, &shared, TIMEOUT).await.unwrap();
+        let names: Vec<String> = c
+            .load_profile(&profile)
+            .unwrap()
+            .mods
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        assert_eq!(names, ["Shared"]);
+        assert!(c.personal_layer(&profile).unwrap().is_none());
+        c_node.shutdown().await.unwrap();
+
+        // removed on b, it goes on a too
+        b.remove_mod(&profile, "Mine").unwrap();
+        until(|| personal(&a).is_none()).await;
+        assert!(a.personal_layer(&profile).unwrap().is_none());
+    };
+    both_running((&a_node, &a), (&b_node, &b), steps).await;
+
+    a_node.shutdown().await.unwrap();
+    b_node.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn friends_pass_changes_on_without_whoever_shared() {
     let tmp = tempfile::tempdir().unwrap();
     let a = patchwork(&tmp.path().join("a"));

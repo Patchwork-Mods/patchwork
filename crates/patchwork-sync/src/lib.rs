@@ -11,8 +11,9 @@
 //! - Between one person's own computers ([`Node::link_devices`]): every
 //!   profile on any of them, including ones made later, is kept in step on
 //!   all of them. A devices document lists each profile's document, as
-//!   `profile/<uuid>`, with a ticket to it, and the mods the user follows
-//!   (see [`follows`]).
+//!   `profile/<uuid>`, with a ticket to it, the mods the user follows
+//!   (see [`follows`]) and each profile's personal layer (see
+//!   [`personal`]), which goes to no one else.
 //! - With friends ([`Node::share`], writable): everyone can change the
 //!   profile, and every change goes to everyone. Whoever can write to a
 //!   document puts themselves in it as `peer/<endpoint id>`, so everyone
@@ -70,6 +71,7 @@ pub mod files;
 mod follows;
 pub mod moves;
 pub mod names;
+mod personal;
 
 pub use moves::Removed;
 pub use names::{peer_names, set_peer_name};
@@ -437,7 +439,7 @@ impl Node {
                 self.write(&doc, entries.into_iter().collect()).await?;
                 self.remember(SyncedProfile::new(profile.uuid, &doc, true, true))?;
                 self.announce(&doc).await?;
-                files::publish(self, pw, &doc, profile).await?;
+                files::publish(self, pw, &doc, &files::shared(pw, profile)?).await?;
                 doc
             }
         };
@@ -482,6 +484,7 @@ impl Node {
             .await?;
         // the user's other computers get it too
         if let Some(devices) = self.devices_doc().await? {
+            // what it did is for the next sync to report
             self.sync_devices(pw, &devices).await?;
         }
         Ok(Joined::Profile(outcome))
@@ -561,6 +564,7 @@ impl Node {
             .map_err(|e| anyhow!("bad document id `{id}`: {e}"))?;
         self.drop_doc(Watched::Devices, id).await?;
         follows::forget(&self.dir)?;
+        personal::forget(&self.dir)?;
         self.save_list(&list)
     }
 
@@ -625,8 +629,10 @@ impl Node {
 
     /// Starts syncing the profiles the user's other computers have put in
     /// the devices document, which arrive as [`Node::run`] hears from their
-    /// documents, and puts in this computer's.
-    async fn sync_devices(&self, pw: &Patchwork, doc: &Doc) -> Result<()> {
+    /// documents, and puts in this computer's; then keeps follows and
+    /// personal layers in step, returning what that did for each profile
+    /// it did anything for.
+    async fn sync_devices(&self, pw: &Patchwork, doc: &Doc) -> Result<Vec<Outcome>> {
         let entries = self.read_entries(doc).await?;
         let synced = self.synced()?;
         for (key, value) in &entries {
@@ -661,7 +667,8 @@ impl Node {
             self.write(doc, vec![(key, serde_json::to_vec(&ticket)?)])
                 .await?;
         }
-        self.sync_follows(pw, doc).await
+        self.sync_follows(pw, doc).await?;
+        self.sync_personal(pw, doc).await
     }
 
     /// Whether `synced` was here and has since been removed, so should stop
@@ -680,7 +687,7 @@ impl Node {
             self.announce(&doc).await?;
             self.start(&doc).await?;
             wait_for_sync(events, timeout).await;
-            self.sync_devices(pw, &doc).await?;
+            outcomes.extend(self.sync_devices(pw, &doc).await?);
             doc.leave().await?;
         }
         for synced in self.synced()? {
@@ -744,8 +751,9 @@ impl Node {
             self.announce(&doc).await?;
             self.watch(Watched::Devices, &doc).await?;
             self.start(&doc).await?;
-            if let Err(e) = self.sync_devices(pw, &doc).await {
-                on_sync(Err(e));
+            match self.sync_devices(pw, &doc).await {
+                Ok(outcomes) => outcomes.into_iter().for_each(|o| on_sync(Ok(o))),
+                Err(e) => on_sync(Err(e)),
             }
         }
         for synced in self.synced()? {
@@ -806,6 +814,15 @@ impl Node {
                     {
                         on_sync(Err(e));
                     }
+                    if self.devices_linked().unwrap_or(false)
+                        && self.personal_changed(pw)
+                        && let Some(doc) = self.devices_doc().await?
+                    {
+                        match self.sync_personal(pw, &doc).await {
+                            Ok(outcomes) => outcomes.into_iter().for_each(|o| on_sync(Ok(o))),
+                            Err(e) => on_sync(Err(e)),
+                        }
+                    }
                     for synced in self.synced()? {
                         let changed = synced.writable
                             && !synced.moved
@@ -841,7 +858,9 @@ impl Node {
         let uuid = match watched {
             Watched::Devices => {
                 if let Some(doc) = self.devices_doc().await? {
-                    self.sync_devices(pw, &doc).await?;
+                    for outcome in self.sync_devices(pw, &doc).await? {
+                        on_sync(Ok(outcome));
+                    }
                 }
                 return Ok(());
             }
@@ -857,7 +876,9 @@ impl Node {
                 if let Some(doc) = self.devices_doc().await?
                     && pw.load_profile(&profile).is_ok()
                 {
-                    self.sync_devices(pw, &doc).await?;
+                    for outcome in self.sync_devices(pw, &doc).await? {
+                        on_sync(Ok(outcome));
+                    }
                 }
             }
         }
@@ -926,8 +947,22 @@ impl Node {
                 ..synced.clone()
             })?;
         }
-        self.finish_step(pw, doc, synced, Some(applied), Vec::new())
-            .await
+        let created = applied.created;
+        let mut outcome = self
+            .finish_step(pw, doc, synced, Some(applied), Vec::new())
+            .await?;
+        // its personal mods, from another of this person's computers
+        if created
+            && let Some(devices) = self.devices_doc().await?
+            && let Some(personal) = self
+                .sync_personal_of(pw, &devices, &synced.reference())
+                .await?
+        {
+            outcome.received_files += personal.received_files;
+            outcome.sent_files += personal.sent_files;
+            outcome.warnings.extend(personal.warnings);
+        }
+        Ok(outcome)
     }
 
     async fn finish_step(
@@ -948,12 +983,15 @@ impl Node {
         if synced.writable {
             self.announce(doc).await?;
         }
+        // personal mods' files go to the devices document (see `personal`)
+        let shared = files::shared(pw, &profile)?;
         let sent_files = if synced.writable {
-            files::publish(self, pw, doc, &profile).await?
+            files::publish(self, pw, doc, &shared).await?
         } else {
             0
         };
-        let received_files = files::receive(self, pw, doc, &profile, &mut warnings).await?;
+        let received_files =
+            files::receive(self, pw, doc, &profile, &shared, &mut warnings).await?;
         match pw.download_locked(&profile).await {
             Ok(()) => {}
             Err(Error::NeedsDownload(pending)) => {

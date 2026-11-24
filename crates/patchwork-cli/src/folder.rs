@@ -46,8 +46,8 @@ pub(crate) enum FolderCommand {
         name: String,
         folder: Option<String>,
     },
-    /// Keep mods of a synced profile on this computer: they go in its
-    /// Personal folder, and aren't synced to anyone else.
+    /// Keep mods of a synced profile to yourself: they go in its Personal
+    /// folder, and are synced only to your own linked computers.
     Personal {
         #[arg(required = true)]
         mods: Vec<String>,
@@ -83,7 +83,7 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                     String::new()
                 };
                 let shared = if f.id == loaded.id {
-                    ", only on this computer".to_owned()
+                    format!(", only on {}", personal_place(pw))
                 } else if loaded.include(f.id).is_some() {
                     let others: Vec<String> = pw
                         .profiles_including(f.id)?
@@ -158,7 +158,7 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
         }
         FolderCommand::Personal { mods } => {
             pw.set_personal(&profile, &mods, true)?;
-            println!("{} only on this computer now", is_are(&mods));
+            println!("{} only on {} now", is_are(&mods), personal_place(pw));
         }
         FolderCommand::Publish { mods } => {
             pw.set_personal(&profile, &mods, false)?;
@@ -213,5 +213,15 @@ fn is_are(mods: &[String]) -> String {
     match mods {
         [one] => format!("{one} is"),
         _ => format!("{} are", mods.join(", ")),
+    }
+}
+
+/// Where a synced profile's personal mods are kept: this computer, or all
+/// of the person's linked ones (see `patchwork_sync`'s devices document).
+fn personal_place(pw: &Patchwork) -> &'static str {
+    if patchwork_sync::devices_linked(&pw.paths().sync()).unwrap_or(false) {
+        "your linked computers"
+    } else {
+        "this computer"
     }
 }

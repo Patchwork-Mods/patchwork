@@ -11,8 +11,8 @@ use super::folders::move_to_folder;
 use super::sets::{folder_name, last_own, linked};
 use crate::error::IoContext;
 use crate::fsutil;
-use crate::lock::{LOCK_SCHEMA, Lockfile};
-use crate::personal::{PERSONAL_NAME, PERSONAL_SCHEMA, Personal};
+use crate::lock::{LOCK_SCHEMA, LockedGame, Lockfile};
+use crate::personal::{Layer, PERSONAL_NAME, PERSONAL_SCHEMA, Personal};
 use crate::profile::{Folder, Include, Profile, ProfileRef, no_such_mod};
 use crate::set::Set;
 use crate::{Error, Result};
@@ -69,6 +69,74 @@ impl Patchwork {
             self.save_profile(profile, &loaded)?;
         }
         Ok(())
+    }
+
+    /// The profile's personal layer with what only it needs locked, if it
+    /// has one, to keep in step between the person's own computers.
+    pub fn personal_layer(&self, profile: &ProfileRef) -> Result<Option<Layer>> {
+        let Some(personal) = self.load_personal(profile)? else {
+            return Ok(None);
+        };
+        let locked = self
+            .load_personal_lock(profile)?
+            .map(|l| l.mods)
+            .unwrap_or_default();
+        Ok(Some(Layer { personal, locked }))
+    }
+
+    /// Takes the profile's personal layer as it is on another of the
+    /// person's computers (`None` if it has none there), in place of this
+    /// one's, lockfile and all. Nothing is resolved or downloaded; see
+    /// [`Patchwork::download_locked`]. Returns whether anything changed.
+    pub fn apply_personal(&self, profile: &ProfileRef, layer: Option<&Layer>) -> Result<bool> {
+        let ours = self.personal_layer(profile)?;
+        if ours.as_ref().map(Layer::to_bytes) == layer.map(Layer::to_bytes) {
+            return Ok(false);
+        }
+        let Some(layer) = layer else {
+            self.remove_personal(profile)?;
+            let lock = self.personal_lock_file(profile);
+            if lock.exists() {
+                fs::remove_file(&lock).at(&lock)?;
+            }
+            self.profile_changed(profile, true);
+            return Ok(true);
+        };
+        if layer.personal.schema > PERSONAL_SCHEMA {
+            return Err(Error::Schema {
+                kind: "personal layer",
+                path: self.personal_file(profile),
+                found: layer.personal.schema,
+                supported: PERSONAL_SCHEMA,
+            });
+        }
+        let loaded = self.load_profile(profile)?;
+        if layer.personal.game != loaded.game {
+            return Err(Error::invalid(format!(
+                "the personal mods for {} that came from another computer are for {}, not {}",
+                loaded.label(),
+                layer.personal.game,
+                loaded.game
+            )));
+        }
+        let game = match self.load_shared_lock(profile)? {
+            Some(lock) => lock.game,
+            None => LockedGame {
+                id: loaded.game.clone(),
+                env: Default::default(),
+            },
+        };
+        self.save_personal(profile, &layer.personal)?;
+        self.save_personal_lock(
+            profile,
+            &Lockfile {
+                schema: LOCK_SCHEMA,
+                game,
+                mods: layer.locked.clone(),
+            },
+        )?;
+        self.profile_changed(profile, true);
+        Ok(true)
     }
 
     /// The profile's personal layer, if it has one.

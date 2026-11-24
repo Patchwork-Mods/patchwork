@@ -260,6 +260,9 @@ struct ProfileDetail {
     /// Whether it's synced with other computers or people, so its mods
     /// can be kept personal (see [`patchwork_core::personal`]).
     synced: bool,
+    /// Whether this computer is linked to the person's others, which its
+    /// personal mods go to.
+    devices_linked: bool,
     /// Where the profile is deployed to, if that's been set up: the game's
     /// folder, or its instance (which always is).
     install: Option<String>,
@@ -683,6 +686,8 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .into_iter()
         .find(|s| s.profile == r.uuid);
     let synced = syncing.is_some();
+    let devices_linked =
+        synced && patchwork_sync::devices_linked(&pw.paths().sync()).unwrap_or(false);
     let following = syncing.is_some_and(|s| !s.writable);
     let unshared = if following {
         pw.unshared_mods(&r).map_err(msg)?
@@ -804,6 +809,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         issues,
         unshared,
         synced,
+        devices_linked,
         id,
         install,
         deployed_files,
