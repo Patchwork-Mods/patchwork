@@ -131,7 +131,8 @@ pub enum Download {
 pub struct SourceFile {
     pub game: String,
     pub source: String,
-    /// The mod's id.
+    /// The mod's id, without any pick of one of its files
+    /// ([`Source::mod_id`]).
     pub id: String,
     pub file: String,
 }
@@ -449,6 +450,14 @@ pub trait Source: Send + Sync {
             source_id: self.id().to_owned(),
             message: "has no downloads of its own".to_owned(),
         })
+    }
+
+    /// The mod that `id` is for, without whatever picks one of its files
+    /// (Nexus's `4597/Main File` is mod `4597`). Downloaded files are known
+    /// by this, because a link from the browser ([`Source::accept_link`])
+    /// only says which mod and file it's for, not how a profile picked it.
+    fn mod_id<'a>(&self, id: &'a str) -> &'a str {
+        id
     }
 
     /// Recognizes a link that the user's browser hands back once they start

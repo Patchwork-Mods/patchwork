@@ -393,6 +393,29 @@ fn files_can_go_in_other_roots() {
 }
 
 #[test]
+fn a_missing_root_patchwork_makes_is_made_on_deploy() {
+    let env = env();
+    let mods = env.store.parent().unwrap().join("Mods");
+    let roots = Roots::game(&env.game).with(RootId::new("mods").unwrap(), &mods);
+    let mut state = DeployState::empty("g", &roots);
+    deploy(
+        &env,
+        &mut state,
+        vec![
+            placement(&env, "mods:a.pak", "a", "a"),
+            placement(&env, "mods:Sub/b.pak", "b", "a"),
+        ],
+    );
+    assert_eq!(fs::read_to_string(mods.join("a.pak")).unwrap(), "a");
+    assert_eq!(fs::read_to_string(mods.join("Sub/b.pak")).unwrap(), "b");
+
+    // the folders in it go on undeploy, but it stays for the game to use
+    deploy(&env, &mut state, Vec::new());
+    assert!(mods.is_dir() && !mods.join("Sub").exists());
+    assert!(state.files.is_empty() && state.created_dirs.is_empty());
+}
+
+#[test]
 fn placements_need_a_root_the_target_has() {
     let env = env();
     let src = env.store.join("a.txt");
@@ -595,29 +618,32 @@ fn roots_are_found_on_the_host_or_in_the_wine_prefix() {
     };
     let prefix = wine_prefix(tmp.path(), "steamuser");
     let none = BTreeMap::new();
-    let resolve = |os: Os, prefix: Option<&Path>, set: &BTreeMap<RootId, PathBuf>| {
-        let resolved = ResolvedRoots::new(
-            "game-id",
-            &roots,
-            &RootSetup {
-                os,
-                game: Path::new("/game"),
-                host: &host,
-                prefix,
-                set,
-            },
-        );
-        resolved
-            .iter()
-            .map(|(id, r)| {
-                let path = r
-                    .path
-                    .clone()
-                    .map(|p| p.strip_prefix(tmp.path()).unwrap().to_owned());
-                (id.to_string(), (path, r.origin))
-            })
-            .collect::<BTreeMap<_, _>>()
-    };
+    let resolve_in =
+        |os: Os, prefix: Option<&Path>, wine: bool, set: &BTreeMap<RootId, PathBuf>| {
+            let resolved = ResolvedRoots::new(
+                "game-id",
+                &roots,
+                &RootSetup {
+                    os,
+                    game: Path::new("/game"),
+                    host: &host,
+                    prefix,
+                    wine,
+                    set,
+                },
+            );
+            resolved
+                .iter()
+                .map(|(id, r)| {
+                    let path = r
+                        .path
+                        .clone()
+                        .map(|p| p.strip_prefix(tmp.path()).unwrap().to_owned());
+                    (id.to_string(), (path, r.origin))
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+    let resolve = |os, prefix, set| resolve_in(os, prefix, false, set);
     let ok = |p: &str, origin| (Ok(PathBuf::from(p)), origin);
 
     let windows = resolve(Os::Windows, None, &none);
@@ -637,6 +663,15 @@ fn roots_are_found_on_the_host_or_in_the_wine_prefix() {
         )
     );
     assert_eq!(linux["saves"], ok("share/game", RootOrigin::Definition));
+    // but the Windows build of a game with a native one is all in its prefix
+    let windows_build = resolve_in(Os::Linux, Some(&prefix), true, &none);
+    assert_eq!(
+        windows_build["saves"],
+        ok(
+            "pfx/drive_c/users/steamuser/Documents/My Games/Game",
+            RootOrigin::Prefix
+        )
+    );
 
     let (Err(why), _) = &resolve(Os::Linux, None, &none)["appdata"] else {
         panic!("found without a prefix");
@@ -668,6 +703,7 @@ fn roots_are_found_on_the_host_or_in_the_wine_prefix() {
             game: Path::new("/game"),
             host: &host,
             prefix: None,
+            wine: false,
             set: &none,
         },
     );
@@ -728,6 +764,30 @@ fn other_roots_only_take_allowed_files_in_folders_that_exist() {
         .check(&"appdata:plugins.txt".parse().unwrap())
         .unwrap_err();
     assert!(!blame && why.contains("doesn't exist"), "{why}");
+
+    // unless it's one patchwork makes, once the folder it's in is there
+    let made = |path: &Path| {
+        let def = root_defs(
+            "[roots.appdata]\npath = \"{home}\"\nallow = [\"plugins.txt\"]\ncreate = true",
+        )
+        .unwrap();
+        let resolved = ResolvedRoots::new(
+            "game-id",
+            &def,
+            &RootSetup {
+                os: Os::Linux,
+                game: &env.game,
+                host: &Folders::default(),
+                prefix: None,
+                wine: false,
+                set: &BTreeMap::from([(RootId::new("appdata").unwrap(), path.to_owned())]),
+            },
+        );
+        resolved.check(&"appdata:plugins.txt".parse().unwrap())
+    };
+    assert_eq!(made(&appdata.join("gone")), Ok(false));
+    let (_, why) = made(&appdata.join("gone/deeper")).unwrap_err();
+    assert!(why.contains("doesn't exist"), "{why}");
 }
 
 #[test]

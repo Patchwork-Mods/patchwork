@@ -294,6 +294,10 @@ pub struct RootSetup<'a> {
     /// The Wine prefix the game runs in, for a Windows game on another
     /// system, if there is one.
     pub prefix: Option<&'a Path>,
+    /// Whether the game runs in Wine: it's a Windows build, on a system that
+    /// isn't Windows. Roots' paths for this system are only used when it
+    /// doesn't.
+    pub wine: bool,
     /// Where the user has said roots are, which wins over everything else.
     pub set: &'a BTreeMap<RootId, PathBuf>,
 }
@@ -319,6 +323,8 @@ pub struct ResolvedRoot {
     pub allow: Vec<FilePattern>,
     matcher: GlobSet,
     rewritten: GlobSet,
+    /// Whether it's made when it's missing.
+    create: bool,
 }
 
 /// Every root a target has, with what may go in each one.
@@ -339,7 +345,8 @@ impl ResolvedRoots {
                     Some(path) => (Ok(path.clone()), RootOrigin::Set),
                     None => locate(game, id, def, setup),
                 };
-                let root = ResolvedRoot::new(path, origin, &def.allow, &def.rewritten);
+                let mut root = ResolvedRoot::new(path, origin, &def.allow, &def.rewritten);
+                root.create = def.create;
                 (id.clone(), root)
             })
             .collect();
@@ -439,7 +446,8 @@ impl ResolvedRoots {
             .path
             .as_ref()
             .map_err(|why| (false, format!("{dest} can't be deployed because {why}")))?;
-        if !path.is_dir() {
+        let made = |path: &Path| root.create && path.parent().is_some_and(Path::is_dir);
+        if !path.is_dir() && !made(path) {
             return Err((
                 false,
                 format!(
@@ -465,6 +473,7 @@ impl ResolvedRoot {
             allow: allow.to_vec(),
             matcher: glob_set(allow),
             rewritten: glob_set(rewritten),
+            create: false,
         }
     }
 }
@@ -493,6 +502,7 @@ fn locate(
 ) -> (std::result::Result<PathBuf, String>, RootOrigin) {
     let native = match setup.os {
         Os::Windows => Some(&def.path),
+        _ if setup.wine => None,
         Os::Linux => def.linux.as_ref(),
         Os::Macos => def.macos.as_ref(),
     };
@@ -506,7 +516,7 @@ fn locate(
         });
         return (found, RootOrigin::Definition);
     }
-    if setup.os == Os::Macos {
+    if setup.os == Os::Macos && !setup.wine {
         return (
             Err(format!(
                 "the game doesn't say where its `{id}` folder is on macOS; {set_it}"

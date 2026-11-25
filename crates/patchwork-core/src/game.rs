@@ -347,13 +347,17 @@ pub struct InstancesDef {
 /// # Starts with one of the folders in `Folder`. On Linux, a Windows game's
 /// # folders are inside the Wine prefix it runs in.
 /// path = "{localappdata}/Skyrim Special Edition"
-/// # Used instead of `path` for a native build on these systems.
+/// # Used instead of `path` for a native build on these systems. It's a
+/// # native build unless one of the `.exe`s in `[detect] exe` is there, or
+/// # the user has set a Wine prefix for it.
 /// linux = "{data}/skyrim"
 /// # The only files that may go here, which every root but the game's own
 /// # has to say.
 /// allow = ["plugins.txt", "loadorder.txt"]
 /// # Files among those that the game writes to itself.
 /// rewritten = ["plugins.txt"]
+/// # Made by patchwork if it's missing, once the folder it's in is there.
+/// create = true
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -423,6 +427,11 @@ pub struct RootDef {
     /// first deploy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rewritten: Vec<FilePattern>,
+    /// Whether patchwork makes the folder when it's missing, for one the
+    /// game reads but doesn't make itself. It's only made once the folder
+    /// it's in is there, which the game makes the first time it runs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub create: bool,
 }
 
 /// Where a root is: a [`Folder`] and, usually, a path inside it, written

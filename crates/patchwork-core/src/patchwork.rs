@@ -2467,10 +2467,11 @@ impl Patchwork {
             },
             ArtifactLocation::Url { url } => self.fetch_url(url, name, format).await,
             ArtifactLocation::Source { file, .. } => {
+                // known by the mod alone, as links from the browser give it
                 let file = SourceFile {
                     game: game.to_owned(),
                     source: source.to_owned(),
-                    id: id.to_owned(),
+                    id: self.source(source)?.mod_id(id).to_owned(),
                     file: file.clone(),
                 };
                 if let Some(hash) = self.known_source_file(&file, format) {
@@ -3529,6 +3530,9 @@ fn resolve_roots(def: &GameDef, install: &GameInstall) -> ResolvedRoots {
         (None, Os::Windows) => None,
         (None, _) => locate::wine_prefix(def, &install.path),
     };
+    // A prefix the user set says it runs in Wine, even if it doesn't look
+    // like a Windows build.
+    let wine = os != Os::Windows && (install.prefix.is_some() || windows_build(def, &install.path));
     ResolvedRoots::new(
         &def.id,
         &def.roots,
@@ -3537,9 +3541,22 @@ fn resolve_roots(def: &GameDef, install: &GameInstall) -> ResolvedRoots {
             game: &install.path,
             host: &Folders::host(),
             prefix: prefix.as_deref(),
+            wine,
             set: &install.roots,
         },
     )
+}
+
+/// Whether the build of `def` in `install` is the Windows one: one of the
+/// exes that mark it as the game is a Windows program. Games with native
+/// builds as well list theirs too, so the one that's there says which.
+fn windows_build(def: &GameDef, install: &Path) -> bool {
+    def.detect.exe.iter().any(|exe| {
+        Path::new(exe)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+            && install.join(exe).is_file()
+    })
 }
 
 /// The error for a game that hasn't been set up, saying how to.

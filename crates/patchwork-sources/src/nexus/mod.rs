@@ -599,6 +599,12 @@ impl Source for Nexus {
         "Nexus Mods"
     }
 
+    /// `4597` for `4597`, `4597/Main File` or `4597/@103526`, the same as
+    /// the `nxm://` links for its files.
+    fn mod_id<'a>(&self, id: &'a str) -> &'a str {
+        id.split_once('/').map_or(id, |(m, _)| m).trim()
+    }
+
     fn settings(&self) -> &[SettingSpec] {
         &[API_KEY]
     }

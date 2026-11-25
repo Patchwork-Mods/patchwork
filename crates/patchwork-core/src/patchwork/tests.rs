@@ -286,9 +286,10 @@ async fn updating_skips_downloads_that_havent_changed() {
 
 /// Resolves every mod to a file of its own, which downloads from `url`, or
 /// needs the user if there's no `url`. Counts how often it's asked. Takes
-/// links like `own://<id>`, which download from `url` either way.
+/// links like `own://<mod id>`, which download from `link_url`.
 struct OwnFiles {
     url: Option<String>,
+    link_url: Option<String>,
     downloads: Arc<AtomicUsize>,
 }
 
@@ -322,6 +323,10 @@ impl Source for OwnFiles {
         })
     }
 
+    fn mod_id<'a>(&self, id: &'a str) -> &'a str {
+        id.split('/').next().unwrap()
+    }
+
     async fn download(&self, _: &SourceContext<'_>, id: &str, file: &str) -> Result<Download> {
         assert_eq!(file, "7");
         self.downloads.fetch_add(1, SeqCst);
@@ -343,7 +348,7 @@ impl Source for OwnFiles {
             .map(|id| crate::source::Handoff {
                 id: id.to_owned(),
                 file: "7".to_owned(),
-                url: self.url.clone().unwrap(),
+                url: self.link_url.clone().unwrap(),
             }))
     }
 }
@@ -356,9 +361,20 @@ async fn own_files_profile(
 ) -> (Patchwork, ProfileRef, Arc<AtomicUsize>) {
     let downloads = Arc::new(AtomicUsize::new(0));
     let source = OwnFiles {
+        link_url: url.clone(),
         url,
         downloads: downloads.clone(),
     };
+    own_files_with(tmp, source, ids).await
+}
+
+/// A profile with mods `ids` from `source`, and its download count.
+async fn own_files_with(
+    tmp: &Path,
+    source: OwnFiles,
+    ids: &[&str],
+) -> (Patchwork, ProfileRef, Arc<AtomicUsize>) {
+    let downloads = source.downloads.clone();
     let pw = Patchwork::builder(Paths::rooted(tmp))
         .source(source)
         .deployer(NoDeployer)
@@ -575,6 +591,27 @@ async fn links_from_the_browser_download_their_file() {
     // the lock doesn't need the source to download it again
     pw.lock(&profile, false).await.unwrap();
     assert_eq!(downloads.load(SeqCst), 0);
+}
+
+/// A mod added with one of its files picked (`a/main`) needs the user to
+/// download it, and the link the browser hands back only names mod `a`.
+#[tokio::test]
+async fn links_are_for_mods_added_with_a_file_picked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = OwnFiles {
+        url: None,
+        link_url: Some(serve_once("200 OK", b"mod bytes")),
+        downloads: Arc::new(AtomicUsize::new(0)),
+    };
+    let (pw, profile, _) = own_files_with(tmp.path(), source, &["a/main"]).await;
+
+    let pending = pending(pw.lock(&profile, false).await.unwrap_err());
+    let linked = pw.link_file("own://a").await.unwrap().unwrap();
+    // so the window can tell which pending download it's for
+    assert_eq!(linked.file, pending[0].file);
+    pw.download_linked(&linked).await.unwrap();
+    let lock = pw.lock(&profile, false).await.unwrap();
+    assert_eq!(lock.mods[0].id, "a/main");
 }
 
 /// Resolves every mod to `<id>-<version>.txt` in a folder, at whichever

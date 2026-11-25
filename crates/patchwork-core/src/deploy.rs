@@ -912,6 +912,14 @@ fn create_parent(path: &Path) -> Result<()> {
 }
 
 fn create_dirs(roots: &Roots, dst: &Dest, created: &mut BTreeSet<Dest>) -> Result<()> {
+    // A root that's missing is one patchwork makes (`create`): planning
+    // turns down files for any other. It's made only in a folder that's
+    // there, and kept, since the game reads from it whatever's deployed.
+    if let Some(root) = roots.get(&dst.root)
+        && !root.is_dir()
+    {
+        fs::create_dir(root).at(root)?;
+    }
     let mut missing = Vec::new();
     let mut dir = dst.parent();
     while let Some(d) = dir {

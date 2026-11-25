@@ -1,7 +1,7 @@
 schema = 1
 id = "baldurs-gate-3"
 name = "Baldur's Gate 3"
-description = "Mods' .pak files go in the Mods folder in the game's AppData, and their modules are loaded in the order you set on the profile's Load order tab, which is written to modsettings.lsx. Mods that need Script Extender say so there. Mods turned on in the in-game mod manager stay on, loaded before the profile's."
+description = "Mods' .pak files go in the Mods folder in the game's AppData (or its data folder, for the native Linux build), and their modules are loaded in the order you set on the profile's Load order tab, which is written to modsettings.lsx. Mods that need Script Extender say so there. Mods turned on in the in-game mod manager stay on, loaded before the profile's."
 
 [sources.nexus]
 game_domain = "baldursgate3"
@@ -83,12 +83,17 @@ version64 = 145241946983074840
 [ext.bg3.extender]
 file = "bin/DWrite.dll"
 
+# The native Linux build keeps them in its data folder instead of AppData,
+# and doesn't make the Mods folder itself.
 [roots.mods]
 path = "{localappdata}/Larian Studios/Baldur's Gate 3/Mods"
+linux = "{data}/Larian Studios/Baldur's Gate 3/Mods"
 allow = ["*.pak"]
+create = true
 
 [roots.profile]
 path = "{localappdata}/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public"
+linux = "{data}/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public"
 allow = ["modsettings.lsx"]
 # The game rewrites it on start, and drops mods it can't load.
 rewritten = ["modsettings.lsx"]
@@ -112,4 +117,5 @@ dll_overrides = ["dwrite"]
 [detect]
 steam = [1086940]
 folder = "Baldurs Gate 3"
-exe = ["bin/bg3.exe", "bin/bg3_dx11.exe"]
+# `bin/bg3` is the native Linux build.
+exe = ["bin/bg3.exe", "bin/bg3_dx11.exe", "bin/bg3"]

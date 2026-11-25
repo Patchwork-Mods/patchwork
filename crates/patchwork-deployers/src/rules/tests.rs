@@ -614,3 +614,36 @@ fn rules_can_place_in_other_roots() {
     };
     assert!(place(&bad, &who, &RelPath::new("x").unwrap()).is_err());
 }
+
+const PAK_RULES: &str = r#"
+[[rules]]
+files = "**/*.pak"
+to = "{file}"
+"#;
+
+#[test]
+fn unmatched_files_make_one_warning() {
+    let (dsts, warnings) = deploy(
+        PAK_RULES,
+        &["a.pak", "x/1.py", "x/2.py", "x/3.py", "x/4.py"],
+    )
+    .unwrap();
+    assert_eq!(dsts.len(), 1);
+    assert_eq!(
+        warnings,
+        ["no rule for 4 files in `Cool` (x/1.py, x/2.py, x/3.py and 1 more); skipped them"]
+    );
+    let (_, warnings) = deploy(PAK_RULES, &["a.pak", "x/1.py"]).unwrap();
+    assert_eq!(warnings, ["no rule for x/1.py in `Cool`; skipped it"]);
+}
+
+#[test]
+fn mod_with_nothing_for_the_game_says_so() {
+    let (dsts, warnings) = deploy(PAK_RULES, &["tool/run.py", "tool/lib.py"]).unwrap();
+    assert!(dsts.is_empty());
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("nothing in `Cool` goes in the game"),
+        "{warnings:?}"
+    );
+}

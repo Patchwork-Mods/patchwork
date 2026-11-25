@@ -365,6 +365,8 @@ impl RulesDeployer {
             None => Vec::new(),
         };
         let mut outside = 0;
+        let mut unmatched = Vec::new();
+        let mut used = 0;
         for file in &m.files {
             let rel = if top.is_empty() {
                 file.rel.clone()
@@ -381,20 +383,27 @@ impl RulesDeployer {
             let outcome = place(&setup.rules, &Who::of(m), &rel)
                 .map_err(|e| self.error(format!("`{}`: {e}", m.name)))?;
             match outcome {
-                Outcome::Place(dst) => desired.placements.push(Placement {
-                    dst,
-                    src: m.src(file),
-                    mod_name: m.name.clone(),
-                }),
+                Outcome::Place(dst) => {
+                    used += 1;
+                    desired.placements.push(Placement {
+                        dst,
+                        src: m.src(file),
+                        mod_name: m.name.clone(),
+                    });
+                }
                 Outcome::Skip => {}
                 Outcome::Unmatched => {
-                    let message = format!("no rule for {} in `{}`", file.rel, m.name);
                     if setup.unmatched == Unmatched::Error {
-                        return Err(self.error(message));
+                        return Err(self.error(format!("no rule for {} in `{}`", file.rel, m.name)));
                     }
-                    desired.warnings.push(format!("{message}; skipped it"));
+                    unmatched.push(file.rel.as_str());
                 }
             }
+        }
+        if !unmatched.is_empty() {
+            desired
+                .warnings
+                .push(unmatched_warning(&m.name, &unmatched, used));
         }
         if outside > 0 {
             desired.warnings.push(format!(
@@ -411,6 +420,28 @@ impl RulesDeployer {
             kind: self.kind().to_owned(),
             message,
         }
+    }
+}
+
+/// One warning for all of a mod's files that no rule places, naming the
+/// first few. `used` is how many of its files did go somewhere: when none
+/// did, the mod is most likely a tool that runs on its own rather than
+/// something the game loads, so the warning says that.
+fn unmatched_warning(mod_name: &str, files: &[&str], used: usize) -> String {
+    const SHOWN: usize = 3;
+    let mut list = files[..files.len().min(SHOWN)].join(", ");
+    if files.len() > SHOWN {
+        list.push_str(&format!(" and {} more", files.len() - SHOWN));
+    }
+    match (files.len(), used) {
+        (1, 0) => format!(
+            "nothing in `{mod_name}` goes in the game: no rule for {list}; it may be a tool to run on its own"
+        ),
+        (n, 0) => format!(
+            "nothing in `{mod_name}` goes in the game: no rule for any of its {n} files ({list}); it may be a tool to run on its own"
+        ),
+        (1, _) => format!("no rule for {list} in `{mod_name}`; skipped it"),
+        (n, _) => format!("no rule for {n} files in `{mod_name}` ({list}); skipped them"),
     }
 }
 
