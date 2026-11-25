@@ -107,13 +107,10 @@ pub struct OtherFolder {
     /// Its mods the profile already has of its own, whose own entries win
     /// over the folder's.
     pub already: Vec<String>,
-    /// Why it can only be copied in rather than used as the same folder,
-    /// if it can't be.
-    pub copy_only: Option<String>,
     /// Whether, used as the same folder, it'd be in the profile's personal
-    /// layer (see [`crate::personal`]): the profile's synced, and sets
-    /// aren't, so it'd only be on this person's computers. Copied in, it
-    /// goes to everyone.
+    /// layer whatever's asked (see [`crate::personal`]): the profile's
+    /// only followed here, so it'd only be on this person's computers.
+    /// Copied in, it's the profile's own, which is personal too then.
     pub personal: bool,
 }
 

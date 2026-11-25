@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use clap::Subcommand;
 use patchwork_core::Patchwork;
-use patchwork_core::set::OtherFolder;
+use patchwork_core::set::{FolderSource, OtherFolder};
 
 use crate::common::selected;
 
@@ -35,7 +35,19 @@ pub(crate) enum FolderCommand {
         /// changes apart from the other's.
         #[arg(long)]
         copy: bool,
+        /// In a synced profile, use it just for you: its mods go only to
+        /// your own computers, not everyone who has the profile.
+        #[arg(long, conflicts_with = "copy")]
+        personal: bool,
     },
+    /// Of a synced profile's folder that someone you share it with changed
+    /// while other profiles had it too: save it as it is now for every
+    /// profile that has it.
+    Everywhere { folder: String },
+    /// Of a synced profile's folder that someone you share it with changed
+    /// while other profiles had it too: keep it as it is now only in this
+    /// profile, leaving it as it was in the others.
+    Keep { folder: String },
     /// Rename a folder. A shared one is renamed in every profile that has it.
     Rename { folder: String, name: String },
     /// Remove a folder. Its mods stay in the profile, where they are.
@@ -123,26 +135,36 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                         f.already.join(", ")
                     );
                 }
-                if let Some(why) = &f.copy_only {
-                    println!("  can only be copied in: {why}");
-                }
                 if f.personal {
                     println!(
-                        "  {} is synced, so used here it'd only be on {}; copy it in to share \
-                         it with everyone",
+                        "  you follow {}, so used here it'd only be on {}",
                         loaded.label(),
                         personal_place(pw)
                     );
                 }
             }
         }
-        FolderCommand::Use { folder, from, copy } => {
+        FolderCommand::Use {
+            folder,
+            from,
+            copy,
+            personal,
+        } => {
             let found = other_folder(pw.other_folders(&profile)?, &folder, from.as_deref())?;
-            pw.use_folder(&profile, &found.source, !copy)?;
+            pw.use_folder(&profile, &found.source, !copy, personal)?;
+            // a set keeps the id of the folder it was made from
+            let id = match found.source {
+                FolderSource::Set { set } => set,
+                FolderSource::Folder { folder, .. } => folder,
+            };
+            let personal = pw
+                .load_profile(&profile)?
+                .include(id)
+                .is_some_and(|i| i.personal);
             if copy {
                 println!("copied {} into {}", found.name, loaded.label());
             } else {
-                let only = if found.personal {
+                let only = if personal {
                     format!(", only on {}", personal_place(pw))
                 } else {
                     String::new()
@@ -154,6 +176,17 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                     found.profiles.join(", ")
                 );
             }
+        }
+        FolderCommand::Everywhere { folder } => {
+            pw.use_folder_everywhere(&profile, &folder)?;
+            println!("{folder} is the same in every profile that has it again");
+        }
+        FolderCommand::Keep { folder } => {
+            pw.keep_folder_here(&profile, &folder)?;
+            println!(
+                "{folder} is {}'s own now; the other profiles keep it as it was",
+                loaded.label()
+            );
         }
         FolderCommand::Add { name, mods } => {
             let folder = pw.add_folder(&profile, &name, &mods)?;

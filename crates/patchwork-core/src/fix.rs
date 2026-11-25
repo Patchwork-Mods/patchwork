@@ -89,7 +89,7 @@ pub(crate) fn labelled<S: Serializer>(fix: &Option<Fix>, s: S) -> Result<S::Ok, 
 }
 
 /// Serializes fixes as [`Labelled`].
-fn labelled_all<S: Serializer>(fixes: &[Fix], s: S) -> Result<S::Ok, S::Error> {
+pub(crate) fn labelled_all<S: Serializer>(fixes: &[Fix], s: S) -> Result<S::Ok, S::Error> {
     s.collect_seq(fixes.iter().map(Labelled::from))
 }
 
@@ -180,30 +180,16 @@ pub enum Fix {
     /// Open Settings at `source`'s settings (its API key, say), named
     /// `name`, to fill in something it needs. Only a frontend can do this.
     SourceSettings { source: String, name: String },
-    /// Stop the profile including the shared sets `sets` (by id, named
-    /// `names`), keeping their mods as ordinary folders of its own; see
-    /// [`Patchwork::unlink_set`](crate::Patchwork::unlink_set).
-    UnlinkSets {
-        sets: Vec<String>,
-        names: Vec<String>,
-    },
-    /// Keep the shared sets `sets` (by id, named `names`) that the profile
-    /// includes just for this person, in its personal layer; see
-    /// [`Patchwork::include_personally`](crate::Patchwork::include_personally).
-    IncludePersonally {
-        sets: Vec<String>,
-        names: Vec<String>,
-    },
-    /// Copy the folder `folder` (by id, named `name`) of the profile `from`
-    /// (by id, named `from_name`) in as an ordinary folder of the profile's
-    /// own, rather than using the same folder in both; see
-    /// [`Patchwork::use_folder`](crate::Patchwork::use_folder).
-    CopyFolder {
-        from: String,
-        from_name: String,
-        folder: String,
-        name: String,
-    },
+    /// Save the profile's folder `folder` (by id, named `name`), which a
+    /// friend changed, to the set it came from and include that again, so
+    /// it's the same in every profile that has it; see
+    /// [`Patchwork::use_folder_everywhere`](crate::Patchwork::use_folder_everywhere).
+    UseEverywhere { folder: String, name: String },
+    /// Keep the profile's folder `folder` (by id, named `name`), which a
+    /// friend changed, as its own, leaving the set it came from as it is
+    /// for the other profiles; see
+    /// [`Patchwork::keep_folder_here`](crate::Patchwork::keep_folder_here).
+    KeepHere { folder: String, name: String },
     /// Go back to the profile's last deploy (`number` `None`) or deploy
     /// `number` of its history, doing as `sets` says with the shared sets
     /// that have changed since; see
@@ -233,15 +219,8 @@ impl Fix {
             Fix::UpdatePatchwork => "Update Patchwork".to_owned(),
             Fix::ProfileSettings => "Open profile settings".to_owned(),
             Fix::SourceSettings { .. } => "Open Settings".to_owned(),
-            Fix::UnlinkSets { names, .. } if names.len() == 1 => {
-                "Copy it in as a folder".to_owned()
-            }
-            Fix::UnlinkSets { .. } => "Copy them in as folders".to_owned(),
-            Fix::IncludePersonally { names, .. } if names.len() == 1 => {
-                "Keep it just for you".to_owned()
-            }
-            Fix::IncludePersonally { .. } => "Keep them just for you".to_owned(),
-            Fix::CopyFolder { .. } => "Copy it in as a folder".to_owned(),
+            Fix::UseEverywhere { .. } => "Use in every profile".to_owned(),
+            Fix::KeepHere { .. } => "Keep it only in this profile".to_owned(),
             Fix::GoBack { sets, .. } => match sets {
                 SetsThen::Restore => "Put them back as they were",
                 SetsThen::Copy => "Copy them in as they were",
@@ -270,13 +249,8 @@ impl Fix {
             Fix::UpdatePatchwork => "Updating Patchwork…".to_owned(),
             Fix::ProfileSettings => "Opening profile settings…".to_owned(),
             Fix::SourceSettings { .. } => "Opening Settings…".to_owned(),
-            Fix::UnlinkSets { names, .. } => format!("Copying in {}…", names.join(", ")),
-            Fix::IncludePersonally { names, .. } => {
-                format!("Keeping {} just for you…", names.join(", "))
-            }
-            Fix::CopyFolder { name, .. } => {
-                format!("Copying in {name}…")
-            }
+            Fix::UseEverywhere { name, .. } => format!("Saving {name} for every profile…"),
+            Fix::KeepHere { name, .. } => format!("Keeping {name} only in this profile…"),
             Fix::GoBack { number: None, .. } => "Reverting…".to_owned(),
             Fix::GoBack { .. } => "Rolling back…".to_owned(),
             Fix::ForgetSet { .. } => "Removing the missing set…".to_owned(),
@@ -322,27 +296,8 @@ impl Fix {
             Fix::SourceSettings { source, .. } => {
                 format!("patchwork config set {source}.api_key <key>")
             }
-            Fix::UnlinkSets { names, .. } => {
-                let unlinks: Vec<_> = names
-                    .iter()
-                    .map(|n| on(format!("set unlink {}", quoted(n))))
-                    .collect();
-                unlinks.join(" && ")
-            }
-            Fix::IncludePersonally { names, .. } => {
-                let keeps: Vec<_> = names
-                    .iter()
-                    .map(|n| on(format!("set personal {}", quoted(n))))
-                    .collect();
-                keeps.join(" && ")
-            }
-            Fix::CopyFolder {
-                from_name, name, ..
-            } => on(format!(
-                "folder use {} --from {} --copy",
-                quoted(name),
-                quoted(from_name)
-            )),
+            Fix::UseEverywhere { name, .. } => on(format!("folder everywhere {}", quoted(name))),
+            Fix::KeepHere { name, .. } => on(format!("folder keep {}", quoted(name))),
             Fix::GoBack { number, sets } => {
                 let number = number.map(|n| format!(" {n}")).unwrap_or_default();
                 on(format!("rollback{number} --sets {}", sets.as_str()))

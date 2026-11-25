@@ -4621,7 +4621,7 @@ async fn a_shared_folder_is_one_set_for_every_profile_that_includes_it() {
     assert!(!b_mod.enabled, "still off in the profile that had it off");
     assert_eq!(pw.find_set("my-game", "qol").unwrap().mods.len(), 2);
 
-    pw.include_set(&b, set.id, None).unwrap();
+    pw.include_set(&b, set.id, None, false).unwrap();
     assert_eq!(mod_names(&pw, &b), ["d", "b", "c"]);
     assert!(pw.load_profile(&b).unwrap().find("b").unwrap().enabled);
     assert_eq!(pw.profiles_including(set.id).unwrap().len(), 2);
@@ -4731,7 +4731,7 @@ async fn shared_folders_carry_their_mods_config_edits() {
     assert_eq!(shown(&a), 5);
 
     let b = pw.create_profile("my-game", "b").unwrap();
-    pw.include_set(&b, set.id, None).unwrap();
+    pw.include_set(&b, set.id, None, false).unwrap();
     pw.lock(&b, false).await.unwrap();
     let view = pw.config_form(&b, &fast, None).unwrap();
     assert_eq!(view.save_to, SaveTo::Set(set.id));
@@ -4806,7 +4806,7 @@ async fn shared_folders_carry_their_mods_config_edits() {
         profile: a.uuid,
         folder,
     };
-    pw.use_folder(&b, &from, false).unwrap();
+    pw.use_folder(&b, &from, false, false).unwrap();
     assert_eq!(
         pw.load_profile(&b).unwrap().config[&fast]["speed"]["level"],
         Value::Int(4)
@@ -4971,11 +4971,10 @@ async fn a_profile_uses_another_profiles_folder_as_the_same_folder() {
     assert_eq!(others[0].mods, ["b", "c"]);
     assert_eq!(others[0].profiles, ["a"]);
     assert!(others[0].already.is_empty());
-    assert_eq!(others[0].copy_only, None);
     // none of its own
     assert!(pw.other_folders(&a).unwrap().is_empty());
 
-    pw.use_folder(&b, &from, true).unwrap();
+    pw.use_folder(&b, &from, true, false).unwrap();
     let set = pw.find_set("my-game", "QOL").unwrap();
     for p in [&a, &b] {
         let loaded = pw.load_profile(p).unwrap();
@@ -5001,7 +5000,7 @@ async fn a_profile_uses_another_profiles_folder_as_the_same_folder() {
     assert_eq!(others[0].already, ["b"]);
 
     // or copies it in, which leaves it as it is
-    pw.use_folder(&c, &others[0].source, false).unwrap();
+    pw.use_folder(&c, &others[0].source, false, false).unwrap();
     let loaded = pw.load_profile(&c).unwrap();
     assert!(loaded.includes.is_empty());
     assert_eq!(
@@ -5012,74 +5011,241 @@ async fn a_profile_uses_another_profiles_folder_as_the_same_folder() {
 }
 
 #[tokio::test]
-async fn synced_profiles_use_other_profiles_folders_personally() {
+async fn synced_profiles_use_other_profiles_folders_for_everyone() {
     let tmp = tempfile::tempdir().unwrap();
     let (pw, a, b) = two_profiles(tmp.path()).await;
     let qol = pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
     pw.start_sync(&b).unwrap();
     let others = pw.other_folders(&b).unwrap();
-    assert!(others[0].copy_only.is_none(), "{others:?}");
-    assert!(others[0].personal, "{others:?}");
+    assert!(!others[0].personal, "{others:?}");
     let from = FolderSource::Folder {
         profile: a.uuid,
         folder: qol.id,
     };
-    pw.use_folder(&b, &from, true).unwrap();
+    pw.use_folder(&b, &from, true, false).unwrap();
+    // the set keeps the folder's id
     let set = pw.find_set("my-game", "QOL").unwrap();
-    // a shares it as ever, and b has it only here
-    assert!(
-        pw.load_profile(&a)
-            .unwrap()
-            .include(set.id)
-            .is_some_and(|i| !i.personal)
-    );
+    assert_eq!(set.id, qol.id);
     let loaded = pw.load_profile(&b).unwrap();
-    assert!(loaded.include(set.id).is_some_and(|i| i.personal));
+    assert!(loaded.include(set.id).is_some_and(|i| !i.personal));
     assert_eq!(mod_names(&pw, &b), ["d", "b"]);
-    assert!(loaded.is_personal(loaded.find("b").unwrap()));
-    let mut both = vec![a.clone(), b.clone()];
-    both.sort();
-    assert_eq!(pw.profiles_including(set.id).unwrap(), both);
-    // so nothing's published
-    assert!(pw.unsynced_changes(&b).unwrap().is_empty());
-
-    // a set only a synced profile includes, personally, stays a set
-    pw.unlink_set(&a, set.id, true).unwrap();
-    assert!(pw.load_set(set.id).unwrap().is_some());
-    assert_eq!(
-        pw.profiles_including(set.id).unwrap(),
-        std::slice::from_ref(&b)
+    // and everyone gets it as an ordinary folder
+    let changes: BTreeMap<String, Vec<u8>> = pw.unsynced_changes(&b).unwrap().into_iter().collect();
+    let folder = format!("folder/{}", set.id);
+    assert!(changes.contains_key(&folder), "{changes:?}");
+    assert!(changes.contains_key("mod/versioned:b"), "{changes:?}");
+    let entries = pw.sync_entries(&b).unwrap();
+    let synced = crate::sync::from_entries(&entries).unwrap();
+    assert!(synced.profile.includes.is_empty());
+    assert_eq!(synced.profile.folders[0].name, "QOL");
+    // with its mods locked with everyone else's
+    pw.lock(&b, false).await.unwrap();
+    let shared = pw.load_shared_lock(&b).unwrap().unwrap();
+    assert!(shared.mods.iter().any(|m| m.id == "b"));
+    assert!(
+        pw.sync_entries(&b)
+            .unwrap()
+            .contains_key("lock/versioned:b")
     );
-    // and stopping sharing it keeps its mods personal
-    pw.unlink_set(&b, set.id, true).unwrap();
+
+    // stopping sharing it as the only one left keeps the same folder, so
+    // nothing changes for everyone else
+    pw.start_sync(&b).unwrap();
+    pw.unlink_set(&a, set.id, false).unwrap();
     assert!(pw.load_set(set.id).unwrap().is_none());
     let loaded = pw.load_profile(&b).unwrap();
-    let m = loaded.find("b").unwrap();
-    assert!(loaded.is_personal(m));
-    assert_eq!(loaded.folder_of(m).unwrap().name, "Personal");
+    assert!(loaded.includes.is_empty());
+    assert_eq!(loaded.folders[0].id, set.id);
     assert!(pw.unsynced_changes(&b).unwrap().is_empty());
 
-    // a synced profile's own folders can't be used as the same one
-    // elsewhere, since they go to everyone
-    pw.add_folder(&b, "Mine", &["d".to_owned()]).unwrap();
+    // a synced profile's own folders can be used in other profiles, as
+    // the same folder, and it publishes the same as before
     let c = pw.create_profile("my-game", "c").unwrap();
-    let theirs = pw.load_profile(&b).unwrap().find_folder("Mine").unwrap().id;
+    let theirs = loaded.folders[0].id;
     let from = FolderSource::Folder {
         profile: b.uuid,
         folder: theirs,
     };
-    let others = pw.other_folders(&c).unwrap();
-    let mine = others.iter().find(|f| f.name == "Mine").unwrap();
-    assert!(mine.copy_only.is_some() && !mine.personal, "{others:?}");
-    let err = pw.use_folder(&c, &from, true).unwrap_err();
-    let Some(crate::fix::Fix::CopyFolder { from: id, name, .. }) = err.fix() else {
-        panic!("{err:?}");
+    pw.use_folder(&c, &from, true, false).unwrap();
+    assert!(pw.load_profile(&b).unwrap().include(theirs).is_some());
+    assert_eq!(mod_names(&pw, &c), ["b"]);
+    assert!(pw.unsynced_changes(&b).unwrap().is_empty());
+
+    // or included just for this person
+    let d = pw.create_profile("my-game", "d").unwrap();
+    pw.start_sync(&d).unwrap();
+    pw.use_folder(&d, &FolderSource::Set { set: theirs }, true, true)
+        .unwrap();
+    let loaded = pw.load_profile(&d).unwrap();
+    assert!(loaded.include(theirs).is_some_and(|i| i.personal));
+    assert!(pw.unsynced_changes(&d).unwrap().is_empty());
+}
+
+/// `pw`'s profile `profile` as someone it's synced with has it: on a
+/// computer of their own, with the same mods.
+async fn a_friend(tmp: &Path, doc: &crate::sync::Entries) -> Patchwork {
+    let dir = tmp.join("mods");
+    let source = std::sync::Arc::new(Versioned {
+        dir,
+        version: std::sync::Mutex::new("1.0".to_owned()),
+    });
+    let friend = Patchwork::builder(Paths::rooted(&tmp.join("friend")))
+        .source(SharedSource(source))
+        .deployer(NoDeployer)
+        .open()
+        .unwrap();
+    friend.add_game(new_game("my-game", "none")).unwrap();
+    friend.apply_synced(doc, true).unwrap();
+    friend
+}
+
+#[tokio::test]
+async fn a_friends_change_to_a_linked_folder_is_this_profiles_until_asked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    let qol = pw
+        .add_folder(&a, "QOL", &["b".to_owned(), "c".to_owned()])
+        .unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    pw.include_set(&b, set.id, None, false).unwrap();
+    pw.lock(&a, false).await.unwrap();
+    let mut doc = pw.start_sync(&a).unwrap();
+    // what this computer published coming back changes nothing
+    assert!(!pw.apply_synced(&doc, true).unwrap().changed);
+
+    // a friend has it as an ordinary folder
+    let friend = a_friend(tmp.path(), &doc).await;
+    let theirs = friend.load_profile(&a).unwrap();
+    assert!(theirs.includes.is_empty());
+    assert_eq!(theirs.folders[0].id, qol.id);
+
+    // turning one of its mods off is only this profile's
+    friend.set_enabled(&a, "c", false).unwrap();
+    doc.extend(friend.unsynced_changes(&a).unwrap());
+    pw.apply_synced(&doc, true).unwrap();
+    let loaded = pw.load_profile(&a).unwrap();
+    assert!(loaded.include(set.id).is_some());
+    assert!(!loaded.find("c").unwrap().enabled);
+    assert!(pw.load_profile(&b).unwrap().find("c").unwrap().enabled);
+    assert!(
+        pw.issues(&a)
+            .unwrap()
+            .iter()
+            .all(|i| !matches!(i.kind, crate::issue::IssueKind::FolderChanged { .. }))
+    );
+    // and changing it here goes to them
+    pw.set_enabled(&a, "c", true).unwrap();
+    pw.set_mod_folder(&b, "d", Some("QOL")).unwrap();
+    let changes = pw.unsynced_changes(&a).unwrap();
+    assert!(
+        changes.iter().any(|(k, _)| k == "mod/versioned:d"),
+        "{changes:?}"
+    );
+    doc.extend(changes);
+    friend.apply_synced(&doc, true).unwrap();
+    assert_eq!(mod_names(&friend, &a), ["a", "b", "c", "d"]);
+    assert!(!pw.apply_synced(&doc, true).unwrap().changed);
+
+    // but taking a mod out of it doesn't reach the other profiles
+    friend.set_mod_folder(&a, "b", None).unwrap();
+    doc.extend(friend.unsynced_changes(&a).unwrap());
+    pw.apply_synced(&doc, true).unwrap();
+    let loaded = pw.load_profile(&a).unwrap();
+    assert!(loaded.includes.is_empty());
+    assert_eq!(loaded.folders[0].id, qol.id);
+    assert!(!loaded.is_linked(loaded.find("c").unwrap()));
+    assert_eq!(loaded.folder_of(loaded.find("b").unwrap()), None);
+    assert!(pw.unsynced_changes(&a).unwrap().is_empty());
+    // the set's as it was, under a new id
+    let moved = pw.find_set("my-game", "QOL").unwrap();
+    assert_ne!(moved.id, qol.id);
+    assert_eq!(moved.mods.len(), 3);
+    assert_eq!(mod_names(&pw, &b), ["b", "c", "d"]);
+    assert!(pw.load_profile(&b).unwrap().include(moved.id).is_some());
+
+    let issues = pw.issues(&a).unwrap();
+    let issue = issues
+        .iter()
+        .find(|i| matches!(i.kind, crate::issue::IssueKind::FolderChanged { .. }))
+        .expect("an issue");
+    let crate::issue::IssueKind::FolderChanged {
+        profiles, removed, ..
+    } = &issue.kind
+    else {
+        unreachable!()
     };
-    assert_eq!((id, name), (b.uuid.to_string(), "Mine".to_owned()));
-    // before anything changed
-    assert!(pw.find_set("my-game", "Mine").is_err());
-    pw.use_folder(&c, &from, false).unwrap();
-    assert_eq!(mod_names(&pw, &c), ["d"]);
+    assert_eq!(
+        (profiles, removed),
+        (&vec!["b".to_owned()], &vec!["b".to_owned()])
+    );
+    assert!(matches!(
+        issue.fix,
+        Some(crate::fix::Fix::UseEverywhere { .. })
+    ));
+    assert!(matches!(
+        issue.other_fixes[..],
+        [crate::fix::Fix::KeepHere { .. }]
+    ));
+
+    // used in every profile, it's the set again, with its id back
+    pw.use_folder_everywhere(&a, "QOL").unwrap();
+    let set = pw.find_set("my-game", "QOL").unwrap();
+    assert_eq!(set.id, qol.id);
+    let names: Vec<&str> = set.mods.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["c", "d"]);
+    assert!(pw.load_profile(&a).unwrap().include(qol.id).is_some());
+    assert!(pw.load_profile(&b).unwrap().include(qol.id).is_some());
+    assert!(pw.unsynced_changes(&a).unwrap().is_empty());
+    assert!(
+        pw.issues(&a)
+            .unwrap()
+            .iter()
+            .all(|i| !matches!(i.kind, crate::issue::IssueKind::FolderChanged { .. }))
+    );
+
+    // or kept only here, which leaves the set to the other profile
+    friend.apply_synced(&doc, true).unwrap();
+    friend.rename_folder(&a, "QOL", "Ours").unwrap();
+    doc.extend(friend.unsynced_changes(&a).unwrap());
+    pw.apply_synced(&doc, true).unwrap();
+    let moved = pw.find_set("my-game", "QOL").unwrap();
+    assert_ne!(moved.id, qol.id);
+    pw.keep_folder_here(&a, "Ours").unwrap();
+    assert!(pw.sets("my-game").unwrap().is_empty());
+    let loaded = pw.load_profile(&b).unwrap();
+    assert!(loaded.includes.is_empty());
+    assert_eq!(loaded.folders[0].name, "QOL");
+    assert_eq!(pw.load_profile(&a).unwrap().folders[0].name, "Ours");
+
+    // and a friend removing the folder stops it being included
+    pw.add_folder(&b, "More", &["d".to_owned()]).unwrap();
+    let more = pw.load_profile(&b).unwrap().find_folder("More").unwrap().id;
+    pw.use_folder(
+        &a,
+        &FolderSource::Folder {
+            profile: b.uuid,
+            folder: more,
+        },
+        true,
+        false,
+    )
+    .unwrap();
+    doc.extend(pw.unsynced_changes(&a).unwrap());
+    pw.apply_synced(&doc, true).unwrap();
+    friend.apply_synced(&doc, true).unwrap();
+    friend.remove_folder(&a, "More").unwrap();
+    doc.extend(friend.unsynced_changes(&a).unwrap());
+    pw.apply_synced(&doc, true).unwrap();
+    assert!(pw.load_profile(&a).unwrap().include(more).is_none());
+    // which leaves it b's own folder
+    assert!(pw.sets("my-game").unwrap().is_empty());
+    assert!(
+        pw.load_profile(&b)
+            .unwrap()
+            .folders
+            .iter()
+            .any(|f| f.id == more)
+    );
 }
 
 #[tokio::test]
@@ -5088,7 +5254,7 @@ async fn a_set_only_one_profile_includes_is_its_own_folder_again() {
     let (pw, a, b) = two_profiles(tmp.path()).await;
     pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
     let set = pw.share_folder(&a, "QOL").unwrap();
-    pw.include_set(&b, set.id, None).unwrap();
+    pw.include_set(&b, set.id, None, false).unwrap();
     pw.set_enabled(&b, "b", false).unwrap();
     assert!(pw.remove_set(set.id).is_err());
     // unlinked from `a`, keeping a copy as its own folder
@@ -5113,7 +5279,7 @@ async fn a_set_only_one_profile_includes_is_its_own_folder_again() {
 
     // as when the profile's deleted instead
     let set = pw.share_folder(&a, "QOL").unwrap();
-    pw.include_set(&b, set.id, None).unwrap();
+    pw.include_set(&b, set.id, None, false).unwrap();
     pw.remove_profile(&a).unwrap();
     assert_eq!(own(&b).0, "QOL");
     assert!(pw.sets("my-game").unwrap().is_empty());
@@ -5143,7 +5309,7 @@ async fn a_set_and_a_profile_with_the_same_mod_lock_it_once() {
     )
     .await
     .unwrap();
-    pw.include_set(&b, set.id, Some("d")).unwrap();
+    pw.include_set(&b, set.id, Some("d"), false).unwrap();
     // the profile's own `a` wins
     assert_eq!(mod_names(&pw, &b), ["d", "b", "a"]);
     let loaded = pw.load_profile(&b).unwrap();
@@ -5162,19 +5328,9 @@ async fn synced_profiles_include_sets_personally() {
     pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
     let set = pw.share_folder(&a, "QOL").unwrap();
 
-    // one that includes a set can't start syncing
-    let err = pw.start_sync(&a).unwrap_err();
-    let Some(crate::fix::Fix::UnlinkSets { sets, names }) = err.fix() else {
-        panic!("{err:?}");
-    };
-    assert_eq!(
-        (sets, names),
-        (vec![set.id.to_string()], vec!["QOL".to_owned()])
-    );
-
-    // but a synced one includes it in its personal layer
+    // a synced one includes it in its personal layer, if asked
     pw.start_sync(&b).unwrap();
-    pw.include_set(&b, set.id, None).unwrap();
+    pw.include_set(&b, set.id, None, true).unwrap();
     let loaded = pw.load_profile(&b).unwrap();
     assert!(loaded.include(set.id).is_some_and(|i| i.personal));
     assert!(loaded.personal().is_none());
@@ -5250,7 +5406,7 @@ async fn synced_profiles_include_sets_personally() {
     with.config
         .insert("config/c.cfg".parse().unwrap(), setting(3));
     pw.save_set(&with).unwrap();
-    pw.include_set(&b, set.id, None).unwrap();
+    pw.include_set(&b, set.id, None, true).unwrap();
     pw.unlink_set(&b, set.id, true).unwrap();
     let loaded = pw.load_profile(&b).unwrap();
     assert!(loaded.is_personal(loaded.find("b").unwrap()));
@@ -5262,24 +5418,12 @@ async fn synced_profiles_include_sets_personally() {
 }
 
 #[tokio::test]
-async fn starting_to_sync_can_keep_sets_just_for_you() {
+async fn sets_included_for_everyone_can_be_kept_just_for_you() {
     let tmp = tempfile::tempdir().unwrap();
     let (pw, a, _) = two_profiles(tmp.path()).await;
     pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
     let set = pw.share_folder(&a, "QOL").unwrap();
     pw.lock(&a, false).await.unwrap();
-
-    let err = pw.start_sync(&a).unwrap_err();
-    let fixes = err.blocker().unwrap().fixes;
-    assert_eq!(fixes.len(), 2, "{fixes:?}");
-    let crate::fix::Fix::IncludePersonally { sets, names } = &fixes[1] else {
-        panic!("{fixes:?}");
-    };
-    assert_eq!(
-        (sets, names),
-        (&vec![set.id.to_string()], &vec!["QOL".to_owned()])
-    );
-    assert_eq!(fixes[1].command(None), "patchwork set personal QOL");
 
     pw.include_personally(&a, set.id).unwrap();
     let loaded = pw.load_profile(&a).unwrap();
@@ -5321,7 +5465,7 @@ async fn going_back_asks_what_to_do_with_sets_changed_since() {
     pw.set_game_path("my-game", &game).unwrap();
     pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
     let set = pw.share_folder(&a, "QOL").unwrap();
-    pw.include_set(&b, set.id, None).unwrap();
+    pw.include_set(&b, set.id, None, false).unwrap();
     pw.apply(&pw.plan_deploy(&a).await.unwrap()).unwrap();
     assert!(!pw.has_changes(&a).unwrap());
 

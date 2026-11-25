@@ -13,7 +13,6 @@ use std::path::Path;
 
 use patchwork_core::deploy::DeployTarget;
 use patchwork_core::fix::{Blocker, Fix, ProfileName};
-use patchwork_core::set::FolderSource;
 use serde::{Serialize, Serializer};
 use serde_json::json;
 use tauri::{AppHandle, State};
@@ -149,29 +148,8 @@ pub async fn apply_fix(
                 .map_err(lock_msg(&handle))?;
         }
         Fix::Sync => crate::sync::wait_for_files(&handle, &profile()?).await?,
-        Fix::UnlinkSets { sets, .. } => {
-            let r = profile()?;
-            for set in sets {
-                app.pw.unlink_set(&r, parse_set(&set)?, true)?;
-            }
-        }
-        Fix::IncludePersonally { sets, .. } => {
-            let r = profile()?;
-            for set in sets {
-                app.pw.include_personally(&r, parse_set(&set)?)?;
-            }
-        }
-        Fix::CopyFolder { from, folder, .. } => {
-            let parse = |id: &str| -> CmdResult<uuid::Uuid> {
-                id.parse()
-                    .map_err(|_| format!("`{id}` isn't a profile's or folder's id").into())
-            };
-            let source = FolderSource::Folder {
-                profile: parse(&from)?,
-                folder: parse(&folder)?,
-            };
-            app.pw.use_folder(&profile()?, &source, false)?
-        }
+        Fix::UseEverywhere { folder, .. } => app.pw.use_folder_everywhere(&profile()?, &folder)?,
+        Fix::KeepHere { folder, .. } => app.pw.keep_folder_here(&profile()?, &folder)?,
         Fix::ForgetSet { set } => app.pw.unlink_set(&profile()?, parse_set(&set)?, false)?,
         Fix::Deploy
         | Fix::GoBack { .. }

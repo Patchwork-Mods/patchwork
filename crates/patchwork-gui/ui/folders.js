@@ -14,9 +14,14 @@
 // A synced profile's personal mods (see personal.rs) show as a linked
 // folder too, Personal, whose mods stay on this person's computers rather than going
 // to everyone. It's there while it has mods, so it has no menu.
+//
+// In a synced profile, a linked folder goes to everyone it's shared with as
+// an ordinary folder, unless it was added just for this person. What they
+// change in it stays in this profile until the person picks, from the
+// warning that says so, whether it's used in every profile.
 
 import { $, chevronIcon, folderIcon, h } from "./dom.js";
-import { errorText, invoke, invokeResolving, run, state, status, windowFixes } from "./state.js";
+import { errorText, invoke, run, state, status } from "./state.js";
 import { showProfile } from "./profile.js";
 import { dragHandle, saveOrder } from "./reorder.js";
 
@@ -42,7 +47,17 @@ export const folderOf = (m) => state.profile.folders.find((f) => f.id === m.fold
 
 /** Where else a linked folder's set is, for telling the user. */
 const elsewhere = (folder) =>
-  folder.alsoIn.length ? `every profile that has it (${folder.alsoIn.join(", ")})` : "the other profiles that have it";
+  (folder.alsoIn.length ? `every profile that has it (${folder.alsoIn.join(", ")})` : "the other profiles that have it") +
+  friends(folder);
+
+/**
+ * For a change to a linked folder, who else gets it: everyone the synced
+ * profiles that have it for everyone are shared with. Empty if none are.
+ */
+export const friends = (folder) =>
+  folder.syncedIn?.length
+    ? `, and everyone ${folder.syncedIn.join(" and ")} ${folder.syncedIn.length === 1 ? "is" : "are"} shared with`
+    : "";
 
 /**
  * `mods` (in the profile's order) as the Mods tab shows them: each mod not
@@ -111,7 +126,7 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
     "p",
     { class: "folder-empty muted" },
     folder.linked
-      ? "Empty. Mods put in it from the folder button on each mod go into it in every profile that has it."
+      ? `Empty. Mods put in it from the folder button on each mod go into it in every profile that has it${friends(folder)}.`
       : "Empty. Put mods in it from the folder button on each mod.",
   );
   const toggle = h("input", {
@@ -187,8 +202,8 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
         {
           class: "badge folder-shared",
           title: folder.alsoIn.length
-            ? `Shared with ${folder.alsoIn.join(", ")}. Changing what's in it changes it there too; turning its mods on or off is this profile's own.`
-            : "Shared with other profiles. Changing what's in it changes it there too; turning its mods on or off is this profile's own.",
+            ? `Shared with ${folder.alsoIn.join(", ")}. Changing what's in it changes it there too${friends(folder)}; turning its mods on or off is this profile's own.`
+            : `Shared with other profiles. Changing what's in it changes it there too${friends(folder)}; turning its mods on or off is this profile's own.`,
         },
         folder.alsoIn.length
           ? `Shared with ${folder.alsoIn.length} ${folder.alsoIn.length === 1 ? "profile" : "profiles"}`
@@ -199,7 +214,7 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
           "span",
           {
             class: "badge folder-shared",
-            title: `Only on ${where()}: the profile's synced, but shared folders aren't, so no one else it's shared with gets these mods.`,
+            title: `Only on ${where()}: it's in this profile just for you, so no one else it's shared with gets these mods.`,
           },
           state.profile.devicesLinked ? "Only on your computers" : "Only on this computer",
         ),
@@ -467,13 +482,21 @@ function whose(other) {
 
 function otherRow(other) {
   const count = `${other.mods.length} ${other.mods.length === 1 ? "mod" : "mods"}`;
-  const act = (label, link, attrs = {}) =>
-    h("button", { type: "button", ...attrs, onclick: () => useFolder(other, link).catch(() => {}) }, label);
+  const act = (label, link, personal, attrs = {}) =>
+    h(
+      "button",
+      { type: "button", ...attrs, onclick: () => useFolder(other, link, personal).catch(() => {}) },
+      label,
+    );
   const already = other.already.length
     ? `This profile has ${other.already.join(", ")} already, and keeps its own ${
         other.already.length === 1 ? "copy" : "copies"
       }.`
     : null;
+  // A synced profile asks who gets it, unless it's only followed here, when
+  // it's just for this person whatever.
+  const ask = state.profile.synced && !other.personal;
+  const same = "changing what's in it changes it in every profile that has it";
   return h(
     "li",
     {},
@@ -485,17 +508,20 @@ function otherRow(other) {
       h(
         "span",
         { class: "set-actions" },
-        act("Copy in", false, {
+        act("Copy in", false, false, {
           title: "Copy its mods in as a folder of this profile's own, which changes apart from the other's",
         }),
-        act("Add", true, {
+        ask &&
+          act("Just for me", true, true, {
+            title: `Use the same folder here, only on ${where()}: no one else this profile's shared with gets it`,
+          }),
+        act(ask ? "For everyone" : "Add", true, false, {
           class: "primary",
-          disabled: Boolean(other.copyOnly),
-          title:
-            other.copyOnly ??
-            (other.personal
-              ? `Use the same folder here, only on ${where()}: shared folders aren't synced, so no one else this profile's shared with gets it`
-              : "Use the same folder here: changing what's in it changes it in every profile that has it"),
+          title: other.personal
+            ? `Use the same folder here, only on ${where()}: you follow this profile, so what you add is just for you`
+            : ask
+            ? `Use the same folder here, and everyone this profile's shared with gets it as a folder of the profile's own; ${same}`
+            : `Use the same folder here: ${same}`,
         }),
       ),
     ),
@@ -506,17 +532,20 @@ function otherRow(other) {
       h("br"),
       whose(other),
       already && [h("br"), already],
-      other.copyOnly && [h("br"), `Can only be copied in: ${other.copyOnly}.`],
-      other.personal && [
+      other.personal && [h("br"), `You follow this profile, so added it's only on ${where()}.`],
+      ask && [
         h("br"),
-        `This profile's synced, so added it's only on ${where()}. Copy it in to share it with everyone.`,
+        "This profile's synced. For everyone, the people it's shared with get it too; what they change in it stays in this profile until you say otherwise.",
       ],
     ),
   );
 }
 
-/** Uses `other` in the open profile, as the same folder if `link`. */
-async function useFolder(other, link) {
+/**
+ * Uses `other` in the open profile, as the same folder if `link`, just for
+ * this person if `personal`.
+ */
+async function useFolder(other, link, personal) {
   // closed first, so a blocker can show
   $("#other-folders-dialog").close();
   const { kind, set, profile, folder } = other;
@@ -524,25 +553,16 @@ async function useFolder(other, link) {
     id: state.profile.id,
     source: { kind, set, profile, folder },
     link,
+    personal,
   });
   showProfile(profileDetail);
-  const only = other.personal ? `, only on ${where()}` : "";
+  const only = other.personal || (personal && state.profile.synced) ? `, only on ${where()}` : "";
   status(
     link
       ? `Added ${other.name}, shared with ${other.profiles.join(", ") || "this profile"}${only}`
       : `Copied ${other.name} in as a folder`,
   );
 }
-
-// A synced profile can't share its own folders with other profiles yet,
-// so the blocker offers copying the folder in, which is all that was asked.
-windowFixes.copyFolder = async (fix, id) => ({
-  done: await invokeResolving("use_folder", {
-    id,
-    source: { kind: "folder", profile: fix.from, folder: fix.folder },
-    link: false,
-  }),
-});
 
 // A menu popped up under a button, on the page itself so a card can't clip
 // it. `items` are `{ label, run, danger }`, "-" for a line between, or

@@ -85,6 +85,22 @@ pub(crate) fn status(pw: &Patchwork, explicit: &Option<String>) -> Result<()> {
     }
     for issue in pw.issues(&profile)? {
         println!("{}: {}", severity(issue.severity), issue.message);
+        let commands: Vec<String> = issue
+            .fix
+            .iter()
+            .chain(&issue.other_fixes)
+            .map(|fix| fix.command(explicit.as_deref()))
+            .collect();
+        match commands.as_slice() {
+            [] => {}
+            [command] => println!("  to fix it, run `{command}`"),
+            _ => {
+                println!("  to deal with it, run one of:");
+                for command in commands {
+                    println!("    {command}");
+                }
+            }
+        }
     }
     Ok(())
 }

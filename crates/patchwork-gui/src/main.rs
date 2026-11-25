@@ -307,6 +307,10 @@ struct UiFolder {
     /// Whether it's a shared set's linked folder that the profile includes
     /// personally, so it's only on this person's computers too.
     personal_set: bool,
+    /// For a linked folder, the synced profiles (this one too) that have
+    /// it for everyone, by name: changing what's in it changes it for
+    /// everyone they're synced with.
+    synced_in: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -715,6 +719,10 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .map(|f| {
             let include = loaded.include(f.id);
             let linked = include.is_some();
+            let synced_in = match include {
+                Some(i) if f.id != loaded.id => pw.synced_includers(i.set).map_err(msg)?,
+                _ => Vec::new(),
+            };
             let also_in = includers
                 .remove(&f.id)
                 .unwrap_or_default()
@@ -725,15 +733,16 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
                     None => label,
                 })
                 .collect();
-            UiFolder {
+            Ok(UiFolder {
                 folder: f.clone(),
                 linked,
                 also_in,
                 personal: f.id == loaded.id,
                 personal_set: f.id != loaded.id && include.is_some_and(|i| i.personal),
-            }
+                synced_in,
+            })
         })
-        .collect();
+        .collect::<CmdResult<_>>()?;
     let load_index: HashMap<String, usize> = order::load_order(&loaded.mods)
         .into_iter()
         .enumerate()
@@ -1385,16 +1394,18 @@ fn other_folders(app: State<'_, App>, id: String) -> CmdResult<Vec<OtherFolder>>
 }
 
 /// Uses a folder another profile has in this one too: the same folder
-/// with `link`, otherwise a copy of its own.
+/// with `link`, otherwise a copy of its own. With `personal`, a synced
+/// profile has it just for this person.
 #[tauri::command]
 fn use_folder(
     app: State<'_, App>,
     id: String,
     source: FolderSource,
     link: bool,
+    personal: Option<bool>,
 ) -> CmdResult<ProfileDetail> {
     app.pw
-        .use_folder(&profile_ref(&id)?, &source, link)
+        .use_folder(&profile_ref(&id)?, &source, link, personal.unwrap_or(false))
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }
@@ -1403,7 +1414,7 @@ fn use_folder(
 #[tauri::command]
 fn include_set(app: State<'_, App>, id: String, set: String) -> CmdResult<ProfileDetail> {
     app.pw
-        .include_set(&profile_ref(&id)?, blockers::parse_set(&set)?, None)
+        .include_set(&profile_ref(&id)?, blockers::parse_set(&set)?, None, false)
         .map_err(msg)?;
     profile_detail(&app.pw, id)
 }

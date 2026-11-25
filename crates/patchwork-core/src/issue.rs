@@ -30,6 +30,13 @@ pub struct Issue {
         skip_serializing_if = "Option::is_none"
     )]
     pub fix: Option<Fix>,
+    /// Other things that deal with it, if there's a choice, sent the same
+    /// way as `fix`.
+    #[serde(
+        serialize_with = "crate::fix::labelled_all",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub other_fixes: Vec<Fix>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -98,6 +105,19 @@ pub enum IssueKind {
     /// The profile includes a shared set that isn't on this machine:
     /// removed, or the profile came from another one.
     MissingSet { set: String },
+    /// Someone the profile's synced with changed one of its linked folders
+    /// (`folder`, by id, named `name`), so it's the profile's own folder
+    /// for now, while the set it came from is as it was in the other
+    /// `profiles` that include it. `added`, `removed` and `changed` are
+    /// the mods that differ from the set's, by name.
+    FolderChanged {
+        folder: String,
+        name: String,
+        profiles: Vec<String>,
+        added: Vec<String>,
+        removed: Vec<String>,
+        changed: Vec<String>,
+    },
     /// What an extension's [`Check`](crate::check::Check) found.
     Check {
         /// The check's id, `<extension>.<check>`.
@@ -119,6 +139,7 @@ impl From<UnmetRequirement> for Issue {
                 found: unmet.found,
                 pinned: unmet.pinned,
             },
+            other_fixes: Vec::new(),
             fix: None,
         }
     }
@@ -142,6 +163,7 @@ impl Issue {
                 version: version.to_owned(),
                 supports,
             },
+            other_fixes: Vec::new(),
             fix: None,
         }
     }
@@ -167,6 +189,7 @@ impl Issue {
                 value: value.to_owned(),
                 supports: supports.to_vec(),
             },
+            other_fixes: Vec::new(),
             fix: None,
         }
     }
@@ -180,6 +203,7 @@ impl Issue {
                  include, so some of what it does for {game} is missing"
             ),
             kind: IssueKind::MissingExtension { id: id.to_owned() },
+            other_fixes: Vec::new(),
             fix: Some(Fix::UpdatePatchwork),
         }
     }
@@ -196,6 +220,7 @@ impl Issue {
                 ext: ext.to_owned(),
                 name: name.to_owned(),
             },
+            other_fixes: Vec::new(),
             fix: None,
         }
     }
@@ -207,6 +232,7 @@ impl Issue {
             mods: problem.mods,
             message: problem.message,
             kind: IssueKind::List { id: id.to_owned() },
+            other_fixes: Vec::new(),
             fix: None,
         }
     }
@@ -221,6 +247,7 @@ impl Issue {
                 id: id.to_owned(),
                 list: problem.list.map(|name| crate::ext::hook_id(ext, &name)),
             },
+            other_fixes: Vec::new(),
             fix: None,
         }
     }
@@ -237,6 +264,7 @@ impl Issue {
             kind: IssueKind::ArtifactChanged {
                 key: changed.key.clone(),
             },
+            other_fixes: Vec::new(),
             fix: Some(Fix::AcceptChanged {
                 keys: vec![changed.key.clone()],
                 names: vec![name.clone()],
@@ -260,6 +288,7 @@ impl Issue {
             mods: names,
             message,
             kind: IssueKind::OnAnotherPc,
+            other_fixes: Vec::new(),
             fix: Some(Fix::Sync),
         }
     }
@@ -280,6 +309,7 @@ impl Issue {
             kind: IssueKind::DownloadBlocked {
                 title: blocker.title.clone(),
             },
+            other_fixes: Vec::new(),
             fix: Some(Fix::Lock),
         }
     }
@@ -293,6 +323,7 @@ impl Issue {
                  deploy again, and check that its mods work with this version"
             ),
             kind: IssueKind::GameChanged { from, to },
+            other_fixes: Vec::new(),
             fix: Some(Fix::Deploy),
         }
     }
@@ -332,6 +363,7 @@ impl Issue {
                  deploy again to put them back"
             ),
             kind: IssueKind::FilesChanged { missing, changed },
+            other_fixes: Vec::new(),
             fix: Some(Fix::Deploy),
         }
     }

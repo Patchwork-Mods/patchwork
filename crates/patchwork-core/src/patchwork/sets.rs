@@ -13,7 +13,6 @@ use super::personal::personal_include;
 use crate::ConfigFileInfo;
 use crate::config::{FileEdits, overlay, same_dest};
 use crate::error::IoContext;
-use crate::fix::Fix;
 use crate::fsutil;
 use crate::lock::mod_key;
 use crate::profile::{Folder, Include, Linked, Profile, ProfileMod, ProfileRef};
@@ -74,15 +73,15 @@ impl Patchwork {
         if loaded.include(found.id).is_some() {
             return Err(Error::invalid(format!("{} is already a set", found.name)));
         }
-        if self.is_synced(profile) {
-            return Err(Error::invalid(format!(
-                "{} is synced, and synced profiles can't share folders as sets yet",
-                loaded.label()
-            )));
-        }
         let name = self.set_name(&loaded.game, &found.name, None)?;
         let (mut set, own) = folder_as_set(&loaded, &found, &files);
         set.name = name;
+        // The same id, so a synced profile's document has the same folder
+        // as before (see `sync::published`), unless a set has it already
+        // (the one a folder someone else changed came from, say).
+        if self.load_set(found.id)?.is_none() {
+            set.id = found.id;
+        }
         for m in loaded
             .mods
             .iter_mut()
@@ -110,7 +109,7 @@ impl Patchwork {
     /// too.
     pub fn other_folders(&self, profile: &ProfileRef) -> Result<Vec<OtherFolder>> {
         let loaded = self.load_profile(profile)?;
-        let synced = self.is_synced(profile);
+        let followed = self.is_followed(profile)?;
         let keys: HashSet<String> = loaded
             .mods
             .iter()
@@ -129,13 +128,6 @@ impl Patchwork {
             if other.game != loaded.game || other_ref == *profile {
                 continue;
             }
-            let copy_only = self.is_synced(&other_ref).then(|| {
-                format!(
-                    "{} is synced, and a synced profile's own folders can't be shared with \
-                     other profiles yet",
-                    other.name
-                )
-            });
             for folder in &other.folders {
                 let mods: Vec<ProfileMod> = other
                     .mods
@@ -152,8 +144,7 @@ impl Patchwork {
                     mods: mods.iter().map(|m| m.name.clone()).collect(),
                     profiles: vec![other.name.clone()],
                     already: already(&mods),
-                    personal: synced && copy_only.is_none(),
-                    copy_only: copy_only.clone(),
+                    personal: followed,
                 });
             }
             for include in other.shared_includes() {
@@ -165,7 +156,7 @@ impl Patchwork {
                     Some(&at) => found[at].profiles.push(other.name.clone()),
                     None => {
                         sets.insert(include.set, found.len());
-                        found.push(set_folder(&set.folder, &set.mods, already, synced));
+                        found.push(set_folder(&set.folder, &set.mods, already, followed));
                         found.last_mut().expect("just pushed").profiles = vec![other.name.clone()];
                     }
                 }
@@ -177,7 +168,7 @@ impl Patchwork {
                     id: set.id,
                     name: set.name.clone(),
                 };
-                found.push(set_folder(&folder, &set.mods, already, synced));
+                found.push(set_folder(&folder, &set.mods, already, followed));
             }
         }
         for f in &mut found {
@@ -194,18 +185,19 @@ impl Patchwork {
     /// the same folder in both: changing what's in it changes it in every
     /// profile that has it, which makes one of a profile's own folders a
     /// set. Otherwise it's copied in as an ordinary folder of the profile's
-    /// own. Its config edits come with it either way. A synced profile
-    /// includes it personally (see [`Patchwork::include_set`]); a synced
-    /// profile's own folders can only be copied.
+    /// own. Its config edits come with it either way. With `personal`, a
+    /// synced profile includes it just for this person (see
+    /// [`Patchwork::include_set`]).
     pub fn use_folder(
         &self,
         profile: &ProfileRef,
         source: &FolderSource,
         link: bool,
+        personal: bool,
     ) -> Result<()> {
         match *source {
             FolderSource::Set { set } if link => {
-                self.include_set(profile, set, None)?;
+                self.include_set(profile, set, None, personal)?;
                 // a set left over from before is this profile's alone now
                 self.settle_set(set)
             }
@@ -239,34 +231,8 @@ impl Patchwork {
                     let (set, _) = folder_as_set(&source, found, &files);
                     return self.copy_set_in(profile, set);
                 }
-                // A synced profile's own folder goes to everyone, so it
-                // can't become a set. One that's synced can include a set
-                // personally, though (see `include_set`).
-                if self.is_synced(&from) {
-                    return Err(Error::blocked(
-                        format!(
-                            "{} is synced, and a synced profile's own folders can't be shared \
-                             with other profiles yet",
-                            source.label()
-                        ),
-                        "Synced profiles can't share their folders yet",
-                        format!(
-                            "{} is synced with other computers or people, and sharing its own \
-                             folders with other profiles isn't supported yet. {} can be \
-                             copied in as an ordinary folder of {}'s own instead; changing it \
-                             won't change {}'s.",
-                            source.name, found.name, loaded.name, source.name
-                        ),
-                        Fix::CopyFolder {
-                            from: from.uuid.to_string(),
-                            from_name: source.name.clone(),
-                            folder: folder.to_string(),
-                            name: found.name.clone(),
-                        },
-                    ));
-                }
                 let set = self.share_folder(&from, &folder.to_string())?;
-                self.include_set(profile, set.id, None)
+                self.include_set(profile, set.id, None, personal)
             }
         }
     }
@@ -286,6 +252,9 @@ impl Patchwork {
             // A synced profile's own folders go to everyone, so one that
             // includes it personally keeps it as a set.
             [(only, _)] if self.includes_personally(only, id)? => Ok(()),
+            // it's still to be asked whether a folder that came from it
+            // goes back in it (see `folder_changed`)
+            [_] if self.awaits_answer(id)? => Ok(()),
             // saving it settles the set again, with none left
             [(only, _)] => self.unlink_set(only, id, true),
             _ => Ok(()),
@@ -293,11 +262,21 @@ impl Patchwork {
     }
 
     /// Has the profile include the set `id`, after its own mod `after`
-    /// (`None` for after all of them). A synced profile includes it in its
-    /// personal layer (see [`crate::personal`]), so it's only on this
-    /// person's computers: sets aren't synced, and its mods would go to
-    /// everyone as the profile's own otherwise.
-    pub fn include_set(&self, profile: &ProfileRef, id: Uuid, after: Option<&str>) -> Result<()> {
+    /// (`None` for after all of them). In a synced profile, everyone it's
+    /// synced with gets its mods as an ordinary folder (see
+    /// [`sync::published`](super::sync)); with `personal`, it's in the
+    /// profile's personal layer instead (see [`crate::personal`]), so it's
+    /// only on this person's computers. A profile this computer only
+    /// follows always includes it personally, since whoever shares it
+    /// decides what everyone has. `personal` means nothing for a profile
+    /// that isn't synced: everything in it is only here anyway.
+    pub fn include_set(
+        &self,
+        profile: &ProfileRef,
+        id: Uuid,
+        after: Option<&str>,
+        personal: bool,
+    ) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
         let set = self.load_set(id)?.ok_or_else(|| no_such_set(id))?;
         if set.game != loaded.game {
@@ -328,8 +307,7 @@ impl Patchwork {
         // saved as it is, then loaded again to bring its mods in
         loaded.includes.push(Include {
             after,
-            // sets aren't synced, so a synced profile's is only here
-            personal: self.is_synced(profile),
+            personal: (personal && self.is_synced(profile)) || self.is_followed(profile)?,
             ..Include::new(id)
         });
         self.save_profile(profile, &loaded)
@@ -431,7 +409,12 @@ impl Patchwork {
                 m.folder = Some(loaded.id);
             }
         } else if keep && let Some(linked) = &include.linked {
-            let folder = Folder::new(&folder_name(&loaded, &linked.folder.name));
+            let mut folder = Folder::new(&folder_name(&loaded, &linked.folder.name));
+            // The set's id if it's going, so a synced profile's document has
+            // the same folder as before (see `sync::published`).
+            if self.profiles_including(id)?.iter().all(|p| p == profile) {
+                folder.id = id;
+            }
             for m in loaded.mods.iter_mut().filter(|m| m.folder == Some(id)) {
                 m.folder = Some(folder.id);
             }
@@ -448,7 +431,7 @@ impl Patchwork {
 
     /// `name` trimmed, if it isn't blank and no set of `game` but `except`
     /// has it (ignoring case).
-    fn set_name(&self, game: &str, name: &str, except: Option<Uuid>) -> Result<String> {
+    pub(super) fn set_name(&self, game: &str, name: &str, except: Option<Uuid>) -> Result<String> {
         let name = name.trim();
         if name.is_empty() {
             return Err(Error::invalid("a set needs a name"));
@@ -533,6 +516,23 @@ impl Patchwork {
             .into_iter()
             .map(|(profile, _)| profile)
             .collect())
+    }
+
+    /// The synced profiles that include the set `id` for everyone (not
+    /// personally), by name: changing the set changes what everyone
+    /// they're synced with has.
+    pub fn synced_includers(&self, id: Uuid) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+        for (profile, label) in self.includers()?.remove(&id).unwrap_or_default() {
+            if self.is_synced(&profile) && !self.includes_personally(&profile, id)? {
+                names.push(
+                    label
+                        .split_once('/')
+                        .map_or(label.clone(), |(_, n)| n.to_owned()),
+                );
+            }
+        }
+        Ok(names)
     }
 
     /// Every set some profile includes, with those profiles and their
@@ -627,7 +627,7 @@ fn folder_as_set(profile: &Profile, folder: &Folder, files: &[ConfigFileInfo]) -
 
 /// A set, named and with the mods `folder` and `mods` give, for
 /// [`Patchwork::other_folders`]; with no profiles yet. `personal` if the
-/// profile it's for is synced, so would include it personally.
+/// profile it's for is followed, so would include it personally.
 fn set_folder(
     folder: &Folder,
     mods: &[ProfileMod],
@@ -641,7 +641,6 @@ fn set_folder(
         profiles: Vec::new(),
         already: already(mods),
         personal,
-        copy_only: None,
     }
 }
 

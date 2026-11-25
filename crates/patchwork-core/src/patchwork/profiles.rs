@@ -137,6 +137,7 @@ impl Patchwork {
             )?);
         }
         self.remove_instance(profile, &loaded.game)?;
+        let came_from = self.sets_folders_came_from(profile)?;
         let dir = self.profile_dir(profile);
         fs::remove_dir_all(&dir).at(&dir)?;
         let state = self.profile_state_dir(profile);
@@ -160,6 +161,9 @@ impl Patchwork {
         // a set it shared with just one other profile is that one's own now
         for include in loaded.shared_includes() {
             self.settle_set(include.set)?;
+        }
+        for set in came_from {
+            self.settle_set(set)?;
         }
         Ok(())
     }
@@ -402,6 +406,7 @@ impl Patchwork {
                 self.settle_set(id)?;
             }
         }
+        self.forget_gone_folders(profile, &stored)?;
         if moved {
             self.split_lock_again(profile)?;
         }

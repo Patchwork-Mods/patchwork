@@ -2097,11 +2097,13 @@ impl Patchwork {
                 kind: IssueKind::MissingSet {
                     set: include.set.to_string(),
                 },
+                other_fixes: Vec::new(),
                 fix: Some(Fix::ForgetSet {
                     set: include.set.to_string(),
                 }),
             });
         }
+        issues.extend(self.changed_folder_issues(profile, &loaded)?);
         {
             let registry = self.registry();
             let def = &registry.game(&loaded.game)?.value;
@@ -3740,6 +3742,7 @@ fn visit<'a>(
 
 mod actions;
 mod capture;
+mod changed_folders;
 mod checks;
 mod config;
 mod extensions;

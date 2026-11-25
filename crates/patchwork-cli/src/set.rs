@@ -21,6 +21,10 @@ pub(crate) enum SetCommand {
         /// out.
         #[arg(long)]
         after: Option<String>,
+        /// In a synced profile, include it just for you: its mods go only
+        /// to your own computers, not everyone who has the profile.
+        #[arg(long)]
+        personal: bool,
     },
     /// Copy a set's mods into the profile as an ordinary folder of its own,
     /// rather than including it, so changing them doesn't change the set.
@@ -36,7 +40,6 @@ pub(crate) enum SetCommand {
     },
     /// Keep a set the profile includes just for you: its mods aren't
     /// synced to everyone who has the profile, only to your own computers.
-    /// A synced profile can only include sets this way.
     Personal { set: String },
     /// Rename a set, for every profile that includes it.
     Rename { set: String, name: String },
@@ -76,17 +79,20 @@ pub(crate) fn run(pw: &Patchwork, command: SetCommand, explicit: &Option<String>
                 }
             }
         }
-        SetCommand::Include { set, after } => {
+        SetCommand::Include {
+            set,
+            after,
+            personal,
+        } => {
             let set = pw.find_set(game, &set)?;
-            pw.include_set(&profile, set.id, after.as_deref())?;
+            pw.include_set(&profile, set.id, after.as_deref(), personal)?;
             let personal = pw
                 .load_profile(&profile)?
                 .include(set.id)
                 .is_some_and(|i| i.personal);
             if personal {
                 println!(
-                    "{} now includes {}, only on this person's computers (it's synced, and \
-                     sets aren't)",
+                    "{} now includes {} just for you, on your own computers only",
                     loaded.label(),
                     set.name
                 );

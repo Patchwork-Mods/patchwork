@@ -1,8 +1,9 @@
 # Folders, shared sets and layered profiles
 
 Status (2026-11-24): steps 1 (folders inside a profile) and 2 (shared
-sets) are done, and step 3 (the personal layer) is under way; the rest is
-a proposal. Where what gets built differs from this, the notes under
+sets) are done, step 3 (the personal layer) is done but for the
+client/server-side issue, and step 4 (linked folders in synced profiles,
+for everyone) is built; the rest is a proposal. Where what gets built differs from this, the notes under
 each step in "Order of work" say so, and those notes win.
 
 ## The problem
@@ -176,10 +177,15 @@ disabled = ["SomeMod"]   # this profile's only override
 - **Catching mistakes**: where a source says which side a mod runs on
   (Modrinth's `client_side`/`server_side`), a personal mod that both sides
   need is an issue: "friends won't have this, so you'll desync".
-- **Putting a personal set into a shared layer** copies it in as an
-  ordinary folder of the profile. Keeping it linked for other people would
-  make sets documents of their own that friends sync, which waits until
-  there's a need for it.
+- **Linked folders go to everyone by default.** A linked folder works the
+  same in a synced profile as in any other: it's still the set on this
+  computer, and friends get its mods as an ordinary folder of the profile.
+  Keeping it for yourself ("Just for me") is the choice you make, putting
+  it in the personal layer. Changes friends make to it don't reach the set
+  without asking (see step 4).
+- **Linked folders between friends** (a set that friends sync as a
+  document of its own, used in several of their profiles) wait until
+  there's a need for them.
 
 ## 4. Working on a shared profile together
 
@@ -233,9 +239,10 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
    - **A set that doesn't suit the profile** (a Fabric set in a Forge
      profile) needs nothing of its own: its mods get the usual
      `IncompatibleEnv` issues, and turning them off is the profile's own.
-   - **Synced profiles** can't include a set yet (a blocker whose fix,
-     `CopySet`, copies it in as a folder), and one that includes a set
-     can't sync (`UnlinkSets`). Including sets in synced profiles is step 3.
+   - **Synced profiles** couldn't include a set at first (a blocker whose
+     fix, `CopySet`, copied it in as a folder), and one that included a set
+     couldn't sync (`UnlinkSets`). (Superseded: step 3 includes sets
+     personally, and step 4 for everyone.)
    - **Exports** turn each linked folder into an ordinary folder.
    - **GUI**: `ProfileDetail::folders` has the linked folders too, after
      the profile's own, each with `linked` and `alsoIn` (the other
@@ -300,8 +307,9 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
        with "restore" can still put back a set only one profile includes;
        it settles the next time one stops including it.
      - **Synced profiles**: using a folder linked when either profile is
-       synced is the `CopyFolder` blocker, whose fix copies it in (a
-       window fix that's done, like `CopySet`).
+       synced was the `CopyFolder` blocker, whose fix copies it in (a
+       window fix that's done, like `CopySet`). (Superseded: step 3 kept
+       it only for a synced profile's own folders, and step 4 removes it.)
      - **CLI**: `patchwork folder others` lists them, `patchwork folder
        use <folder> [--from <profile>] [--copy]` uses one. `set new` and
        `set share` are gone; `set remove` is for sets left over from
@@ -355,7 +363,8 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
    - **Personal includes of shared sets.** A synced profile includes a
      set in its personal layer (`include_set` and `use_folder` do it
      themselves when the profile's synced; the `CopySet` blocker is
-     gone). The includes are kept in `personal.toml` (`[[include]]`,
+     gone). (Changing: step 4 makes including for everyone the default,
+     and this the "Just for me" choice.) The includes are kept in `personal.toml` (`[[include]]`,
      `PERSONAL_SCHEMA` 2, saved as 1 while there are none), with the
      layer's own place among them as an include of the profile's id so
      ties keep their order (`Personal::includes`/`set_includes`). As
@@ -369,12 +378,13 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      to everyone). Stopping sharing it keeping its mods puts them in the
      personal layer; going back with "copy" past a change to it does the
      same, and so does it for the layer itself. Its config edits apply
-     but can't be saved to (as for the layer), and are dropped when it's
-     unlinked. A synced profile's own folders still can't become sets
-     (`CopyFolder`), and a profile that includes sets in its file still
-     can't start syncing as it is (`UnlinkSets`, or `IncludePersonally`;
-     see below). The sets themselves aren't
-     synced between linked computers yet (step 5): another computer gets
+     over the profile's, can be saved to (see "Personal config edits"),
+     and go into the layer when it's unlinked keeping its mods. A synced
+     profile's own folders still can't become sets (`CopyFolder`), and a
+     profile that includes sets in its file still can't start syncing as
+     it is (`UnlinkSets`, or `IncludePersonally`; see below); step 4
+     removes both. The sets themselves aren't
+     synced between linked computers yet (step 6): another computer gets
      the include, and a `MissingSet` issue until it has the set. GUI:
      the folder's marked "Only on your computers" next to "Shared with
      N profiles", and "From another profile…" says so before adding.
@@ -430,8 +440,119 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      fix, `IncludePersonally`, which makes its includes personal
      (`include_personally`, `patchwork set personal <set>`), splitting
      the lockfile so what only they need stays out of what's synced.
+     (Superseded by step 4: such a profile just syncs, its sets going to
+     everyone.)
    - Still to do: the client/server-side issue.
-4. **Optional folders** in synced profiles.
-5. **Sets synced between linked computers**, and exporting a set on its
+4. **Linked folders in synced profiles, for everyone.** *Built* (notes on
+   how at the end of this step). A
+   linked folder should work the same whether the profile is synced or
+   not, so using another profile's folder in a synced profile gives
+   everyone its mods, and keeping it for yourself is the choice.
+   - **Publishing flattens.** The include stays a set on this computer
+     (`[[include]]` in `profile.toml`, as in an unsynced profile), and
+     `sync_entries` turns each include that isn't personal into an
+     ordinary folder: `folder/<set id>` with the set's name, and its
+     mods' entries filed in it, the way exports already do it. Its
+     config edits are published as the profile's (where the profile's
+     own don't win). Friends see an ordinary folder. Since the folder's
+     id is the set's, what comes back maps onto it.
+   - **Locking**: its mods are in the shared lock like any folder's, not
+     `personal.lock`.
+   - **Either way round.** A synced profile's own folder can be used
+     linked in another profile, becoming a set as usual, and stays in the
+     synced profile's document as a folder. So `CopyFolder` goes, and so
+     does the blocker on starting to sync a profile that includes sets
+     (`UnlinkSets` / `IncludePersonally`): it just syncs.
+   - **"Just for me"** is step 3's personal include, offered when adding
+     (GUI: "From another profile…" asks For everyone / Just for me; CLI:
+     `folder use --personal`). On a profile this computer only follows,
+     it's the only way, since the rest is whoever shares it's.
+   - **Editing the set from elsewhere** (another profile of yours) changes
+     the synced profile too, and friends get it at the next sync. The
+     messages that already say a change leaves every profile with the
+     folder name the synced profiles, and say friends get it as well.
+   - **When a friend changes the folder** (adds, removes or changes a
+     mod in it, or renames it), syncing doesn't change the set, which
+     would reach into the person's other profiles:
+     - The synced profile takes the friend's version straight away, so
+       it stays in step with them, and stops including the set: the
+       folder becomes its own, keeping its id (friends know it), and is
+       recorded in profile-state as having come from the set. The set
+       takes a new id instead, since only this computer knows it. The
+       other profiles are left as they were.
+     - That's reported as an issue ("Sam changed Client QOL, which is
+       also in A and B"), listing what was added, removed and changed,
+       with two fixes: **Use in every profile** (save the folder to the
+       set and include it again) and **Keep it only in this profile**
+       (forget the record). Doing nothing is safe: friends stay in step
+       and nothing else changes.
+     - Only a change that makes the folder differ from the set counts,
+       so this computer's own changes coming back don't.
+     - Config edits need no question: a friend's go in as the profile's
+       own, over the set's, as saving a profile never changes a set's
+       config anyway.
+     - A friend removing the folder just stops the profile including the
+       set (`settle_set` as usual).
+   - **Linked computers** get the folder from the profile's document as
+     an ordinary folder (no `MissingSet`); it's only linked on the
+     computer that has the set, until step 6.
+   - Order: publishing and locking; removing `CopyFolder` and the sync
+     blocker; incoming changes and their issue; GUI and CLI.
+   - **As built:**
+     - `sync_entries` gives `sync::published(loaded)`: `personal::without`,
+       then each include's linked folder moved into `folders`. Locking
+       needed nothing: `is_personal` only counts personal includes, so a
+       set's mods were already in the shared lock.
+     - `share_folder` gives the set the folder's own id (unless a set has
+       it already), and `unlink_set` keeping the mods gives the folder the
+       set's id when no other profile includes it, so a synced profile's
+       document doesn't change when a folder becomes a set or settles
+       back.
+     - `include_set` and `use_folder` take `personal`, which only means
+       something for a synced profile; a followed one is always personal.
+       `OtherFolder::copy_only` is gone, and `OtherFolder::personal` now
+       means "followed, so it can only be personal".
+     - Incoming (`apply_entries`): when the profile changed, `relink`
+       compares each include's folder in what arrived with the folder as
+       loaded here (its mods in order, ignoring on/off, and its name).
+       Unchanged, it's included again (on/off going to `disabled`); gone,
+       the include's dropped and the set settled; changed,
+       `folder_changed` keeps it as the profile's own folder. If other
+       profiles include the set, it's re-id'd (`reid_set`, which loads
+       and re-saves each includer) and the profile's state gets
+       `from-sets.json` (`{ folder, set }`); otherwise the set's just
+       settled. `settle_set` keeps a set only one profile includes while
+       such a record names it. Re-id'ing a set that another synced
+       profile includes for everyone publishes a folder change there too.
+     - The issue is `IssueKind::FolderChanged` (with the other profiles
+       and the mods added, removed and changed), with `UseEverywhere` and
+       `KeepHere`. Issues can carry more than one fix now
+       (`Issue::other_fixes`, sent as `otherFixes`); the warnings panel
+       shows a button per fix and `patchwork status` prints the commands.
+       It doesn't say who made the change: core doesn't know authors.
+     - `use_folder_everywhere` saves the folder's mods (and its name,
+       unless another set has it) to the set, gives the set the folder's
+       id back so the synced document doesn't change, and includes it
+       again; `keep_folder_here` forgets the record and settles the set.
+       A record whose folder's gone is forgotten on the next save
+       (`forget_gone_folders`), and removing the profile settles its
+       records' sets.
+     - `CopyFolder`, `UnlinkSets` and `IncludePersonally` are gone.
+       `include_personally` stays, for `patchwork set personal`.
+     - CLI: `folder use --personal`, `set include --personal`, `folder
+       everywhere <folder>`, `folder keep <folder>`. GUI: "From another
+       profile…" has Copy in, Just for me and For everyone for a synced
+       profile; `UiFolder::synced_in` names the synced profiles with a
+       folder for everyone, which the messages about changing a linked
+       folder add ("and everyone X is shared with").
+     - Not done: the friend's name in the issue, and a desktop
+       notification for it (it's a warning). Going back, in another
+       profile, to a deploy from before its set was re-id'd sees the old
+       set as gone, so it asks as for a changed set, and "restore" would
+       bring it back under the old id beside the new one.
+5. **Optional folders** in synced profiles.
+6. **Sets synced between linked computers**, and exporting a set on its
    own.
-6. Who changed what, and maintainers (section 4).
+7. Who changed what, and maintainers (section 4).
+8. **Linked folders between friends**, if there's a need: sets as
+   documents of their own that friends sync.

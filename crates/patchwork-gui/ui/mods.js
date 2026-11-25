@@ -22,7 +22,7 @@ import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
 import { showChangelog } from "./changelog.js";
 import { dragHandle, dragging } from "./reorder.js";
-import { arrange, folderButton, folderOf, folderSection, refreshFolder, saveTop } from "./folders.js";
+import { arrange, folderButton, folderOf, folderSection, friends, refreshFolder, saveTop } from "./folders.js";
 import { conflictMark } from "./conflicts.js";
 import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
 import { requirementsList, requirementsMark } from "./requirements.js";
@@ -974,7 +974,7 @@ function confirmRemove(m) {
   $("#remove-summary").textContent = folder?.linked && !folder.personal
     ? `Remove ${m.name} from the shared folder ${folder.name}? The folder's shared, so it leaves ${
         folder.alsoIn.length ? `${state.profile.label} and ${folder.alsoIn.join(", ")}` : state.profile.label
-      }. Its files leave the game on the next deploy.`
+      }${friends(folder)}. Its files leave the game on the next deploy.`
     : `Remove ${m.name} from ${state.profile.label}? Its files leave the game on the next deploy.`;
   dialog.returnValue = "";
   dialog.showModal();

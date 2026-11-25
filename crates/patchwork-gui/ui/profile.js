@@ -201,27 +201,30 @@ function renderSteamBranch(p) {
     : "";
 }
 
-/** A button to deal with issue `i`, for the issues that have one. */
+/** Buttons to deal with issue `i`, for the issues that have any: one per fix. */
 function issueAction(p, i) {
   if (i.fix) {
-    const onclick = async (e) => {
-      e.target.disabled = true;
-      try {
-        // Fixes the window applies say how they're going themselves.
-        if (windowFixes[i.fix.type]) {
-          await applyFix(i.fix, p.id);
-        } else {
-          status(i.fix.doing);
-          await applyFix(i.fix, p.id);
-          status("Done");
+    const button = (fix) => {
+      const onclick = async (e) => {
+        e.target.disabled = true;
+        try {
+          // Fixes the window applies say how they're going themselves.
+          if (windowFixes[fix.type]) {
+            await applyFix(fix, p.id);
+          } else {
+            status(fix.doing);
+            await applyFix(fix, p.id);
+            status("Done");
+          }
+        } catch (err) {
+          status(errorText(err), true);
+        } finally {
+          if (state.profile?.id === p.id) await openProfile(p.id).catch(() => {});
         }
-      } catch (err) {
-        status(errorText(err), true);
-      } finally {
-        if (state.profile?.id === p.id) await openProfile(p.id).catch(() => {});
-      }
+      };
+      return h("button", { type: "button", class: "issue-action", onclick }, fix.label);
     };
-    return h("button", { type: "button", class: "issue-action", onclick }, i.fix.label);
+    return [i.fix, ...(i.otherFixes ?? [])].map(button);
   }
   if (i.kind.type !== "incompatibleGame") return null;
   const m = p.mods.find((m) => m.name === i.mods[0]);

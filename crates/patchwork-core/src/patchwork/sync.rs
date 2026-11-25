@@ -14,18 +14,20 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use super::Patchwork;
 use super::local::{LOCAL, not_here};
 use super::personal::keep_added;
 use crate::error::{ArtifactChanged, IoContext};
 use crate::event::Event;
-use crate::fix::{Blocker, Fix};
+use crate::fix::Blocker;
 use crate::fsutil;
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
 use crate::personal;
-use crate::profile::{Profile, ProfileRef};
+use crate::profile::{Profile, ProfileMod, ProfileRef};
+use crate::set;
 use crate::sync::{self, Entries};
 use crate::{Error, Result};
 
@@ -110,18 +112,17 @@ impl Patchwork {
 
     /// The profile and its lockfile as they are here, as entries. Its
     /// personal layer is left out (see [`crate::personal`]), with the sets
-    /// it includes personally and what only those need locked.
+    /// it includes personally and what only those need locked. The sets it
+    /// includes for everyone go as ordinary folders (see [`published`]):
+    /// whoever it's synced with doesn't have them.
     pub fn sync_entries(&self, profile: &ProfileRef) -> Result<Entries> {
         let loaded = self.load_profile(profile)?;
-        if loaded.includes.iter().any(|i| !i.personal) {
-            return Err(sets_cant_sync(&loaded));
-        }
         let lock = self.load_lock(profile)?;
-        if !loaded.has_personal() {
-            return Ok(sync::to_entries(&loaded, lock.as_ref()));
-        }
-        let lock = lock.map(|lock| personal::split_lock(&loaded, lock).0);
-        Ok(sync::to_entries(&personal::without(&loaded), lock.as_ref()))
+        let lock = match loaded.has_personal() {
+            true => lock.map(|lock| personal::split_lock(&loaded, lock).0),
+            false => lock,
+        };
+        Ok(sync::to_entries(&published(&loaded), lock.as_ref()))
     }
 
     /// Starts keeping track of what's synced of `profile`, from the profile
@@ -266,10 +267,25 @@ impl Patchwork {
         });
         let changed = !exists
             || self.sync_entries(&profile)? != sync::to_entries(&synced.profile, Some(&lock));
+        let mut left = Vec::new();
         if changed {
-            self.save_synced(&profile, &synced.profile, &lock)?;
+            let stored = match exists {
+                true => {
+                    let (stored, gone) = relink(&self.load_profile(&profile)?, synced.profile);
+                    left = gone;
+                    stored
+                }
+                false => synced.profile,
+            };
+            self.save_synced(&profile, &stored, &lock)?;
         }
         self.save_sync_base(&profile, entries, !writable)?;
+        for (set, changed) in left {
+            match changed {
+                true => self.folder_changed(&profile, set)?,
+                false => self.settle_set(set)?,
+            }
+        }
         Ok(Some(Applied {
             profile,
             created: !exists,
@@ -278,8 +294,10 @@ impl Patchwork {
         }))
     }
 
-    fn save_synced(&self, profile: &ProfileRef, loaded: &Profile, lock: &Lockfile) -> Result<()> {
-        fsutil::write_toml(&self.profile_file(profile), loaded)?;
+    /// Saves a profile that came from syncing, as it's stored (see
+    /// [`relink`]), and its lockfile.
+    fn save_synced(&self, profile: &ProfileRef, stored: &Profile, lock: &Lockfile) -> Result<()> {
+        fsutil::write_toml(&self.profile_file(profile), stored)?;
         fsutil::write_toml(&self.lock_file(profile), lock)?;
         self.profile_changed(profile, true);
         Ok(())
@@ -535,45 +553,70 @@ fn is_in_profile(loaded: &Profile, key: &str) -> bool {
     loaded.mods.iter().any(|m| mod_key(&m.source, &m.id) == key)
 }
 
-/// Synced profiles can't include shared sets yet, except personally:
-/// their mods would go to everyone as the profile's own.
-fn sets_cant_sync(loaded: &Profile) -> Error {
-    let (sets, names): (Vec<String>, Vec<String>) = loaded
-        .includes
+/// What's synced of `loaded`: without its personal layer (see
+/// [`personal::without`]), and with each set it includes as an ordinary
+/// folder whose id is the set's, so what comes back maps onto it (see
+/// [`Patchwork::apply_synced`]). The sets' config edits are the profile's,
+/// where its own don't win.
+pub(super) fn published(loaded: &Profile) -> Profile {
+    let mut shared = personal::without(loaded);
+    for include in std::mem::take(&mut shared.includes) {
+        if let Some(linked) = include.linked {
+            shared.folders.push(linked.folder);
+        }
+    }
+    shared
+}
+
+/// The profile that came back from syncing (`flat`, as [`published`] gives
+/// it) as it's stored, for a profile that's `here` as loaded: each set it
+/// includes whose folder is still as the set has it is included again,
+/// with whatever's off in it off in this profile. Also gives the sets it
+/// stops including: those whose folder is gone (`false`), and those
+/// someone else changed (`true`), whose folder stays as the profile's own
+/// so it's as they have it, without changing the set (see
+/// [`Patchwork::folder_changed`]).
+///
+/// Changes made here, to the profile or to a set from another profile, are
+/// in `flat` already (see [`Patchwork::apply_synced`]), so only a change
+/// that came from elsewhere makes a folder differ.
+fn relink(here: &Profile, mut flat: Profile) -> (Profile, Vec<(Uuid, bool)>) {
+    let mut left = Vec::new();
+    for include in here.includes.iter().filter(|i| !i.personal) {
+        let Some(linked) = &include.linked else {
+            // a missing set's include stays until its issue's fix drops it
+            flat.includes.push(include.clone());
+            continue;
+        };
+        let Some(folder) = flat.folders.iter().find(|f| f.id == include.set) else {
+            left.push((include.set, false));
+            continue;
+        };
+        if folder.name != linked.folder.name
+            || folder_mods(&flat, include.set) != folder_mods(here, include.set)
+        {
+            left.push((include.set, true));
+            continue;
+        }
+        flat.folders.retain(|f| f.id != include.set);
+        flat.includes.push(include.clone());
+    }
+    // nothing's changed in the sets, so there's nothing to save to them
+    let (mut stored, _) = set::collapse(&flat);
+    stored.schema = stored.saved_schema();
+    (stored, left)
+}
+
+/// The mods in `profile`'s folder `id`, in order, without whether they're
+/// on, which is up to each profile rather than the set.
+fn folder_mods(profile: &Profile, id: Uuid) -> Vec<ProfileMod> {
+    profile
+        .mods
         .iter()
-        .filter(|i| !i.personal)
-        .map(|i| {
-            let name = i
-                .linked
-                .as_ref()
-                .map_or_else(|| i.set.to_string(), |l| l.folder.name.clone());
-            (i.set.to_string(), name)
+        .filter(|m| m.folder == Some(id))
+        .map(|m| ProfileMod {
+            enabled: true,
+            ..m.clone()
         })
-        .unzip();
-    let label = loaded.label();
-    let list = names.join(", ");
-    let (them, their, folder) = match names.len() {
-        1 => ("it", "its", "an ordinary folder"),
-        _ => ("them", "their", "ordinary folders"),
-    };
-    Error::blocked_by(
-        format!("{label} includes shared sets ({list}), which can't be synced yet"),
-        Blocker::with_fixes(
-            "Shared sets can't be synced yet",
-            format!(
-                "{label} includes {list}, and syncing shared sets isn't supported yet. \
-                 Copying {them} in makes {folder} of this profile's own, which everyone \
-                 who has the profile gets. Keeping {them} just for you leaves {their} mods \
-                 out of what's shared, on your own computers only. Either way, the sets \
-                 stay as they are for other profiles."
-            ),
-            vec![
-                Fix::UnlinkSets {
-                    sets: sets.clone(),
-                    names: names.clone(),
-                },
-                Fix::IncludePersonally { sets, names },
-            ],
-        ),
-    )
+        .collect()
 }
