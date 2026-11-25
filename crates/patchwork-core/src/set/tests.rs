@@ -221,6 +221,55 @@ fn a_sets_config_is_under_the_profiles_and_saving_keeps_them_apart() {
 }
 
 #[test]
+fn personal_settings_go_over_the_profiles_which_saving_keeps() {
+    let mut qol = set("QOL", &["x"]);
+    qol.config = edits(&[("a.cfg", "zoom", 2), ("a.cfg", "size", 1)]);
+    let mut mine = set("Mine", &["m"]);
+    mine.config = edits(&[("a.cfg", "zoom", 5), ("a.cfg", "size", 6)]);
+    let mut p = profile(&["a"], &[(&mine, None), (&qol, None)]);
+    p.includes[0].personal = true;
+    p.config = edits(&[("a.cfg", "zoom", 9), ("c.cfg", "own", 3)]);
+    let p = expanded(p, &[&qol, &mine]);
+
+    // the personal set's over everything, though it's included first
+    assert_eq!(
+        p.config,
+        edits(&[
+            ("a.cfg", "zoom", 5),
+            ("a.cfg", "size", 6),
+            ("c.cfg", "own", 3)
+        ])
+    );
+    // and what it hides of the profile's own is still the profile's
+    let own = edits(&[("a.cfg", "zoom", 9), ("c.cfg", "own", 3)]);
+    assert_eq!(own_config(&p), own);
+    assert_eq!(collapse(&p).0.config, own);
+    assert_eq!(
+        crate::personal::without(&p).config,
+        edits(&[
+            ("a.cfg", "zoom", 9),
+            ("a.cfg", "size", 1),
+            ("c.cfg", "own", 3)
+        ])
+    );
+
+    // without it, they're as the profile and its sets have them
+    let mut gone = p.clone();
+    gone.includes.remove(0);
+    assert_eq!(own_config(&gone), own);
+    merge_config(&mut gone, &own);
+    assert_eq!(
+        gone.config,
+        edits(&[
+            ("a.cfg", "zoom", 9),
+            ("a.cfg", "size", 1),
+            ("c.cfg", "own", 3)
+        ])
+    );
+    assert!(gone.personal_config.given.is_empty());
+}
+
+#[test]
 fn a_set_is_saved_as_schema_1_unless_it_has_config() {
     let mut s = set("QOL", &["x"]);
     assert_eq!(s.saved_schema(), 1);

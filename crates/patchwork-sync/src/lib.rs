@@ -20,8 +20,9 @@
 //!   knows everyone else, and gets changes from whoever's online, not just
 //!   from whoever made them.
 //! - Read only ([`Node::share`], not writable): others follow the profile.
-//!   They can add mods of their own, which stay on their computer (see
-//!   [`Patchwork::unshared_mods`]). Only those with write access can change
+//!   They can add mods of their own, which go in the profile's personal
+//!   layer, so to their own computers but no one else's (see
+//!   [`Patchwork::is_followed`]). Only those with write access can change
 //!   what's in the document: iroh-docs refuses entries not signed with its
 //!   key, and every file is checked against its hash, so followers can pass
 //!   the profile on to each other but can't slip anything into it.

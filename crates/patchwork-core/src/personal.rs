@@ -37,6 +37,12 @@
 //! disabled = ["Shaders"]
 //! ```
 //!
+//! It can change settings in config files too (`[config."<file>"]`, as a
+//! set's), with schema 3: the person's own settings, which win over the
+//! profile's shared ones and those of every set it includes, since they're
+//! the person's own choice on top of what everyone has. They follow the
+//! person to their linked computers with the rest of the layer.
+//!
 //! Loading a profile includes it, so its mods show as a linked folder,
 //! "Personal", and everything that reads a profile sees them. Syncing
 //! leaves it out ([`without`]), and so does what's synced of the lockfile:
@@ -49,15 +55,20 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::config::{FileEdits, overlay};
 use crate::lock::{LockedMod, Lockfile, mod_key};
 use crate::profile::{Include, Profile, ProfileMod};
 use crate::set::{Set, merge_config, own_config};
 
 /// The newest schema of `personal.toml` this build reads. Schema 2 added
-/// `include`; a layer that includes no sets is still saved as 1 (see
-/// [`Personal::saved_schema`]), so builds that would drop them don't open
-/// ones that do.
-pub const PERSONAL_SCHEMA: u32 = 2;
+/// `include` and 3 `config`; a layer is saved as the oldest that has
+/// everything in it (see [`Personal::saved_schema`]), so builds that would
+/// drop them don't open ones that do.
+pub const PERSONAL_SCHEMA: u32 = 3;
+
+/// The schema a personal layer that includes sets, but changes no
+/// settings, is saved as.
+const SCHEMA_WITHOUT_CONFIG: u32 = 2;
 
 /// The schema a personal layer that includes no sets is saved as.
 const SCHEMA_WITHOUT_INCLUDES: u32 = 1;
@@ -86,6 +97,10 @@ pub struct Personal {
     /// In load order, as a set's are.
     #[serde(default, rename = "mod")]
     pub mods: Vec<ProfileMod>,
+    /// The person's own settings in config files, as a set's
+    /// [`config`](Set::config), over everything else the profile has.
+    #[serde(default, skip_serializing_if = "FileEdits::is_empty")]
+    pub config: FileEdits,
 }
 
 impl Personal {
@@ -97,22 +112,32 @@ impl Personal {
             disabled: Vec::new(),
             includes: Vec::new(),
             mods: Vec::new(),
+            config: FileEdits::new(),
         }
     }
 
-    /// Whether there's nothing in the profile `id`'s layer: no mods of its
-    /// own, and no sets.
+    /// Whether there's nothing in the profile `id`'s layer: no mods or
+    /// settings of its own, and no sets.
     pub fn is_empty(&self, id: Uuid) -> bool {
-        self.mods.is_empty() && self.includes.iter().all(|i| i.set == id)
+        !self.has_own() && self.includes.iter().all(|i| i.set == id)
     }
 
-    /// [`PERSONAL_SCHEMA`] if it includes sets, otherwise the schema from
-    /// before it could.
+    /// Whether it has mods or settings of its own, so it's included
+    /// itself (see [`Personal::includes`]).
+    fn has_own(&self) -> bool {
+        !self.mods.is_empty() || !self.config.is_empty()
+    }
+
+    /// The oldest schema that has everything in it: [`PERSONAL_SCHEMA`] if
+    /// it changes settings, otherwise the one from before it could, or
+    /// from before it could include sets if it includes none.
     pub fn saved_schema(&self) -> u32 {
-        if self.includes.is_empty() {
-            SCHEMA_WITHOUT_INCLUDES
-        } else {
+        if !self.config.is_empty() {
             PERSONAL_SCHEMA
+        } else if !self.includes.is_empty() {
+            SCHEMA_WITHOUT_CONFIG
+        } else {
+            SCHEMA_WITHOUT_INCLUDES
         }
     }
 
@@ -121,13 +146,15 @@ impl Personal {
         Set {
             id,
             mods: self.mods.clone(),
+            config: self.config.clone(),
             ..Set::new(&self.game, PERSONAL_NAME)
         }
     }
 
     /// The profile `id`'s personal includes, in order: the sets included
     /// personally, and the layer's own (the private set whose id is the
-    /// profile's) if it has mods, first unless it's been put among them.
+    /// profile's) if it has mods or settings, first unless it's been put
+    /// among them.
     pub fn includes(&self, id: Uuid) -> Vec<Include> {
         let mut includes = self.includes.clone();
         if !includes.iter().any(|i| i.set == id) {
@@ -140,7 +167,7 @@ impl Personal {
                 },
             );
         }
-        if self.mods.is_empty() {
+        if !self.has_own() {
             includes.retain(|i| i.set != id);
         }
         for include in &mut includes {
@@ -219,6 +246,10 @@ impl Layer {
                 personal.includes.push(include);
             }
         }
+        // theirs win where both change a setting
+        let mut config = ours.personal.config;
+        overlay(&mut config, &personal.config);
+        personal.config = config;
         let mut locked = theirs.locked;
         let have: HashSet<String> = locked.iter().map(LockedMod::key).collect();
         locked.extend(ours.locked.into_iter().filter(|m| !have.contains(&m.key())));

@@ -232,6 +232,7 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
         mods: dedupe_names(ordered),
         ext,
         config,
+        personal_config: Default::default(),
     };
     // two machines' moves can leave a folder's mods apart
     profile.group_folders();

@@ -310,6 +310,28 @@ pub fn beyond(all: &FileEdits, base: &FileEdits) -> FileEdits {
     left
 }
 
+/// The settings in `all` that `cover` changes too, with `all`'s values
+/// (`inside`), or that it doesn't (`!inside`).
+pub fn covered(all: &FileEdits, cover: &FileEdits, inside: bool) -> FileEdits {
+    let mut left = FileEdits::new();
+    for (path, edits) in all {
+        let over = edits_in(cover, path);
+        for (group, values) in edits {
+            for (id, value) in values {
+                if over.is_some_and(|e| e.get(group).is_some_and(|v| v.contains_key(id))) == inside
+                {
+                    left.entry(path.clone())
+                        .or_default()
+                        .entry(group.clone())
+                        .or_default()
+                        .insert(id.clone(), value.clone());
+                }
+            }
+        }
+    }
+    left
+}
+
 mod one_or_many {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

@@ -1294,14 +1294,6 @@ select.mod-version {
   cursor: help;
 }
 
-/* A mod added to a followed profile on this computer, which whoever shares
-   it doesn't have. */
-.mod-unshared {
-  margin-left: 6px;
-  font-size: 0.8em;
-  cursor: help;
-}
-
 /* A bell that follows a mod, to be told about its new versions (see
    followToggle in mods.js). Filled in while followed; otherwise it only
    shows while its mod is hovered or has the focus. */

@@ -8,6 +8,8 @@
 // to pick, or of fields to set. A config file's settings can come from the
 // shared folders (sets) the profile includes, and changes can be saved in
 // one of those instead of the profile, for every profile that includes it.
+// A synced profile's can be saved as the person's own (its personal layer),
+// which only their computers have and which win over everyone's.
 
 import { $, h } from "./dom.js";
 import { colorPicker } from "./colorpick.js";
@@ -183,22 +185,42 @@ function render() {
 const savingIn = () =>
   open.path && open.to !== "profile" ? open.view.sets.find((s) => s.id === open.to) : null;
 
+/** Where personal settings are, as the folders say it. */
+const onYours = () =>
+  state.profile?.devicesLinked ? "only on your computers" : "only on this computer";
+
+/** What a set settings are saved in is called: the personal layer is the
+ * person's own settings. */
+const setName = (s) =>
+  s.personal
+    ? s.id === open.id
+      ? `Just for you (${onYours()})`
+      : `${s.name} (${onYours()})`
+    : `${s.name} (shared folder)`;
+
 /** The Save changes in choice, for a config file when the profile includes
- * shared folders. */
+ * shared folders or is synced (so has the person's own settings). */
 function renderSaveTo() {
   const { view } = open;
   const sets = open.path ? view.sets : [];
   $("#options-save-to").hidden = !sets.length;
   if (!sets.length) return;
   $("#options-save-to-select").replaceChildren(
-    h("option", { value: "profile", selected: open.to === "profile" }, "This profile only"),
-    ...sets.map((s) =>
-      h("option", { value: s.id, selected: open.to === s.id }, `${s.name} (shared folder)`),
+    h(
+      "option",
+      { value: "profile", selected: open.to === "profile" },
+      state.profile?.synced ? "This profile, for everyone" : "This profile only",
     ),
+    ...sets.map((s) => h("option", { value: s.id, selected: open.to === s.id }, setName(s))),
   );
-  $("#options-save-to").title = savingIn()
-    ? `Saved in ${savingIn().name}, for every profile that includes it`
-    : "Saved in this profile only, over what its shared folders have";
+  const set = savingIn();
+  $("#options-save-to").title = !set
+    ? state.profile?.synced
+      ? "Saved in this profile, for everyone it's synced with, over what its shared folders have"
+      : "Saved in this profile only, over what its shared folders have"
+    : set.personal
+      ? `Saved ${onYours()}, over what the profile has, so no one else gets them`
+      : `Saved in ${set.name}, for every profile that includes it`;
 }
 
 /** Undo all changes, for what's saved where changes are being saved. */
@@ -209,9 +231,11 @@ function renderReset() {
   $("#options-reset").textContent = open.path ? "Undo all changes" : "Use defaults";
   $("#options-reset").title = !open.path
     ? "Forget the options picked, and deploy with the defaults"
-    : set
-      ? `Forget the settings ${set.name} changes in this file, for every profile that includes it`
-      : view.sets.length
+    : set?.personal
+      ? "Forget your own settings in this file, going back to what the profile has"
+      : set
+        ? `Forget the settings ${set.name} changes in this file, for every profile that includes it`
+        : view.sets.length
         ? "Forget the settings this profile changes in this file, keeping its shared folders'"
         : "Forget the settings changed in this file, and deploy it as it is";
 }
@@ -297,6 +321,15 @@ function answer(group, change) {
   load(answers);
 }
 
+/** Where a setting's value comes from, when it isn't the profile's own. */
+function sharedNote(shared) {
+  if (!shared.personal) {
+    return shared.overridden ? `Changed here, over ${shared.set}` : `From ${shared.set}`;
+  }
+  const yours = shared.id === open.id ? "Yours" : `Yours, from ${shared.set}`;
+  return shared.overridden ? `${yours}, over the profile's` : yours;
+}
+
 /** A group's fields, each with something to set it with that suits it. */
 function fieldsView(group) {
   return h(
@@ -328,7 +361,7 @@ function fieldsView(group) {
             h(
               "small",
               { class: "options-shared muted" },
-              shared.overridden ? `Changed here, over ${shared.set}` : `From ${shared.set}`,
+              sharedNote(shared),
             ),
         ),
         !toggle && control,

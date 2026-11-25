@@ -9,12 +9,15 @@ use uuid::Uuid;
 use super::Patchwork;
 use super::folders::move_to_folder;
 use super::sets::{folder_name, last_own, linked};
+use crate::config::{FileEdits, overlay};
 use crate::error::IoContext;
 use crate::fsutil;
+use crate::lock::mod_key;
 use crate::lock::{LOCK_SCHEMA, LockedGame, Lockfile};
 use crate::personal::{Layer, PERSONAL_NAME, PERSONAL_SCHEMA, Personal};
 use crate::profile::{Folder, Include, Profile, ProfileRef, no_such_mod};
 use crate::set::Set;
+use crate::sync::{self, Entries};
 use crate::{Error, Result};
 
 impl Patchwork {
@@ -32,6 +35,13 @@ impl Patchwork {
         personal: bool,
     ) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
+        if self.is_followed(profile)? {
+            return Err(Error::invalid(format!(
+                "you follow {}, so the mods you add to it are only on your computers \
+                 already, and only whoever shares it can change the rest",
+                loaded.label()
+            )));
+        }
         if personal && loaded.personal().is_none() {
             if !self.is_synced(profile) {
                 return Err(Error::invalid(format!(
@@ -193,24 +203,44 @@ impl Patchwork {
         Ok(self.load_personal(&profile)?.map(|p| p.set(id)))
     }
 
-    /// Saves `set`'s mods as the personal layer of the profile whose id
-    /// it has, if it's one of those; returns whether it was.
+    /// Saves `set`'s mods and settings as the personal layer of the
+    /// profile whose id it has, if it's one of those; returns whether it
+    /// was.
     pub(super) fn save_personal_set(&self, set: &Set) -> Result<bool> {
         let profile = ProfileRef { uuid: set.id };
         if !self.profile_file(&profile).is_file() {
             return Ok(false);
         }
-        if !set.config.is_empty() {
-            return Err(Error::invalid(
-                "settings can't be saved in a profile's personal mods yet",
-            ));
-        }
         let mut personal = self
             .load_personal(&profile)?
             .unwrap_or_else(|| Personal::new(&set.game));
         personal.mods = set.mods.clone();
+        personal.config = set.config.clone();
         self.save_personal(&profile, &personal)?;
         Ok(true)
+    }
+
+    /// Adds `config` to the settings the profile's personal layer changes,
+    /// under those it has already, as when a set included personally is
+    /// copied into it.
+    pub(super) fn add_personal_config(
+        &self,
+        profile: &ProfileRef,
+        game: &str,
+        config: FileEdits,
+    ) -> Result<()> {
+        if config.is_empty() {
+            return Ok(());
+        }
+        let mut personal = self
+            .load_personal(profile)?
+            .unwrap_or_else(|| Personal::new(game));
+        let mut added = config;
+        overlay(&mut added, &personal.config);
+        personal.config = added;
+        self.save_personal(profile, &personal)?;
+        self.profile_changed(profile, false);
+        Ok(())
     }
 
     /// What only the profile's personal layer needs locked, if anything.
@@ -261,6 +291,34 @@ pub(super) fn personal_include(loaded: &Profile) -> Include {
         personal: true,
         ..Include::new(loaded.id)
     }
+}
+
+/// Moves the mods added to a followed profile into its personal layer
+/// (see [`Patchwork::is_followed`]), `base` being what was last synced of
+/// it: the profile's own mods that whoever shares it doesn't have. Returns
+/// whether any were.
+pub(super) fn keep_added(loaded: &mut Profile, base: &Entries) -> Result<bool> {
+    let added: Vec<String> = loaded
+        .mods
+        .iter()
+        .filter(|m| m.folder.is_none_or(|id| loaded.include(id).is_none()))
+        .filter(|m| {
+            let key = format!("{}{}", sync::MOD, mod_key(&m.source, &m.id));
+            base.get(&key).is_none_or(|v| v.as_slice() == sync::REMOVED)
+        })
+        .map(|m| m.name.clone())
+        .collect();
+    if added.is_empty() {
+        return Ok(false);
+    }
+    if loaded.personal().is_none() {
+        let include = personal_include(loaded);
+        loaded.includes.push(include);
+    }
+    for name in &added {
+        move_to_folder(loaded, name, Some(loaded.id))?;
+    }
+    Ok(true)
 }
 
 /// Makes the personal layer of `profile` (whose id was `id`) an ordinary

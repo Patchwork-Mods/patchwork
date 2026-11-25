@@ -17,6 +17,7 @@ use tokio::sync::broadcast;
 
 use super::Patchwork;
 use super::local::{LOCAL, not_here};
+use super::personal::keep_added;
 use crate::error::{ArtifactChanged, IoContext};
 use crate::event::Event;
 use crate::fix::{Blocker, Fix};
@@ -56,6 +57,10 @@ pub struct Applied {
 struct SyncBase {
     /// Values are JSON, so they're kept as text.
     entries: BTreeMap<String, String>,
+    /// This machine only follows the profile, so the mods added here go
+    /// in its personal layer (see [`Patchwork::is_followed`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    followed: bool,
 }
 
 /// What [`Patchwork::download_locked`] found had changed since it was
@@ -123,7 +128,7 @@ impl Patchwork {
     /// as it is now, and returns all of it to publish.
     pub fn start_sync(&self, profile: &ProfileRef) -> Result<Entries> {
         let entries = self.sync_entries(profile)?;
-        self.save_sync_base(profile, &entries)?;
+        self.save_sync_base(profile, &entries, false)?;
         Ok(entries)
     }
 
@@ -145,26 +150,43 @@ impl Patchwork {
         Ok(sync::changes(&base, &self.sync_entries(profile)?))
     }
 
-    /// The names of the mods added here to a followed profile, which
-    /// whoever shares it doesn't have. Empty if it isn't synced.
-    pub fn unshared_mods(&self, profile: &ProfileRef) -> Result<Vec<String>> {
-        let Some(base) = self.sync_base(profile)? else {
-            return Ok(Vec::new());
-        };
-        let loaded = self.load_profile(profile)?;
-        Ok(loaded
-            .mods
-            .iter()
-            .filter(|m| {
-                // they're kept here on purpose
-                if loaded.is_personal(m) {
-                    return false;
-                }
-                let key = format!("{}{}", sync::MOD, crate::lock::mod_key(&m.source, &m.id));
-                base.get(&key).is_none_or(|v| v.as_slice() == sync::REMOVED)
-            })
-            .map(|m| m.name.clone())
-            .collect())
+    /// Whether this machine only follows `profile`, rather than sharing
+    /// it. Mods added to a followed profile go in its personal layer (see
+    /// [`crate::personal`]), since there's no publishing them, and that
+    /// way they still go to the person's other computers.
+    pub fn is_followed(&self, profile: &ProfileRef) -> Result<bool> {
+        let base: Option<SyncBase> = fsutil::read_json(&self.sync_base_file(profile))?;
+        Ok(base.is_some_and(|b| b.followed))
+    }
+
+    /// What was last synced of `profile`, if this machine only follows it.
+    pub(super) fn followed_base(&self, profile: &ProfileRef) -> Result<Option<Entries>> {
+        match self.is_followed(profile)? {
+            true => self.sync_base(profile),
+            false => Ok(None),
+        }
+    }
+
+    /// Moves the mods added here to a followed profile (`base` being what
+    /// was last synced of it) into its personal layer, and saves it if any
+    /// were. Profiles followed before additions went there have them in
+    /// the profile itself.
+    fn keep_additions_personal(&self, profile: &ProfileRef, base: &Entries) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        if keep_added(&mut loaded, base)? {
+            self.save_profile(profile, &loaded)?;
+            self.split_lock_again(profile)?;
+        }
+        Ok(())
+    }
+
+    /// Splits the lockfile again after mods have moved into the personal
+    /// layer, so what only they need stops being synced.
+    pub(super) fn split_lock_again(&self, profile: &ProfileRef) -> Result<()> {
+        if let Some(lock) = self.load_lock(profile)? {
+            self.save_lock(profile, &lock)?;
+        }
+        Ok(())
     }
 
     /// Takes a profile as it's been synced, `entries` being the newest
@@ -174,8 +196,9 @@ impl Patchwork {
     /// Changes made here since the last sync are kept on top and returned.
     /// If `writable`, they're for publishing, and win over what arrived.
     /// A profile that's only followed can't be published to, so they stay
-    /// here (see [`Patchwork::unshared_mods`]), and whatever the sharer
-    /// changed since the last sync wins over them.
+    /// here, and whatever the sharer changed since the last sync wins over
+    /// them. Mods added to it go in its personal layer (see
+    /// [`Patchwork::is_followed`]), including any added before that was so.
     pub fn apply_synced(&self, entries: &Entries, writable: bool) -> Result<Applied> {
         let applied = self.apply_entries(entries, writable, true)?;
         Ok(applied.expect("a missing profile is created"))
@@ -200,6 +223,12 @@ impl Patchwork {
         let exists = self.profile_file(&profile).is_file();
         if !exists && !create {
             return Ok(None);
+        }
+        if exists
+            && !writable
+            && let Some(base) = self.sync_base(&profile)?
+        {
+            self.keep_additions_personal(&profile, &base)?;
         }
 
         let mut unpublished = match self.sync_base(&profile)? {
@@ -240,7 +269,7 @@ impl Patchwork {
         if changed {
             self.save_synced(&profile, &synced.profile, &lock)?;
         }
-        self.save_sync_base(&profile, entries)?;
+        self.save_sync_base(&profile, entries, !writable)?;
         Ok(Some(Applied {
             profile,
             created: !exists,
@@ -479,8 +508,14 @@ impl Patchwork {
         }))
     }
 
-    fn save_sync_base(&self, profile: &ProfileRef, entries: &Entries) -> Result<()> {
+    fn save_sync_base(
+        &self,
+        profile: &ProfileRef,
+        entries: &Entries,
+        followed: bool,
+    ) -> Result<()> {
         let base = SyncBase {
+            followed,
             entries: entries
                 .iter()
                 .map(|(k, v)| (k.clone(), String::from_utf8_lossy(v).into_owned()))
@@ -489,7 +524,7 @@ impl Patchwork {
         fsutil::write_json(&self.sync_base_file(profile), &base)
     }
 
-    fn sync_base_file(&self, profile: &ProfileRef) -> PathBuf {
+    pub(super) fn sync_base_file(&self, profile: &ProfileRef) -> PathBuf {
         self.profile_state_dir(profile).join("synced.json")
     }
 }
@@ -500,8 +535,8 @@ fn is_in_profile(loaded: &Profile, key: &str) -> bool {
     loaded.mods.iter().any(|m| mod_key(&m.source, &m.id) == key)
 }
 
-/// Synced profiles can't include shared sets yet: their mods would go to
-/// everyone as the profile's own.
+/// Synced profiles can't include shared sets yet, except personally:
+/// their mods would go to everyone as the profile's own.
 fn sets_cant_sync(loaded: &Profile) -> Error {
     let (sets, names): (Vec<String>, Vec<String>) = loaded
         .includes
@@ -515,21 +550,30 @@ fn sets_cant_sync(loaded: &Profile) -> Error {
             (i.set.to_string(), name)
         })
         .unzip();
-    Error::blocked(
-        format!(
-            "{} includes shared sets ({}), which can't be synced yet",
-            loaded.label(),
-            names.join(", ")
+    let label = loaded.label();
+    let list = names.join(", ");
+    let (them, their, folder) = match names.len() {
+        1 => ("it", "its", "an ordinary folder"),
+        _ => ("them", "their", "ordinary folders"),
+    };
+    Error::blocked_by(
+        format!("{label} includes shared sets ({list}), which can't be synced yet"),
+        Blocker::with_fixes(
+            "Shared sets can't be synced yet",
+            format!(
+                "{label} includes {list}, and syncing shared sets isn't supported yet. \
+                 Copying {them} in makes {folder} of this profile's own, which everyone \
+                 who has the profile gets. Keeping {them} just for you leaves {their} mods \
+                 out of what's shared, on your own computers only. Either way, the sets \
+                 stay as they are for other profiles."
+            ),
+            vec![
+                Fix::UnlinkSets {
+                    sets: sets.clone(),
+                    names: names.clone(),
+                },
+                Fix::IncludePersonally { sets, names },
+            ],
         ),
-        "Shared sets can't be synced yet",
-        format!(
-            "{} includes {}, and syncing shared sets isn't supported yet. \
-             Copying them in makes each linked folder an ordinary folder of this \
-             profile's own, which syncs like the rest. The sets stay as they are \
-             for other profiles.",
-            loaded.label(),
-            names.join(", ")
-        ),
-        Fix::UnlinkSets { sets, names },
     )
 }

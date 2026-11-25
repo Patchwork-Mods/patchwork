@@ -67,10 +67,10 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
     let (profile, loaded) = selected(pw, explicit)?;
     match command {
         FolderCommand::List => {
-            if loaded.all_folders().next().is_none() {
+            if loaded.shown_folders().next().is_none() {
                 println!("{} has no folders", loaded.label());
             }
-            for f in loaded.all_folders() {
+            for f in loaded.shown_folders() {
                 let mods: Vec<_> = loaded
                     .mods
                     .iter()

@@ -155,6 +155,12 @@ pub async fn apply_fix(
                 app.pw.unlink_set(&r, parse_set(&set)?, true)?;
             }
         }
+        Fix::IncludePersonally { sets, .. } => {
+            let r = profile()?;
+            for set in sets {
+                app.pw.include_personally(&r, parse_set(&set)?)?;
+            }
+        }
         Fix::CopyFolder { from, folder, .. } => {
             let parse = |id: &str| -> CmdResult<uuid::Uuid> {
                 id.parse()

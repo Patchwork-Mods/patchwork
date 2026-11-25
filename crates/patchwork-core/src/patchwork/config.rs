@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::personal::personal_include;
 use super::{Patchwork, deploy_order, not_installed};
 use crate::config::{
     self, ConfigContext, ConfigDefs, ConfigFormat, Contents, Edits, FileEdits, answers,
@@ -22,9 +23,10 @@ use crate::ext::Hook;
 use crate::game::GameDef;
 use crate::hash::ContentHash;
 use crate::options::{Answer, Form, GroupKind, Page};
-use crate::profile::{Profile, ProfileRef};
+use crate::personal::{PERSONAL_NAME, Personal};
+use crate::profile::{Include, Profile, ProfileRef};
 use crate::relpath::RelPath;
-use crate::set::{merge_config, own_config};
+use crate::set::{merge_config, own_config, sets_config};
 use crate::{Error, Result, fsutil};
 
 /// A config file whose settings can be changed, from
@@ -60,6 +62,8 @@ pub struct ConfigFileInfo {
 
 /// Where changes to a profile's config file settings are saved: in the
 /// profile, or in a shared set it includes, for every profile that does.
+/// A synced profile's personal layer is the set whose id is the profile's
+/// (see [`crate::personal`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SaveTo {
@@ -76,6 +80,10 @@ pub struct ConfigSet {
     pub name: String,
     /// Whether it changes any of the file's settings.
     pub edited: bool,
+    /// Whether it's the profile's personal layer or a set it includes
+    /// personally, so its settings are only on this person's computers,
+    /// over the profile's own.
+    pub personal: bool,
 }
 
 /// A setting a shared set changes, from [`ConfigView::shared`].
@@ -84,9 +92,16 @@ pub struct ConfigSet {
 pub struct SharedSetting {
     pub group: String,
     pub field: String,
-    /// The set's name; the last to change it, if more than one does.
+    /// The set's id and name; the one whose value is used, if more than
+    /// one changes it.
+    pub id: Uuid,
     pub set: String,
-    /// The profile changes it too, so its own value is used.
+    /// Whether it's the personal layer or a set included personally,
+    /// whose settings win over the profile's own.
+    pub personal: bool,
+    /// The profile changes it too. For a shared set, the profile's own
+    /// value is used; for a personal one, the personal value is, over the
+    /// profile's.
     pub overridden: bool,
 }
 
@@ -105,7 +120,7 @@ pub struct ConfigView {
     /// Whether the profile changes any of its settings itself.
     pub own: bool,
     /// The sets the profile includes, which its settings can be saved in
-    /// instead of the profile.
+    /// instead of the profile, and a synced profile's personal layer.
     pub sets: Vec<ConfigSet>,
     /// Where saving puts them unless told otherwise: the set whose linked
     /// folder the file's mod is in, or else the profile.
@@ -255,8 +270,12 @@ impl Patchwork {
         let changed = kept.values().map(BTreeMap::len).sum::<usize>();
         let own = own_config(&loaded);
         let own = edits_in(&own, &path);
+        let personal = sets_config(&loaded, true);
+        let has = |edits: Option<&Edits>, group: &str, field: &str| {
+            edits.is_some_and(|o| o.get(group).is_some_and(|v| v.contains_key(field)))
+        };
         let mut shared = Vec::new();
-        for include in &loaded.includes {
+        for include in in_order(&loaded) {
             let Some(linked) = &include.linked else {
                 continue;
             };
@@ -267,9 +286,11 @@ impl Patchwork {
                     shared.push(SharedSetting {
                         group: group.clone(),
                         field: field.clone(),
+                        id: linked.folder.id,
                         set: linked.folder.name.clone(),
-                        overridden: own
-                            .is_some_and(|o| o.get(group).is_some_and(|v| v.contains_key(field))),
+                        personal: include.personal,
+                        overridden: has(own, group, field)
+                            || !include.personal && has(edits_in(&personal, &path), group, field),
                     });
                 }
             }
@@ -280,7 +301,7 @@ impl Patchwork {
             from: base.from,
             saved: saved.is_some(),
             own: own.is_some(),
-            sets: config_sets(&loaded, &path),
+            sets: config_sets(&loaded, &path, self.is_synced(profile)),
             save_to,
             shared,
             form: Form {
@@ -310,6 +331,13 @@ impl Patchwork {
     /// Saved to a shared set, they're the set's for every profile that
     /// includes it, and the profile stops changing the file's settings
     /// itself, since `answers` are all of them, as the profile has them.
+    ///
+    /// Saved to the personal layer of a synced profile (or a set it
+    /// includes personally), they're only on this person's computers, over
+    /// the profile's own, which stay as they are, so nothing changes for
+    /// anyone else. Saved anywhere else, settings that the personal layer
+    /// changes are kept there as they were, since the form has the
+    /// personal values for them and those mustn't go to everyone.
     pub fn set_config(
         &self,
         profile: &ProfileRef,
@@ -323,6 +351,12 @@ impl Patchwork {
         let registry = self.registry();
         let game = &registry.game(&loaded.game)?.value;
         let mut own = own_config(&loaded);
+        if to == Some(SaveTo::Set(loaded.id)) && loaded.personal().is_none() {
+            if !self.is_synced(profile) {
+                return Err(not_synced(&loaded));
+            }
+            loaded.includes.push(personal_include(&loaded));
+        }
         let Some(answers) = answers else {
             let to = match to {
                 Some(to) => to,
@@ -350,6 +384,9 @@ impl Patchwork {
                     set.config.retain(|p, _| !same_dest(p, path));
                     if set.config.len() != before {
                         self.save_set_config(&set)?;
+                        if is_personal(&loaded, id) {
+                            self.profile_changed(profile, false);
+                        }
                     }
                 }
             }
@@ -364,24 +401,51 @@ impl Patchwork {
         let to = to.unwrap_or_else(|| {
             default_save_to(&loaded, &path, Some(&base), contents.title.as_deref())
         });
+        let personal = match to {
+            SaveTo::Set(id) => is_personal(&loaded, id),
+            SaveTo::Profile => false,
+        };
         // What it'd be without what's being saved: the file, with the sets'
-        // changes (but the one saved to) over it.
+        // changes (but the one saved to) over it, and the profile's own
+        // under personal ones. The personal layer's are over everything
+        // else, so where it changes a setting, nothing under it does.
         let mut under = FileEdits::from([(path.clone(), contents.values())]);
-        for linked in loaded.includes.iter().filter_map(|i| i.linked.as_ref()) {
-            if to != SaveTo::Set(linked.folder.id) {
+        for include in in_order(&loaded) {
+            if include.personal && personal {
+                overlay(&mut under, &own);
+            }
+            if let Some(linked) = &include.linked
+                && to != SaveTo::Set(linked.folder.id)
+            {
                 overlay(&mut under, &linked.config);
             }
         }
-        let edits = config::changed(&under[&path], &kept);
-        own.retain(|p, _| !same_dest(p, &path));
-        match to {
-            SaveTo::Profile => {
-                if !edits.is_empty() {
-                    own.insert(path, edits);
-                }
+        let changed = config::changed(&under[&path], &kept);
+        // Where the personal layer changes a setting, the form has its
+        // value, so anywhere else keeps what it had.
+        let cover = match personal {
+            true => Edits::new(),
+            false => edits_in(&sets_config(&loaded, true), &path)
+                .cloned()
+                .unwrap_or_default(),
+        };
+        if !personal {
+            let before = edits_in(&own, &path).cloned();
+            own.retain(|p, _| !same_dest(p, &path));
+            let edits = match to {
+                SaveTo::Profile => keep_covered(&changed, before.as_ref(), &cover),
+                // the profile's own that are hidden stay
+                SaveTo::Set(_) => keep_covered(&Edits::new(), before.as_ref(), &cover),
+            };
+            if !edits.is_empty() {
+                own.insert(path.clone(), edits);
             }
+        }
+        match to {
+            SaveTo::Profile => {}
             SaveTo::Set(id) => {
                 let mut set = self.included_set(&loaded, id)?;
+                let edits = keep_covered(&changed, edits_in(&set.config, &path), &cover);
                 set.config.retain(|p, _| !same_dest(p, &path));
                 if !edits.is_empty() {
                     set.config.insert(path, edits);
@@ -401,21 +465,16 @@ impl Patchwork {
         self.save_profile(profile, &loaded)
     }
 
-    /// The set `id`, if `loaded` includes it.
+    /// The set `id`, if `loaded` includes it, or its personal layer
+    /// (which may have nothing in it yet).
     fn included_set(&self, loaded: &Profile, id: Uuid) -> Result<crate::set::Set> {
         if id == loaded.id {
-            return Err(Error::invalid(format!(
-                "{}'s personal mods can't keep settings of their own yet",
-                loaded.label()
-            )));
-        }
-        // Saving to a set drops the profile's own settings for the file,
-        // which would publish their removal to everyone.
-        if loaded.include(id).is_some_and(|i| i.personal) {
-            return Err(Error::invalid(format!(
-                "settings can't be saved in a set {} includes personally yet",
-                loaded.label()
-            )));
+            if loaded.personal().is_none() {
+                return Err(not_synced(loaded));
+            }
+            return Ok(self
+                .load_personal_set(id)?
+                .unwrap_or_else(|| Personal::new(&loaded.game).set(id)));
         }
         if loaded.include(id).is_none_or(|i| i.linked.is_none()) {
             return Err(Error::invalid(format!(
@@ -478,17 +537,20 @@ impl Patchwork {
                 }
             };
             if !changes.is_empty() {
-                let key = loaded
-                    .config
-                    .keys()
-                    .find(|p| same_dest(p, dest))
-                    .cloned()
-                    .unwrap_or_else(|| dest.clone());
-                let edits = loaded.config.entry(key).or_default();
-                for (group, values) in changes {
-                    edits.entry(group).or_default().extend(values);
+                // what the personal layer gives goes back to it, since
+                // it'd win over the profile's own anyway
+                let (personal, own) = split_personal(&loaded, dest, changes);
+                for (id, changes) in personal {
+                    if let Some(mut set) = self.load_set(id)? {
+                        add_edits(&mut set.config, dest, changes);
+                        self.save_set_config(&set)?;
+                        changed_profile = true;
+                    }
                 }
-                changed_profile = true;
+                if !own.is_empty() {
+                    add_edits(&mut loaded.config, dest, own);
+                    changed_profile = true;
+                }
             }
             // What the game made of it is now what's deployed, so the same
             // changes aren't read back again, and deploying puts the
@@ -846,27 +908,36 @@ fn sets_editing(loaded: &Profile, path: &Dest) -> Vec<String> {
         .collect()
 }
 
-/// The sets `loaded` includes, for saving `path`'s settings in. Not its
-/// personal layer or the sets it includes personally, which can't keep
-/// settings yet.
-fn config_sets(loaded: &Profile, path: &Dest) -> Vec<ConfigSet> {
-    loaded
-        .includes
-        .iter()
-        .filter(|i| !i.personal)
-        .filter_map(|i| i.linked.as_ref())
-        .map(|l| ConfigSet {
+/// The sets `loaded` includes, for saving `path`'s settings in, in the
+/// order their settings go over each other. If it's `synced`, its personal
+/// layer is among them even while there's nothing in it.
+fn config_sets(loaded: &Profile, path: &Dest, synced: bool) -> Vec<ConfigSet> {
+    let mut sets: Vec<ConfigSet> = in_order(loaded)
+        .filter_map(|i| Some((i, i.linked.as_ref()?)))
+        .map(|(i, l)| ConfigSet {
             id: l.folder.id,
             name: l.folder.name.clone(),
             edited: edits_in(&l.config, path).is_some(),
+            personal: i.personal,
         })
-        .collect()
+        .collect();
+    if synced && loaded.personal().is_none() {
+        sets.push(ConfigSet {
+            id: loaded.id,
+            name: PERSONAL_NAME.to_owned(),
+            edited: false,
+            personal: true,
+        });
+    }
+    sets
 }
 
 /// Where changes to `path`'s settings go unless said otherwise: the set
 /// whose linked folder its mod is in (the one whose copy it is, or that
-/// it's named like), as editing the folder's mods changes the set.
-/// Otherwise the profile, unless only a set changes its settings now.
+/// it's named like), as editing the folder's mods changes the set, or
+/// the personal layer if the mod's in that. Otherwise the personal layer
+/// (or a set included personally) if it changes the file's settings now,
+/// or the profile, unless only a shared set does.
 fn default_save_to(
     loaded: &Profile,
     path: &Dest,
@@ -878,21 +949,28 @@ fn default_save_to(
         .or_else(|| owner_by_name(loaded, path, title));
     if let Some(m) = owner.as_deref().and_then(|name| loaded.find(name))
         && loaded.is_linked(m)
-        && !loaded.is_personal(m)
         && let Some(id) = m.folder
     {
         return SaveTo::Set(id);
     }
-    if edits_in(&own_config(loaded), path).is_none()
-        && let Some(linked) = loaded
-            .includes
-            .iter()
+    let sets: Vec<&Include> = in_order(loaded).collect();
+    let last = |personal: bool| {
+        sets.iter()
             .rev()
-            .filter(|i| !i.personal)
+            .filter(|i| i.personal == personal)
             .filter_map(|i| i.linked.as_ref())
             .find(|l| edits_in(&l.config, path).is_some())
+            .map(|l| SaveTo::Set(l.folder.id))
+    };
+    // the personal layer's win over the profile's, which win over the
+    // shared sets'
+    if let Some(to) = last(true) {
+        return to;
+    }
+    if edits_in(&own_config(loaded), path).is_none()
+        && let Some(to) = last(false)
     {
-        return SaveTo::Set(linked.folder.id);
+        return to;
     }
     SaveTo::Profile
 }
@@ -929,6 +1007,95 @@ fn owner_by_name(profile: &Profile, path: &Dest, title: Option<&str>) -> Option<
     });
     let found = matching.next()?;
     matching.next().is_none().then(|| found.name.clone())
+}
+
+/// Splits settings changed in game in the file at `path` into those that
+/// go back to the personal layer or a set included personally (the last
+/// that changes each, by its id), and the rest, which are the profile's.
+fn split_personal(loaded: &Profile, path: &Dest, changes: Edits) -> (Vec<(Uuid, Edits)>, Edits) {
+    let mut personal: Vec<(Uuid, Edits)> = Vec::new();
+    let mut own = Edits::new();
+    for (group, values) in changes {
+        for (field, value) in values {
+            let owner = loaded
+                .includes
+                .iter()
+                .rev()
+                .filter(|i| i.personal)
+                .filter_map(|i| i.linked.as_ref())
+                .find(|l| {
+                    edits_in(&l.config, path)
+                        .is_some_and(|e| e.get(&group).is_some_and(|v| v.contains_key(&field)))
+                })
+                .map(|l| l.folder.id);
+            let into = match owner {
+                Some(id) => match personal.iter().position(|(p, _)| *p == id) {
+                    Some(at) => &mut personal[at].1,
+                    None => {
+                        personal.push((id, Edits::new()));
+                        &mut personal.last_mut().expect("just pushed").1
+                    }
+                },
+                None => &mut own,
+            };
+            into.entry(group.clone()).or_default().insert(field, value);
+        }
+    }
+    (personal, own)
+}
+
+/// Adds `changes` to what `config` changes in the file at `path`.
+fn add_edits(config: &mut FileEdits, path: &Dest, changes: Edits) {
+    let key = config
+        .keys()
+        .find(|p| same_dest(p, path))
+        .cloned()
+        .unwrap_or_else(|| path.clone());
+    let edits = config.entry(key).or_default();
+    for (group, values) in changes {
+        edits.entry(group).or_default().extend(values);
+    }
+}
+
+/// `edits` for a file, but with the settings `cover` changes as `before`
+/// has them, if it has them.
+fn keep_covered(edits: &Edits, before: Option<&Edits>, cover: &Edits) -> Edits {
+    let covers = |group: &str, id: &str| cover.get(group).is_some_and(|v| v.contains_key(id));
+    let mut kept = Edits::new();
+    let changed = edits.iter().map(|e| (e, false));
+    let had = before.into_iter().flatten().map(|e| (e, true));
+    for ((group, values), from_before) in changed.chain(had) {
+        for (id, value) in values {
+            if covers(group, id) == from_before {
+                kept.entry(group.clone())
+                    .or_default()
+                    .insert(id.clone(), value.clone());
+            }
+        }
+    }
+    kept
+}
+
+/// Whether the set `id` is `loaded`'s personal layer or one it includes
+/// personally.
+fn is_personal(loaded: &Profile, id: Uuid) -> bool {
+    loaded.include(id).is_some_and(|i| i.personal)
+}
+
+/// `loaded`'s includes in the order their settings go over each other:
+/// shared sets', then the personal ones', which go over the profile's own.
+fn in_order(loaded: &Profile) -> impl Iterator<Item = &Include> {
+    let (personal, shared): (Vec<&Include>, Vec<&Include>) =
+        loaded.includes.iter().partition(|i| i.personal);
+    shared.into_iter().chain(personal)
+}
+
+fn not_synced(loaded: &Profile) -> Error {
+    Error::invalid(format!(
+        "{} isn't synced, so it has no personal settings; its own are only on this computer \
+         already",
+        loaded.label()
+    ))
 }
 
 /// `answers`' values as edits; their picks mean nothing for config files.

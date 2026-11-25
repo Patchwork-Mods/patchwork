@@ -79,6 +79,10 @@ pub struct Profile {
     /// everything else stays as the file has it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub config: BTreeMap<Dest, Edits>,
+    /// As loaded, what of `config` is the personal layer's, and what of
+    /// the profile's own that hides (see [`crate::set::merge_config`]).
+    #[serde(skip)]
+    pub personal_config: PersonalConfig,
 }
 
 impl Profile {
@@ -95,6 +99,7 @@ impl Profile {
             mods: Vec::new(),
             ext: ExtTables::new(),
             config: BTreeMap::new(),
+            personal_config: PersonalConfig::default(),
         }
     }
 
@@ -133,6 +138,13 @@ impl Profile {
                 .iter()
                 .filter_map(|i| Some(&i.linked.as_ref()?.folder)),
         )
+    }
+
+    /// The folders to show: [`Profile::all_folders`], but not the
+    /// personal layer while it has no mods (only settings, say).
+    pub fn shown_folders(&self) -> impl Iterator<Item = &Folder> {
+        self.all_folders()
+            .filter(|f| f.id != self.id || self.mods.iter().any(|m| m.folder == Some(self.id)))
     }
 
     /// The folder `query` names, by name (ignoring case) or by id; a
@@ -267,10 +279,21 @@ impl From<ProfileFile> for Profile {
             mods: file.mods,
             ext,
             config: file.config,
+            personal_config: PersonalConfig::default(),
         };
         profile.group_folders();
         profile
     }
+}
+
+/// The settings a profile's personal layer gives as loaded, so saving
+/// can tell them from the profile's own; see [`Profile::personal_config`].
+#[derive(Debug, Clone, Default)]
+pub struct PersonalConfig {
+    /// The settings the personal layer (and the sets it includes) give.
+    pub given: BTreeMap<Dest, Edits>,
+    /// The profile's own settings those hide, which are still its own.
+    pub hidden: BTreeMap<Dest, Edits>,
 }
 
 /// A group of a profile's mods; see [`Profile::folders`].

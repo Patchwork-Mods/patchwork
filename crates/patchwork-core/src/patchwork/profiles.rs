@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::Patchwork;
+use super::personal::keep_added;
 use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::fsutil;
@@ -337,6 +338,18 @@ impl Patchwork {
         } else {
             value
         };
+        // what a follower adds stays on their computers (see `is_followed`)
+        let kept;
+        let mut moved = false;
+        let value = match self.followed_base(profile)? {
+            Some(base) => {
+                let mut copy = value.clone();
+                moved = keep_added(&mut copy, &base)?;
+                kept = copy;
+                &kept
+            }
+            None => value,
+        };
         let (mut stored, changed) = set::collapse(value);
         // the personal layer's, and sets included personally, are kept with it
         let personal: Vec<Include>;
@@ -373,6 +386,7 @@ impl Patchwork {
                 .unwrap_or_else(|| Personal::new(&value.game));
             if !personal.iter().any(|i| i.set == profile.uuid) {
                 saved.mods = Vec::new();
+                saved.config = Default::default();
             }
             if let Some(mods) = personal_mods {
                 saved.mods = mods;
@@ -387,6 +401,9 @@ impl Patchwork {
             if stored.include(id).is_none() && !personal.iter().any(|i| i.set == id) {
                 self.settle_set(id)?;
             }
+        }
+        if moved {
+            self.split_lock_again(profile)?;
         }
         Ok(())
     }

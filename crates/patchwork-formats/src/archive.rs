@@ -65,6 +65,7 @@ impl ProfileFormat for Archive {
             mods: shared.mods.clone(),
             ext: shared.ext.clone().unwrap_or_default(),
             config: shared.config.clone().unwrap_or_default(),
+            personal_config: Default::default(),
         };
         // the oldest schema that has everything in it, so older builds can
         // import it

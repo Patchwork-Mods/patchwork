@@ -105,14 +105,6 @@ function issueMark(m) {
   return h("span", { class: "mod-issue", title: messages, "aria-label": messages }, "⚠");
 }
 
-/** Marks a mod added here to a profile this computer follows, which isn't
- * synced: whoever shares the profile doesn't get it. */
-function unsharedMark(m) {
-  if (!(state.profile?.unshared ?? []).includes(m.name)) return null;
-  const why = "Added on this computer; it isn't synced with whoever shares this profile";
-  return h("span", { class: "mod-unshared muted", title: why }, "only here");
-}
-
 const FOLLOWED = "You follow it, so you're told when a new version is out";
 
 /**
@@ -494,7 +486,6 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
           modTitle(m, item),
           issueMark(m),
           conflictMark(m),
-          unsharedMark(m),
           optionsMark(m),
           requirementsMark(m),
           followToggle(m),
@@ -809,7 +800,6 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
       { class: "card-marks" },
       issueMark(m),
       conflictMark(m),
-      unsharedMark(m),
       optionsMark(m),
       requirementsMark(m),
     ),

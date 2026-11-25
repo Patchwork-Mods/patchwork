@@ -34,6 +34,10 @@ pub(crate) enum SetCommand {
         #[arg(long)]
         remove: bool,
     },
+    /// Keep a set the profile includes just for you: its mods aren't
+    /// synced to everyone who has the profile, only to your own computers.
+    /// A synced profile can only include sets this way.
+    Personal { set: String },
     /// Rename a set, for every profile that includes it.
     Rename { set: String, name: String },
     /// Delete a set left over from before sets went once no profile had
@@ -116,6 +120,15 @@ pub(crate) fn run(pw: &Patchwork, command: SetCommand, explicit: &Option<String>
             } else {
                 println!("{}'s mods are now {}'s own", set.name, loaded.label());
             }
+        }
+        SetCommand::Personal { set } => {
+            let set = pw.find_set(game, &set)?;
+            pw.include_personally(&profile, set.id)?;
+            println!(
+                "{} includes {} just for you now, on your own computers only",
+                loaded.label(),
+                set.name
+            );
         }
         SetCommand::Rename { set, name } => {
             let found = pw.find_set(game, &set)?;

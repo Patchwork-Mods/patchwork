@@ -212,7 +212,8 @@ pub(crate) fn print_config_file(f: &ConfigFileInfo) {
     }
 }
 
-pub(crate) fn print_config(view: &ConfigView) {
+/// `view` of a file of the profile whose id is `profile`.
+pub(crate) fn print_config(view: &ConfigView, profile: &ProfileRef) {
     let form = &view.form;
     // Its one page is titled with the file's path.
     match &view.from {
@@ -225,7 +226,23 @@ pub(crate) fn print_config(view: &ConfigView) {
         println!("{summary}");
     }
     for s in &view.shared {
-        if s.overridden {
+        let mine = |what: &str| match s.id == profile.uuid {
+            true => what.to_owned(),
+            false => format!("{what}, from {}", s.set),
+        };
+        if s.personal {
+            let over = if s.overridden {
+                ", over this profile's"
+            } else {
+                ""
+            };
+            println!(
+                "{}/{}: {}{over}",
+                s.group,
+                s.field,
+                mine("yours, only on your computers")
+            );
+        } else if s.overridden {
             println!(
                 "{}/{}: changed in {}, and in this profile",
                 s.group, s.field, s.set
@@ -238,7 +255,11 @@ pub(crate) fn print_config(view: &ConfigView) {
         SaveTo::Profile => "the profile".to_owned(),
         SaveTo::Set(id) => view.sets.iter().find(|s| s.id == id).map_or_else(
             || "a shared folder".to_owned(),
-            |s| format!("the shared folder {}", s.name),
+            |s| match (s.personal, s.id == profile.uuid) {
+                (true, true) => "your personal settings".to_owned(),
+                (true, false) => format!("{}, only on your computers", s.name),
+                (false, _) => format!("the shared folder {}", s.name),
+            },
         ),
     };
     if view.saved {
@@ -423,9 +444,11 @@ pub(crate) struct Settings {
     #[arg(long, requires = "file", conflicts_with = "sets")]
     reset: bool,
     /// Where --set and --reset save: `profile`, or a shared folder the
-    /// profile includes, by name, for every profile that includes it. By
-    /// default it's the shared folder the file's mod is in, if it's in one.
-    #[arg(long, value_name = "PROFILE|FOLDER", requires = "file")]
+    /// profile includes, by name, for every profile that includes it, or
+    /// for a synced profile `personal`, only on your own computers and over
+    /// the profile's own. By default it's the shared folder the file's mod
+    /// is in, if it's in one, or `personal` if that changes the file.
+    #[arg(long, value_name = "profile|personal|FOLDER", requires = "file")]
     to: Option<String>,
 }
 
@@ -442,6 +465,8 @@ pub(crate) fn settings(pw: &Patchwork, explicit: &Option<String>, args: Settings
     let to = match to.as_deref() {
         None => None,
         Some(to) if to.eq_ignore_ascii_case("profile") => Some(SaveTo::Profile),
+        // the personal layer, even while it has nothing in it
+        Some(to) if to.eq_ignore_ascii_case("personal") => Some(SaveTo::Set(profile.uuid)),
         Some(name) => {
             let loaded = pw.load_profile(&profile)?;
             let folder = loaded.find_folder(name)?;
@@ -485,7 +510,7 @@ pub(crate) fn settings(pw: &Patchwork, explicit: &Option<String>, args: Settings
         }
         pw.set_config(&profile, &path, Some(&answers), to)?;
     }
-    print_config(&pw.config_form(&profile, &path, None)?);
+    print_config(&pw.config_form(&profile, &path, None)?, &profile);
     Ok(())
 }
 

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::personal::personal_include;
 use super::{Patchwork, local};
-use crate::config::overlay;
+use crate::config::{FileEdits, overlay};
 use crate::error::IoContext;
 use crate::ext::ExtTables;
 use crate::fix::{Blocker, Fix, SetsThen};
@@ -368,13 +368,16 @@ impl Patchwork {
         for include in &deployed.includes {
             now.insert(include.set, self.load_set(include.set)?);
         }
-        let changed: Vec<&Linked> = deployed
+        // The personal layer is only this profile's, like its own mods, so
+        // it's always put back as it was and isn't asked about.
+        let changed: Vec<&DeployedInclude> = deployed
             .includes
             .iter()
-            .filter_map(|i| {
-                let then = i.linked.as_ref()?;
-                let same = now[&i.set].as_ref().is_some_and(|s| s.mods == then.mods);
-                (!same).then_some(then)
+            .filter(|i| i.set != loaded.id)
+            .filter(|i| {
+                i.linked
+                    .as_ref()
+                    .is_some_and(|then| now[&i.set].as_ref().is_none_or(|s| s.mods != then.mods))
             })
             .collect();
         let sets = match sets {
@@ -397,6 +400,7 @@ impl Patchwork {
         );
         let mut includes = Vec::new();
         let mut copied_personal = false;
+        let mut personal_config = FileEdits::new();
         for include in &deployed.includes {
             let Some(then) = &include.linked else {
                 // missing then, so as it was
@@ -405,6 +409,11 @@ impl Patchwork {
             };
             let set = now.remove(&include.set).flatten();
             let changed = set.as_ref().is_none_or(|s| s.mods != then.mods);
+            let sets = if include.set == loaded.id {
+                SetsThen::Restore
+            } else {
+                sets
+            };
             match (sets, set) {
                 // Its mods are as they were; split back up against the set
                 // as it was, nothing's saved to it, so it stays as it is.
@@ -430,13 +439,15 @@ impl Patchwork {
                     self.save_set(&set)?;
                     includes.push(include.include(Some(then.clone())));
                 }
-                // Included personally (or the personal layer itself), it's
-                // copied into the personal layer, so its mods don't go to
-                // everyone. That can't keep settings yet, so its config
-                // edits don't come.
-                (SetsThen::Copy | SetsThen::Keep, _)
-                    if include.personal || include.set == loaded.id =>
-                {
+                // Included personally, it's copied into the personal layer,
+                // so its mods don't go to everyone, and so are its config
+                // edits, under the layer's own.
+                (SetsThen::Copy | SetsThen::Keep, set) if include.personal => {
+                    if let Some(set) = set {
+                        let mut copied = set.config;
+                        overlay(&mut copied, &personal_config);
+                        personal_config = copied;
+                    }
                     for m in loaded
                         .mods
                         .iter_mut()
@@ -473,7 +484,8 @@ impl Patchwork {
         merge_config(&mut loaded, &own);
         loaded.ext = deployed.ext;
         self.save_lock(profile, &deployed.lock)?;
-        self.save_profile(profile, &loaded)
+        self.save_profile(profile, &loaded)?;
+        self.add_personal_config(profile, &loaded.game, personal_config)
     }
 
     fn history_dir(&self, profile: &ProfileRef) -> PathBuf {
@@ -804,37 +816,54 @@ fn toml_eq<T: Serialize>(a: &T, b: &T) -> bool {
 }
 
 /// The blocker for going back to a deploy (`number`, or the last one) of
-/// `profile` when the shared sets `changed` (as they were then) have
+/// `profile` when the shared sets it included then, `changed`, have
 /// changed since.
-fn sets_changed(profile: &Profile, changed: &[&Linked], number: Option<u32>) -> Error {
-    let names: Vec<&str> = changed.iter().map(|l| l.folder.name.as_str()).collect();
+fn sets_changed(profile: &Profile, changed: &[&DeployedInclude], number: Option<u32>) -> Error {
+    let names: Vec<&str> = changed
+        .iter()
+        .filter_map(|i| i.linked.as_ref())
+        .map(|l| l.folder.name.as_str())
+        .collect();
     let names = names.join(", ");
     let deploy = match number {
         Some(n) => format!("deploy #{n}"),
         None => "the last deploy".to_owned(),
     };
-    let (it, they) = if changed.len() == 1 {
-        ("set", "it")
+    let one = changed.len() == 1;
+    let (sets, it, was, is) = if one {
+        ("set", "it", "it was", "it is")
     } else {
-        ("sets", "them")
+        ("sets", "them", "they were", "they are")
+    };
+    let label = profile.label();
+    let personal = changed.iter().filter(|i| i.personal).count();
+    let copied = if personal == changed.len() {
+        format!(
+            "puts {} mods in your Personal folder",
+            if one { "its" } else { "their" }
+        )
+    } else if one {
+        format!("makes an ordinary folder of {label}'s own")
+    } else if personal == 0 {
+        format!("makes ordinary folders of {label}'s own")
+    } else {
+        format!(
+            "makes ordinary folders of {label}'s own (or, for those included just for you, \
+             puts their mods in your Personal folder)"
+        )
     };
     let fixes = [SetsThen::Restore, SetsThen::Copy, SetsThen::Keep]
         .into_iter()
         .map(|sets| Fix::GoBack { number, sets })
         .collect();
     Error::blocked_by(
-        format!(
-            "the shared {it} {names} that {} included at {deploy} changed since",
-            profile.label()
-        ),
+        format!("the shared {sets} {names} that {label} included at {deploy} changed since"),
         Blocker::with_fixes(
-            format!("Shared {it} changed since {deploy}"),
+            format!("Shared {sets} changed since {deploy}"),
             format!(
-                "{names} changed since {deploy}. Putting {they} back as {they} were changes \
-                 {they} for every profile that includes {they}. Copying {they} in as {they} \
-                 were makes ordinary folders of {}'s own instead, and keeping {they} as \
-                 {they} are goes back for everything else.",
-                profile.label()
+                "{names} changed since {deploy}. Putting {it} back as {was} changes {it} for \
+                 every profile that includes {it}. Copying {it} in as {was} {copied} instead, \
+                 and keeping {it} as {is} goes back for everything else."
             ),
             fixes,
         ),

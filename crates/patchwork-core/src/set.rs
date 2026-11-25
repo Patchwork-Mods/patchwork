@@ -12,17 +12,19 @@
 //!
 //! A set's config edits are merged in the same way: as loaded, a profile's
 //! `config` has its sets' settings (a later set's over an earlier one's)
-//! with its own over them, setting by setting. Saving keeps as the
-//! profile's own only the settings that aren't what its sets give, so
-//! saving a profile never changes a set's config; that's done on purpose,
-//! with [`crate::Patchwork::set_config`].
+//! with its own over them, setting by setting, and the personal layer's
+//! (with those of the sets it includes) over everything, as the person's
+//! own (see [`crate::personal`]). Saving keeps as the profile's own only
+//! the settings that aren't what its sets give, and those the personal
+//! layer's hide as they were, so saving a profile never changes a set's
+//! config; that's done on purpose, with [`crate::Patchwork::set_config`].
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::config::{FileEdits, beyond, overlay};
+use crate::config::{FileEdits, beyond, covered, overlay};
 use crate::lock::mod_key;
 use crate::profile::{Folder, Linked, Profile, ProfileMod};
 
@@ -115,27 +117,47 @@ pub struct OtherFolder {
     pub personal: bool,
 }
 
-/// The settings `profile`'s sets change in config files, as loaded: a
-/// later include's over an earlier one's.
-pub fn sets_config(profile: &Profile) -> FileEdits {
+/// The settings the sets `profile` includes change in config files, as
+/// loaded: a later include's over an earlier one's. With `personal`, those
+/// of its personal layer and the sets it includes personally, which go
+/// over the profile's own; otherwise the rest, which go under them.
+pub fn sets_config(profile: &Profile, personal: bool) -> FileEdits {
     let mut config = FileEdits::new();
-    for linked in profile.includes.iter().filter_map(|i| i.linked.as_ref()) {
+    for linked in profile
+        .includes
+        .iter()
+        .filter(|i| i.personal == personal)
+        .filter_map(|i| i.linked.as_ref())
+    {
         overlay(&mut config, &linked.config);
     }
     config
 }
 
 /// The settings `profile` (as loaded) changes in config files itself:
-/// those that aren't what its sets give them.
+/// those that aren't what its sets give them. Where its personal layer
+/// changes a setting (or did when it was loaded), it's what the profile
+/// had under it, if anything (see [`Profile::personal_config`]).
 pub fn own_config(profile: &Profile) -> FileEdits {
-    beyond(&profile.config, &sets_config(profile))
+    let mut own = beyond(&profile.config, &sets_config(profile, false));
+    let mut over = sets_config(profile, true);
+    overlay(&mut over, &profile.personal_config.given);
+    if !over.is_empty() {
+        own = covered(&own, &over, false);
+        overlay(&mut own, &profile.personal_config.hidden);
+    }
+    own
 }
 
-/// Sets `profile`'s config to `own` over what its sets change, as
-/// [`expand`] does.
+/// Sets `profile`'s config to `own` over what its sets change, with what
+/// its personal layer changes over that, as [`expand`] does.
 pub fn merge_config(profile: &mut Profile, own: &FileEdits) {
-    let mut config = sets_config(profile);
+    let personal = sets_config(profile, true);
+    let mut config = sets_config(profile, false);
     overlay(&mut config, own);
+    profile.personal_config.hidden = covered(own, &personal, true);
+    overlay(&mut config, &personal);
+    profile.personal_config.given = personal;
     profile.config = config;
 }
 

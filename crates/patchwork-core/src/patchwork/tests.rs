@@ -2444,18 +2444,33 @@ async fn a_follower_keeps_the_mods_it_adds_and_takes_the_rest() {
         .unwrap();
     a.lock(&profile, false).await.unwrap();
     let mut doc = a.start_sync(&profile).unwrap();
+    assert!(!a.is_followed(&profile).unwrap());
 
     let b = with_local_files(&tmp.path().join("b"));
     b.apply_synced(&doc, false).unwrap();
+    assert!(b.is_followed(&profile).unwrap());
     for m in b.missing_local_files(&profile).unwrap() {
         b.add_synced_file(&m, &a.stored_file(&m).unwrap()).unwrap();
     }
-    assert!(b.unshared_mods(&profile).unwrap().is_empty());
+    // what a follower adds goes in its personal layer, to its own
+    // computers rather than nowhere
     b.add_mod(&profile, local_spec(&mods.join("Mine.pak")), None, true)
         .await
         .unwrap();
     b.lock(&profile, false).await.unwrap();
-    assert_eq!(b.unshared_mods(&profile).unwrap(), ["Mine"]);
+    let loaded = b.load_profile(&profile).unwrap();
+    assert!(loaded.is_personal(loaded.find("Mine").unwrap()));
+    assert!(!loaded.is_personal(loaded.find("Shared").unwrap()));
+    assert!(b.unsynced_changes(&profile).unwrap().is_empty());
+    assert_eq!(b.load_shared_lock(&profile).unwrap().unwrap().mods.len(), 1);
+    assert!(b.personal_layer(&profile).unwrap().is_some());
+    // and nothing moves in or out of it by hand
+    let mine = ["Mine".to_owned()];
+    assert!(b.set_personal(&profile, &mine, false).is_err());
+    assert!(
+        b.set_personal(&profile, &["Shared".to_owned()], true)
+            .is_err()
+    );
 
     // the sharer adds one too, which moves the load order
     a.add_mod(&profile, local_spec(&mods.join("Later.pak")), None, true)
@@ -2467,16 +2482,58 @@ async fn a_follower_keeps_the_mods_it_adds_and_takes_the_rest() {
     for m in b.missing_local_files(&profile).unwrap() {
         b.add_synced_file(&m, &a.stored_file(&m).unwrap()).unwrap();
     }
-    let names: Vec<String> = b
-        .load_profile(&profile)
-        .unwrap()
-        .mods
-        .into_iter()
-        .map(|m| m.name)
-        .collect();
-    assert_eq!(names, ["Shared", "Later", "Mine"]);
-    assert_eq!(b.unshared_mods(&profile).unwrap(), ["Mine"]);
+    let loaded = b.load_profile(&profile).unwrap();
+    let names: Vec<&str> = loaded.mods.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["Shared", "Mine", "Later"]);
+    assert!(loaded.is_personal(loaded.find("Mine").unwrap()));
     assert_eq!(b.load_lock(&profile).unwrap().unwrap().mods.len(), 3);
+    assert_eq!(b.load_shared_lock(&profile).unwrap().unwrap().mods.len(), 2);
+}
+
+#[tokio::test]
+async fn mods_a_follower_added_before_go_in_its_personal_layer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mods = tmp.path().join("mods");
+    fs::create_dir_all(&mods).unwrap();
+    for name in ["Shared.pak", "Mine.pak"] {
+        fs::write(mods.join(name), name).unwrap();
+    }
+    let a = with_local_files(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    a.add_mod(&profile, local_spec(&mods.join("Shared.pak")), None, true)
+        .await
+        .unwrap();
+    a.lock(&profile, false).await.unwrap();
+    let doc = a.start_sync(&profile).unwrap();
+
+    let b = with_local_files(&tmp.path().join("b"));
+    b.apply_synced(&doc, false).unwrap();
+    for m in b.missing_local_files(&profile).unwrap() {
+        b.add_synced_file(&m, &a.stored_file(&m).unwrap()).unwrap();
+    }
+    // as an older build left it: followed, but not known to be
+    let base = b.sync_base_file(&profile);
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&base).unwrap()).unwrap();
+    value.as_object_mut().unwrap().remove("followed").unwrap();
+    fs::write(&base, value.to_string()).unwrap();
+    assert!(!b.is_followed(&profile).unwrap());
+    b.add_mod(&profile, local_spec(&mods.join("Mine.pak")), None, true)
+        .await
+        .unwrap();
+    b.lock(&profile, false).await.unwrap();
+    let loaded = b.load_profile(&profile).unwrap();
+    assert!(!loaded.is_personal(loaded.find("Mine").unwrap()));
+
+    // the next sync puts it there, and it's still kept
+    let applied = b.apply_synced(&doc, false).unwrap();
+    assert!(applied.unpublished.is_empty());
+    assert!(b.is_followed(&profile).unwrap());
+    let loaded = b.load_profile(&profile).unwrap();
+    assert!(loaded.is_personal(loaded.find("Mine").unwrap()));
+    assert_eq!(b.load_lock(&profile).unwrap().unwrap().mods.len(), 2);
+    assert_eq!(b.load_shared_lock(&profile).unwrap().unwrap().mods.len(), 1);
+    assert!(b.unsynced_changes(&profile).unwrap().is_empty());
 }
 
 /// Places mods' files in the game's folder as they are.
@@ -4757,6 +4814,147 @@ async fn shared_folders_carry_their_mods_config_edits() {
 }
 
 #[tokio::test]
+async fn synced_profiles_keep_personal_settings_over_the_shared_ones() {
+    use crate::deploy::Dest;
+    use crate::options::{Answer, Value};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let packed = tmp.path().join("mods/Fast");
+    fs::create_dir_all(packed.join("config")).unwrap();
+    fs::write(
+        packed.join("config/fast.cfg"),
+        "[speed]\nlevel = 1\nmax = 1\n",
+    )
+    .unwrap();
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
+        .source(LocalFiles)
+        .deployer(AsPacked)
+        .extension(KeyValuesExtension)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "as-packed");
+    def.config = vec![toml::from_str("files = \"config/**/*.cfg\"\nformat = \"test.kv\"").unwrap()];
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let game = game.canonicalize().unwrap();
+    let fast: Dest = "config/fast.cfg".parse().unwrap();
+    let speed = |level: i64, max: i64| {
+        vec![Answer::values(
+            "speed",
+            BTreeMap::from([
+                ("level".to_owned(), Value::Int(level)),
+                ("max".to_owned(), Value::Int(max)),
+            ]),
+        )]
+    };
+    let shown = |p: &ProfileRef| {
+        let view = pw.config_form(p, &fast, None).unwrap();
+        let fields = view.form.pages[0].groups[0].fields();
+        let n = |i: usize| match fields[i].value {
+            Value::Int(n) => n,
+            ref other => panic!("{other:?}"),
+        };
+        (n(0), n(1))
+    };
+    let a = pw.create_profile("my-game", "a").unwrap();
+    pw.add_mod(&a, local_spec(&packed), None, true)
+        .await
+        .unwrap();
+    pw.lock(&a, false).await.unwrap();
+    pw.set_config(&a, &fast, Some(&speed(4, 1)), None).unwrap();
+    let mine = SaveTo::Set(a.uuid);
+    // not synced, there's nowhere personal to save them
+    assert!(pw.config_form(&a, &fast, None).unwrap().sets.is_empty());
+    assert!(
+        pw.set_config(&a, &fast, Some(&speed(9, 1)), Some(mine))
+            .is_err()
+    );
+
+    pw.start_sync(&a).unwrap();
+    let view = pw.config_form(&a, &fast, None).unwrap();
+    assert_eq!(view.save_to, SaveTo::Profile);
+    assert_eq!(view.sets.len(), 1);
+    assert!(view.sets[0].personal && view.sets[0].id == a.uuid);
+
+    // saved personally, it wins over the profile's own, which stays, so
+    // there's nothing to publish
+    pw.set_config(&a, &fast, Some(&speed(9, 1)), Some(mine))
+        .unwrap();
+    assert_eq!(shown(&a), (9, 1));
+    assert!(pw.unsynced_changes(&a).unwrap().is_empty());
+    let stored = fs::read_to_string(pw.profile_file(&a)).unwrap();
+    assert!(stored.contains("level = 4"), "{stored}");
+    let file = pw.profile_state_dir(&a).join("personal.toml");
+    let kept = fs::read_to_string(&file).unwrap();
+    assert!(
+        kept.contains("schema = 3") && kept.contains("level = 9"),
+        "{kept}"
+    );
+    let layer = pw.personal_layer(&a).unwrap().unwrap();
+    assert_eq!(
+        layer.personal.config[&fast]["speed"]["level"],
+        Value::Int(9)
+    );
+    // with no mods, it's no folder
+    let loaded = pw.load_profile(&a).unwrap();
+    assert!(loaded.mods.iter().all(|m| !loaded.is_personal(m)));
+    assert_eq!(
+        crate::personal::without(&loaded).config[&fast]["speed"]["level"],
+        Value::Int(4)
+    );
+    let view = pw.config_form(&a, &fast, None).unwrap();
+    assert_eq!(view.save_to, mine);
+    let level = view.shared.iter().find(|s| s.field == "level").unwrap();
+    assert!(level.personal && level.overridden && level.id == a.uuid);
+
+    // saved for everyone, what's personal stays as it was in the profile
+    pw.set_config(&a, &fast, Some(&speed(9, 3)), Some(SaveTo::Profile))
+        .unwrap();
+    assert_eq!(shown(&a), (9, 3));
+    let stored = fs::read_to_string(pw.profile_file(&a)).unwrap();
+    assert!(
+        stored.contains("level = 4") && stored.contains("max = 3"),
+        "{stored}"
+    );
+    // and other changes keep it
+    pw.set_priority(&a, "Fast", 2).unwrap();
+    assert_eq!(shown(&a), (9, 3));
+    let stored = fs::read_to_string(pw.profile_file(&a)).unwrap();
+    assert!(stored.contains("level = 4"), "{stored}");
+
+    // deployed with it, and what the game changes goes back to it
+    pw.apply(&pw.plan_deploy(&a).await.unwrap()).unwrap();
+    assert_eq!(
+        fs::read_to_string(game.join("config/fast.cfg")).unwrap(),
+        "[speed]\nlevel = 9\nmax = 3\n"
+    );
+    fs::write(
+        game.join("config/fast.cfg"),
+        "[speed]\nlevel = 7\nmax = 5\n",
+    )
+    .unwrap();
+    assert_eq!(shown(&a), (7, 5));
+    let kept = fs::read_to_string(&file).unwrap();
+    assert!(
+        kept.contains("level = 7") && !kept.contains("max"),
+        "{kept}"
+    );
+    let stored = fs::read_to_string(pw.profile_file(&a)).unwrap();
+    assert!(
+        stored.contains("level = 4") && stored.contains("max = 5"),
+        "{stored}"
+    );
+
+    // forgotten, it's the profile's again, and the layer goes
+    pw.set_config(&a, &fast, None, Some(mine)).unwrap();
+    assert_eq!(shown(&a), (4, 5));
+    assert!(!file.exists());
+    assert!(pw.config_form(&a, &fast, None).unwrap().sets[0].personal);
+}
+
+#[tokio::test]
 async fn a_profile_uses_another_profiles_folder_as_the_same_folder() {
     let tmp = tempfile::tempdir().unwrap();
     let (pw, a, b) = two_profiles(tmp.path()).await;
@@ -5035,6 +5233,83 @@ async fn synced_profiles_include_sets_personally() {
     assert_eq!(mod_names(&pw, &b), ["d"]);
     let kept = fs::read_to_string(&personal).unwrap();
     assert!(kept.contains("schema = 1"), "{kept}");
+
+    // kept, its mods and settings go to the personal layer, under its own
+    let path: crate::deploy::Dest = "config/b.cfg".parse().unwrap();
+    let setting = |n: i64| {
+        BTreeMap::from([(
+            "g".to_owned(),
+            BTreeMap::from([("n".to_owned(), crate::options::Value::Int(n))]),
+        )])
+    };
+    let mut layer = pw.load_personal(&b).unwrap().unwrap();
+    layer.config.insert(path.clone(), setting(1));
+    pw.save_personal(&b, &layer).unwrap();
+    let mut with = pw.load_set(set.id).unwrap().unwrap();
+    with.config.insert(path.clone(), setting(2));
+    with.config
+        .insert("config/c.cfg".parse().unwrap(), setting(3));
+    pw.save_set(&with).unwrap();
+    pw.include_set(&b, set.id, None).unwrap();
+    pw.unlink_set(&b, set.id, true).unwrap();
+    let loaded = pw.load_profile(&b).unwrap();
+    assert!(loaded.is_personal(loaded.find("b").unwrap()));
+    let layer = pw.load_personal(&b).unwrap().unwrap();
+    assert_eq!(layer.config.len(), 2);
+    assert_eq!(layer.config[&path], setting(1));
+    let stored = fs::read_to_string(pw.profile_file(&b)).unwrap();
+    assert!(!stored.contains("config"), "{stored}");
+}
+
+#[tokio::test]
+async fn starting_to_sync_can_keep_sets_just_for_you() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, _) = two_profiles(tmp.path()).await;
+    pw.add_folder(&a, "QOL", &["b".to_owned()]).unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    pw.lock(&a, false).await.unwrap();
+
+    let err = pw.start_sync(&a).unwrap_err();
+    let fixes = err.blocker().unwrap().fixes;
+    assert_eq!(fixes.len(), 2, "{fixes:?}");
+    let crate::fix::Fix::IncludePersonally { sets, names } = &fixes[1] else {
+        panic!("{fixes:?}");
+    };
+    assert_eq!(
+        (sets, names),
+        (&vec![set.id.to_string()], &vec!["QOL".to_owned()])
+    );
+    assert_eq!(fixes[1].command(None), "patchwork set personal QOL");
+
+    pw.include_personally(&a, set.id).unwrap();
+    let loaded = pw.load_profile(&a).unwrap();
+    assert!(loaded.is_personal(loaded.find("b").unwrap()));
+    let stored = fs::read_to_string(pw.profile_file(&a)).unwrap();
+    assert!(!stored.contains("[[include]]"), "{stored}");
+    // what only it needs locked is kept apart already
+    let shared = pw.load_shared_lock(&a).unwrap().unwrap();
+    assert!(!shared.mods.iter().any(|m| m.id == "b"));
+    assert!(
+        pw.load_lock(&a)
+            .unwrap()
+            .unwrap()
+            .mods
+            .iter()
+            .any(|m| m.id == "b")
+    );
+
+    let entries = pw.start_sync(&a).unwrap();
+    let keys: Vec<&str> = entries.keys().map(String::as_str).collect();
+    assert!(keys.contains(&"mod/versioned:a"), "{keys:?}");
+    assert!(
+        !keys.contains(&"mod/versioned:b") && !keys.contains(&"lock/versioned:b"),
+        "{keys:?}"
+    );
+    // it's still the set, for other profiles to share
+    assert_eq!(
+        pw.profiles_including(set.id).unwrap(),
+        std::slice::from_ref(&a)
+    );
 }
 
 #[tokio::test]
@@ -5054,7 +5329,13 @@ async fn going_back_asks_what_to_do_with_sets_changed_since() {
     pw.set_priority(&b, "b", 3).unwrap();
     assert!(pw.has_changes(&a).unwrap());
     let err = pw.revert(&a).unwrap_err();
-    let fixes = err.blocker().unwrap().fixes;
+    let blocker = err.blocker().unwrap();
+    assert!(
+        blocker.detail.contains("back as it was") && blocker.detail.contains("an ordinary folder"),
+        "{}",
+        blocker.detail
+    );
+    let fixes = blocker.fixes;
     assert_eq!(fixes.len(), 3, "{fixes:?}");
     assert_eq!(
         fixes[0],
@@ -5183,9 +5464,8 @@ async fn personal_mods_stay_here_and_lock_on_top_of_whats_shared() {
     assert!(pw.rename_folder(&profile, "Personal", "Mine").is_err());
     assert!(pw.remove_folder(&profile, "Personal").is_err());
 
-    // so there's nothing to publish, or to say isn't shared
+    // so there's nothing to publish
     assert!(pw.unsynced_changes(&profile).unwrap().is_empty());
-    assert!(pw.unshared_mods(&profile).unwrap().is_empty());
     let lock = pw.lock(&profile, false).await.unwrap();
     assert_eq!(lock.mods.len(), 4);
     assert!(pw.unsynced_changes(&profile).unwrap().is_empty());
@@ -5268,4 +5548,52 @@ async fn personal_mods_stay_here_and_lock_on_top_of_whats_shared() {
             .unwrap()
             .contains("mine")
     );
+}
+
+#[tokio::test]
+async fn going_back_puts_the_personal_layer_back_without_asking() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, _source, profile) = with_dependencies(tmp.path()).await;
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    pw.lock(&profile, false).await.unwrap();
+    pw.start_sync(&profile).unwrap();
+    let mine = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+    pw.add_mod(&profile, deps_spec("mine"), None, true)
+        .await
+        .unwrap();
+    pw.set_personal(&profile, &mine(&["mine"]), true).unwrap();
+    pw.lock(&profile, false).await.unwrap();
+    pw.apply(&pw.plan_deploy(&profile).await.unwrap()).unwrap();
+    let personal = |pw: &Patchwork| {
+        let loaded = pw.load_profile(&profile).unwrap();
+        loaded
+            .mods
+            .iter()
+            .filter(|m| loaded.is_personal(m))
+            .map(|m| m.name.clone())
+            .collect::<Vec<_>>()
+    };
+
+    // a mod added to it since
+    pw.add_mod(&profile, deps_spec("extra"), None, true)
+        .await
+        .unwrap();
+    pw.set_personal(&profile, &mine(&["extra"]), true).unwrap();
+    pw.set_enabled(&profile, "other", false).unwrap();
+    pw.revert(&profile).unwrap();
+    assert_eq!(personal(&pw), ["mine"]);
+    assert_eq!(mod_names(&pw, &profile), ["lib", "other", "mine"]);
+    assert!(!pw.has_changes(&profile).unwrap());
+    // and nothing of it is published
+    assert!(pw.unsynced_changes(&profile).unwrap().is_empty());
+
+    // gone since, published
+    pw.set_personal(&profile, &mine(&["mine"]), false).unwrap();
+    assert!(pw.load_profile(&profile).unwrap().personal().is_none());
+    pw.revert(&profile).unwrap();
+    assert_eq!(personal(&pw), ["mine"]);
+    assert!(!pw.has_changes(&profile).unwrap());
+    assert!(pw.unsynced_changes(&profile).unwrap().is_empty());
 }

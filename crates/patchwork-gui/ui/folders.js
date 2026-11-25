@@ -292,8 +292,11 @@ export function folderButton(m, iconAction) {
       const own = folderOf(m);
       const others = state.profile.folders.filter((f) => f !== own && !f.personal);
       // a synced profile's mods can be kept to this person's own computers,
-      // unless they're a shared set's
-      const personal = own?.personal
+      // unless they're a shared set's; a followed one's added mods are
+      // already, and the rest are whoever shares it's
+      const personal = state.profile.following
+        ? null
+        : own?.personal
         ? { label: "Share with everyone", run: () => setPersonal(m, false) }
         : state.profile.synced &&
           !own?.linked && { label: `Keep on ${where()} only`, run: () => setPersonal(m, true) };

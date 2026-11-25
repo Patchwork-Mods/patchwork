@@ -335,6 +335,27 @@ impl Patchwork {
         self.save_profile(profile, &loaded)
     }
 
+    /// Makes the profile's include of the set `id` part of its personal
+    /// layer (see [`crate::personal`]), so the profile can be synced with
+    /// it: its mods stay on this person's computers rather than going to
+    /// everyone who has the profile. What only they need locked moves to
+    /// the personal lockfile.
+    pub fn include_personally(&self, profile: &ProfileRef, id: Uuid) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let label = loaded.label();
+        let include = loaded
+            .includes
+            .iter_mut()
+            .find(|i| i.set == id)
+            .ok_or_else(|| Error::invalid(format!("{label} doesn't include the set {id}")))?;
+        if include.personal {
+            return Ok(());
+        }
+        include.personal = true;
+        self.save_profile(profile, &loaded)?;
+        self.split_lock_again(profile)
+    }
+
     /// Copies the set `id` into the profile as an ordinary folder of its
     /// own, after its own mods, rather than including it. Its config edits
     /// are copied in too, under the profile's own.
@@ -382,8 +403,8 @@ impl Patchwork {
     /// Stops the profile including the set `id`. With `keep`, its mods (and
     /// config edits) stay in the profile as its own, in an ordinary folder
     /// named like the set; otherwise they go. A set included personally
-    /// keeps its mods in the personal layer instead, without its config
-    /// edits, which the personal layer can't keep yet.
+    /// keeps its mods and config edits in the personal layer instead (under
+    /// its own settings).
     pub fn unlink_set(&self, profile: &ProfileRef, id: Uuid, keep: bool) -> Result<()> {
         let mut loaded = self.load_profile(profile)?;
         let Some(at) = loaded.includes.iter().position(|i| i.set == id) else {
@@ -394,14 +415,15 @@ impl Patchwork {
         };
         let own = own_config(&loaded);
         let include = loaded.includes.remove(at);
-        // the personal layer can't keep settings yet, so a personal
-        // include's go with it
+        // a personal include's go to the personal layer, once it's saved
+        let mut personal_config = None;
         if !keep || include.personal {
             merge_config(&mut loaded, &own);
         }
         // Kept, they're the profile's own once it doesn't include the set,
         // and personal ones stay personal.
         if keep && include.personal && include.linked.is_some() && include.set != loaded.id {
+            personal_config = include.linked.as_ref().map(|l| l.config.clone());
             if loaded.personal().is_none() {
                 loaded.includes.push(personal_include(&loaded));
             }
@@ -417,7 +439,11 @@ impl Patchwork {
         } else {
             loaded.mods.retain(|m| m.folder != Some(id));
         }
-        self.save_profile(profile, &loaded)
+        self.save_profile(profile, &loaded)?;
+        if let Some(config) = personal_config {
+            self.add_personal_config(profile, &loaded.game, config)?;
+        }
+        Ok(())
     }
 
     /// `name` trimmed, if it isn't blank and no set of `game` but `except`

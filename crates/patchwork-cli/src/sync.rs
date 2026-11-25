@@ -199,12 +199,7 @@ async fn sync_with(
                     println!("{label}");
                     continue;
                 }
-                let unshared = pw.unshared_mods(&profile).unwrap_or_default();
-                if unshared.is_empty() {
-                    println!("{label} (following)");
-                } else {
-                    println!("{label} (following; only here: {})", unshared.join(", "));
-                }
+                println!("{label} (following)");
             }
         }
         SyncCommand::Leave => {

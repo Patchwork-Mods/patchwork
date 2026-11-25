@@ -187,6 +187,13 @@ pub enum Fix {
         sets: Vec<String>,
         names: Vec<String>,
     },
+    /// Keep the shared sets `sets` (by id, named `names`) that the profile
+    /// includes just for this person, in its personal layer; see
+    /// [`Patchwork::include_personally`](crate::Patchwork::include_personally).
+    IncludePersonally {
+        sets: Vec<String>,
+        names: Vec<String>,
+    },
     /// Copy the folder `folder` (by id, named `name`) of the profile `from`
     /// (by id, named `from_name`) in as an ordinary folder of the profile's
     /// own, rather than using the same folder in both; see
@@ -230,6 +237,10 @@ impl Fix {
                 "Copy it in as a folder".to_owned()
             }
             Fix::UnlinkSets { .. } => "Copy them in as folders".to_owned(),
+            Fix::IncludePersonally { names, .. } if names.len() == 1 => {
+                "Keep it just for you".to_owned()
+            }
+            Fix::IncludePersonally { .. } => "Keep them just for you".to_owned(),
             Fix::CopyFolder { .. } => "Copy it in as a folder".to_owned(),
             Fix::GoBack { sets, .. } => match sets {
                 SetsThen::Restore => "Put them back as they were",
@@ -260,6 +271,9 @@ impl Fix {
             Fix::ProfileSettings => "Opening profile settings…".to_owned(),
             Fix::SourceSettings { .. } => "Opening Settings…".to_owned(),
             Fix::UnlinkSets { names, .. } => format!("Copying in {}…", names.join(", ")),
+            Fix::IncludePersonally { names, .. } => {
+                format!("Keeping {} just for you…", names.join(", "))
+            }
             Fix::CopyFolder { name, .. } => {
                 format!("Copying in {name}…")
             }
@@ -314,6 +328,13 @@ impl Fix {
                     .map(|n| on(format!("set unlink {}", quoted(n))))
                     .collect();
                 unlinks.join(" && ")
+            }
+            Fix::IncludePersonally { names, .. } => {
+                let keeps: Vec<_> = names
+                    .iter()
+                    .map(|n| on(format!("set personal {}", quoted(n))))
+                    .collect();
+                keeps.join(" && ")
             }
             Fix::CopyFolder {
                 from_name, name, ..

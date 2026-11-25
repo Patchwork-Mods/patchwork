@@ -372,21 +372,65 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      but can't be saved to (as for the layer), and are dropped when it's
      unlinked. A synced profile's own folders still can't become sets
      (`CopyFolder`), and a profile that includes sets in its file still
-     can't start syncing (`UnlinkSets`). The sets themselves aren't
+     can't start syncing as it is (`UnlinkSets`, or `IncludePersonally`;
+     see below). The sets themselves aren't
      synced between linked computers yet (step 5): another computer gets
      the include, and a `MissingSet` issue until it has the set. GUI:
      the folder's marked "Only on your computers" next to "Shared with
      N profiles", and "From another profile…" says so before adding.
-   - Still to do: personal config edits (saving settings to
-     the personal layer or a set it includes is refused for now, since
-     saving to a set drops the profile's own, which would publish their
-     removal); followed
-     profiles' additions going to it (today they're `unshared_mods` in
-     the profile itself); the client/server-side issue; and going back
-     past a change to it, which asks what to do as for a changed shared
-     set (where "copy" now keeps them personal) rather than just putting
-     it back; and offering to include a profile's sets personally when it
-     starts syncing, as well as copying them in.
+   - **Personal config edits.** The personal layer keeps settings of its
+     own (`[config."<file>"]` in `personal.toml`, `PERSONAL_SCHEMA` 3,
+     saved as that only when there are any), which go to linked
+     computers with the rest of the `Layer`. They, and those of sets
+     included personally, go **over** the profile's own settings, not
+     under them like a shared set's: they're the person's own choice on
+     top of what everyone has. So the loaded profile keeps what the
+     personal ones gave and what of the profile's own they hide
+     (`Profile::personal_config`), and `own_config` gives the hidden
+     values back, so saving never publishes a personal value or drops
+     the profile's own. A layer with only settings is still included
+     (its empty folder isn't shown: `Profile::shown_folders`).
+     - `set_config` saves to the layer with `SaveTo::Set(<profile id>)`
+       (making it if need be; a synced profile's `ConfigView::sets`
+       always offers it) or to a set included personally. Saving there
+       leaves the profile's own as they are. Saving anywhere else keeps
+       settings the personal layer changes as they were there, since the
+       form showed the personal values. By default a file whose mod is
+       personal, or whose settings the layer already changes, saves to
+       it.
+     - Settings changed in game that the personal layer gives go back to
+       it (or the set included personally that gives them); the rest are
+       the profile's own, as before.
+     - Unlinking a set included personally keeping its mods, and going
+       back with "copy" past a change to one, put its settings in the
+       layer, under the layer's own.
+     - `ConfigSet` and `SharedSetting` say whether they're `personal`.
+       GUI: "Save changes in" offers "Just for you (only on your
+       computers)", and a setting is marked "Yours" or "Yours, over the
+       profile's". CLI: `settings --to personal`.
+   - **Followed profiles' additions go in it.** What was last synced
+     records whether this computer only follows the profile
+     (`is_followed`), and `save_profile` moves the profile's own mods
+     whoever shares it doesn't have into the personal layer
+     (`keep_added`), splitting the lockfile again. So whatever adds a
+     mod puts it there, and it goes to the person's other computers
+     rather than staying on this one. Mods a follower added before
+     this, kept in the profile itself, move the next time it syncs.
+     Nothing can be moved in or out of a followed profile's layer by
+     hand (`set_personal` refuses, and the GUI doesn't offer it): the
+     rest is whoever shares it's. `unshared_mods` and the GUI's "only
+     here" mark are gone, since those mods are in the Personal folder.
+   - **Going back** puts the personal layer back as it was, like the
+     profile's own mods, without asking: it's only this profile's (and
+     goes to the person's other computers as it was). Sets included
+     personally that changed since are asked about like any shared set,
+     and the blocker says "copy" puts their mods in the Personal folder.
+   - **Starting to sync a profile that includes sets**: the blocker
+     (`UnlinkSets`, copy them in, which everyone then gets) has a second
+     fix, `IncludePersonally`, which makes its includes personal
+     (`include_personally`, `patchwork set personal <set>`), splitting
+     the lockfile so what only they need stays out of what's synced.
+   - Still to do: the client/server-side issue.
 4. **Optional folders** in synced profiles.
 5. **Sets synced between linked computers**, and exporting a set on its
    own.

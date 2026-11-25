@@ -254,9 +254,9 @@ struct ProfileDetail {
     actions: Vec<ActionInfo>,
     /// Everything worth warning about, from [`Patchwork::issues`].
     issues: Vec<Issue>,
-    /// The names of mods added here to a profile this computer follows,
-    /// which whoever shares it doesn't have.
-    unshared: Vec<String>,
+    /// Whether this computer only follows it, so the mods added here go
+    /// in its personal layer and none can be moved in or out of it.
+    following: bool,
     /// Whether it's synced with other computers or people, so its mods
     /// can be kept personal (see [`patchwork_core::personal`]).
     synced: bool,
@@ -692,11 +692,6 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
     let devices_linked =
         synced && patchwork_sync::devices_linked(&pw.paths().sync()).unwrap_or(false);
     let following = syncing.is_some_and(|s| !s.writable);
-    let unshared = if following {
-        pw.unshared_mods(&r).map_err(msg)?
-    } else {
-        Vec::new()
-    };
     let lists = pw.lists(&r).map_err(msg)?;
     let has_config = pw.has_config_files(&r).map_err(msg)?;
     let actions = pw.actions(&r).map_err(msg)?;
@@ -716,7 +711,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         pw.includers().map_err(msg)?
     };
     let folders = loaded
-        .all_folders()
+        .shown_folders()
         .map(|f| {
             let include = loaded.include(f.id);
             let linked = include.is_some();
@@ -812,7 +807,7 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         has_config,
         actions,
         issues,
-        unshared,
+        following,
         synced,
         devices_linked,
         id,
