@@ -1,0 +1,21 @@
+[package]
+name = "patchwork-bg3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+flate2.workspace = true
+lz4_flex.workspace = true
+patchwork-core.workspace = true
+patchwork-deployers.workspace = true
+roxmltree.workspace = true
+ruzstd.workspace = true
+serde.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+patchwork-bethesda.workspace = true
+patchwork-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true

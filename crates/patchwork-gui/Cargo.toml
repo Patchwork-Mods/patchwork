@@ -20,9 +20,10 @@ path = "src/main.rs"
 [features]
 # The games' extensions; `release` is what release builds use. Keep in step
 # with patchwork-cli, which says why.
-default = ["bethesda", "drg", "ftl", "helldivers", "smf"]
-release = ["bethesda", "ftl", "helldivers"]
+default = ["bethesda", "bg3", "drg", "ftl", "helldivers", "smf"]
+release = ["bethesda", "bg3", "ftl", "helldivers"]
 bethesda = ["patchwork-builtin/bethesda"]
+bg3 = ["patchwork-builtin/bg3"]
 drg = ["patchwork-builtin/drg"]
 ftl = ["patchwork-builtin/ftl"]
 helldivers = ["patchwork-builtin/helldivers"]

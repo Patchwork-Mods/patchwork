@@ -285,6 +285,14 @@ impl<'a> GameFiles<'a> {
         self.root
     }
 
+    fn root_path(&self, root: &RootId) -> Option<&Path> {
+        if root.is_game() {
+            Some(self.root)
+        } else {
+            self.state.roots.get(root).map(PathBuf::as_path)
+        }
+    }
+
     /// Where the game's own copy of `rel` is, if it has one.
     ///
     /// A deployed file that's been changed since (say by a game update) is
@@ -297,12 +305,31 @@ impl<'a> GameFiles<'a> {
         }
     }
 
+    /// Where the file at `dest` is, in any of the target's roots, whoever
+    /// put it there: unlike [`GameFiles::original`], a file patchwork
+    /// deployed counts. For files the game and other tools change, such as
+    /// a load order in the game's AppData. `None` for a root the target
+    /// doesn't have.
+    pub fn current_at(&self, dest: &Dest) -> Option<PathBuf> {
+        let path = dest.path.under(self.root_path(&dest.root)?);
+        path.is_file().then_some(path)
+    }
+
     /// The game's own files directly inside `dir` (the game directory itself
     /// if `None`), sorted. Unlike [`GameFiles::original`], files patchwork
     /// added are left out without checking whether they've changed, since
     /// that would mean reading every one.
     pub fn list(&self, dir: Option<&RelPath>) -> Result<Vec<RelPath>> {
-        let path = dir.map_or_else(|| self.root.to_owned(), |d| d.under(self.root));
+        self.list_at(&RootId::game(), dir)
+    }
+
+    /// Like [`GameFiles::list`], in any of the target's roots. Empty for a
+    /// root the target doesn't have.
+    pub fn list_at(&self, root: &RootId, dir: Option<&RelPath>) -> Result<Vec<RelPath>> {
+        let Some(base) = self.root_path(root) else {
+            return Ok(Vec::new());
+        };
+        let path = dir.map_or_else(|| base.to_owned(), |d| d.under(base));
         let entries = match fs::read_dir(&path) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -325,7 +352,10 @@ impl<'a> GameFiles<'a> {
             let ours = self
                 .state
                 .files
-                .get(&Dest::game(rel.clone()))
+                .get(&Dest {
+                    root: root.clone(),
+                    path: rel.clone(),
+                })
                 .is_some_and(|d| d.backup.is_none());
             if is_file && !ours {
                 files.push(rel);

@@ -584,8 +584,33 @@ fn id_placeholder() {
         source: "beatsaver",
     };
     let placed = place(&rules, &who, &RelPath::new("sub/Info.dat").unwrap()).unwrap();
-    assert!(matches!(placed, Outcome::Place(p) if p.as_str() == "Levels/25f/sub/Info.dat"));
+    assert!(matches!(placed, Outcome::Place(p) if p.to_string() == "Levels/25f/sub/Info.dat"));
     let who = Who { id: "a/b", ..who };
     let placed = place(&rules, &who, &RelPath::new("x").unwrap()).unwrap();
-    assert!(matches!(placed, Outcome::Place(p) if p.as_str() == "Levels/a_b/x"));
+    assert!(matches!(placed, Outcome::Place(p) if p.to_string() == "Levels/a_b/x"));
+}
+
+#[test]
+fn rules_can_place_in_other_roots() {
+    let rules = parse(
+        "[[rules]]\nfiles = \"**/*.pak\"\nto = \"mods:{file}\"\n\n[[rules]]\nto = \"Data/{path}\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        dst(&rules, "m", "Wrapper/Cool.pak").as_deref(),
+        Some("mods:Cool.pak")
+    );
+    assert_eq!(
+        dst(&rules, "m", "Public/x.txt").as_deref(),
+        Some("Data/Public/x.txt")
+    );
+
+    let bad = parse("[[rules]]\nto = \"Not A Root:{path}\"\n").unwrap();
+    let who = Who {
+        name: "m",
+        id: "m",
+        kind: None,
+        source: "local",
+    };
+    assert!(place(&bad, &who, &RelPath::new("x").unwrap()).is_err());
 }

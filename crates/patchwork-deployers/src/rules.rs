@@ -48,6 +48,10 @@ use serde::Deserialize;
 /// to = "Levels/{id}/{path}"  # the mod's id at its source, for a folder of its own
 ///
 /// [[deployer.rules]]
+/// files = "**/*.pak"
+/// to = "mods:{file}"         # in the game's `mods` root (see `[roots]`)
+///
+/// [[deployer.rules]]
 /// ruleset = "bepinex"        # a ruleset's rules, at this point in the list
 ///
 /// [deployer.root]
@@ -173,7 +177,7 @@ struct Setup {
 }
 
 enum Outcome {
-    Place(RelPath),
+    Place(Dest),
     Skip,
     Unmatched,
 }
@@ -378,7 +382,7 @@ impl RulesDeployer {
                 .map_err(|e| self.error(format!("`{}`: {e}", m.name)))?;
             match outcome {
                 Outcome::Place(dst) => desired.placements.push(Placement {
-                    dst: Dest::game(dst),
+                    dst,
                     src: m.src(file),
                     mod_name: m.name.clone(),
                 }),
@@ -528,7 +532,8 @@ fn place(rules: &[CompiledRule], who: &Who<'_>, rel: &RelPath) -> Result<Outcome
             .replace("{id}", &who.id.replace(['/', '\\'], "_"))
             .replace("{path}", &rest[rule.strip..].join("/"))
             .replace("{file}", rel.file_name());
-        return RelPath::new(&dst).map(Outcome::Place);
+        // `root:path`, or just a path in the game's folder.
+        return dst.parse::<Dest>().map(Outcome::Place);
     }
     Ok(Outcome::Unmatched)
 }

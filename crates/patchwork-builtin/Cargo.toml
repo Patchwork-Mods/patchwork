@@ -9,8 +9,9 @@ homepage.workspace = true
 description = "Registers the extensions bundled with Patchwork"
 
 [features]
-default = ["bethesda", "drg", "ftl", "helldivers", "smf"]
+default = ["bethesda", "bg3", "drg", "ftl", "helldivers", "smf"]
 bethesda = ["dep:patchwork-bethesda"]
+bg3 = ["dep:patchwork-bg3"]
 drg = ["dep:patchwork-drg"]
 ftl = ["dep:patchwork-ftl"]
 helldivers = ["dep:patchwork-helldivers"]
@@ -22,6 +23,7 @@ patchwork-sources.workspace = true
 patchwork-deployers.workspace = true
 patchwork-formats.workspace = true
 patchwork-bethesda = { workspace = true, optional = true }
+patchwork-bg3 = { workspace = true, optional = true }
 patchwork-drg = { workspace = true, optional = true }
 patchwork-ftl = { workspace = true, optional = true }
 patchwork-helldivers = { workspace = true, optional = true }

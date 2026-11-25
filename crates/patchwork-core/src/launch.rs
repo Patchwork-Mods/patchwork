@@ -40,7 +40,8 @@ pub use runner::{Fit, RunContext, Runner, Runners};
 
 /// DLLs that mods put next to a game's exe to be loaded in place of the
 /// system's: loaders like BepInEx's (`winhttp`), ReShade and ENB (`dxgi`,
-/// `d3d11`, ...), and ASI loaders (`dinput8`, `version`). Windows loads them
+/// `d3d11`, ...), ASI loaders (`dinput8`, `version`) and BG3 Script Extender
+/// (`dwrite`). Windows loads them
 /// from the game's folder by itself, but Wine prefers its own copies unless
 /// told otherwise.
 const PROXY_DLLS: &[&str] = &[
@@ -54,6 +55,7 @@ const PROXY_DLLS: &[&str] = &[
     "dinput",
     "dinput8",
     "dsound",
+    "dwrite",
     "dxgi",
     "opengl32",
     "version",

@@ -17,9 +17,10 @@ path = "src/main.rs"
 # instead (dist-workspace.toml, release.yml, packaging/licenses.sh): it leaves
 # out Hitman (smf) and Deep Rock Galactic (drg), which depend on git crates
 # with no license yet (see deny.toml). Their games drop out of the game list.
-default = ["bethesda", "drg", "ftl", "helldivers", "smf"]
-release = ["bethesda", "ftl", "helldivers"]
+default = ["bethesda", "bg3", "drg", "ftl", "helldivers", "smf"]
+release = ["bethesda", "bg3", "ftl", "helldivers"]
 bethesda = ["patchwork-builtin/bethesda"]
+bg3 = ["patchwork-builtin/bg3"]
 drg = ["patchwork-builtin/drg"]
 ftl = ["patchwork-builtin/ftl"]
 helldivers = ["patchwork-builtin/helldivers"]

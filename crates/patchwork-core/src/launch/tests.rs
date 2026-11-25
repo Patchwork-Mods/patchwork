@@ -807,3 +807,14 @@ fn an_unset_prefix_is_cleared_by_starting_from_steam() {
     let err = add_prefix_overrides(tmp.path(), &["winhttp".to_owned()]).unwrap_err();
     assert_try_again(&err);
 }
+
+#[test]
+fn script_extender_dwrite_is_a_proxy_dll() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut setup = steam_setup(tmp.path(), &["bin/bg3.exe"]);
+    setup.deployed = vec![rel("bin/DWrite.dll")];
+    let mut game = game("");
+    game.detect.exe = vec!["bin/bg3.exe".to_owned()];
+    let launch = plan(&game, None, &setup).unwrap();
+    assert_eq!(launch.prefix_overrides.unwrap().dlls, ["dwrite"]);
+}

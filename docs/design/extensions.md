@@ -846,6 +846,7 @@ Each step leaves `main` working and shippable.
    Built (2026-11-05), with these differences:
    - Only games' code got crates of its own, not every extension:
      `patchwork-bethesda` (the `bethesda` and `fomod` extensions),
+     `patchwork-bg3` (`bg3`, added 2026-11-06),
      `patchwork-helldivers` (`helldivers`, added 2026-11-05),
      `patchwork-ftl` (`ftl`, added 2026-11-13), `patchwork-drg` (`drg`,
      added 2026-11-17) and `patchwork-smf` (`smf`). Each crate's `lib.rs` has its `Extension`s.
@@ -857,13 +858,35 @@ Each step leaves `main` working and shippable.
      crates. `generic`, `thunderstore`, `nexus`, `modrinth`, `github` and
      `modio` (added 2026-11-07) stay in `patchwork-builtin`.
    - `patchwork-builtin` has a feature per game crate (`bethesda`,
-     `drg`, `ftl`, `helldivers`, `smf`, all on by default) and `register(builder)`, which adds every extension the
+     `bg3`, `drg`, `ftl`, `helldivers`, `smf`, all on by default) and `register(builder)`, which adds every extension the
      build has. The frontends call that instead of naming each extension,
      so they need no `cfg`s. They don't pass the features through yet; a
      build without one sets `default-features = false` on
      `patchwork-builtin` itself.
    - The `opt-level = 2` dev profile override moved from
      `patchwork-deployers` to `patchwork-smf`, since it was for SMF.
+   - Baldur's Gate 3 (added 2026-11-06) got `patchwork-bg3`, with the
+     `bg3` extension: a deployer that wraps the rules deployer and writes
+     `modsettings.lsx`, the `mods` list (each package's modules, read from
+     the `Mods/<folder>/meta.lsx` inside it; LSPK v18, with LZ4, zlib and
+     zstd entries) and the `extender` check (Script Extender). The game's
+     campaign module and its own modules are data in
+     `[ext.bg3.mods]`, so a patch that renames them is a TOML edit. For it,
+     the rules deployer's `to` can name another root (`mods:{file}`), as
+     `Dest` is written. Mods from the in-game mod manager (2026-11-25): the
+     modules the game's `modsettings.lsx` loads from packages in `Mods`
+     that patchwork didn't deploy are kept, right after the campaign, and
+     listed as `fixed` items with a "not in profile" badge; the deployer's
+     `fingerprint` covers them, so turning one on or off in the game makes
+     the deploy stale. For it, `GameFiles` gained `current_at` and
+     `list_at`, which reach the target's other roots. `dwrite` joined
+     core's proxy DLLs, so a deployed Script Extender loads under Wine.
+     A `meta.lsx` in a later part of a split package (`Big_1.pak`) is read
+     from that part, found by name among the packages deployed to Mods.
+     BG3 turns on `[ext.fomod.installer]` with no folder: the installer's
+     destinations go through the game's rules, which put packages in Mods.
+     Not done: solid packages' `meta.lsx`, and macOS (needs per-OS exes and
+     launch options in core first; Script Extender has no macOS build).
 8. **Mod settings**; see "Mod settings" under `ModOptions`.
    - Step 1 (value fields) built (2026-11-06). `Group::kind` is
      `GroupKind::Pick` or `GroupKind::Fields`, flattened in JSON (pick
