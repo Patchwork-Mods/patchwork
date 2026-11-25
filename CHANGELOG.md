@@ -9,6 +9,7 @@ dialog shows, so the heading has to match the version being released.
   - Folders can be shared between a game's profiles
   - Shared folders carry their mods' config settings
   - You can keep personal folders of mods to not share
+  - Folders in shared profiles can be made optional, so each person picks whether to use them
 
 ## 0.3.1
 

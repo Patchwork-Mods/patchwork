@@ -19,7 +19,14 @@ use crate::list::ListEntry;
 /// state, so builds that would drop extensions' state don't open profiles
 /// that have it. Schema 4 added `[[include]]`s of shared sets; a profile
 /// that doesn't include one is still saved as 3 (see [`Profile::saved_schema`]).
-pub const PROFILE_SCHEMA: u32 = 4;
+/// Schema 5 added optional folders ([`Folder::optional`]), whose mods are
+/// stored off and turned on by each person's opt-ins, which older builds
+/// would publish for everyone; a profile with none is saved as before.
+pub const PROFILE_SCHEMA: u32 = 5;
+
+/// The schema a profile that includes sets, but has no optional folders,
+/// is saved as.
+pub const SCHEMA_WITHOUT_OPTIONAL: u32 = 4;
 
 /// The schema a profile with no includes is saved as, so builds from
 /// before sets still open it.
@@ -120,14 +127,24 @@ impl Profile {
         self.mods.iter_mut().find(|m| m.name == name)
     }
 
-    /// The schema the profile is saved as: [`PROFILE_SCHEMA`] if it
-    /// includes a set, otherwise the one from before there were sets.
+    /// The schema the profile is saved as: [`PROFILE_SCHEMA`] if it has
+    /// an optional folder, otherwise the one from before there were any if
+    /// it includes a set, otherwise the one from before there were sets.
     pub fn saved_schema(&self) -> u32 {
-        if self.includes.is_empty() {
+        if self.folders.iter().any(|f| f.optional) {
+            PROFILE_SCHEMA
+        } else if self.includes.is_empty() {
             SCHEMA_WITHOUT_INCLUDES
         } else {
-            PROFILE_SCHEMA
+            SCHEMA_WITHOUT_OPTIONAL
         }
+    }
+
+    /// The optional folder (see [`Folder::optional`]) mod `m` is in, if
+    /// it's in one. Only the profile's own folders can be.
+    pub fn optional_folder(&self, m: &ProfileMod) -> Option<&Folder> {
+        let id = m.folder?;
+        self.folders.iter().find(|f| f.id == id && f.optional)
     }
 
     /// The profile's own folders, then the linked folders of the sets it
@@ -304,6 +321,13 @@ pub struct Folder {
     pub id: Uuid,
     /// Unique within the profile, ignoring case.
     pub name: String,
+    /// Whether it's optional in a synced profile: everyone it's synced
+    /// with gets its mods, and each person opts in for themselves (see
+    /// [`crate::personal::OptIn`]). Its mods are stored, and published,
+    /// as off; as loaded, they're on as the person's opt-in has them.
+    /// Only the profile's own folders can be.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
 }
 
 impl Folder {
@@ -311,6 +335,7 @@ impl Folder {
         Self {
             id: Uuid::new_v4(),
             name: name.to_owned(),
+            optional: false,
         }
     }
 }

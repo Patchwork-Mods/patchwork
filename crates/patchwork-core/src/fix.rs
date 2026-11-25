@@ -190,6 +190,17 @@ pub enum Fix {
     /// for the other profiles; see
     /// [`Patchwork::keep_folder_here`](crate::Patchwork::keep_folder_here).
     KeepHere { folder: String, name: String },
+    /// Make the folder `folder` (by id, named `name`) of the profile
+    /// `profile` (by id, `label` being its `<game>/<name>`) required
+    /// again, so it can be in other profiles too; see
+    /// [`Patchwork::set_folder_optional`](crate::Patchwork::set_folder_optional).
+    /// It's often another profile's folder, so it says which.
+    MakeRequired {
+        profile: String,
+        label: String,
+        folder: String,
+        name: String,
+    },
     /// Go back to the profile's last deploy (`number` `None`) or deploy
     /// `number` of its history, doing as `sets` says with the shared sets
     /// that have changed since; see
@@ -221,6 +232,7 @@ impl Fix {
             Fix::SourceSettings { .. } => "Open Settings".to_owned(),
             Fix::UseEverywhere { .. } => "Use in every profile".to_owned(),
             Fix::KeepHere { .. } => "Keep it only in this profile".to_owned(),
+            Fix::MakeRequired { name, .. } => format!("Make {name} required"),
             Fix::GoBack { sets, .. } => match sets {
                 SetsThen::Restore => "Put them back as they were",
                 SetsThen::Copy => "Copy them in as they were",
@@ -251,6 +263,7 @@ impl Fix {
             Fix::SourceSettings { .. } => "Opening Settings…".to_owned(),
             Fix::UseEverywhere { name, .. } => format!("Saving {name} for every profile…"),
             Fix::KeepHere { name, .. } => format!("Keeping {name} only in this profile…"),
+            Fix::MakeRequired { name, .. } => format!("Making {name} required…"),
             Fix::GoBack { number: None, .. } => "Reverting…".to_owned(),
             Fix::GoBack { .. } => "Rolling back…".to_owned(),
             Fix::ForgetSet { .. } => "Removing the missing set…".to_owned(),
@@ -298,6 +311,11 @@ impl Fix {
             }
             Fix::UseEverywhere { name, .. } => on(format!("folder everywhere {}", quoted(name))),
             Fix::KeepHere { name, .. } => on(format!("folder keep {}", quoted(name))),
+            Fix::MakeRequired { label, name, .. } => format!(
+                "patchwork --profile {} folder required {}",
+                quoted(label),
+                quoted(name)
+            ),
             Fix::GoBack { number, sets } => {
                 let number = number.map(|n| format!(" {n}")).unwrap_or_default();
                 on(format!("rollback{number} --sets {}", sets.as_str()))

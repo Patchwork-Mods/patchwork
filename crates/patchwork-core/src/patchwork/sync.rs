@@ -592,7 +592,9 @@ fn relink(here: &Profile, mut flat: Profile) -> (Profile, Vec<(Uuid, bool)>) {
             left.push((include.set, false));
             continue;
         };
+        // a set can't be optional, so one made optional is the profile's
         if folder.name != linked.folder.name
+            || folder.optional
             || folder_mods(&flat, include.set) != folder_mods(here, include.set)
         {
             left.push((include.set, true));

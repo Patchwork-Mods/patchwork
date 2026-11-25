@@ -150,6 +150,14 @@ pub async fn apply_fix(
         Fix::Sync => crate::sync::wait_for_files(&handle, &profile()?).await?,
         Fix::UseEverywhere { folder, .. } => app.pw.use_folder_everywhere(&profile()?, &folder)?,
         Fix::KeepHere { folder, .. } => app.pw.keep_folder_here(&profile()?, &folder)?,
+        Fix::MakeRequired {
+            profile, folder, ..
+        } => {
+            let profile = profile
+                .parse()
+                .map_err(|_| format!("`{profile}` isn't a profile's id"))?;
+            app.pw.set_folder_optional(&profile, &folder, false)?
+        }
         Fix::ForgetSet { set } => app.pw.unlink_set(&profile()?, parse_set(&set)?, false)?,
         Fix::Deploy
         | Fix::GoBack { .. }

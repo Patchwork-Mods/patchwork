@@ -5741,3 +5741,208 @@ async fn going_back_puts_the_personal_layer_back_without_asking() {
     assert!(!pw.has_changes(&profile).unwrap());
     assert!(pw.unsynced_changes(&profile).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn optional_folders_go_to_everyone_and_each_person_opts_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mods = tmp.path().join("mods");
+    fs::create_dir_all(&mods).unwrap();
+    for name in ["Shared.pak", "Shaders.pak", "Extra.pak", "Later.pak"] {
+        fs::write(mods.join(name), name).unwrap();
+    }
+    let a = with_local_files(&tmp.path().join("a"));
+    let profile = a.create_profile("my-game", "default").unwrap();
+    for name in ["Shared.pak", "Shaders.pak", "Extra.pak"] {
+        a.add_mod(&profile, local_spec(&mods.join(name)), None, true)
+            .await
+            .unwrap();
+    }
+    let folder = a
+        .add_folder(
+            &profile,
+            "Looks",
+            &["Shaders".to_owned(), "Extra".to_owned()],
+        )
+        .unwrap();
+    a.lock(&profile, false).await.unwrap();
+    // only a synced profile's folders can be optional
+    assert!(a.set_folder_optional(&profile, "Looks", true).is_err());
+    let mut doc = a.start_sync(&profile).unwrap();
+    assert_eq!(doc["format"], br#"{"format":2}"#);
+
+    a.set_folder_optional(&profile, "Looks", true).unwrap();
+    // still on for whoever made it optional, who's opted in
+    let loaded = a.load_profile(&profile).unwrap();
+    assert!(loaded.mods.iter().all(|m| m.enabled));
+    let layer = a.personal_layer(&profile).unwrap().unwrap();
+    assert_eq!(layer.personal.optional.len(), 1);
+    // and off for everyone else, in what's published and what's stored
+    let changes = a.unsynced_changes(&profile).unwrap();
+    let published = |changes: &[(String, Vec<u8>)], key: &str| -> serde_json::Value {
+        let (_, v) = changes.iter().find(|(k, _)| k == key).unwrap();
+        serde_json::from_slice(v).unwrap()
+    };
+    let shaders = format!("mod/{}", local_key(&a, &profile, "Shaders"));
+    assert_eq!(published(&changes, &shaders)["enabled"], false);
+    let entry = published(&changes, &format!("folder/{}", folder.id));
+    assert_eq!(entry["optional"], true);
+    assert_eq!(published(&changes, "format")["format"], 3);
+    let stored = fs::read_to_string(a.profile_file(&profile)).unwrap();
+    assert!(stored.contains("schema = 5"), "{stored}");
+    doc.extend(changes);
+    a.apply_synced(&doc, true).unwrap();
+    // the mods are locked for everyone, so whoever opts in has the same
+    assert_eq!(a.load_shared_lock(&profile).unwrap().unwrap().mods.len(), 3);
+
+    let b = with_local_files(&tmp.path().join("b"));
+    b.apply_synced(&doc, true).unwrap();
+    for m in b.missing_local_files(&profile).unwrap() {
+        b.add_synced_file(&m, &a.stored_file(&m).unwrap()).unwrap();
+    }
+    let enabled = |pw: &Patchwork| -> Vec<(String, bool)> {
+        let loaded = pw.load_profile(&profile).unwrap();
+        loaded
+            .mods
+            .iter()
+            .map(|m| (m.name.clone(), m.enabled))
+            .collect()
+    };
+    let on = |names: &[(&str, bool)]| -> Vec<(String, bool)> {
+        names.iter().map(|(n, e)| (n.to_string(), *e)).collect()
+    };
+    assert_eq!(
+        enabled(&b),
+        on(&[("Shared", true), ("Shaders", false), ("Extra", false)])
+    );
+    assert!(b.load_profile(&profile).unwrap().folders[0].optional);
+    assert_eq!(b.load_lock(&profile).unwrap().unwrap().mods.len(), 3);
+    // opting in, and turning one back off, is theirs alone
+    b.set_folder_enabled(&profile, "Looks", true).unwrap();
+    b.set_enabled(&profile, "Extra", false).unwrap();
+    assert!(b.unsynced_changes(&profile).unwrap().is_empty());
+    assert_eq!(
+        enabled(&b),
+        on(&[("Shared", true), ("Shaders", true), ("Extra", false)])
+    );
+
+    // a mod added to the folder later is on for whoever's opted in
+    a.add_mod(&profile, local_spec(&mods.join("Later.pak")), None, true)
+        .await
+        .unwrap();
+    a.set_mod_folder(&profile, "Later", Some("Looks")).unwrap();
+    a.lock(&profile, false).await.unwrap();
+    doc.extend(a.unsynced_changes(&profile).unwrap());
+    a.apply_synced(&doc, true).unwrap();
+    b.apply_synced(&doc, true).unwrap();
+    assert_eq!(
+        enabled(&b),
+        on(&[
+            ("Shared", true),
+            ("Shaders", true),
+            ("Extra", false),
+            ("Later", true)
+        ])
+    );
+    assert!(b.unsynced_changes(&profile).unwrap().is_empty());
+
+    // opt-ins go to the person's other computers with the personal layer
+    let b2 = with_local_files(&tmp.path().join("b2"));
+    b2.apply_synced(&doc, true).unwrap();
+    let layer = b.personal_layer(&profile).unwrap();
+    b2.apply_personal(&profile, layer.as_ref()).unwrap();
+    assert_eq!(enabled(&b2), enabled(&b));
+
+    // an optional folder can't be in other profiles too until it's
+    // required again
+    let other = a.create_profile("my-game", "other").unwrap();
+    let from = FolderSource::Folder {
+        profile: profile.uuid,
+        folder: folder.id,
+    };
+    let err = a.use_folder(&other, &from, true, false).unwrap_err();
+    assert!(matches!(
+        err.fix(),
+        Some(crate::fix::Fix::MakeRequired { .. })
+    ));
+    // copying it in is fine, as an ordinary folder
+    a.use_folder(&other, &from, false, false).unwrap();
+    assert!(!a.load_profile(&other).unwrap().folders[0].optional);
+
+    // made required, everyone gets the mods as whoever did it has them
+    a.set_enabled(&profile, "Extra", false).unwrap();
+    a.set_folder_optional(&profile, "Looks", false).unwrap();
+    assert_eq!(
+        a.sync_entries(&profile).unwrap()["format"],
+        br#"{"format":2}"#
+    );
+    doc.extend(a.unsynced_changes(&profile).unwrap());
+    a.apply_synced(&doc, true).unwrap();
+    b.set_enabled(&profile, "Extra", true).unwrap();
+    b.apply_synced(&doc, true).unwrap();
+    assert_eq!(
+        enabled(&b),
+        on(&[
+            ("Shared", true),
+            ("Shaders", true),
+            ("Extra", false),
+            ("Later", true)
+        ])
+    );
+    assert!(!b.load_profile(&profile).unwrap().folders[0].optional);
+}
+
+/// The `<source>:<id>` of `profile`'s mod `name`.
+fn local_key(pw: &Patchwork, profile: &ProfileRef, name: &str) -> String {
+    let loaded = pw.load_profile(profile).unwrap();
+    let m = loaded.find(name).unwrap();
+    crate::lock::mod_key(&m.source, &m.id)
+}
+
+#[tokio::test]
+async fn a_linked_folder_a_friend_makes_optional_is_this_profiles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    pw.add_folder(&a, "QOL", &["b".to_owned(), "c".to_owned()])
+        .unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    pw.include_set(&b, set.id, None, false).unwrap();
+    // a linked folder can't be made optional here
+    assert!(pw.set_folder_optional(&a, "QOL", true).is_err());
+    pw.lock(&a, false).await.unwrap();
+    let mut doc = pw.start_sync(&a).unwrap();
+    assert!(pw.set_folder_optional(&a, "QOL", true).is_err());
+
+    // but a friend has it as an ordinary folder, so they can
+    let friend = a_friend(tmp.path(), &doc).await;
+    friend.set_folder_optional(&a, "QOL", true).unwrap();
+    doc.extend(friend.unsynced_changes(&a).unwrap());
+    pw.apply_synced(&doc, true).unwrap();
+    // which leaves the set to the other profile, and the mods off here
+    let loaded = pw.load_profile(&a).unwrap();
+    assert!(loaded.includes.is_empty());
+    assert!(loaded.folders[0].optional);
+    assert!(!loaded.find("b").unwrap().enabled);
+    assert!(pw.load_profile(&b).unwrap().find("b").unwrap().enabled);
+    assert!(pw.unsynced_changes(&a).unwrap().is_empty());
+
+    // it can only be kept here, since a set can't be optional
+    let issues = pw.issues(&a).unwrap();
+    let issue = issues
+        .iter()
+        .find(|i| matches!(i.kind, crate::issue::IssueKind::FolderChanged { .. }))
+        .expect("an issue");
+    assert!(
+        issue.message.contains("made it optional"),
+        "{}",
+        issue.message
+    );
+    assert!(matches!(issue.fix, Some(crate::fix::Fix::KeepHere { .. })));
+    assert!(issue.other_fixes.is_empty());
+    let err = pw.use_folder_everywhere(&a, "QOL").unwrap_err();
+    assert!(matches!(
+        err.fix(),
+        Some(crate::fix::Fix::MakeRequired { .. })
+    ));
+    pw.keep_folder_here(&a, "QOL").unwrap();
+    assert!(pw.sets("my-game").unwrap().is_empty());
+}

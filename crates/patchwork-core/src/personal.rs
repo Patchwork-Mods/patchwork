@@ -43,6 +43,16 @@
 //! the person's own choice on top of what everyone has. They follow the
 //! person to their linked computers with the rest of the layer.
 //!
+//! It keeps which of the profile's optional folders (see
+//! [`crate::profile::Folder::optional`]) the person has opted into, with
+//! schema 4, since those go to everyone and each person picks:
+//!
+//! ```toml
+//! [[optional]]
+//! folder = "<the folder's id>"
+//! disabled = ["Shaders"]   # its mods the person still has off
+//! ```
+//!
 //! Loading a profile includes it, so its mods show as a linked folder,
 //! "Personal", and everything that reads a profile sees them. Syncing
 //! leaves it out ([`without`]), and so does what's synced of the lockfile:
@@ -61,10 +71,14 @@ use crate::profile::{Include, Profile, ProfileMod};
 use crate::set::{Set, merge_config, own_config};
 
 /// The newest schema of `personal.toml` this build reads. Schema 2 added
-/// `include` and 3 `config`; a layer is saved as the oldest that has
-/// everything in it (see [`Personal::saved_schema`]), so builds that would
-/// drop them don't open ones that do.
-pub const PERSONAL_SCHEMA: u32 = 3;
+/// `include`, 3 `config` and 4 `optional`; a layer is saved as the oldest
+/// that has everything in it (see [`Personal::saved_schema`]), so builds
+/// that would drop them don't open ones that do.
+pub const PERSONAL_SCHEMA: u32 = 4;
+
+/// The schema a personal layer that opts into no optional folders, but
+/// changes settings, is saved as.
+const SCHEMA_WITHOUT_OPTIONAL: u32 = 3;
 
 /// The schema a personal layer that includes sets, but changes no
 /// settings, is saved as.
@@ -101,6 +115,23 @@ pub struct Personal {
     /// [`config`](Set::config), over everything else the profile has.
     #[serde(default, skip_serializing_if = "FileEdits::is_empty")]
     pub config: FileEdits,
+    /// The profile's optional folders the person has opted into.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional: Vec<OptIn>,
+}
+
+/// A person's opting into one of a synced profile's optional folders (see
+/// [`crate::profile::Folder::optional`]): its mods are on for them, but
+/// those they've turned off. A mod added to the folder later is on. Not
+/// having one for a folder is having all its mods off, so turning them all
+/// off opts out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OptIn {
+    pub folder: Uuid,
+    /// Its mods that are off for the person, by name, as
+    /// [`Include::disabled`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
 }
 
 impl Personal {
@@ -113,13 +144,14 @@ impl Personal {
             includes: Vec::new(),
             mods: Vec::new(),
             config: FileEdits::new(),
+            optional: Vec::new(),
         }
     }
 
     /// Whether there's nothing in the profile `id`'s layer: no mods or
-    /// settings of its own, and no sets.
+    /// settings of its own, no sets, and no optional folders opted into.
     pub fn is_empty(&self, id: Uuid) -> bool {
-        !self.has_own() && self.includes.iter().all(|i| i.set == id)
+        !self.has_own() && self.includes.iter().all(|i| i.set == id) && self.optional.is_empty()
     }
 
     /// Whether it has mods or settings of its own, so it's included
@@ -129,11 +161,14 @@ impl Personal {
     }
 
     /// The oldest schema that has everything in it: [`PERSONAL_SCHEMA`] if
-    /// it changes settings, otherwise the one from before it could, or
-    /// from before it could include sets if it includes none.
+    /// it opts into optional folders, otherwise the one from before it
+    /// could if it changes settings, or from before it could, or from
+    /// before it could include sets if it includes none.
     pub fn saved_schema(&self) -> u32 {
-        if !self.config.is_empty() {
+        if !self.optional.is_empty() {
             PERSONAL_SCHEMA
+        } else if !self.config.is_empty() {
+            SCHEMA_WITHOUT_OPTIONAL
         } else if !self.includes.is_empty() {
             SCHEMA_WITHOUT_CONFIG
         } else {
@@ -246,6 +281,11 @@ impl Layer {
                 personal.includes.push(include);
             }
         }
+        for opt_in in ours.personal.optional {
+            if !personal.optional.iter().any(|o| o.folder == opt_in.folder) {
+                personal.optional.push(opt_in);
+            }
+        }
         // theirs win where both change a setting
         let mut config = ours.personal.config;
         overlay(&mut config, &personal.config);
@@ -261,6 +301,57 @@ impl Layer {
         }
         Layer { personal, locked }
     }
+}
+
+/// Turns the mods of `profile`'s optional folders on or off as the
+/// person's opt-ins have them, as it's loaded.
+pub fn apply_opt_ins(profile: &mut Profile, optional: &[OptIn]) {
+    let folders: HashSet<Uuid> = profile
+        .folders
+        .iter()
+        .filter(|f| f.optional)
+        .map(|f| f.id)
+        .collect();
+    for m in &mut profile.mods {
+        let Some(id) = m.folder.filter(|id| folders.contains(id)) else {
+            continue;
+        };
+        m.enabled = optional
+            .iter()
+            .find(|o| o.folder == id)
+            .is_some_and(|o| !o.disabled.contains(&m.name));
+    }
+}
+
+/// The person's opt-ins, from which of `loaded`'s optional folders' mods
+/// are on: a folder with any on is opted into, with the rest off.
+pub fn opt_ins(loaded: &Profile) -> Vec<OptIn> {
+    loaded
+        .folders
+        .iter()
+        .filter(|f| f.optional)
+        .filter_map(|f| {
+            let mods: Vec<&ProfileMod> = loaded
+                .mods
+                .iter()
+                .filter(|m| m.folder == Some(f.id))
+                .collect();
+            mods.iter().any(|m| m.enabled).then(|| OptIn {
+                folder: f.id,
+                disabled: mods
+                    .iter()
+                    .filter(|m| !m.enabled)
+                    .map(|m| m.name.clone())
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+/// Turns the mods of `profile`'s optional folders off, as they're stored
+/// and published: whether they're on is each person's.
+pub fn clear_opt_ins(profile: &mut Profile) {
+    apply_opt_ins(profile, &[]);
 }
 
 /// `loaded` without its personal layer: what's synced of it. The config
@@ -454,6 +545,48 @@ mod tests {
         assert!(!personal.is_empty(id));
         personal.set_includes(id, Vec::new());
         assert!(personal.is_empty(id));
+    }
+
+    #[test]
+    fn opt_ins_are_kept_with_a_schema_that_has_them() {
+        let id = Uuid::new_v4();
+        let folder = Uuid::new_v4();
+        let mut personal = Personal::new("g");
+        assert!(personal.is_empty(id));
+        personal.optional.push(OptIn {
+            folder,
+            disabled: Vec::new(),
+        });
+        assert!(!personal.is_empty(id));
+        assert_eq!(personal.saved_schema(), PERSONAL_SCHEMA);
+        // they don't make the layer a folder of its own
+        assert!(personal.includes(id).is_empty());
+
+        let other = Uuid::new_v4();
+        let layer = |optional: Vec<OptIn>| Layer {
+            personal: Personal {
+                optional,
+                ..Personal::new("g")
+            },
+            locked: Vec::new(),
+        };
+        let theirs = layer(vec![OptIn {
+            folder,
+            disabled: vec!["a".to_owned()],
+        }]);
+        let ours = layer(vec![
+            OptIn {
+                folder,
+                disabled: Vec::new(),
+            },
+            OptIn {
+                folder: other,
+                disabled: Vec::new(),
+            },
+        ]);
+        let merged = Layer::merge(theirs, ours).personal.optional;
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].disabled, ["a"]);
     }
 
     #[test]

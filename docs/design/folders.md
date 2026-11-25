@@ -2,8 +2,9 @@
 
 Status (2026-11-24): steps 1 (folders inside a profile) and 2 (shared
 sets) are done, step 3 (the personal layer) is done but for the
-client/server-side issue, and step 4 (linked folders in synced profiles,
-for everyone) is built; the rest is a proposal. Where what gets built differs from this, the notes under
+client/server-side issue, step 4 (linked folders in synced profiles,
+for everyone) and step 5 (optional folders) are built; the rest is a
+proposal. Where what gets built differs from this, the notes under
 each step in "Order of work" say so, and those notes win.
 
 ## The problem
@@ -550,7 +551,59 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
        profile, to a deploy from before its set was re-id'd sees the old
        set as gone, so it asks as for a changed set, and "restore" would
        bring it back under the old id beside the new one.
-5. **Optional folders** in synced profiles.
+5. **Optional folders** in synced profiles. *Built.* As built:
+   - **A property of the profile's own folder**: `Folder::optional`
+     (`optional = true` in `[[folder]]`, and in its `folder/<id>` sync
+     entry). Only a synced profile that's shared from here can have one
+     made optional (`set_folder_optional`); one can be made required
+     anywhere, as in a profile that's stopped syncing. Linked folders and
+     the Personal folder can't be optional: whether a set's mods are on is
+     each profile's, and an optional folder's is each person's.
+   - **Opt-ins are personal.** Each person's are kept in the personal layer
+     (`[[optional]] folder = <id>, disabled = [...]` in `personal.toml`,
+     `PERSONAL_SCHEMA` 4, saved as that only when there are any), so they
+     go to their linked computers with the `Layer` and never to friends.
+     Having one is being opted in: its mods are on but those in
+     `disabled`, so a mod added to the folder later is on. Not having one
+     is having them all off.
+   - **Loading applies, saving derives.** The folder's mods are stored and
+     published off (`personal::clear_opt_ins`; `to_entries` too), so an
+     older build sees them off. `load_profile` turns them on as the
+     opt-ins say (`apply_opt_ins`), and `save_profile` works the opt-ins
+     out again from which are on (`opt_ins`): a folder with any on is
+     opted into. So the folder's switch is opting in or out, a mod's own
+     switch is turning it off within the folder, and nothing that turns
+     mods on or off needs to know. Going back puts the opt-ins back as they
+     were at the deploy, like the personal layer.
+   - **Making one optional** keeps the person's mods as they were (they're
+     opted in if any were on); everyone else gets them off at the next
+     sync. **Making one required** publishes the mods as the person who did
+     it has them, and everyone gets that; opt-ins left over for it are
+     dropped at each person's next save (until then they'd apply again if
+     it were made optional again).
+   - **Locking** needed nothing: mods that are off are locked like the
+     rest, and an optional folder's mods aren't personal, so they're in
+     the shared lock for everyone.
+   - **Schemas**: `PROFILE_SCHEMA` 5 and `SYNC_FORMAT` 3, each written only
+     when a folder is optional. Older builds would publish the folder as
+     required (and the mods as off for everyone) the first time they
+     changed anything, so they refuse such a profile instead.
+   - **Not in more profiles than one.** Using an optional folder linked
+     (`share_folder`) is the `MakeRequired` blocker, whose fix makes it
+     required in its own profile (it names the profile, since it's
+     usually another one) and retries. Copying it in gives an ordinary
+     folder. A friend making a linked folder optional counts as changing
+     it (`relink`): it stays the profile's own folder, and the
+     `FolderChanged` issue says they "made it optional" and offers only
+     Keep it only in this profile; `folder everywhere` raises
+     `MakeRequired`.
+   - **Exports and duplicates** make optional folders ordinary ones, with
+     the mods on as they are for the person.
+   - **CLI**: `folder optional <folder>`, `folder required <folder>`;
+     `folder list` says "optional, N on for you"; `folder on|off` say
+     it's just for you. **GUI**: the folder's menu has Make optional /
+     Make required, an optional folder has an "Optional" badge, and its
+     switch and status say it's just for you.
 6. **Sets synced between linked computers**, and exporting a set on its
    own.
 7. Who changed what, and maintainers (section 4).

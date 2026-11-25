@@ -182,7 +182,7 @@ pub fn expand(profile: &mut Profile, mut set: impl FnMut(Uuid) -> Option<Set>) {
             let mut linked = Linked {
                 folder: Folder {
                     id: set.id,
-                    name: set.name.clone(),
+                    ..Folder::new(&set.name)
                 },
                 mods: set.mods.clone(),
                 config: set.config.clone(),

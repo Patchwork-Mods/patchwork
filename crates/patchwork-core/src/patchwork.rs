@@ -39,7 +39,7 @@ use crate::matching::{self, ModText};
 use crate::options::{ModOptions, ModTransform};
 use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
-use crate::profile::{Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
+use crate::profile::{Folder, Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
 use crate::registry::Registry;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::{Origin, SettingSpec, SettingState, Settings};
@@ -2672,8 +2672,15 @@ impl Patchwork {
             )));
         }
         // linked folders go as ordinary ones; whoever imports it doesn't
-        // have the sets
-        let folders = loaded.all_folders().cloned().collect();
+        // have the sets. Optional ones do too, their mods on or off as
+        // they are for this person.
+        let folders = loaded
+            .all_folders()
+            .map(|f| Folder {
+                optional: false,
+                ..f.clone()
+            })
+            .collect();
         let mut shared = SharedProfile {
             game: Some(loaded.game.clone()),
             name: Some(loaded.name.clone()),

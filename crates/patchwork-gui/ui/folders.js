@@ -19,6 +19,10 @@
 // an ordinary folder, unless it was added just for this person. What they
 // change in it stays in this profile until the person picks, from the
 // warning that says so, whether it's used in every profile.
+//
+// A synced profile's own folder can be made optional: everyone it's shared
+// with gets its mods, but off, and each person turns them on for
+// themselves. Its switch is then this person's alone.
 
 import { $, chevronIcon, folderIcon, h } from "./dom.js";
 import { errorText, invoke, run, state, status } from "./state.js";
@@ -132,7 +136,7 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
   const toggle = h("input", {
     type: "checkbox",
     role: "switch",
-    "aria-label": `Enable the mods in ${folder.name}`,
+    "aria-label": folder.optional ? `Use ${folder.name}, just for you` : `Enable the mods in ${folder.name}`,
     onchange: (e) => setEnabled(folder, e.target),
   });
   const arrow = h(
@@ -170,6 +174,11 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
       ]
     : [
         { label: "Rename…", run: () => renameFolder(folder) },
+        // only whoever shares it picks; one can be made required anywhere
+        !state.profile.following &&
+          (folder.optional
+            ? { label: "Make required", run: () => setOptional(folder, false) }
+            : state.profile.synced && { label: "Make optional", run: () => setOptional(folder, true) }),
         "-",
         { label: "Remove folder", danger: true, run: () => removeFolder(folder) },
       ];
@@ -178,7 +187,11 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
     {
       type: "button",
       class: "folder-menu",
-      title: folder.linked ? "Rename this shared folder, or stop sharing it" : "Rename or remove this folder",
+      title: folder.linked
+        ? "Rename this shared folder, or stop sharing it"
+        : state.profile.synced && !state.profile.following
+        ? "Rename or remove this folder, or make it optional"
+        : "Rename or remove this folder",
       "aria-label": `${folder.name} options`,
       "aria-haspopup": "menu",
       onclick: (e) => popupMenu(e.currentTarget, items),
@@ -195,6 +208,17 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
             : "These mods stay on this computer: they aren't synced to anyone the profile's shared with. Link your other computers in Settings to have them there too.",
         },
         state.profile.devicesLinked ? "Only on your computers" : "Only on this computer",
+      )
+    : folder.optional
+    ? h(
+        "span",
+        {
+          class: "badge folder-shared",
+          title:
+            "Everyone the profile's shared with gets these mods, but each person turns them on for themselves. " +
+            "Turning them on or off here is just for you.",
+        },
+        "Optional",
       )
     : folder.linked && [
       h(
@@ -239,7 +263,12 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
       ),
       h(
         "label",
-        { class: "switch", title: "Turn all of this folder's mods on or off" },
+        {
+          class: "switch",
+          title: folder.optional
+            ? "Turn this folder's mods on or off, just for you"
+            : "Turn all of this folder's mods on or off",
+        },
         toggle,
       ),
       menu,
@@ -288,7 +317,8 @@ async function setEnabled(folder, input) {
       enabled,
     });
     showProfile(profile);
-    status(`Turned ${enabled ? "on" : "off"} the mods in ${folder.name}`);
+    const mine = folder.optional ? ", just for you" : "";
+    status(`Turned ${enabled ? "on" : "off"} the mods in ${folder.name}${mine}`);
   } catch {
     input.checked = !enabled;
   }
@@ -317,7 +347,7 @@ export function folderButton(m, iconAction) {
           !own?.linked && { label: `Keep on ${where()} only`, run: () => setPersonal(m, true) };
       popupMenu(e.currentTarget, [
         ...others.map((f) => ({
-          label: f.linked ? `Move to ${f.name} (shared)` : `Move to ${f.name}`,
+          label: f.linked ? `Move to ${f.name} (shared)` : f.optional ? `Move to ${f.name} (optional)` : `Move to ${f.name}`,
           run: () => moveTo(m, f),
         })),
         own &&
@@ -396,6 +426,20 @@ async function unlink(folder, keep) {
         ? `${folder.name}'s mods are in Personal now; the other profiles still have the folder`
         : `${folder.name} is this profile's own now; the other profiles still have theirs`
       : `Took ${folder.name} out of this profile; add it again from Add folder`,
+  );
+}
+
+/**
+ * Makes a folder optional, so each person the profile's shared with turns
+ * its mods on for themselves, or with `optional` false required again.
+ */
+async function setOptional(folder, optional) {
+  const profile = await run("set_folder_optional", { id: state.profile.id, folder: folder.id, optional });
+  showProfile(profile);
+  status(
+    optional
+      ? `${folder.name} is optional now: everyone gets its mods, and turns them on for themselves`
+      : `${folder.name} is required now: everyone has its mods as you do`,
   );
 }
 

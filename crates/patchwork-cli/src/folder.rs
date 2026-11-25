@@ -69,9 +69,18 @@ pub(crate) enum FolderCommand {
         #[arg(required = true)]
         mods: Vec<String>,
     },
-    /// Enable every mod in a folder.
+    /// Make a synced profile's folder optional: everyone gets its mods,
+    /// but each person turns them on for themselves (with `on`). They stay
+    /// as they are for you.
+    Optional { folder: String },
+    /// Make an optional folder required again: everyone gets its mods on
+    /// or off as you have them.
+    Required { folder: String },
+    /// Enable every mod in a folder. In an optional folder, that's only
+    /// for you.
     On { folder: String },
-    /// Disable every mod in a folder.
+    /// Disable every mod in a folder. In an optional folder, that's only
+    /// for you.
     Off { folder: String },
 }
 
@@ -89,7 +98,12 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
                     .filter(|m| m.folder == Some(f.id))
                     .collect();
                 let off = mods.iter().filter(|m| !m.enabled).count();
-                let off = if off > 0 {
+                let off = if f.optional {
+                    match mods.len() - off {
+                        0 => ", optional, off for you".to_owned(),
+                        on => format!(", optional, {on} on for you"),
+                    }
+                } else if off > 0 {
                     format!(", {off} disabled")
                 } else {
                     String::new()
@@ -215,13 +229,30 @@ pub(crate) fn run(pw: &Patchwork, command: FolderCommand, explicit: &Option<Stri
             pw.set_personal(&profile, &mods, false)?;
             println!("{} synced to everyone now", is_are(&mods));
         }
+        FolderCommand::Optional { folder } => {
+            pw.set_folder_optional(&profile, &folder, true)?;
+            println!(
+                "{folder} is optional now: everyone gets its mods, and turns them on for \
+                 themselves"
+            );
+        }
+        FolderCommand::Required { folder } => {
+            pw.set_folder_optional(&profile, &folder, false)?;
+            println!("{folder} is required now: everyone has its mods as you do");
+        }
         FolderCommand::On { folder } => {
             pw.set_folder_enabled(&profile, &folder, true)?;
-            println!("enabled the mods in {folder}");
+            match loaded.find_folder(&folder).is_ok_and(|f| f.optional) {
+                true => println!("enabled the mods in {folder}, just for you"),
+                false => println!("enabled the mods in {folder}"),
+            }
         }
         FolderCommand::Off { folder } => {
             pw.set_folder_enabled(&profile, &folder, false)?;
-            println!("disabled the mods in {folder}");
+            match loaded.find_folder(&folder).is_ok_and(|f| f.optional) {
+                true => println!("disabled the mods in {folder}, just for you"),
+                false => println!("disabled the mods in {folder}"),
+            }
         }
     }
     Ok(())

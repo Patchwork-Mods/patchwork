@@ -17,10 +17,12 @@
 //! - `ext/<id>`: what extension `<id>` keeps for the profile (see
 //!   [`Profile::ext`]), so two extensions' changes made at once both
 //!   survive. What extensions keep for a mod is part of the mod's entry.
-//! - `folder/<id>`: a [`Folder`]'s name. Which folder a mod is in is part
-//!   of the mod's entry, so mods moved between folders at once all survive.
-//!   Older builds ignore these, and drop mods' folders when they change
-//!   them, which only changes how the list is shown.
+//! - `folder/<id>`: a [`Folder`]'s name, and whether it's optional. Which
+//!   folder a mod is in is part of the mod's entry, so mods moved between
+//!   folders at once all survive. Older builds ignore these, and drop
+//!   mods' folders when they change them, which only changes how the list
+//!   is shown. An optional folder's mods are published off: each person
+//!   opts in for themselves (see [`crate::personal::OptIn`]).
 //! - `config/<path>`: the settings changed in the config file deployed to
 //!   `<path>` (see [`Profile::config`]), so changes to different files
 //!   made at once all survive
@@ -69,8 +71,13 @@ use crate::{Error, Result};
 
 /// The version of the entries' layout this build reads and writes. 2 moved
 /// the plugin load order into extensions' state, which format 1 builds
-/// would lose.
-pub const SYNC_FORMAT: u32 = 2;
+/// would lose. 3 added optional folders, which format 2 builds would
+/// publish as required ones; a profile with none is written as 2 (see
+/// [`format_of`]), so they still read the rest.
+pub const SYNC_FORMAT: u32 = 3;
+
+/// The format a profile with no optional folders is written as.
+const FORMAT_WITHOUT_OPTIONAL: u32 = 2;
 
 /// The newest value of each key; see the [module docs](self).
 pub type Entries = BTreeMap<String, Vec<u8>>;
@@ -101,6 +108,8 @@ struct FormatEntry {
 #[derive(Serialize, Deserialize)]
 struct FolderEntry {
     name: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    optional: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -128,7 +137,7 @@ pub fn to_entries(profile: &Profile, lock: Option<&Lockfile>) -> Entries {
     entries.insert(
         FORMAT.to_owned(),
         json(&FormatEntry {
-            format: SYNC_FORMAT,
+            format: format_of(profile),
         }),
     );
     let meta = ProfileEntry {
@@ -145,7 +154,15 @@ pub fn to_entries(profile: &Profile, lock: Option<&Lockfile>) -> Entries {
         entries.insert(format!("{EXT}{id}"), json(state));
     }
     for m in &profile.mods {
-        entries.insert(format!("{MOD}{}", key_of(m)), json(m));
+        let value = match profile.optional_folder(m) {
+            // each person's opt-in turns it on, not what's published
+            Some(_) if m.enabled => json(&ProfileMod {
+                enabled: false,
+                ..m.clone()
+            }),
+            _ => json(m),
+        };
+        entries.insert(format!("{MOD}{}", key_of(m)), value);
     }
     for (path, edits) in &profile.config {
         entries.insert(format!("{CONFIG}{path}"), json(edits));
@@ -153,6 +170,7 @@ pub fn to_entries(profile: &Profile, lock: Option<&Lockfile>) -> Entries {
     for f in &profile.folders {
         let entry = FolderEntry {
             name: f.name.clone(),
+            optional: f.optional,
         };
         entries.insert(format!("{FOLDER}{}", f.id), json(&entry));
     }
@@ -188,6 +206,7 @@ pub fn from_entries(entries: &Entries) -> Result<Synced> {
                 folders.push(Folder {
                     id,
                     name: entry.name,
+                    optional: entry.optional,
                 });
             }
         } else if let Some(id) = key.strip_prefix(EXT) {
@@ -286,6 +305,16 @@ pub fn unlocked<'a>(profile: &'a Profile, lock: Option<&Lockfile>) -> Vec<&'a st
         .filter(|m| !locked.contains(&key_of(m)))
         .map(|m| m.name.as_str())
         .collect()
+}
+
+/// The format `profile` is written as: the oldest that has everything in
+/// it, so builds that would get it wrong refuse it, but the rest still
+/// read it.
+fn format_of(profile: &Profile) -> u32 {
+    match profile.folders.iter().any(|f| f.optional) {
+        true => SYNC_FORMAT,
+        false => FORMAT_WITHOUT_OPTIONAL,
+    }
 }
 
 /// Fails if `entries` were written in a layout this build can't read.

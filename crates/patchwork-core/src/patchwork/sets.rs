@@ -9,6 +9,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::Patchwork;
+use super::changed_folders::optional_folder;
 use super::personal::personal_include;
 use crate::ConfigFileInfo;
 use crate::config::{FileEdits, overlay, same_dest};
@@ -72,6 +73,9 @@ impl Patchwork {
         let found = loaded.find_folder(folder)?.clone();
         if loaded.include(found.id).is_some() {
             return Err(Error::invalid(format!("{} is already a set", found.name)));
+        }
+        if found.optional {
+            return Err(optional_folder(&loaded, &found));
         }
         let name = self.set_name(&loaded.game, &found.name, None)?;
         let (mut set, own) = folder_as_set(&loaded, &found, &files);
@@ -166,7 +170,7 @@ impl Patchwork {
             if !sets.contains_key(&set.id) && loaded.include(set.id).is_none() {
                 let folder = Folder {
                     id: set.id,
-                    name: set.name.clone(),
+                    ..Folder::new(&set.name)
                 };
                 found.push(set_folder(&folder, &set.mods, already, followed));
             }
@@ -649,7 +653,7 @@ pub(super) fn linked(set: &Set) -> Linked {
     Linked {
         folder: Folder {
             id: set.id,
-            name: set.name.clone(),
+            ..Folder::new(&set.name)
         },
         mods: set.mods.clone(),
         config: set.config.clone(),

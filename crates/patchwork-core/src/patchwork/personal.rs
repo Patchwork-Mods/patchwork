@@ -323,10 +323,15 @@ pub(super) fn keep_added(loaded: &mut Profile, base: &Entries) -> Result<bool> {
 
 /// Makes the personal layer of `profile` (whose id was `id`) an ordinary
 /// folder of its own, for a copy of it that isn't synced. The sets it
-/// included personally are the copy's own includes.
+/// included personally are the copy's own includes, and its optional
+/// folders ordinary ones, with their mods on as they were for the person.
 pub(super) fn fold_personal(profile: &mut Profile, id: Uuid) {
     for include in &mut profile.includes {
         include.personal = false;
+    }
+    // and optional folders are ordinary ones, as the person has them
+    for folder in &mut profile.folders {
+        folder.optional = false;
     }
     let Some(at) = profile.includes.iter().position(|i| i.set == id) else {
         return;

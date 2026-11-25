@@ -307,9 +307,15 @@ impl Patchwork {
         loaded.schema = PROFILE_SCHEMA;
         // its personal layer is included like a set, with the sets it
         // includes personally (see `crate::personal`)
-        if let Some(personal) = self.load_personal(profile)? {
+        let personal = self.load_personal(profile)?;
+        if let Some(personal) = &personal {
             loaded.includes.extend(personal.includes(profile.uuid));
         }
+        // the optional folders' mods are on as the person's opted in
+        personal::apply_opt_ins(
+            &mut loaded,
+            personal.as_ref().map_or(&[], |p| p.optional.as_slice()),
+        );
         let mut failed = None;
         set::expand(&mut loaded, |id| match self.load_set(id) {
             Ok(found) => found,
@@ -328,7 +334,8 @@ impl Patchwork {
     /// mods to its file, and the mods of the sets it includes to those
     /// sets, if they've changed (see [`set::collapse`]). Its personal
     /// layer is saved to its own file, or removed if the profile no longer
-    /// includes it. A set it no longer includes is settled (see
+    /// includes it, with which of the optional folders' mods are on (see
+    /// [`personal::OptIn`]), since those are stored off. A set it no longer includes is settled (see
     /// [`Patchwork::settle_set`]): one only one profile still includes
     /// becomes that profile's own folder.
     pub(super) fn save_profile(&self, profile: &ProfileRef, value: &Profile) -> Result<()> {
@@ -355,6 +362,8 @@ impl Patchwork {
             None => value,
         };
         let (mut stored, changed) = set::collapse(value);
+        let optional = personal::opt_ins(value);
+        personal::clear_opt_ins(&mut stored);
         // the personal layer's, and sets included personally, are kept with it
         let personal: Vec<Include>;
         (personal, stored.includes) = std::mem::take(&mut stored.includes)
@@ -382,22 +391,20 @@ impl Patchwork {
             }
         }
         let before = self.stored_includes(profile)?;
-        if personal.is_empty() {
-            self.remove_personal(profile)?;
-        } else {
-            let mut saved = self
-                .load_personal(profile)?
-                .unwrap_or_else(|| Personal::new(&value.game));
-            if !personal.iter().any(|i| i.set == profile.uuid) {
-                saved.mods = Vec::new();
-                saved.config = Default::default();
-            }
-            if let Some(mods) = personal_mods {
-                saved.mods = mods;
-            }
-            saved.set_includes(profile.uuid, personal.clone());
-            self.save_personal(profile, &saved)?;
+        let mut saved = self
+            .load_personal(profile)?
+            .unwrap_or_else(|| Personal::new(&value.game));
+        if !personal.iter().any(|i| i.set == profile.uuid) {
+            saved.mods = Vec::new();
+            saved.config = Default::default();
         }
+        if let Some(mods) = personal_mods {
+            saved.mods = mods;
+        }
+        saved.set_includes(profile.uuid, personal.clone());
+        saved.optional = optional;
+        // removed if there's nothing in it
+        self.save_personal(profile, &saved)?;
         fsutil::write_toml(&self.profile_file(profile), &stored)?;
         self.profile_changed(profile, false);
         // a set no longer shared is a folder again (see `settle_set`)

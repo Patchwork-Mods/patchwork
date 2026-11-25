@@ -21,7 +21,7 @@ use crate::fix::Fix;
 use crate::fsutil;
 use crate::issue::{Issue, IssueKind, Severity};
 use crate::lock::mod_key;
-use crate::profile::{Include, Profile, ProfileMod, ProfileRef};
+use crate::profile::{Folder, Include, Profile, ProfileMod, ProfileRef};
 use crate::{Error, Result};
 
 /// The profile's folders that came from sets when someone else changed
@@ -70,6 +70,9 @@ impl Patchwork {
         let loaded = self.load_profile(profile)?;
         let found = loaded.find_folder(folder)?.clone();
         let from = self.where_from(profile, &loaded, found.id)?;
+        if found.optional {
+            return Err(optional_folder(&loaded, &found));
+        }
         let mut set = self
             .load_set(from.set)?
             .ok_or_else(|| set_gone(&found.name))?;
@@ -228,6 +231,9 @@ impl Patchwork {
             if folder.name != set.name {
                 what.push(format!("renamed it from {}", set.name));
             }
+            if folder.optional {
+                what.push("made it optional".to_owned());
+            }
             for (done, names) in [
                 ("added", &added),
                 ("removed", &removed),
@@ -240,6 +246,19 @@ impl Patchwork {
             if what.is_empty() {
                 what.push("moved its mods around".to_owned());
             }
+            let use_everywhere = Fix::UseEverywhere {
+                folder: folder.id.to_string(),
+                name: folder.name.clone(),
+            };
+            let keep_here = Fix::KeepHere {
+                folder: folder.id.to_string(),
+                name: folder.name.clone(),
+            };
+            // a folder in other profiles can't be optional
+            let (fix, other_fixes) = match folder.optional {
+                true => (keep_here, Vec::new()),
+                false => (use_everywhere, vec![keep_here]),
+            };
             issues.push(Issue {
                 severity: Severity::Warning,
                 mods: ours.iter().map(|m| m.name.clone()).collect(),
@@ -259,14 +278,8 @@ impl Patchwork {
                     removed,
                     changed,
                 },
-                fix: Some(Fix::UseEverywhere {
-                    folder: folder.id.to_string(),
-                    name: folder.name.clone(),
-                }),
-                other_fixes: vec![Fix::KeepHere {
-                    folder: folder.id.to_string(),
-                    name: folder.name.clone(),
-                }],
+                fix: Some(fix),
+                other_fixes,
             });
         }
         Ok(issues)
@@ -354,6 +367,30 @@ impl Patchwork {
 /// What a profile's folders that came from sets are kept in, in its state
 /// folder.
 const FILE: &str = "from-sets.json";
+
+/// A folder that's optional in a synced profile can't be in other
+/// profiles too: whether its mods are on is each person's, not each
+/// profile's. Making it required again clears that.
+pub(super) fn optional_folder(loaded: &Profile, folder: &Folder) -> Error {
+    let label = loaded.label();
+    let name = &folder.name;
+    Error::blocked(
+        format!("{name} is optional in {label}, so it can't be in other profiles too"),
+        format!("{name} is optional"),
+        format!(
+            "{name} is optional in {label}: everyone it's synced with picks for themselves \
+             whether its mods are on. A folder in more profiles than one has its mods on or \
+             off in each profile instead, so it has to be required first. Its mods stay as \
+             they are for you, and everyone else gets them as you have them."
+        ),
+        Fix::MakeRequired {
+            profile: loaded.id.to_string(),
+            label,
+            folder: folder.id.to_string(),
+            name: name.clone(),
+        },
+    )
+}
 
 fn set_gone(name: &str) -> Error {
     Error::invalid(format!(

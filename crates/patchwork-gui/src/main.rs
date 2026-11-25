@@ -1386,6 +1386,21 @@ fn set_folder_enabled(
     profile_detail(&app.pw, id)
 }
 
+/// Makes one of a synced profile's folders optional, so each person
+/// opts in for themselves, or with `optional` false required again.
+#[tauri::command]
+fn set_folder_optional(
+    app: State<'_, App>,
+    id: String,
+    folder: String,
+    optional: bool,
+) -> CmdResult<ProfileDetail> {
+    app.pw
+        .set_folder_optional(&profile_ref(&id)?, &folder, optional)
+        .map_err(msg)?;
+    profile_detail(&app.pw, id)
+}
+
 /// The folders of the game's other profiles, for using one in this one
 /// too.
 #[tauri::command]
@@ -2705,6 +2720,7 @@ fn main() {
             set_mod_folder,
             set_personal,
             set_folder_enabled,
+            set_folder_optional,
             other_folders,
             use_folder,
             include_set,

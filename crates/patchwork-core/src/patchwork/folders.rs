@@ -97,6 +97,60 @@ impl Patchwork {
         }
         self.save_profile(profile, &loaded)
     }
+
+    /// Makes one of a synced profile's own folders optional, so that
+    /// everyone it's synced with gets its mods but each person opts in for
+    /// themselves, or with `optional` false required again (see
+    /// [`Folder::optional`]). Whether its mods are on for this person stays
+    /// as it is: making it optional opts them in if any are on, and making
+    /// it required gives everyone the mods as they have them.
+    ///
+    /// Only a profile that's shared from here can have one made optional,
+    /// and only its own folders (not one that's in other profiles too, or
+    /// the personal layer's) can be. One can be made required anywhere, as
+    /// in a profile that's stopped being synced.
+    pub fn set_folder_optional(
+        &self,
+        profile: &ProfileRef,
+        folder: &str,
+        optional: bool,
+    ) -> Result<()> {
+        let mut loaded = self.load_profile(profile)?;
+        let found = loaded.find_folder(folder)?.clone();
+        if found.optional == optional {
+            return Ok(());
+        }
+        if found.id == loaded.id {
+            return Err(Error::invalid(format!(
+                "{}'s personal mods are only on your computers, so they can't be optional",
+                loaded.label()
+            )));
+        }
+        if loaded.include(found.id).is_some() {
+            return Err(Error::invalid(format!(
+                "{} is in other profiles too, where its mods are on or off for each \
+                 profile, so it can't be optional; stop sharing it first",
+                found.name
+            )));
+        }
+        if self.is_followed(profile)? {
+            return Err(Error::invalid(format!(
+                "you follow {}, so only whoever shares it can change which folders are optional",
+                loaded.label()
+            )));
+        }
+        if optional && !self.is_synced(profile) {
+            return Err(Error::invalid(format!(
+                "{} isn't synced, so there's no one else to pick for themselves; \
+                 turn {}'s mods on or off instead",
+                loaded.label(),
+                found.name
+            )));
+        }
+        let f = loaded.folders.iter_mut().find(|f| f.id == found.id);
+        f.expect("just found").optional = optional;
+        self.save_profile(profile, &loaded)
+    }
 }
 
 /// The personal layer's folder (see [`crate::personal`]) isn't one to
