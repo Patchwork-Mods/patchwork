@@ -1,10 +1,11 @@
 # Folders, shared sets and layered profiles
 
-Status (2026-11-24): steps 1 (folders inside a profile) and 2 (shared
+Status (2026-11-25): steps 1 (folders inside a profile) and 2 (shared
 sets) are done, step 3 (the personal layer) is done but for the
 client/server-side issue, step 4 (linked folders in synced profiles,
-for everyone) and step 5 (optional folders) are built; the rest is a
-proposal. Where what gets built differs from this, the notes under
+for everyone) and step 5 (optional folders) are built, and so is step
+6's syncing of sets between linked computers (exporting a set on its
+own is still to do); the rest is a proposal. Where what gets built differs from this, the notes under
 each step in "Order of work" say so, and those notes win.
 
 ## The problem
@@ -384,9 +385,9 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      profile's own folders still can't become sets (`CopyFolder`), and a
      profile that includes sets in its file still can't start syncing as
      it is (`UnlinkSets`, or `IncludePersonally`; see below); step 4
-     removes both. The sets themselves aren't
-     synced between linked computers yet (step 6): another computer gets
-     the include, and a `MissingSet` issue until it has the set. GUI:
+     removes both. The sets themselves weren't synced between linked
+     computers until step 6: another computer got the include, and a
+     `MissingSet` issue until it had the set. GUI:
      the folder's marked "Only on your computers" next to "Shared with
      N profiles", and "From another profile…" says so before adding.
    - **Personal config edits.** The personal layer keeps settings of its
@@ -479,7 +480,7 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
        it stays in step with them, and stops including the set: the
        folder becomes its own, keeping its id (friends know it), and is
        recorded in profile-state as having come from the set. The set
-       takes a new id instead, since only this computer knows it. The
+       takes a new id instead, since friends don't know it. The
        other profiles are left as they were.
      - That's reported as an issue ("Sam changed Client QOL, which is
        also in A and B"), listing what was added, removed and changed,
@@ -496,7 +497,8 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
        set (`settle_set` as usual).
    - **Linked computers** get the folder from the profile's document as
      an ordinary folder (no `MissingSet`); it's only linked on the
-     computer that has the set, until step 6.
+     computer that has the set, until step 6 (which links it on all of
+     them).
    - Order: publishing and locking; removing `CopyFolder` and the sync
      blocker; incoming changes and their issue; GUI and CLI.
    - **As built:**
@@ -605,7 +607,60 @@ checks. That's a lot of machinery for groups of friends. In order of cost:
      Make required, an optional folder has an "Optional" badge, and its
      switch and status say it's just for you.
 6. **Sets synced between linked computers**, and exporting a set on its
-   own.
+   own. *Syncing built*; exporting is still to do. As built:
+   - **One entry per set** in the devices document, `set/<set id>`,
+     holding the `Set` as JSON (`Set::to_bytes`), or `null` once it's
+     gone; the newest wins. What each was when last in step is kept in
+     `<data>/sync/sets/<id>`, so a change here is told from one that
+     arrived (patchwork-sync's `sets`, like `personal`). The first time a
+     set's in step, the document's wins. Sets are synced before personal
+     layers, so a set included personally is there when its include
+     arrives.
+   - **Which profiles include a set isn't synced.** A synced profile's
+     document already has each set it includes for everyone as an
+     ordinary folder with the set's id (step 4). So on a computer that has
+     the set, a profile's own folder with its id that's as the set has it
+     (its name and its mods, in order, whether or not they're on) is the
+     set: the profile includes it, with what's off in the folder off in
+     the include. `relink` does that when a profile arrives (for new ones
+     too), and `Patchwork::apply_set` when a set arrives, for the
+     profiles here that have its folder. Either can come first.
+   - **Gone on another computer** (`apply_set` with none): the profiles
+     here that include it for everyone keep its mods and settings as
+     their own, in a folder with its id, so their documents don't
+     change, and the profiles' documents bring whatever else happened
+     (unlinked without its mods, say). Those that include it personally
+     keep the include, since their personal layer comes over too.
+   - **Telling the person's own changes from a friend's.** A change to a
+     linked folder made on another of the person's computers reaches a
+     profile here through the profile's document as well as the devices
+     document, in either order. It mustn't be taken for a friend's
+     (step 4), which would split the folder off the set. The devices
+     document is only written to by the person's own computers, so its
+     entries' authors are theirs: patchwork-sync passes
+     `apply_synced_from` the keys whose newest value one of them wrote
+     (`ours`). A folder that differs from the set only by those keys
+     (its folder entry, its mods' entries and the order) is the
+     profile's own until the set's change arrives, then it's linked
+     again; nothing's published meanwhile, since it's as the document
+     has it. Anything a friend wrote among them makes it their change,
+     as before.
+   - **A friend's change on every computer.** Each of the person's
+     computers sees it, and splits the folder off the set the same way:
+     the set's new id is worked out from its old one and the profile's
+     (`split_id`), so they agree on it without asking each other. Each
+     shows the `FolderChanged` issue; answering on one settles it on the
+     others, as the sets and profiles it changes arrive.
+   - **A profile's change waits until all of it's here.** Entries whose
+     content hadn't arrived were left out, so a profile could be taken
+     without its `order`, its mods sorted by key, and that published
+     back over the real order. A profile's document is now only taken
+     once everything in it has arrived (`still_arriving`); its content
+     arriving brings it round again.
+   - Not done: exporting a set on its own. A set has no lockfile of its
+     own, so a zip of one would have to be locked through a profile that
+     includes it, or carry no lock; and importing one needs somewhere to
+     go (a new profile, or a folder of an existing one).
 7. Who changed what, and maintainers (section 4).
 8. **Linked folders between friends**, if there's a need: sets as
    documents of their own that friends sync.

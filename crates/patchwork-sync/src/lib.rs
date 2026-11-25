@@ -12,8 +12,9 @@
 //!   profile on any of them, including ones made later, is kept in step on
 //!   all of them. A devices document lists each profile's document, as
 //!   `profile/<uuid>`, with a ticket to it, the mods the user follows
-//!   (see [`follows`]) and each profile's personal layer (see
-//!   [`personal`]), which goes to no one else.
+//!   (see [`follows`]), each profile's personal layer (see
+//!   [`personal`]) and the shared sets, folders linked in more profiles
+//!   than one (see [`sets`]), which go to no one else.
 //! - With friends ([`Node::share`], writable): everyone can change the
 //!   profile, and every change goes to everyone. Whoever can write to a
 //!   document puts themselves in it as `peer/<endpoint id>`, so everyone
@@ -73,6 +74,7 @@ mod follows;
 pub mod moves;
 pub mod names;
 mod personal;
+mod sets;
 
 pub use moves::Removed;
 pub use names::{peer_names, set_peer_name};
@@ -566,6 +568,7 @@ impl Node {
         self.drop_doc(Watched::Devices, id).await?;
         follows::forget(&self.dir)?;
         personal::forget(&self.dir)?;
+        sets::forget(&self.dir)?;
         self.save_list(&list)
     }
 
@@ -630,7 +633,7 @@ impl Node {
 
     /// Starts syncing the profiles the user's other computers have put in
     /// the devices document, which arrive as [`Node::run`] hears from their
-    /// documents, and puts in this computer's; then keeps follows and
+    /// documents, and puts in this computer's; then keeps follows, sets and
     /// personal layers in step, returning what that did for each profile
     /// it did anything for.
     async fn sync_devices(&self, pw: &Patchwork, doc: &Doc) -> Result<Vec<Outcome>> {
@@ -671,7 +674,10 @@ impl Node {
                 .await?;
         }
         self.sync_follows(pw, doc).await?;
-        self.sync_personal(pw, doc).await
+        // first, so the sets included personally are here
+        let mut outcomes = self.sync_sets(pw, doc).await?;
+        outcomes.extend(self.sync_personal(pw, doc).await?);
+        Ok(outcomes)
     }
 
     /// Whether `synced` was here and has since been removed, so should stop
@@ -820,6 +826,15 @@ impl Node {
                         on_sync(Err(e));
                     }
                     if self.devices_linked().unwrap_or(false)
+                        && self.sets_changed(pw)
+                        && let Some(doc) = self.devices_doc().await?
+                    {
+                        match self.sync_sets(pw, &doc).await {
+                            Ok(outcomes) => outcomes.into_iter().for_each(|o| on_sync(Ok(o))),
+                            Err(e) => on_sync(Err(e)),
+                        }
+                    }
+                    if self.devices_linked().unwrap_or(false)
                         && self.personal_changed(pw)
                         && let Some(doc) = self.devices_doc().await?
                     {
@@ -942,17 +957,21 @@ impl Node {
             });
         }
         let entries = self.read_entries(doc).await?;
-        if entries.is_empty() {
+        // Taken once all of it's here: taken without part of it (the order,
+        // say), it'd be published back without it. Its content arriving
+        // brings it back here.
+        if entries.is_empty() || self.still_arriving(doc, &entries).await? {
             return Ok(Outcome::nothing(synced.reference()));
         }
+        let ours = self.ours(doc).await?;
         let applied = if synced.arrived {
             // removed here meanwhile, so it's left rather than brought back
-            let Some(applied) = pw.update_synced(&entries, synced.writable)? else {
+            let Some(applied) = pw.update_synced_from(&entries, synced.writable, &ours)? else {
                 return Ok(Outcome::nothing(synced.reference()));
             };
             applied
         } else {
-            pw.apply_synced(&entries, synced.writable)?
+            pw.apply_synced_from(&entries, synced.writable, &ours)?
         };
         if !synced.arrived {
             self.remember(SyncedProfile {
@@ -1057,6 +1076,42 @@ impl Node {
             }
         }
         Ok(entries)
+    }
+
+    /// The keys in `doc` whose newest value was written by this person's
+    /// own computers: this one, and those linked to it, which are the ones
+    /// that write to the devices document.
+    async fn ours(&self, doc: &Doc) -> Result<HashSet<String>> {
+        let mut authors = HashSet::from([self.author]);
+        if let Some(devices) = self.devices_doc().await? {
+            let stream = devices.get_many(Query::all().build()).await?;
+            let mut stream = std::pin::pin!(stream);
+            while let Some(entry) = stream.next().await {
+                authors.insert(entry?.author());
+            }
+        }
+        let mut ours = HashSet::new();
+        let stream = doc.get_many(Query::single_latest_per_key().build()).await?;
+        let mut stream = std::pin::pin!(stream);
+        while let Some(entry) = stream.next().await {
+            let entry = entry?;
+            if authors.contains(&entry.author())
+                && let Some(key) = entry_key(entry.key())
+            {
+                ours.insert(key.to_owned());
+            }
+        }
+        Ok(ours)
+    }
+
+    /// Whether some of what's in `doc` hasn't arrived yet: keys
+    /// [`Node::read_entries`] would read, but whose content isn't in
+    /// `entries`, which it read.
+    async fn still_arriving(&self, doc: &Doc, entries: &Entries) -> Result<bool> {
+        Ok(self.keys(doc).await?.iter().any(|key| {
+            !(key.starts_with(FILE) || key.starts_with(PEER) || key == MOVED)
+                && !entries.contains_key(key)
+        }))
     }
 
     /// Every key in `doc`, including ones whose content hasn't arrived.

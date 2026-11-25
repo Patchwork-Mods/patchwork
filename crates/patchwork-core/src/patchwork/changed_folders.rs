@@ -47,12 +47,16 @@ impl Patchwork {
     /// [`relink`](super::sync)). If other profiles include the set, it
     /// takes a new id, and the profile keeps a note of it for
     /// [`Patchwork::issues`] to ask about. Otherwise it's settled as usual.
+    ///
+    /// The new id is worked out from the old one and the profile's, so the
+    /// person's other computers, which have the set too and see the same
+    /// change, give it the same one (see [`split_id`]).
     pub(super) fn folder_changed(&self, profile: &ProfileRef, id: Uuid) -> Result<()> {
         let others = self.profiles_including(id)?;
         if others.iter().all(|p| p == profile) {
             return self.settle_set(id);
         }
-        let set = Uuid::new_v4();
+        let set = split_id(id, profile);
         let mut found = self.came_from(profile)?;
         found.folders.retain(|f| f.folder != id);
         found.folders.push(FromSet { folder: id, set });
@@ -286,9 +290,11 @@ impl Patchwork {
     }
 
     /// Gives the set `old` the id `new`, for every profile that includes
-    /// it. Sets are only on this computer, so nothing else knows their
-    /// ids, except through synced profiles that include them for everyone,
-    /// which publish the change of folder.
+    /// it. Friends only know a set's id through synced profiles that
+    /// include it for everyone, which publish the change of folder. The
+    /// person's other computers get the set under its new id from the
+    /// devices document, and link those folders to it again (see
+    /// [`Patchwork::apply_set`]).
     pub(super) fn reid_set(&self, old: Uuid, new: Uuid) -> Result<()> {
         let mut including = Vec::new();
         for profile in self.profiles_including(old)? {
@@ -362,6 +368,14 @@ impl Patchwork {
     fn came_from_file(&self, profile: &ProfileRef) -> PathBuf {
         self.profile_state_dir(profile).join(FILE)
     }
+}
+
+/// The id the set `id` takes when someone `profile` is synced with changes
+/// its folder there (see [`Patchwork::folder_changed`]): the same on every
+/// computer of the person's, so they agree on it without asking each other.
+pub(super) fn split_id(id: Uuid, profile: &ProfileRef) -> Uuid {
+    let mixed = id.as_u128() ^ profile.uuid.as_u128().rotate_left(64);
+    uuid::Builder::from_random_bytes(mixed.to_le_bytes()).into_uuid()
 }
 
 /// What a profile's folders that came from sets are kept in, in its state

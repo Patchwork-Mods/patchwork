@@ -456,9 +456,17 @@ impl Patchwork {
     /// personal layer (see [`crate::personal`]), the private set only it
     /// includes.
     pub fn load_set(&self, id: Uuid) -> Result<Option<Set>> {
+        match self.shared_set(id)? {
+            Some(set) => Ok(Some(set)),
+            None => self.load_personal_set(id),
+        }
+    }
+
+    /// The shared set with id `id`, if there is one (not a personal layer).
+    pub(super) fn shared_set(&self, id: Uuid) -> Result<Option<Set>> {
         let path = self.set_file(id);
         let Some(set) = fsutil::read_toml::<Set>(&path)? else {
-            return self.load_personal_set(id);
+            return Ok(None);
         };
         if set.schema > SET_SCHEMA {
             return Err(Error::Schema {
@@ -469,6 +477,24 @@ impl Patchwork {
             });
         }
         Ok(Some(set))
+    }
+
+    /// Every shared set here, of any game (not the personal layers).
+    pub fn all_sets(&self) -> Result<Vec<Set>> {
+        let mut sets = Vec::new();
+        let Ok(entries) = fs::read_dir(self.paths.sets()) else {
+            return Ok(sets);
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let Ok(id) = entry.file_name().to_string_lossy().parse::<Uuid>() else {
+                continue;
+            };
+            if let Some(set) = self.shared_set(id)? {
+                sets.push(set);
+            }
+        }
+        sets.sort_by_key(|s| s.id);
+        Ok(sets)
     }
 
     /// Saves a set whose config edits have changed, for every profile that
@@ -585,7 +611,7 @@ impl Patchwork {
         Ok(self.personal_sets(profile)?.contains(&id))
     }
 
-    fn set_file(&self, id: Uuid) -> PathBuf {
+    pub(super) fn set_file(&self, id: Uuid) -> PathBuf {
         self.paths.sets().join(id.to_string()).join("set.toml")
     }
 }

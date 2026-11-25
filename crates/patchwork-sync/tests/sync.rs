@@ -9,6 +9,7 @@ use iroh::endpoint::presets;
 use patchwork_core::Patchwork;
 use patchwork_core::follow::{Follows, set_followed};
 use patchwork_core::game::GameDef;
+use patchwork_core::issue::IssueKind;
 use patchwork_core::order::Position;
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::ProfileRef;
@@ -396,6 +397,80 @@ async fn personal_mods_go_to_linked_computers_but_not_to_friends() {
         b.remove_mod(&profile, "Mine").unwrap();
         until(|| personal(&a).is_none()).await;
         assert!(a.personal_layer(&profile).unwrap().is_none());
+    };
+    both_running((&a_node, &a), (&b_node, &b), steps).await;
+
+    a_node.shutdown().await.unwrap();
+    b_node.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn linked_computers_share_folders_between_profiles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mods = tmp.path().join("mods");
+    fs::create_dir_all(&mods).unwrap();
+    for name in ["Minimap", "Hud", "Extra"] {
+        fs::write(mods.join(format!("{name}.pak")), name).unwrap();
+    }
+    let a = patchwork(&tmp.path().join("a"));
+    let one = a.create_profile("my-game", "one").unwrap();
+    let two = a.create_profile("my-game", "two").unwrap();
+    for name in ["Minimap", "Hud"] {
+        a.add_mod(&one, local(&mods.join(format!("{name}.pak"))), None, true)
+            .await
+            .unwrap();
+    }
+    a.add_folder(&one, "QOL", &["Minimap".to_owned(), "Hud".to_owned()])
+        .unwrap();
+    let set = a.share_folder(&one, "QOL").unwrap();
+    a.include_set(&two, set.id, None, false).unwrap();
+    let a_node = node(&a).await;
+    let b = patchwork(&tmp.path().join("b"));
+    let b_node = node(&b).await;
+    let ticket = a_node.link_devices(&a).await.unwrap();
+    b_node.join(&b, &ticket, TIMEOUT).await.unwrap();
+
+    let linked = |pw: &Patchwork, profile: &ProfileRef| {
+        pw.load_profile(profile)
+            .is_ok_and(|p| p.include(set.id).is_some())
+    };
+    let names = |pw: &Patchwork, profile: &ProfileRef| -> Vec<String> {
+        pw.load_profile(profile)
+            .map(|p| p.mods.into_iter().map(|m| m.name).collect())
+            .unwrap_or_default()
+    };
+    let steps = async {
+        // b gets the set, and both profiles have it linked
+        until(|| linked(&b, &one) && linked(&b, &two)).await;
+
+        // changed through one profile on b, it changes in both on a,
+        // without being taken for a friend's change
+        b.add_mod(&two, local(&mods.join("Extra.pak")), None, true)
+            .await
+            .unwrap();
+        b.set_mod_folder(&two, "Extra", Some("QOL")).unwrap();
+        until(|| names(&a, &one).contains(&"Extra".to_owned())).await;
+        until(|| linked(&a, &one) && linked(&a, &two)).await;
+        assert_eq!(a.find_set("my-game", "QOL").unwrap().id, set.id);
+        assert_eq!(a.find_set("my-game", "QOL").unwrap().mods.len(), 3);
+        for profile in [&one, &two] {
+            assert!(
+                a.issues(profile)
+                    .unwrap()
+                    .iter()
+                    .all(|i| !matches!(i.kind, IssueKind::FolderChanged { .. })),
+                "{:?}",
+                a.issues(profile).unwrap()
+            );
+        }
+
+        // and once it's only in one profile, it's that one's own folder on
+        // both
+        a.unlink_set(&two, set.id, false).unwrap();
+        until(|| !linked(&b, &one) && !linked(&b, &two)).await;
+        until(|| b.load_set(set.id).unwrap().is_none()).await;
+        assert!(!names(&b, &two).contains(&"Minimap".to_owned()));
+        assert!(names(&b, &one).contains(&"Minimap".to_owned()));
     };
     both_running((&a_node, &a), (&b_node, &b), steps).await;
 

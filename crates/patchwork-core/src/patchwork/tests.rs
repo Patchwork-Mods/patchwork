@@ -5224,19 +5224,122 @@ async fn synced_profiles_use_other_profiles_folders_for_everyone() {
 /// `pw`'s profile `profile` as someone it's synced with has it: on a
 /// computer of their own, with the same mods.
 async fn a_friend(tmp: &Path, doc: &crate::sync::Entries) -> Patchwork {
+    let friend = another_computer(tmp, "friend");
+    friend.apply_synced(doc, true).unwrap();
+    friend
+}
+
+/// Another computer, in `tmp`'s folder `name`, using the same mods as
+/// [`two_profiles`]'s.
+fn another_computer(tmp: &Path, name: &str) -> Patchwork {
     let dir = tmp.join("mods");
     let source = std::sync::Arc::new(Versioned {
         dir,
         version: std::sync::Mutex::new("1.0".to_owned()),
     });
-    let friend = Patchwork::builder(Paths::rooted(&tmp.join("friend")))
+    let other = Patchwork::builder(Paths::rooted(&tmp.join(name)))
         .source(SharedSource(source))
         .deployer(NoDeployer)
         .open()
         .unwrap();
-    friend.add_game(new_game("my-game", "none")).unwrap();
-    friend.apply_synced(doc, true).unwrap();
-    friend
+    other.add_game(new_game("my-game", "none")).unwrap();
+    other
+}
+
+/// The keys of `changes`, as made on one of the person's own computers.
+fn keys_of(changes: &[(String, Vec<u8>)]) -> std::collections::HashSet<String> {
+    changes.iter().map(|(k, _)| k.clone()).collect()
+}
+
+#[tokio::test]
+async fn linked_computers_link_the_same_folders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (pw, a, b) = two_profiles(tmp.path()).await;
+    let qol = pw
+        .add_folder(&a, "QOL", &["b".to_owned(), "c".to_owned()])
+        .unwrap();
+    let set = pw.share_folder(&a, "QOL").unwrap();
+    pw.include_set(&b, set.id, None, false).unwrap();
+    pw.set_enabled(&b, "c", false).unwrap();
+    pw.lock(&a, false).await.unwrap();
+    pw.lock(&b, false).await.unwrap();
+    let mut doc_a = pw.start_sync(&a).unwrap();
+    let mut doc_b = pw.start_sync(&b).unwrap();
+    let includes = |pw: &Patchwork, p: &ProfileRef, id: uuid::Uuid| {
+        pw.load_profile(p).unwrap().include(id).is_some()
+    };
+
+    // the profiles first: their folders are ordinary ones until the set
+    // arrives, then they're linked, and nothing changes for anyone
+    let mine = another_computer(tmp.path(), "mine");
+    mine.apply_synced(&doc_a, true).unwrap();
+    mine.apply_synced(&doc_b, true).unwrap();
+    assert!(!includes(&mine, &a, set.id));
+    assert!(mine.apply_set(set.id, Some(&set)).unwrap());
+    assert!(includes(&mine, &a, set.id) && includes(&mine, &b, set.id));
+    assert_eq!(mod_names(&mine, &b), mod_names(&pw, &b));
+    assert!(!mine.load_profile(&b).unwrap().find("c").unwrap().enabled);
+    assert!(mine.unsynced_changes(&a).unwrap().is_empty());
+    assert!(mine.unsynced_changes(&b).unwrap().is_empty());
+    assert!(!mine.apply_set(set.id, Some(&set)).unwrap());
+
+    // or the set first, and the profiles are linked as they arrive
+    let other = another_computer(tmp.path(), "other");
+    other.apply_set(set.id, Some(&set)).unwrap();
+    other.apply_synced(&doc_a, true).unwrap();
+    assert!(includes(&other, &a, set.id));
+    assert!(other.unsynced_changes(&a).unwrap().is_empty());
+
+    // changed on one of them, it's the set there, and here it's not a
+    // friend's change: the folder's only the profile's own until the set's
+    // change arrives too, then it's linked again
+    mine.set_mod_folder(&b, "d", Some("QOL")).unwrap();
+    let changes = mine.unsynced_changes(&a).unwrap();
+    let ours = keys_of(&changes);
+    doc_a.extend(changes);
+    pw.apply_synced_from(&doc_a, true, &ours).unwrap();
+    assert_eq!(pw.find_set("my-game", "QOL").unwrap().id, qol.id);
+    assert!(!includes(&pw, &a, set.id) && includes(&pw, &b, set.id));
+    assert!(
+        pw.issues(&a)
+            .unwrap()
+            .iter()
+            .all(|i| !matches!(i.kind, crate::issue::IssueKind::FolderChanged { .. }))
+    );
+    let theirs = mine.load_set(set.id).unwrap().unwrap();
+    pw.apply_set(set.id, Some(&theirs)).unwrap();
+    assert!(includes(&pw, &a, set.id) && includes(&pw, &b, set.id));
+    assert_eq!(mod_names(&pw, &a), ["a", "b", "c", "d"]);
+    assert!(pw.unsynced_changes(&a).unwrap().is_empty());
+    let changes = mine.unsynced_changes(&b).unwrap();
+    let ours = keys_of(&changes);
+    doc_b.extend(changes);
+    pw.apply_synced_from(&doc_b, true, &ours).unwrap();
+    assert!(includes(&pw, &b, set.id));
+    assert!(pw.unsynced_changes(&b).unwrap().is_empty());
+
+    // a friend's change splits it off the same way on each computer
+    let friend = a_friend(tmp.path(), &doc_a).await;
+    friend.set_mod_folder(&a, "b", None).unwrap();
+    doc_a.extend(friend.unsynced_changes(&a).unwrap());
+    for pw in [&pw, &mine] {
+        pw.apply_synced_from(&doc_a, true, &std::collections::HashSet::new())
+            .unwrap();
+        assert!(!includes(pw, &a, set.id));
+    }
+    let moved = pw.find_set("my-game", "QOL").unwrap();
+    assert_ne!(moved.id, set.id);
+    assert_eq!(mine.find_set("my-game", "QOL").unwrap().id, moved.id);
+
+    // and once a set's gone on another computer, the profiles that had it
+    // keep its mods in a folder with its id, so nothing changes for anyone
+    assert!(pw.apply_set(moved.id, None).unwrap());
+    assert!(pw.load_set(moved.id).unwrap().is_none());
+    let loaded = pw.load_profile(&b).unwrap();
+    assert!(loaded.includes.is_empty());
+    assert_eq!(loaded.folders[0].id, moved.id);
+    assert_eq!(mod_names(&pw, &b), ["b", "c", "d"]);
+    assert!(!loaded.find("c").unwrap().enabled);
 }
 
 #[tokio::test]

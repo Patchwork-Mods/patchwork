@@ -3763,6 +3763,7 @@ mod personal;
 mod profiles;
 mod sets;
 mod sync;
+mod synced_sets;
 
 pub use capture::{Captured, ToolRan};
 pub use config::{ConfigFileInfo, ConfigSet, ConfigView, SaveTo, SharedSetting};

@@ -68,6 +68,17 @@ impl Set {
         }
     }
 
+    /// The set as one value, to keep in step between the person's own
+    /// computers.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // nothing in it can fail to serialize
+        serde_json::to_vec(self).unwrap_or_default()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> serde_json::Result<Self> {
+        serde_json::from_slice(bytes)
+    }
+
     /// [`SET_SCHEMA`] if it changes config files, otherwise the schema from
     /// before sets could.
     pub fn saved_schema(&self) -> u32 {

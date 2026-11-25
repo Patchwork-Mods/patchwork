@@ -8,7 +8,7 @@
 //! changed elsewhere: only the former is published, and the latter is taken
 //! as it is, lockfile included, without resolving anything again.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -26,8 +26,8 @@ use crate::fsutil;
 use crate::hash::ContentHash;
 use crate::lock::{LOCK_SCHEMA, LockedGame, LockedMod, Lockfile, mod_key};
 use crate::personal;
-use crate::profile::{Profile, ProfileMod, ProfileRef};
-use crate::set;
+use crate::profile::{Include, Profile, ProfileMod, ProfileRef};
+use crate::set::{self, Set};
 use crate::sync::{self, Entries};
 use crate::{Error, Result};
 
@@ -200,8 +200,26 @@ impl Patchwork {
     /// here, and whatever the sharer changed since the last sync wins over
     /// them. Mods added to it go in its personal layer (see
     /// [`Patchwork::is_followed`]), including any added before that was so.
+    ///
+    /// Every change is taken to be someone else's; see
+    /// [`Patchwork::apply_synced_from`].
     pub fn apply_synced(&self, entries: &Entries, writable: bool) -> Result<Applied> {
-        let applied = self.apply_entries(entries, writable, true)?;
+        self.apply_synced_from(entries, writable, &HashSet::new())
+    }
+
+    /// [`Patchwork::apply_synced`], `ours` being the keys whose newest value
+    /// was written by this person's own computers (this one included)
+    /// rather than by someone the profile's shared with. That tells a
+    /// change to a linked folder made on another of their computers, which
+    /// changed the set there too, from a friend's, which doesn't change the
+    /// set (see [`Patchwork::folder_changed`]).
+    pub fn apply_synced_from(
+        &self,
+        entries: &Entries,
+        writable: bool,
+        ours: &HashSet<String>,
+    ) -> Result<Applied> {
+        let applied = self.apply_entries(entries, writable, true, ours)?;
         Ok(applied.expect("a missing profile is created"))
     }
 
@@ -209,7 +227,18 @@ impl Patchwork {
     /// `None` if it isn't, as when it's been removed since it was last
     /// synced, so that the sync doesn't bring it back.
     pub fn update_synced(&self, entries: &Entries, writable: bool) -> Result<Option<Applied>> {
-        self.apply_entries(entries, writable, false)
+        self.update_synced_from(entries, writable, &HashSet::new())
+    }
+
+    /// [`Patchwork::update_synced`], with `ours` as for
+    /// [`Patchwork::apply_synced_from`].
+    pub fn update_synced_from(
+        &self,
+        entries: &Entries,
+        writable: bool,
+        ours: &HashSet<String>,
+    ) -> Result<Option<Applied>> {
+        self.apply_entries(entries, writable, false, ours)
     }
 
     fn apply_entries(
@@ -217,6 +246,7 @@ impl Patchwork {
         entries: &Entries,
         writable: bool,
         create: bool,
+        ours: &HashSet<String>,
     ) -> Result<Option<Applied>> {
         let incoming = sync::from_entries(entries)?;
         let profile = incoming.profile.reference();
@@ -232,9 +262,10 @@ impl Patchwork {
             self.keep_additions_personal(&profile, &base)?;
         }
 
-        let mut unpublished = match self.sync_base(&profile)? {
+        let base = self.sync_base(&profile)?;
+        let mut unpublished = match &base {
             Some(base) if exists => {
-                let mut local = sync::changes(&base, &self.sync_entries(&profile)?);
+                let mut local = sync::changes(base, &self.sync_entries(&profile)?);
                 if !writable {
                     local.retain(|(k, _)| entries.get(k) == base.get(k));
                 }
@@ -269,14 +300,16 @@ impl Patchwork {
             || self.sync_entries(&profile)? != sync::to_entries(&synced.profile, Some(&lock));
         let mut left = Vec::new();
         if changed {
-            let stored = match exists {
-                true => {
-                    let (stored, gone) = relink(&self.load_profile(&profile)?, synced.profile);
-                    left = gone;
-                    stored
-                }
-                false => synced.profile,
+            let sets = |id| self.shared_set(id).ok().flatten();
+            let by_others = |key: &str| {
+                !ours.contains(key) && entries.get(key) != base.as_ref().and_then(|b| b.get(key))
             };
+            let here = match exists {
+                true => self.load_profile(&profile)?,
+                false => synced.profile.clone(),
+            };
+            let (stored, gone) = relink(&here, synced.profile, sets, by_others);
+            left = gone;
             self.save_synced(&profile, &stored, &lock)?;
         }
         self.save_sync_base(&profile, entries, !writable)?;
@@ -569,18 +602,31 @@ pub(super) fn published(loaded: &Profile) -> Profile {
 }
 
 /// The profile that came back from syncing (`flat`, as [`published`] gives
-/// it) as it's stored, for a profile that's `here` as loaded: each set it
-/// includes whose folder is still as the set has it is included again,
-/// with whatever's off in it off in this profile. Also gives the sets it
-/// stops including: those whose folder is gone (`false`), and those
-/// someone else changed (`true`), whose folder stays as the profile's own
-/// so it's as they have it, without changing the set (see
-/// [`Patchwork::folder_changed`]).
+/// it) as it's stored, for a profile that's `here` as loaded, `set` giving
+/// the sets this computer has: each set it includes whose folder is still
+/// as the set has it is included again, with whatever's off in it off in
+/// this profile, and so is any other folder that's one of those sets,
+/// as the set has it (one that came from another of this person's
+/// computers, which have the same sets; see [`Patchwork::apply_set`]).
+///
+/// Also gives the sets it stops including: those whose folder is gone
+/// (`false`), and those someone else changed (`true`), whose folder stays
+/// as the profile's own so it's as they have it, without changing the set
+/// (see [`Patchwork::folder_changed`]). `by_others` says whether a key's
+/// value arrived from someone other than this person: a change from
+/// another of their own computers changed the set there too, so the
+/// folder's only the profile's own until that change arrives, then it's
+/// linked again.
 ///
 /// Changes made here, to the profile or to a set from another profile, are
 /// in `flat` already (see [`Patchwork::apply_synced`]), so only a change
 /// that came from elsewhere makes a folder differ.
-fn relink(here: &Profile, mut flat: Profile) -> (Profile, Vec<(Uuid, bool)>) {
+pub(super) fn relink(
+    here: &Profile,
+    mut flat: Profile,
+    set: impl Fn(Uuid) -> Option<Set>,
+    by_others: impl Fn(&str) -> bool,
+) -> (Profile, Vec<(Uuid, bool)>) {
     let mut left = Vec::new();
     for include in here.includes.iter().filter(|i| !i.personal) {
         let Some(linked) = &include.linked else {
@@ -597,16 +643,93 @@ fn relink(here: &Profile, mut flat: Profile) -> (Profile, Vec<(Uuid, bool)>) {
             || folder.optional
             || folder_mods(&flat, include.set) != folder_mods(here, include.set)
         {
-            left.push((include.set, true));
+            if folder.optional || changed_by_others(here, &flat, include.set, &by_others) {
+                left.push((include.set, true));
+            }
             continue;
         }
         flat.folders.retain(|f| f.id != include.set);
         flat.includes.push(include.clone());
     }
+    // including those whose change came from another of the person's
+    // computers, which may be as the set has it here already
+    let others: Vec<Uuid> = flat
+        .folders
+        .iter()
+        .filter(|f| !f.optional && !left.iter().any(|(id, _)| *id == f.id))
+        .map(|f| f.id)
+        .collect();
+    for id in others {
+        if let Some(set) = set(id).filter(|s| s.game == flat.game)
+            && let Some(include) = as_set_has_it(&flat, set)
+        {
+            flat.folders.retain(|f| f.id != id);
+            flat.includes.push(include);
+        }
+    }
     // nothing's changed in the sets, so there's nothing to save to them
     let (mut stored, _) = set::collapse(&flat);
     stored.schema = stored.saved_schema();
     (stored, left)
+}
+
+/// Whether anyone but this person changed what's in `flat`'s folder `id`
+/// (or the order, or the folder itself) since `here` was synced, going by
+/// `by_others` for each key.
+fn changed_by_others(
+    here: &Profile,
+    flat: &Profile,
+    id: Uuid,
+    by_others: &impl Fn(&str) -> bool,
+) -> bool {
+    let mods = here
+        .mods
+        .iter()
+        .chain(&flat.mods)
+        .filter(|m| m.folder == Some(id))
+        .map(|m| format!("{}{}", sync::MOD, mod_key(&m.source, &m.id)));
+    [format!("{}{id}", sync::FOLDER), sync::ORDER.to_owned()]
+        .into_iter()
+        .chain(mods)
+        .any(|key| by_others(&key))
+}
+
+/// An include of `set` in place of `flat`'s own folder with its id, if the
+/// folder's as the set has it (its name and its mods, in order, whether or
+/// not they're on).
+fn as_set_has_it(flat: &Profile, set: Set) -> Option<Include> {
+    let id = set.id;
+    let folder = flat.folders.iter().find(|f| f.id == id)?;
+    if folder.name != set.name {
+        return None;
+    }
+    let after = match flat.mods.iter().position(|m| m.folder == Some(id)) {
+        Some(first) => flat.mods[..first]
+            .iter()
+            .rev()
+            .find(|m| !flat.is_linked(m))
+            .map(|m| m.name.clone()),
+        None => flat
+            .mods
+            .iter()
+            .rev()
+            .find(|m| !flat.is_linked(m))
+            .map(|m| m.name.clone()),
+    };
+    // the profile's own mods, with the set where its folder is
+    let mut probe = flat.clone();
+    probe
+        .mods
+        .retain(|m| m.folder != Some(id) && !flat.is_linked(m));
+    probe.includes = vec![Include {
+        after,
+        ..Include::new(id)
+    }];
+    set::expand(&mut probe, |_| Some(set.clone()));
+    if folder_mods(&probe, id) != folder_mods(flat, id) {
+        return None;
+    }
+    probe.includes.pop()
 }
 
 /// The mods in `profile`'s folder `id`, in order, without whether they're
