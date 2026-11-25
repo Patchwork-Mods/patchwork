@@ -10,6 +10,10 @@ dialog shows, so the heading has to match the version being released.
   - Shared folders carry their mods' config settings
   - You can keep personal folders of mods to not share
   - Folders in shared profiles can be made optional, so each person picks whether to use them
+- Added Beat Saber and BeatMods support
+  - On a game version with no mods yet, Patchwork says so and which version to switch to in Steam
+  - Sabers, notes, avatars and platforms from BeatMods' assets, each with the mod that loads it; paste an asset's page or one-click link to add it
+  - Custom maps from BeatSaver, with SongCore to load them
 
 ## 0.3.1
 

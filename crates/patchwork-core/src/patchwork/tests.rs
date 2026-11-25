@@ -3884,7 +3884,35 @@ impl crate::config::ConfigFormat for KeyValues {
             out.push_str(&line);
             out.push('\n');
         }
+        // Settings the file hasn't got go at the end, in a section of
+        // their own.
+        let had = self.read(
+            &crate::config::ConfigContext::new(&"x".parse().unwrap(), &toml::Table::new()),
+            file,
+        )?;
+        for answer in values {
+            let group = had.groups.iter().find(|g| g.id == answer.group);
+            let missing: Vec<_> = answer
+                .values
+                .iter()
+                .filter(|(k, _)| group.is_none_or(|g| !g.fields().iter().any(|f| f.id == **k)))
+                .collect();
+            if missing.is_empty() {
+                continue;
+            }
+            out.push_str(&format!("[{}]\n", answer.group));
+            for (key, value) in missing {
+                match value {
+                    crate::options::Value::Text(text) => out.push_str(&format!("{key} = {text}\n")),
+                    other => out.push_str(&format!("{key} = {other}\n")),
+                }
+            }
+        }
         Ok(out.into_bytes())
+    }
+
+    fn new_file(&self) -> Option<Vec<u8>> {
+        Some(Vec::new())
     }
 }
 
@@ -3898,6 +3926,118 @@ impl Extension for KeyValuesExtension {
     fn register(&self, ext: &mut crate::ext::Registrar<'_>) {
         ext.config_format("kv", KeyValues);
     }
+}
+
+#[tokio::test]
+async fn games_set_settings_in_config_files_even_before_theyre_made() {
+    use crate::deploy::Dest;
+    use crate::options::{Answer, Value};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let packed = tmp.path().join("mods/Fast");
+    fs::create_dir_all(packed.join("Plugins")).unwrap();
+    fs::write(packed.join("Plugins/fast.dll"), "dll").unwrap();
+    let pw = Patchwork::builder(Paths::rooted(&tmp.path().join("pw")))
+        .source(LocalFiles)
+        .deployer(AsPacked)
+        .extension(KeyValuesExtension)
+        .open()
+        .unwrap();
+    let mut def = new_game("my-game", "as-packed");
+    def.config = vec![
+        toml::from_str(
+            r#"files = "UserData/loader.cfg"
+format = "test.kv"
+set.loader = { yeet = "no", level = 2 }"#,
+        )
+        .unwrap(),
+    ];
+    pw.add_game(def).unwrap();
+    let game = tmp.path().join("game");
+    fs::create_dir_all(&game).unwrap();
+    pw.set_game_path("my-game", &game).unwrap();
+    let game = game.canonicalize().unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    pw.add_mod(&profile, local_spec(&packed), None, true)
+        .await
+        .unwrap();
+    pw.lock(&profile, false).await.unwrap();
+    let file = game.join("UserData/loader.cfg");
+
+    // the game hasn't made it yet, so it's started with what's set
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    pw.apply(&plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "[loader]\nlevel = 2\nyeet = no\n"
+    );
+
+    // the game fills in the rest, which deploying again keeps, along with
+    // what the profile changes
+    fs::write(&file, "[loader]\nyeet = no\nlevel = 2\nlogs = 1\n").unwrap();
+    let path: Dest = "UserData/loader.cfg".parse().unwrap();
+    let logs = vec![Answer::values(
+        "loader",
+        BTreeMap::from([("logs".to_owned(), Value::Int(4))]),
+    )];
+    pw.set_config(&profile, &path, Some(&logs), None).unwrap();
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    pw.apply(&plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "[loader]\nyeet = no\nlevel = 2\nlogs = 4\n"
+    );
+
+    // the profile's own changes win over the game's
+    let level = vec![Answer::values(
+        "loader",
+        BTreeMap::from([("level".to_owned(), Value::Int(7))]),
+    )];
+    pw.set_config(&profile, &path, Some(&level), None).unwrap();
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    pw.apply(&plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "[loader]\nyeet = no\nlevel = 7\nlogs = 4\n"
+    );
+
+    // undeploying takes away the file patchwork started
+    let target = pw
+        .deploy_target(&pw.load_profile(&profile).unwrap())
+        .unwrap();
+    pw.apply(&pw.plan_undeploy(&target).unwrap()).unwrap();
+    assert!(!file.exists());
+
+    // one the game made is changed, and put back as it was after
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "[loader]\nyeet = yes\nlevel = 1\n").unwrap();
+    pw.set_config(&profile, &path, None, None).unwrap();
+    let plan = pw.plan_deploy(&profile).await.unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    pw.apply(&plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "[loader]\nyeet = no\nlevel = 2\n"
+    );
+    pw.apply(&pw.plan_undeploy(&target).unwrap()).unwrap();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "[loader]\nyeet = yes\nlevel = 1\n"
+    );
+}
+
+#[tokio::test]
+async fn setting_config_needs_one_file() {
+    let err = toml::from_str::<crate::config::ConfigDef>(
+        "files = \"UserData/*.cfg\"\nformat = \"test.kv\"\nset.a = { b = 1 }",
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("one file with no wildcards"),
+        "{err}"
+    );
 }
 
 #[tokio::test]

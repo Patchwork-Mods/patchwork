@@ -223,7 +223,12 @@ pub(crate) async fn add(pw: &Patchwork, explicit: &Option<String>, args: Add) ->
         disabled,
     } = args;
     let (profile, loaded) = selected(pw, explicit)?;
-    let mut spec = match spec.starts_with("https://") || spec.starts_with("http://") {
+    // a link has `//` after its scheme, like `https://` or
+    // `modelsaber://`; a `url:https://...` spec doesn't
+    let is_link = spec
+        .split_once(':')
+        .is_some_and(|(_, rest)| rest.starts_with("//"));
+    let mut spec = match is_link {
         true => ModSpec {
             version,
             ..pw.parse_link(&loaded.game, &spec)?

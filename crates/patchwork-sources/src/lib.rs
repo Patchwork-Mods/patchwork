@@ -1,5 +1,7 @@
 //! Built-in mod sources.
 
+mod beatmods;
+mod beatsaver;
 mod github;
 mod local;
 mod modio;
@@ -10,6 +12,8 @@ mod pattern;
 mod thunderstore;
 mod url;
 
+pub use beatmods::{BeatMods, BeatModsAssets};
+pub use beatsaver::BeatSaver;
 pub use github::GitHub;
 pub use local::LocalSource;
 pub use modio::ModIo;

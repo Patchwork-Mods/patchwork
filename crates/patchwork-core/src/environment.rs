@@ -148,6 +148,9 @@ fn probe_version(probe: &VersionProbe, root: &Path) -> Option<String> {
                 _ => None,
             }
         }
+        VersionProbe::Regex { file, pattern } => {
+            pattern.find(&std::fs::read(file.under(root)).ok()?)
+        }
     }
 }
 

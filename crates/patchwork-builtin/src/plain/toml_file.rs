@@ -90,6 +90,10 @@ fn value_of(value: &Value) -> toml_edit::Value {
 }
 
 impl ConfigFormat for TomlConfig {
+    fn new_file(&self) -> Option<Vec<u8>> {
+        Some(Vec::new())
+    }
+
     fn read(&self, _ctx: &ConfigContext<'_>, file: &[u8]) -> Result<Contents> {
         let doc = parse(file)?;
         let mut all = Vec::new();

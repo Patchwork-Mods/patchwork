@@ -18,7 +18,8 @@ use patchwork_core::ext::{Extension, Registrar};
 use patchwork_deployers::RulesDeployer;
 use patchwork_formats::{Archive, R2modman, ThunderstoreCode, UrlList};
 use patchwork_sources::{
-    GitHub, LocalSource, ModIo, ModLinks, Modrinth, Nexus, Thunderstore, UrlSource,
+    BeatMods, BeatModsAssets, BeatSaver, GitHub, LocalSource, ModIo, ModLinks, Modrinth, Nexus,
+    Thunderstore, UrlSource,
 };
 pub use plain::{IniConfig, JsonConfig, TomlConfig};
 
@@ -43,6 +44,8 @@ pub fn register(builder: Builder) -> Builder {
         .extension(GitHubExtension)
         .extension(ModIoExtension)
         .extension(ModLinksExtension)
+        .extension(BeatModsExtension)
+        .extension(BeatSaverExtension)
         .extension(BepInEx);
     #[cfg(feature = "bethesda")]
     let builder = builder.extension(Bethesda).extension(Fomod).extension(Loot);
@@ -155,6 +158,34 @@ impl Extension for ModLinksExtension {
 
     fn register(&self, ext: &mut Registrar<'_>) {
         ext.source(ModLinks);
+    }
+}
+
+/// BeatMods, where Beat Saber's mods are, and its assets (sabers, avatars,
+/// platforms and notes).
+pub struct BeatModsExtension;
+
+impl Extension for BeatModsExtension {
+    fn id(&self) -> &'static str {
+        "beatmods"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.source(BeatMods);
+        ext.source(BeatModsAssets);
+    }
+}
+
+/// BeatSaver, where Beat Saber's custom maps are.
+pub struct BeatSaverExtension;
+
+impl Extension for BeatSaverExtension {
+    fn id(&self) -> &'static str {
+        "beatsaver"
+    }
+
+    fn register(&self, ext: &mut Registrar<'_>) {
+        ext.source(BeatSaver);
     }
 }
 

@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::deploy::{Dest, RootId};
 use crate::game::FilePattern;
 use crate::options::{Answer, Group, Value};
+use crate::relpath::RelPath;
 use crate::{Error, Result};
 
 /// Reads and writes one kind of config file, registered with
@@ -44,6 +45,14 @@ pub trait ConfigFormat: Send + Sync {
     /// can, or left out with an error otherwise. Values have been checked
     /// against the fields `read` gave them.
     fn write(&self, ctx: &ConfigContext<'_>, file: &[u8], values: &[Answer]) -> Result<Vec<u8>>;
+
+    /// A file with no settings yet, which [`ConfigFormat::write`] can add
+    /// settings to, for settings a game definition sets (`[config.set]`)
+    /// in a file the game hasn't made yet. `None` if the format can't
+    /// start one.
+    fn new_file(&self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// What a [`ConfigFormat`] gets to work with.
@@ -117,14 +126,79 @@ pub fn answers(edits: &Edits) -> Vec<Answer> {
 /// format = "bepinex.cfg"              # <extension>.<name>
 /// root = "game"                       # the default
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// A definition for one file (a path with no wildcards) can also set some
+/// of its settings, by group and then field id, as a profile's changes
+/// would. Deploying applies them under the profile's own changes, adding
+/// any the file hasn't got, and starts the file if the game hasn't made it
+/// yet:
+///
+/// ```toml
+/// [[config]]
+/// files = "UserData/Beat Saber IPA.json"
+/// format = "generic.json"
+/// set."" = { YeetMods = false }        # JSON's top-level group is ""
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "ConfigDefData")]
 pub struct ConfigDef {
     #[serde(with = "one_or_many")]
     pub files: Vec<FilePattern>,
     pub format: String,
     #[serde(default = "RootId::game", skip_serializing_if = "RootId::is_game")]
     pub root: RootId,
+    #[serde(default, skip_serializing_if = "Edits::is_empty")]
+    pub set: Edits,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigDefData {
+    #[serde(with = "one_or_many")]
+    files: Vec<FilePattern>,
+    format: String,
+    #[serde(default = "RootId::game")]
+    root: RootId,
+    #[serde(default)]
+    set: Edits,
+}
+
+impl TryFrom<ConfigDefData> for ConfigDef {
+    type Error = String;
+
+    fn try_from(d: ConfigDefData) -> std::result::Result<Self, String> {
+        let def = ConfigDef {
+            files: d.files,
+            format: d.format,
+            root: d.root,
+            set: d.set,
+        };
+        if !def.set.is_empty() && def.file().is_none() {
+            return Err(format!(
+                "`set` needs `files` to be one file with no wildcards, not {}",
+                def.files
+                    .iter()
+                    .map(|f| format!("`{}`", f.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        Ok(def)
+    }
+}
+
+impl ConfigDef {
+    /// The one file this is for, if it's a single path with no wildcards.
+    pub fn file(&self) -> Option<Dest> {
+        let [pattern] = &self.files[..] else {
+            return None;
+        };
+        let path = pattern.as_str();
+        if path.contains(['*', '?', '[', ']', '{', '}']) {
+            return None;
+        }
+        Some(Dest::new(self.root.clone(), RelPath::new(path).ok()?))
+    }
 }
 
 /// Matches paths against several [`ConfigDef`]s; the first that matches a
@@ -158,6 +232,17 @@ impl ConfigDefs {
 
     pub fn is_empty(&self) -> bool {
         self.defs.is_empty()
+    }
+
+    /// The settings the definitions set (`[config.set]`), by file.
+    pub fn set(&self) -> FileEdits {
+        let mut all = FileEdits::new();
+        for (def, _) in &self.defs {
+            if let Some(file) = def.file().filter(|_| !def.set.is_empty()) {
+                overlay(&mut all, &FileEdits::from([(file, def.set.clone())]));
+            }
+        }
+        all
     }
 
     /// What says `dest` is config, if anything does.
@@ -228,6 +313,31 @@ pub fn checked_edits(contents: &Contents, edits: &Edits) -> (Edits, Vec<String>)
                 }
                 Err(e) => problems.push(e),
             }
+        }
+    }
+    (kept, problems)
+}
+
+/// Like [`checked_edits`], but settings `contents` hasn't got are kept as
+/// they are, for the format to add: for what a game definition sets,
+/// which needn't be in the file yet.
+pub fn checked_or_new(contents: &Contents, edits: &Edits) -> (Edits, Vec<String>) {
+    let (present, absent): (Edits, Edits) = edits
+        .iter()
+        .map(|(group_id, values)| {
+            let group = contents.groups.iter().find(|g| g.id == *group_id);
+            let has = |id: &str| group.is_some_and(|g| g.fields().iter().any(|f| f.id == id));
+            let (here, new) = values
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .partition(|(id, _)| has(id));
+            ((group_id.clone(), here), (group_id.clone(), new))
+        })
+        .unzip();
+    let (mut kept, problems) = checked_edits(contents, &present);
+    for (group_id, values) in absent {
+        if !values.is_empty() {
+            kept.entry(group_id).or_default().extend(values);
         }
     }
     (kept, problems)

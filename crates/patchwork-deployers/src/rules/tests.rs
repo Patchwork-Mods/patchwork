@@ -52,6 +52,7 @@ fn kind_dst(
 ) -> Option<String> {
     let who = Who {
         name: mod_name,
+        id: "an-id",
         kind,
         source: "local",
     };
@@ -250,6 +251,7 @@ fn mod_filters_and_escapes() {
     let evil = [rule("**", None, "../{path}")];
     let who = Who {
         name: "m",
+        id: "m",
         kind: None,
         source: "local",
     };
@@ -281,6 +283,7 @@ to = "BepInEx/plugins/{mod}/{file}"
     let dst = |source: &str, path: &str| {
         let who = Who {
             name: "m",
+            id: "m",
             kind: None,
             source,
         };
@@ -569,4 +572,20 @@ fn rulesets_say_which_files_are_config_through_includes() {
     // included ones first, as their rules are, and each only once
     assert_eq!(formats, ["bepinex.cfg", "a.ini"]);
     assert_eq!(defs[0].files[0].as_str(), "BepInEx/config/**/*.cfg");
+}
+
+#[test]
+fn id_placeholder() {
+    let rules = parse("[[rules]]\nkinds = \"map\"\nto = \"Levels/{id}/{path}\"\n").unwrap();
+    let who = Who {
+        name: "Song: Remix?",
+        id: "25f",
+        kind: Some("map"),
+        source: "beatsaver",
+    };
+    let placed = place(&rules, &who, &RelPath::new("sub/Info.dat").unwrap()).unwrap();
+    assert!(matches!(placed, Outcome::Place(p) if p.as_str() == "Levels/25f/sub/Info.dat"));
+    let who = Who { id: "a/b", ..who };
+    let placed = place(&rules, &who, &RelPath::new("x").unwrap()).unwrap();
+    assert!(matches!(placed, Outcome::Place(p) if p.as_str() == "Levels/a_b/x"));
 }

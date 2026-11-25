@@ -77,10 +77,11 @@ The tables a definition can have:
 
 | Table | What it's for |
 |---|---|
-| `[sources.<id>]` | where mods come from, and each source's settings (Thunderstore community, Nexus `game_domain`, Modrinth project types, mod.io `game` and `id`, ModLinks `mods` and `api` catalogs) |
-| `[deployer]` | how mods' files are placed: `kind` (`rules`, `bethesda`, `smf`), plus `rulesets` and `rules` for the `rules` deployer |
+| `[sources.<id>]` | where mods come from, and each source's settings (Thunderstore community, Nexus `game_domain`, Modrinth project types, mod.io `game` and `id`, ModLinks `mods` and `api` catalogs, BeatMods `game` and `platforms`, BeatMods assets `game` and `types`, each type with the mod that loads it, BeatSaver's `needs` and `uses`: the mod every map needs and the mods its difficulties' features come from) |
+| `[deployer]` | how mods' files are placed: `kind` (`rules`, `bethesda`, `smf`), plus `rulesets` and `rules` for the `rules` deployer, whose `to` can use `{path}`, `{file}`, `{mod}` (its name) and `{id}` (its id at its source) |
 | `link` | `copy` (the default), `hardlink` or `symlink`. Hardlinks fall back to copying across drives |
-| `[detect]` | how to find the game: Steam app ids, its folder name, and exes that should be there |
+| `[[config]]` | which files are config the user can change from patchwork (`files`, `format`), and for one file, settings the game always needs (`set`, by group and then setting, which deploying applies under the profile's own and starts the file with if it isn't there yet) |
+| `[detect]` | how to find the game: Steam app ids, its folder name, and exes that should be there, plus `[[detect.version]]` probes that read the installed version: an exe's file version (`exe`), a key in a JSON file (`json`) or a regex match in any file, text or binary (`regex`) |
 | `[versions]` | how to tell which version of the game is installed, so mods can say which ones they support |
 | `[env.<axis>]` | choices each profile makes about the game, such as Minecraft's version and mod loader |
 | `[roots.<id>]` | folders outside the game's own that mods may write to, such as `%LOCALAPPDATA%` for Skyrim's `plugins.txt` |

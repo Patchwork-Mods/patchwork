@@ -125,6 +125,48 @@ fn the_first_probe_that_finds_a_version_wins() {
 }
 
 #[test]
+fn finds_a_version_with_a_regex_in_a_binary_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Like a Unity game's globalgamemanagers: the version is a
+    // length-prefixed string among other settings.
+    let mut data = b"\x00\x03\x00\x00\x001.0\x00\x0c\x00\x00\x00".to_vec();
+    data.extend(b"1.46.0_34060\x00\xff\xfe");
+    std::fs::write(tmp.path().join("globalgamemanagers"), data).unwrap();
+    std::fs::write(tmp.path().join("version.txt"), "  1.29.1_4575554838\n").unwrap();
+
+    let grouped = game(
+        "[[detect.version]]\nkind = \"regex\"\nfile = \"globalgamemanagers\"\n\
+         pattern = '(\\d+\\.\\d+\\.\\d+)_\\d+'",
+    );
+    assert_eq!(
+        GameEnv::detect(&grouped, tmp.path()).version.as_deref(),
+        Some("1.46.0")
+    );
+    let whole = game(
+        "[[detect.version]]\nkind = \"regex\"\nfile = \"version.txt\"\npattern = '[\\d.]+_\\d+'",
+    );
+    assert_eq!(
+        GameEnv::detect(&whole, tmp.path()).version.as_deref(),
+        Some("1.29.1_4575554838")
+    );
+    let missing = game(
+        "[[detect.version]]\nkind = \"regex\"\nfile = \"globalgamemanagers\"\npattern = 'nope'\n\
+         [[detect.version]]\nkind = \"regex\"\nfile = \"missing\"\npattern = '.+'",
+    );
+    assert_eq!(GameEnv::detect(&missing, tmp.path()).version, None);
+}
+
+#[test]
+fn bad_version_regexes_are_rejected() {
+    let err = toml::from_str::<GameDef>(
+        "schema = 1\nid = \"g\"\nname = \"G\"\n[deployer]\nkind = \"rules\"\n\
+         [[detect.version]]\nkind = \"regex\"\nfile = \"v.txt\"\npattern = '(unclosed'",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("isn't a valid regex"), "{err}");
+}
+
+#[test]
 fn probes_cant_read_outside_the_install() {
     let err = toml::from_str::<GameDef>(
         "schema = 1\nid = \"g\"\nname = \"G\"\n[deployer]\nkind = \"rules\"\n\

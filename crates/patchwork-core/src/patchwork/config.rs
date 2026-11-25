@@ -609,7 +609,12 @@ impl Patchwork {
                 p.rewritten = true;
             }
         }
-        if loaded.config.is_empty() {
+        // What the game definition sets, with the profile's own changes
+        // over it.
+        let defined = setup.defs.set();
+        let mut wanted = defined.clone();
+        config::overlay(&mut wanted, &loaded.config);
+        if wanted.is_empty() {
             return Ok(());
         }
         let out = self
@@ -621,7 +626,7 @@ impl Patchwork {
         let all_roots = roots.roots();
         let own = own_config(loaded);
         let mut added = Vec::new();
-        for (path, edits) in &loaded.config {
+        for (path, edits) in &wanted {
             let Some(def) = setup.defs.find(path) else {
                 warnings.push(format!(
                     "{path} isn't a config file for {} any more, so the settings the profile changes in it aren't applied",
@@ -629,11 +634,23 @@ impl Patchwork {
                 ));
                 continue;
             };
+            let defaults = edits_in(&defined, path);
             let winner = placements.iter().rev().find(|p| same_dest(&p.dst, path));
             let (dst, src, mod_name) = match winner {
-                Some(p) => (p.dst.clone(), p.src.clone(), p.mod_name.clone()),
+                Some(p) => (p.dst.clone(), Some(p.src.clone()), p.mod_name.clone()),
                 None => match original(&all_roots, prev, path)? {
-                    Some(src) => (path.clone(), src, String::new()),
+                    Some(src) => (path.clone(), Some(src), String::new()),
+                    // One patchwork started (below) is what's deployed,
+                    // as the game has since rewritten it.
+                    None if defaults.is_some() => {
+                        let deployed = prev
+                            .files
+                            .iter()
+                            .find(|(d, _)| same_dest(d, path))
+                            .map(|(_, f)| f.src.clone())
+                            .filter(|src| src.is_file());
+                        (path.clone(), deployed, String::new())
+                    }
                     // Only the profile's own: a set's can be for a mod
                     // that's off in this profile.
                     None if edits_in(&own, path).is_none() => continue,
@@ -648,9 +665,28 @@ impl Patchwork {
             };
             let made = (|| -> Result<(Option<Vec<u8>>, Vec<String>)> {
                 let hook = self.config_format(&def.format)?;
-                let bytes = fs::read(&src).at(&src)?;
+                let bytes = match &src {
+                    Some(src) => fs::read(src).at(src)?,
+                    // The game hasn't made it yet, so it's started with
+                    // what the game definition sets.
+                    None => hook.hook.new_file().ok_or_else(|| {
+                        Error::invalid(format!(
+                            "it isn't there yet and `{}` files can't be started empty",
+                            def.format
+                        ))
+                    })?,
+                };
                 let contents = read(hook, &setup, path, &bytes)?;
-                let (kept, problems) = checked_edits(&contents, edits);
+                let (mut kept, mut problems) = match defaults {
+                    Some(defaults) => config::checked_or_new(&contents, defaults),
+                    None => (Edits::new(), Vec::new()),
+                };
+                let (own_kept, own_problems) =
+                    checked_edits(&contents, &beyond_defaults(edits, defaults));
+                for (group, values) in own_kept {
+                    kept.entry(group).or_default().extend(values);
+                }
+                problems.extend(own_problems);
                 if kept.is_empty() {
                     return Ok((None, problems));
                 }
@@ -820,6 +856,7 @@ impl Patchwork {
             }
         }
 
+        let defined = setup.defs.set();
         for (root, folder) in setup.defs.folders() {
             let Some(root_path) = roots.get(&root) else {
                 continue;
@@ -849,7 +886,18 @@ impl Patchwork {
                 if setup.defs.find(&dest).is_none() || bases.keys().any(|k| same_dest(k, &dest)) {
                     continue;
                 }
-                if let Some(src) = original(&roots, &state, &dest)? {
+                let src = match original(&roots, &state, &dest)? {
+                    Some(src) => Some(src),
+                    // One patchwork started for what the game definition
+                    // sets: what's deployed, as the game has left it.
+                    None if state.files.get(&dest).is_some_and(|f| f.backup.is_none())
+                        && edits_in(&defined, &dest).is_some() =>
+                    {
+                        Some(entry.path().to_owned())
+                    }
+                    None => None,
+                };
+                if let Some(src) = src {
                     bases.insert(dest, Base { src, from: None });
                 }
             }
@@ -877,6 +925,23 @@ fn read(
 ) -> Result<Contents> {
     let config = setup.config_for(&crate::ext::hook_id(hook.ext, hook.name));
     hook.hook.read(&ConfigContext::new(path, config), bytes)
+}
+
+/// The settings in `edits` that aren't just what the game definition
+/// sets (`defaults`): the profile's own changes, which have to be
+/// settings the file has.
+fn beyond_defaults(edits: &Edits, defaults: Option<&Edits>) -> Edits {
+    let mut left = Edits::new();
+    for (group, values) in edits {
+        for (id, value) in values {
+            if defaults.and_then(|d| d.get(group)?.get(id)) != Some(value) {
+                left.entry(group.clone())
+                    .or_default()
+                    .insert(id.clone(), value.clone());
+            }
+        }
+    }
+    left
 }
 
 /// The game's own copy of `dest`, as it is without what patchwork

@@ -311,6 +311,10 @@ fn written(value: &Value) -> String {
 }
 
 impl ConfigFormat for JsonConfig {
+    fn new_file(&self) -> Option<Vec<u8>> {
+        Some(b"{}\n".to_vec())
+    }
+
     fn read(&self, _ctx: &ConfigContext<'_>, file: &[u8]) -> Result<Contents> {
         let (_, root) = parse(file)?;
         let mut all = Vec::new();

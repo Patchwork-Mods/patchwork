@@ -395,3 +395,33 @@ fn hints_that_dont_fit_the_value_are_dropped() {
         }
     ));
 }
+
+#[test]
+fn new_files_take_settings() {
+    // INI has no settings outside a section.
+    for (format, top) in [
+        (&JsonConfig as &dyn ConfigFormat, true),
+        (&TomlConfig, true),
+        (&IniConfig, false),
+    ] {
+        let empty = String::from_utf8(format.new_file().unwrap()).unwrap();
+        let mut values = vec![set("Debug", &[("ShowDebug", Value::Bool(true))])];
+        if top {
+            values.push(set("", &[("YeetMods", Value::Bool(false))]));
+        }
+        let written = write(format, &empty, &values);
+        let contents = read(format, &written);
+        assert_eq!(
+            field(&contents, "Debug", "ShowDebug").value,
+            Value::Bool(true),
+            "{written}"
+        );
+        if top {
+            assert_eq!(
+                field(&contents, "", "YeetMods").value,
+                Value::Bool(false),
+                "{written}"
+            );
+        }
+    }
+}

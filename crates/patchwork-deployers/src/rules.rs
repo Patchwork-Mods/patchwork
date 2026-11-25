@@ -44,6 +44,10 @@ use serde::Deserialize;
 /// to = "Mods/{mod}/{path}"
 ///
 /// [[deployer.rules]]
+/// kinds = "map"
+/// to = "Levels/{id}/{path}"  # the mod's id at its source, for a folder of its own
+///
+/// [[deployer.rules]]
 /// ruleset = "bepinex"        # a ruleset's rules, at this point in the list
 ///
 /// [deployer.root]
@@ -459,6 +463,8 @@ impl CompiledRoot {
 /// What rules can match a mod by, besides its files.
 struct Who<'a> {
     name: &'a str,
+    /// Its id at its source.
+    id: &'a str,
     /// What its source says it is, if it says.
     kind: Option<&'a str>,
     /// Its source's id.
@@ -469,6 +475,7 @@ impl<'a> Who<'a> {
     fn of(m: &'a InstalledMod) -> Self {
         Who {
             name: &m.name,
+            id: &m.id,
             kind: m.kind.as_deref(),
             source: &m.source,
         }
@@ -518,6 +525,7 @@ fn place(rules: &[CompiledRule], who: &Who<'_>, rel: &RelPath) -> Result<Outcome
         let dst = rule
             .to
             .replace("{mod}", &mod_name.replace(['/', '\\'], "_"))
+            .replace("{id}", &who.id.replace(['/', '\\'], "_"))
             .replace("{path}", &rest[rule.strip..].join("/"))
             .replace("{file}", rel.file_name());
         return RelPath::new(&dst).map(Outcome::Place);

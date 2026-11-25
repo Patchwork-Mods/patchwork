@@ -731,6 +731,11 @@ pub struct Detect {
 /// kind = "json"              # a string in a JSON file
 /// file = "version.json"
 /// key = "game.version"       # dots separate nested keys
+///
+/// [[detect.version]]
+/// kind = "regex"             # the first match in a file, text or binary
+/// file = "Game_Data/globalgamemanagers"
+/// pattern = '(\d+\.\d+\.\d+)_\d+'  # the first group, or the whole match
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
@@ -745,6 +750,53 @@ pub enum VersionProbe {
         file: RelPath,
         key: String,
     },
+    /// For games that only keep their version somewhere without structure
+    /// patchwork reads, such as among a Unity game's player settings.
+    Regex {
+        file: RelPath,
+        pattern: VersionPattern,
+    },
+}
+
+/// A regex a game's version is found with in a file's bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct VersionPattern(regex::bytes::Regex);
+
+impl VersionPattern {
+    /// The version in `bytes`: the first match's first group if the
+    /// pattern has one, or else the whole match, trimmed. `None` if there's
+    /// no match, or it's empty or not UTF-8.
+    pub fn find(&self, bytes: &[u8]) -> Option<String> {
+        let caps = self.0.captures(bytes)?;
+        let found = caps.get(1).or_else(|| caps.get(0))?;
+        let text = std::str::from_utf8(found.as_bytes()).ok()?.trim();
+        (!text.is_empty()).then(|| text.to_owned())
+    }
+}
+
+impl PartialEq for VersionPattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_str() == other.0.as_str()
+    }
+}
+
+impl Eq for VersionPattern {}
+
+impl TryFrom<String> for VersionPattern {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, String> {
+        regex::bytes::Regex::new(&s)
+            .map(VersionPattern)
+            .map_err(|e| format!("`{s}` isn't a valid regex: {e}"))
+    }
+}
+
+impl From<VersionPattern> for String {
+    fn from(p: VersionPattern) -> String {
+        p.0.as_str().to_owned()
+    }
 }
 
 impl Detect {

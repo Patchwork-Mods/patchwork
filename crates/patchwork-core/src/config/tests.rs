@@ -9,6 +9,7 @@ fn def(files: &[&str]) -> ConfigDef {
             .collect(),
         format: "test.kv".to_owned(),
         root: RootId::game(),
+        set: Edits::new(),
     }
 }
 

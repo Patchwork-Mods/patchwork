@@ -225,6 +225,10 @@ fn written(value: &Value, style: Style) -> String {
 }
 
 impl ConfigFormat for IniConfig {
+    fn new_file(&self) -> Option<Vec<u8>> {
+        Some(Vec::new())
+    }
+
     fn read(&self, _ctx: &ConfigContext<'_>, file: &[u8]) -> Result<Contents> {
         let parsed = parse(file)?;
         let mut contents = Contents::default();

@@ -1,0 +1,129 @@
+schema = 1
+id = "beat-saber"
+name = "Beat Saber"
+description = "PC VR (Steam). Takes mods from BeatMods (the same ones Mod Assistant and BSManager install), sabers, avatars, platforms and notes from its assets, and custom maps from BeatSaver. Mods load with BSIPA, which patchwork installs by placing its files as its installer would, so IPA.exe never needs to run. Mods only work on the game versions they're made for, and new game versions often have none for a while."
+
+# Verified mods for the installed game version, from the files for any
+# platform or Steam's (not Oculus's).
+[sources.beatmods]
+game = "beatsaber"
+
+# Sabers, avatars, platforms and notes, each needing the mod that loads
+# them, which comes along with it.
+[sources.beatmods-assets]
+game = "beatsaber"
+
+[sources.beatmods-assets.types]
+saber_saber = "beatmods:CustomSabersLite"
+saber_whacker = "beatmods:CustomSabersLite"
+avatar_avatar = "beatmods:CustomAvatar"
+platform_plat = "beatmods:CustomPlatforms"
+note_bloq = "beatmods:CustomNotes"
+
+# Custom maps, each needing SongCore to load. The mods that features of
+# their difficulties come from are suggested with the maps that use them
+# (Cinema isn't on BeatMods, so it's only named).
+[sources.beatsaver]
+needs = "beatmods:SongCore"
+
+[sources.beatsaver.uses]
+ne = "beatmods:NoodleExtensions"
+me = "beatmods:MappingExtensions"
+vivify = "beatmods:Vivify"
+chroma = "beatmods:Chroma"
+cinema = ""
+
+[deployer]
+kind = "rules"
+
+# Maps, each in a folder named by its key, where SongCore looks for them.
+# A map's name can have characters Windows can't put in a folder's.
+[[deployer.rules]]
+kinds = "map"
+to = "Beat Saber_Data/CustomLevels/{id}/{path}"
+
+# BSIPA's installer (IPA.exe) only copies files out of its IPA folder, and
+# patchwork does that itself: IPA/Data into the game's data folder,
+# IPA/Libs into Libs, and the files directly in IPA (winhttp.dll, the
+# Doorstop proxy that loads it) into the game folder. Its backups aren't
+# needed, since what patchwork deploys it can also take away.
+[[deployer.rules]]
+files = "{IPA.exe,IPA.exe.config,IPA.runtimeconfig*.json}"
+skip = true
+
+[[deployer.rules]]
+files = "IPA/Data/**"
+strip = 2
+to = "Beat Saber_Data/{path}"
+
+[[deployer.rules]]
+files = "IPA/Libs/**"
+strip = 2
+to = "Libs/{path}"
+
+[[deployer.rules]]
+files = "IPA/*"
+strip = 1
+to = "{path}"
+
+# Assets, which are a file on their own, into the folder of the mod that
+# loads them.
+[[deployer.rules]]
+files = "*.{saber,whacker}"
+to = "CustomSabers/{file}"
+
+[[deployer.rules]]
+files = "*.avatar"
+to = "CustomAvatars/{file}"
+
+[[deployer.rules]]
+files = "*.plat"
+to = "CustomPlatforms/{file}"
+
+[[deployer.rules]]
+files = "*.bloq"
+to = "CustomNotes/{file}"
+
+# A plugin on its own.
+[[deployer.rules]]
+files = "*.dll"
+to = "Plugins/{file}"
+
+# Everything else is packed as it goes in the game folder (Plugins, Libs,
+# UserData and so on).
+[[deployer.rules]]
+to = "{path}"
+
+# Mods packed inside an extra folder start at the one with these in it.
+[deployer.root]
+markers = ["Plugins", "Libs", "UserData", "IPA", "Beat Saber_Data"]
+
+# BSIPA's own settings. When the game updates, BSIPA moves every mod out
+# of Plugins (into "Old <version> Plugins") so none load; patchwork's
+# deployed files would go with them, so that's turned off, and patchwork's
+# own checks say which mods don't fit the new version instead. Without
+# Regenerate off, BSIPA resets every setting the first time it reads the
+# file. BSIPA makes the file when the game first starts, but patchwork
+# starts it if it isn't there, so it's right from the first run.
+[[config]]
+files = "UserData/Beat Saber IPA.json"
+format = "generic.json"
+set."" = { Regenerate = false, YeetMods = false }
+
+[detect]
+steam = [620980]
+folder = "Beat Saber"
+exe = ["Beat Saber.exe"]
+
+# The version is in the player settings (as "1.46.0_34060"), which Steam
+# updates along with the game. BeatSaberVersion.txt has it too, but only
+# from when the game last started.
+[[detect.version]]
+kind = "regex"
+file = "Beat Saber_Data/globalgamemanagers"
+pattern = '(\d+\.\d+\.\d+)_\d+'
+
+[[detect.version]]
+kind = "regex"
+file = "BeatSaberVersion.txt"
+pattern = '(\d+\.\d+\.\d+)'
