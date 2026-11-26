@@ -196,6 +196,19 @@ function strokeIcon(...paths) {
   return svg;
 }
 
+/** An eye, for showing what's hidden. */
+export const eyeIcon = () =>
+  strokeIcon("M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z", "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z");
+
+/** A struck-out eye, for hiding something. */
+export const eyeOffIcon = () =>
+  strokeIcon(
+    "M9.88 9.88a3 3 0 1 0 4.24 4.24",
+    "M10.73 5.08A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68",
+    "M6.61 6.61A13.5 13.5 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.39-1.61",
+    "M2 2l20 20",
+  );
+
 /** A folder, for groups of mods. */
 export const folderIcon = () =>
   strokeIcon("M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z");

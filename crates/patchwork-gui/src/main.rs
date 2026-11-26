@@ -41,7 +41,7 @@ use patchwork_core::options::Answer;
 use patchwork_core::order::{self, SortKey};
 use patchwork_core::paths::Paths;
 use patchwork_core::profile::{Folder, ProfileMod, ProfileRef};
-use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
+use patchwork_core::search::{Category, HiddenMods, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::set::{FolderSource, OtherFolder};
 use patchwork_core::settings::{Origin, SettingState};
 use patchwork_core::source::{FileChoice, ModSpec, SourceFile};
@@ -1981,8 +1981,19 @@ struct Search {
     page: u32,
 }
 
+/// A page of search results, with which of them are hidden.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FoundPage {
+    #[serde(flatten)]
+    page: SearchPage,
+    /// The ids of the items hidden from the Add mods tab: by the registry's
+    /// `hidden` entry for the source, or by the user (see `set_mod_hidden`).
+    hidden: Vec<String>,
+}
+
 #[tauri::command]
-async fn search(app: State<'_, App>, query: Search) -> CmdResult<SearchPage> {
+async fn search(app: State<'_, App>, query: Search) -> CmdResult<FoundPage> {
     let Search {
         game,
         source,
@@ -1999,7 +2010,36 @@ async fn search(app: State<'_, App>, query: Search) -> CmdResult<SearchPage> {
         excluded_categories,
         page,
     };
-    app.pw.search(&game, &source, &query).await.map_err(msg)
+    // a broken entry just hides nothing; the registry test catches it
+    let defaults = HiddenMods::of(&app.pw.registry(), &source).unwrap_or_default();
+    let page = app.pw.search(&game, &source, &query).await.map_err(msg)?;
+    let prefs = themes::GuiPrefs::load(&app.pw.paths().config).unwrap_or_default();
+    let chosen = prefs.hidden_mods.get(&game);
+    let hidden = page
+        .items
+        .iter()
+        .filter(|item| {
+            let key = format!("{}:{}", item.source, item.id);
+            chosen
+                .and_then(|c| c.get(&key).copied())
+                .unwrap_or_else(|| defaults.hides(&item.id))
+        })
+        .map(|item| item.id.clone())
+        .collect();
+    Ok(FoundPage { page, hidden })
+}
+
+/// Hides mod `key` (`source:id`) of `game` from the Add mods tab, or shows
+/// it again, even if the registry hides it by default.
+#[tauri::command]
+fn set_mod_hidden(app: State<'_, App>, game: String, key: String, hidden: bool) -> CmdResult<()> {
+    let config = &app.pw.paths().config;
+    let mut file = themes::GuiPrefs::load(config)?;
+    file.hidden_mods
+        .entry(game)
+        .or_default()
+        .insert(key, hidden);
+    Ok(file.save(config)?)
 }
 
 /// The categories `source`'s searches for `game` can be narrowed by.
@@ -2767,6 +2807,7 @@ fn main() {
             theme_list,
             set_theme_prefs,
             set_favorite,
+            set_mod_hidden,
             selfupdate::check_for_update,
             selfupdate::install_update,
             selfupdate::cancel_update,

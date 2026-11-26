@@ -3,10 +3,12 @@
 use std::fmt;
 use std::str::FromStr;
 
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
+use crate::registry::Registry;
 use crate::source::ModSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -156,6 +158,52 @@ impl SearchPage {
             has_more: false,
             sort,
         }
+    }
+}
+
+/// The registry kind listing, for each source, the mods that searches hide
+/// unless asked to show them: `hidden/<source>.toml`, with `ids`, a list of
+/// globs matched against mod ids, ignoring case. They're for mods nobody
+/// needs to add by hand with patchwork, like other mod managers, or loaders
+/// that mods pull in as a dependency anyway.
+pub const HIDDEN_KIND: &str = "hidden";
+
+/// The mods a source's searches hide by default (see [`HIDDEN_KIND`]).
+#[derive(Debug, Clone, Default)]
+pub struct HiddenMods {
+    ids: GlobSet,
+}
+
+impl HiddenMods {
+    /// What `source`'s `hidden` entry hides, which is nothing without one.
+    pub fn of(registry: &Registry, source: &str) -> Result<Self, Error> {
+        let Some(entry) = registry.data(HIDDEN_KIND, source) else {
+            return Ok(Self::default());
+        };
+        let bad = |why: String| Error::invalid(format!("{HIDDEN_KIND}/{source}.toml: {why}"));
+        let ids = match entry.value.get("ids") {
+            None => &Vec::new(),
+            Some(toml::Value::Array(ids)) => ids,
+            Some(_) => return Err(bad("`ids` must be a list of patterns".into())),
+        };
+        let mut set = GlobSetBuilder::new();
+        for id in ids {
+            let id = id
+                .as_str()
+                .ok_or_else(|| bad("`ids` must be a list of patterns".into()))?;
+            let glob = GlobBuilder::new(id)
+                .case_insensitive(true)
+                .build()
+                .map_err(|e| bad(format!("`{id}` isn't a valid pattern: {e}")))?;
+            set.add(glob);
+        }
+        let ids = set.build().map_err(|e| bad(e.to_string()))?;
+        Ok(Self { ids })
+    }
+
+    /// Whether mod `id` is hidden by default.
+    pub fn hides(&self, id: &str) -> bool {
+        self.ids.is_match(id)
     }
 }
 

@@ -357,13 +357,18 @@ impl Registry {
     }
 
     /// The hash of every entry that isn't a game, keyed by kind and id,
-    /// except runners and hosts: how a game is started or where its mods
-    /// are downloaded from has no effect on what's deployed to it, like the
-    /// `launch` in [`COSMETIC_GAME_FIELDS`].
+    /// except runners, hosts and hidden mods: how a game is started, where
+    /// its mods are downloaded from or what searches show has no effect on
+    /// what's deployed to it, like the `launch` in [`COSMETIC_GAME_FIELDS`].
     pub fn data_hashes(&self) -> impl Iterator<Item = (&str, &str, ContentHash)> {
+        const COSMETIC: [&str; 3] = [
+            crate::launch::runner::KIND,
+            links::KIND,
+            crate::search::HIDDEN_KIND,
+        ];
         self.data
             .iter()
-            .filter(|((kind, _), _)| kind != crate::launch::runner::KIND && kind != links::KIND)
+            .filter(|((kind, _), _)| !COSMETIC.contains(&kind.as_str()))
             .map(|((kind, id), entry)| (kind.as_str(), id.as_str(), entry.hash))
     }
 }

@@ -1,0 +1,12 @@
+# Thunderstore mods the Add mods tab hides until "Show hidden mods" is on:
+# ones nobody needs to add by hand with patchwork. `ids` are globs matched
+# against mod ids (`Owner-Name`), ignoring case.
+ids = [
+    # other mod managers
+    "ebkr-r2modman",
+    "Kesomannen-GaleModManager",
+    # BepInEx, which the mods that need it pull in anyway; each game has
+    # its own pack, like denikson-BepInExPack_Valheim
+    "*-BepInExPack",
+    "*-BepInExPack_*",
+]

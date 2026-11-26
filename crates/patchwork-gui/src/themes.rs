@@ -539,6 +539,11 @@ pub struct GuiPrefs {
     /// Games pinned to the top of the game picker, by id.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub favorites: BTreeSet<String>,
+    /// Mods hidden from the Add mods tab (`true`), or shown there although
+    /// the registry hides them by default (`false`), by game then
+    /// `source:id`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub hidden_mods: BTreeMap<String, BTreeMap<String, bool>>,
     pub theme: ThemePrefs,
     #[serde(flatten)]
     pub rest: toml::Table,

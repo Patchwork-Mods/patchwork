@@ -353,6 +353,9 @@
 						<summary title="Only show, or hide, mods in some categories, like libraries">Filter</summary>
 						<div class="menu-items"></div>
 					</details>
+					<!-- Shows hidden mods too, so they can be unhidden; its icon and
+					     count are filled in by renderHiddenToggle() in browse.js. -->
+					<button id="show-hidden" type="button" class="show-hidden" aria-pressed="false" aria-label="Show hidden mods" title="Show hidden mods"></button>
 				</form>
 				<!-- Sources that couldn't be searched, with why. -->
 				<p id="search-errors" class="muted" hidden></p>

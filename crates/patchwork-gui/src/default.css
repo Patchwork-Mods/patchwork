@@ -3302,6 +3302,67 @@ textarea {
   content: "✓ ";
 }
 
+/* The eye that shows hidden mods too (see browse.js), with how many of
+   the results are hidden. */
+.show-hidden {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--pw-muted);
+}
+
+.show-hidden[aria-pressed="true"] {
+  color: var(--pw-accent);
+  border-color: var(--pw-accent);
+}
+
+.show-hidden svg,
+.result .hide-toggle svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.show-hidden .count {
+  font-size: 12px;
+}
+
+/* A search result's button to hide it, over its picture across from the
+   source's name, showing on hover; a hidden one shown anyway is faded,
+   with its button there to unhide it. */
+.result .hide-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--pw-muted);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.result:hover .hide-toggle,
+.result.hidden-mod .hide-toggle,
+:where(:root:not([data-pointer])) .result .hide-toggle:focus-visible {
+  opacity: 1;
+}
+
+.result .hide-toggle:hover {
+  color: var(--pw-text);
+}
+
+.result.hidden-mod .card-main > * {
+  opacity: 0.5;
+}
+
 #search-errors {
   margin: 0;
   font-size: 13px;

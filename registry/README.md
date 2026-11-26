@@ -11,6 +11,8 @@ compiled into patchwork: `build.rs` in `patchwork-core` picks up every
   a page about a file (see below).
 - `runners/<id>.toml`: ways to start games that are just a command to fill
   in (see below).
+- `hidden/<source>.toml`: mods that source's searches hide unless asked,
+  like other mod managers (see below).
 - `themes/<id>.css`, or `themes/<id>/theme.css` for a theme with pictures or
   fonts beside it: games' own themes for the app, each with
   `game = "<id>"` in its `@theme` comment (see
@@ -203,6 +205,21 @@ fetch = "https://drive.google.com/embeddedfolderview?id=${id}"
 # `name` groups, and an optional `size` group in bytes.
 entries = '(?s)<div class="flip-entry"[^>]*>.*?<a href="(?<link>[^"]+)".*?class="flip-entry-title">(?<name>[^<]*)<'
 ```
+
+## Hidden mods
+
+The app's Add mods tab hides some mods until "Show hidden mods" is on: ones
+nobody needs to add by hand with patchwork, like other mod managers, or
+loaders that the mods needing them pull in anyway. They're listed per
+source, as globs matched against mod ids, ignoring case:
+
+```toml
+# hidden/thunderstore.toml
+ids = ["ebkr-r2modman", "*-BepInExPack"]
+```
+
+A user can hide more mods, or show one of these again, from the Add mods
+tab; that's kept per game in `<config>/gui.toml`.
 
 ## Other data
 

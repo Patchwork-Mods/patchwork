@@ -4,9 +4,13 @@
 // same sources (see sourcesearch.js), and "See all" there opens its search
 // here. It works without a profile, to look around first; adding a mod
 // then asks for one (see askForProfile() in profilestart.js).
+//
+// Mods can be hidden from it, for good: some are hidden from the start
+// (the registry's `hidden/<source>.toml`, like other mod managers), and the
+// eye by the Filter menu shows them all again, to unhide one.
 
 import { gameInfo, invoke, run, sourceName, state, status } from "./state.js";
-import { $, h, ms, nextFrame } from "./dom.js";
+import { $, eyeIcon, eyeOffIcon, h, ms, nextFrame } from "./dom.js";
 import { renderProfile } from "./profile.js";
 import { cardMain } from "./mods.js";
 import { refreshDetails } from "./details.js";
@@ -272,7 +276,7 @@ async function searchPart(source, text, sort) {
     const page = await invoke("search", { query });
     return {
       query,
-      items: page.items,
+      items: markHidden(page),
       total: page.total,
       hasMore: page.has_more,
       sort: page.sort,
@@ -352,7 +356,7 @@ async function loadMore() {
           const page = await invoke("search", { query });
           // Mods can shift between pages while scrolling, so skip ones already had.
           const had = new Set(part.items.map(key));
-          part.items.push(...page.items.filter((item) => !had.has(key(item))));
+          part.items.push(...markHidden(page).filter((item) => !had.has(key(item))));
           part.query = query;
           part.total = page.total;
           part.hasMore = page.has_more;
@@ -371,7 +375,10 @@ async function loadMore() {
   if (state.tab === ADD_TAB) {
     const added = addedMods();
     const labelled = found.sources.length > 1;
-    $("#results").append(...items.map((item) => resultCard(item, added, { labelled })));
+    const shown = items.filter(shows);
+    $("#results").append(...shown.map((item) => resultCard(item, added, { labelled })));
+    if (shown.length) $("#results > .empty")?.remove();
+    renderHiddenToggle();
     showMore(found);
   }
   status(`${totalOf(found) ?? found.items.length} mods · showing ${found.items.length}`);
@@ -389,10 +396,12 @@ function renderResults(found) {
   const added = addedMods();
   // with several sources, each card says which it's from
   const labelled = found.sources.length > 1;
-  $("#results").replaceChildren(...found.items.map((item) => resultCard(item, added, { labelled })));
-  if (!found.items.length) {
-    $("#results").append(h("p", { class: "empty" }, "No mods found."));
+  const shown = found.items.filter(shows);
+  $("#results").replaceChildren(...shown.map((item) => resultCard(item, added, { labelled })));
+  if (!shown.length) {
+    $("#results").append(h("p", { class: "empty" }, found.items.length ? "Every mod found is hidden." : "No mods found."));
   }
+  renderHiddenToggle();
   const failed = failures(found);
   errors.hidden = !failed.length;
   errors.replaceChildren(
@@ -424,9 +433,20 @@ export function resultCard(item, added, { labelled = false } = {}) {
   const isAdded = added.has(key(item));
   const card = h(
     "li",
-    { class: "result", "data-key": key(item) },
+    { class: item.hidden ? "result hidden-mod" : "result", "data-key": key(item) },
     cardMain(item),
     labelled && h("span", { class: "result-source" }, sourceName(item.source)),
+    h(
+      "button",
+      {
+        type: "button",
+        class: "hide-toggle",
+        title: item.hidden ? "Unhide this mod" : "Hide this mod from searches",
+        "aria-label": item.hidden ? `Unhide ${item.name}` : `Hide ${item.name}`,
+        onclick: () => setHidden(item, card, !item.hidden),
+      },
+      item.hidden ? eyeIcon() : eyeOffIcon(),
+    ),
     h(
       "button",
       {
@@ -439,6 +459,72 @@ export function resultCard(item, added, { labelled = false } = {}) {
     ),
   );
   return card;
+}
+
+// Hiding mods. Each search page says which of its items are hidden, and
+// each item keeps that as `hidden`, so cards for it on either tab agree.
+
+/** Marks the items of a page from the `search` command that are hidden. */
+function markHidden(page) {
+  const hidden = new Set(page.hidden ?? []);
+  for (const item of page.items) item.hidden = hidden.has(item.id);
+  return page.items;
+}
+
+/** Whether the Add mods tab shows hidden mods too; remembered on this computer. */
+let showHidden = false;
+try {
+  showHidden = localStorage.getItem("showHiddenMods") === "true";
+} catch {
+  // storage is off: hidden mods stay hidden
+}
+
+/** Whether the Add mods tab shows `item`. */
+const shows = (item) => showHidden || !item.hidden;
+
+/** The eye that shows hidden mods, with how many of the results are. */
+function renderHiddenToggle() {
+  const button = $("#show-hidden");
+  const n = state.search?.items.filter((item) => item.hidden).length ?? 0;
+  button.setAttribute("aria-pressed", String(showHidden));
+  button.replaceChildren(showHidden ? eyeIcon() : eyeOffIcon(), n ? h("span", { class: "count" }, String(n)) : null);
+  const some = n ? ` (${n} in these results)` : "";
+  button.title = showHidden ? `Leave hidden mods out again${some}` : `Show hidden mods${some}`;
+  button.setAttribute("aria-label", showHidden ? "Hide hidden mods" : "Show hidden mods");
+}
+
+$("#show-hidden").addEventListener("click", () => {
+  showHidden = !showHidden;
+  try {
+    localStorage.setItem("showHiddenMods", String(showHidden));
+  } catch {
+    // only lasts until patchwork closes, then
+  }
+  const top = $("#tab-browse").scrollTop;
+  if (state.search) renderResults(state.search);
+  $("#tab-browse").scrollTop = top;
+  renderHiddenToggle();
+});
+
+/** Hides search result `item` for good, or unhides it, from its `card`. */
+async function setHidden(item, card, hidden) {
+  const ok = await run("set_mod_hidden", { game: state.game, key: key(item), hidden })
+    .then(() => true)
+    .catch(() => false);
+  if (!ok) return;
+  item.hidden = hidden;
+  status(hidden ? `Hid ${item.name}` : `Unhid ${item.name}`);
+  // the Mods tab's results never show hidden mods
+  if (hidden && !(showHidden && card.closest("#results"))) {
+    const next = card.nextElementSibling ?? card.previousElementSibling;
+    card.remove();
+    next?.querySelector(".hide-toggle")?.focus({ preventScroll: true });
+  } else {
+    const fresh = resultCard(item, addedMods(), { labelled: !!card.querySelector(".result-source") });
+    card.replaceWith(fresh);
+    fresh.querySelector(".hide-toggle").focus({ preventScroll: true });
+  }
+  if (state.tab === ADD_TAB) renderHiddenToggle();
 }
 
 /** Adds mod `modId` of search result `item`, returning whether it was. */

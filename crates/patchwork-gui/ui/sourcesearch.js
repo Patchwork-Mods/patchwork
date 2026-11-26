@@ -101,9 +101,12 @@ function render() {
   // ones, which another mod stands in for), are in the lists above, so
   // they're left out here; the Add mods tab still shows them. One added
   // from here keeps its card, as "Added", until the results are redrawn.
+  // Hidden mods are left out too (see browse.js).
   const added = addedMods();
   const listed = new Set([...added, ...(state.profile.dependencies ?? []).map((d) => d.key)]);
-  const items = search.items.filter((item) => !listed.has(`${item.source}:${item.id}`));
+  const items = search.items.filter(
+    (item) => !item.hidden && !listed.has(`${item.source}:${item.id}`),
+  );
   const labelled = search.sources.length > 1;
   const anyMore = search.sources.some((s) => search.parts[s]?.hasMore);
   more.replaceChildren(
