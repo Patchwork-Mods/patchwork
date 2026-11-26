@@ -18,6 +18,9 @@ dialog shows, so the heading has to match the version being released.
   - Custom maps from BeatSaver, with SongCore to load them
 - Added Baldur's Gate 3 support
 
+### Themes
+- Added a Baldur's Gate 3 theme
+
 ## 0.3.1
 
 Did a lot of improvements for increasing clarity and easy of use from the GUI.

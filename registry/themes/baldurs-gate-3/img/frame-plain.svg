@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="120" height="120" viewBox="0 0 120 120">
+  <!-- frame.svg without the ornate corners, for menus and other small boxes:
+       the two lines crossing over a small diamond at every corner. -->
+  <defs>
+    <g id="plain" fill="none">
+      <path d="M32 6.5 H3 M6.5 32 V3" stroke="#b8924f"/>
+      <path d="M32 9.5 H9.5 V32" stroke="#6e5530" stroke-width="0.8"/>
+      <path d="M6.5 3.8 L9.2 6.5 L6.5 9.2 L3.8 6.5 Z" fill="#d9b874"/>
+    </g>
+  </defs>
+  <g fill="none">
+    <path d="M30 6.5 H90 M30 113.5 H90 M6.5 30 V90 M113.5 30 V90" stroke="#b8924f"/>
+    <path d="M30 9.5 H90 M30 110.5 H90 M9.5 30 V90 M110.5 30 V90" stroke="#6e5530" stroke-width="0.8"/>
+  </g>
+  <use xlink:href="#plain"/>
+  <use xlink:href="#plain" transform="matrix(-1 0 0 1 120 0)"/>
+  <use xlink:href="#plain" transform="matrix(1 0 0 -1 0 120)"/>
+  <use xlink:href="#plain" transform="matrix(-1 0 0 -1 120 120)"/>
+</svg>

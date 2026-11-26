@@ -1,0 +1,404 @@
+/*
+ * @theme
+ * name = "Baldur's Gate 3"
+ * game = "baldurs-gate-3"
+ * modes = ["dark"]
+ *
+ * In the colours of the game's menus: near-black panels with a warm cast,
+ * parchment text, and gold everywhere there's an edge. Each section is
+ * framed by a thin gold line with a darker one just inside it. Two corners
+ * of a frame are ornate (a jewel, a leaf and a pair of curls), the other two
+ * plain, and the long mod list gets a scrolled jewel in the middle of its
+ * top and bottom edges. Headings are in capitals, in gold. Buttons are dark
+ * with a gold outline that brightens on hover; the main actions are bronze.
+ * Behind it all is a faint warm light from above and a purple one from
+ * below. Nothing moves.
+ *
+ * [[option]]
+ * id = "flourishes"
+ * label = "Flourishes"
+ * type = "choice"
+ * var = "--bg3-flourish"
+ * choices = [
+ *   { value = "shown", label = "Shown", css = "block" },
+ *   { value = "hidden", label = "Hidden", css = "none" },
+ * ]
+ */
+
+:root {
+  color-scheme: dark;
+
+  --bg3-gold: #c9a25f;
+  --bg3-gold-bright: #e6c98a;
+  --bg3-gold-dim: #6e5530; /* the inner line */
+  --bg3-gold-faint: rgb(201 162 95 / 0.22);
+  --bg3-ink: #0b0907;
+  /* A panel: a touch lighter at the top, as in the game. */
+  --bg3-panel: linear-gradient(180deg, #18130e, #0d0a08);
+  --bg3-wash: rgb(201 162 95 / 0.07);
+  --bg3-wash-hover: rgb(201 162 95 / 0.12);
+  /* A gold line that fades out at both ends. */
+  --bg3-divider: linear-gradient(90deg, transparent, var(--bg3-gold-faint) 20% 80%, transparent);
+  --bg3-flourish: block;
+
+  /* The game's own fonts aren't installed anywhere, so the nearest common
+     ones: an inscriptional capital for headings, a book serif for text. */
+  --pw-font: "EB Garamond", "Cormorant Garamond", "Palatino Linotype", Palatino, "Book Antiqua",
+    Georgia, serif;
+  --bg3-title-font: "Cinzel", "Trajan Pro", "Trajan Pro 3", var(--pw-font);
+  --pw-radius: 1px;
+
+  --pw-bg: var(--bg3-ink);
+  --pw-surface: #17120d;
+  --pw-sidebar: #090706;
+  --pw-text: #ece0c4;
+  --pw-muted: #a8977a;
+  --pw-border: #3b2f1e;
+  --pw-accent: var(--bg3-gold);
+  --pw-accent-text: #1a1209;
+  --pw-danger: #d06a55;
+  --pw-danger-text: #fff3e6;
+  --pw-warning: #e3b55c;
+  --pw-link: var(--bg3-gold-bright);
+  --pw-focus: var(--bg3-gold-bright);
+  --pw-hover: var(--bg3-wash);
+  --pw-selection: rgb(201 162 95 / 0.3);
+  --pw-backdrop: rgb(4 3 2 / 0.75);
+  --pw-progress: var(--bg3-gold);
+  --pw-progress-track: rgb(201 162 95 / 0.15);
+}
+
+/* ---- Behind everything ---- */
+
+:root {
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -10%, rgb(120 82 38 / 0.22), transparent 70%),
+    radial-gradient(ellipse 80% 50% at 50% 115%, rgb(70 30 75 / 0.2), transparent 70%),
+    var(--bg3-ink);
+  background-attachment: fixed;
+}
+
+body {
+  font-size: 15px;
+  background: none;
+}
+
+/* ---- Type ---- */
+
+h1,
+h2,
+h3,
+legend,
+.brand {
+  font-family: var(--bg3-title-font);
+  font-weight: 400;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.06em;
+  color: var(--bg3-gold-bright);
+}
+
+/* ---- Edges: a gold line with a darker one inside it ---- */
+
+#sidebar {
+  background:
+    linear-gradient(var(--bg3-gold), var(--bg3-gold)) right top / 1px 100% no-repeat,
+    linear-gradient(var(--bg3-gold-dim), var(--bg3-gold-dim)) right 3px top / 1px 100% no-repeat,
+    var(--bg3-panel);
+  border-right: none;
+}
+
+#statusbar {
+  background:
+    linear-gradient(var(--bg3-gold), var(--bg3-gold)) left top / 100% 1px no-repeat,
+    linear-gradient(var(--bg3-gold-dim), var(--bg3-gold-dim)) left 0 top 3px / 100% 1px no-repeat,
+    rgb(8 6 5 / 0.9);
+  border-top: none;
+}
+
+#profile-header {
+  background: var(--bg3-divider) bottom / 100% 1px no-repeat;
+  border-bottom: none;
+}
+
+hr {
+  border: none;
+  height: 1px;
+  background: var(--bg3-divider);
+}
+
+fieldset {
+  border: none;
+  background: var(--bg3-divider) top / 100% 1px no-repeat;
+}
+
+/* The big boxes get the ornate frame, drawn 6px out from their edge so the
+   jewels sit across it; small ones get the plain one. */
+dialog,
+.mod-list {
+  border: 1px solid transparent;
+  border-image: url("img/frame.svg") 32 / 32px / 6px stretch;
+  border-radius: 0;
+}
+
+.menu-items,
+.settings-menu {
+  border: 1px solid transparent;
+  border-image: url("img/frame-plain.svg") 32 / 32px / 6px stretch;
+  border-radius: 0;
+}
+
+dialog {
+  background: var(--bg3-panel);
+  box-shadow:
+    0 0 0 6px rgb(0 0 0 / 0.35),
+    0 24px 70px rgb(0 0 0 / 0.85);
+  padding: 26px 30px;
+}
+
+dialog h2:first-child,
+dialog form > h2:first-child {
+  padding-bottom: 14px;
+  background: url("img/rule.svg") left bottom / 240px 12px no-repeat;
+}
+
+.menu-items,
+.settings-menu {
+  background: var(--bg3-panel);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.75);
+}
+
+/* ---- Buttons: dark, outlined in gold ---- */
+
+/* Every button that draws a box; the ones the built-in look leaves bare
+   (icons, links, rows in menus) stay bare. */
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ),
+.menu summary {
+  background: linear-gradient(180deg, #221b13, #140f0b);
+  border: 1px solid var(--bg3-gold-dim);
+  color: var(--pw-text);
+  transition:
+    border-color 0.12s,
+    color 0.12s,
+    box-shadow 0.12s;
+}
+
+button:not(
+    .link,
+    .expand,
+    .drag-handle,
+    .dismiss,
+    .config-open,
+    .back,
+    .mod-priority,
+    .mod-settings,
+    .remove,
+    .theme-choice,
+    #game-settings,
+    #profile-settings,
+    :is(.menu-items, .card-update, .settings-menu, .tabs, #profiles) button
+  ):hover:not(:disabled),
+.menu summary:hover,
+.menu[open] > summary {
+  border-color: var(--bg3-gold);
+  color: var(--bg3-gold-bright);
+  box-shadow: inset 0 0 10px rgb(201 162 95 / 0.18);
+}
+
+button.primary,
+#deploy.primary + .menu > summary {
+  background: linear-gradient(180deg, #6a4a20, #3e2a12);
+  border-color: var(--bg3-gold-bright);
+  color: #f6e6bd;
+}
+
+button.primary:hover:not(:disabled),
+#deploy.primary + .menu > summary:hover {
+  background: linear-gradient(180deg, #7d5726, #4a3216);
+  color: #fff4d6;
+  box-shadow: 0 0 12px rgb(230 201 138 / 0.3);
+}
+
+button.danger {
+  background: linear-gradient(180deg, #6e1f1c, #43110f);
+  border-color: #b4573f;
+  color: #fff3e6;
+}
+
+button.danger:hover:not(:disabled) {
+  background: linear-gradient(180deg, #84271f, #521512);
+  border-color: #d06a55;
+  color: #fff3e6;
+}
+
+.menu-items button:hover,
+.menu-items button:focus-visible,
+.menu-items label:hover,
+.menu-items label:focus-within,
+.settings-menu button:hover,
+.settings-menu button:focus-visible {
+  background: var(--bg3-wash-hover);
+  color: var(--bg3-gold-bright);
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+.menu summary:focus-visible {
+  outline: 1px solid var(--bg3-gold-bright);
+  outline-offset: 2px;
+}
+
+/* ---- Fields: dark wells ---- */
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea {
+  background: rgb(0 0 0 / 0.45);
+  border-color: #3b2f1e;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+textarea:focus {
+  border-color: var(--bg3-gold-dim);
+}
+
+/* Colour only, so the built-in look's arrow stays. */
+select {
+  background-color: rgb(0 0 0 / 0.45);
+  border-color: #3b2f1e;
+}
+
+.card-footer select.mod-version {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+/* ---- What's chosen: gold, with a line and a small jewel under it ---- */
+
+.tabs button,
+#profiles button,
+.segmented button {
+  position: relative;
+}
+
+.tabs button[aria-selected="true"],
+#profiles button[aria-current="true"],
+.segmented button[aria-pressed="true"] {
+  background: linear-gradient(90deg, transparent, var(--bg3-gold) 20% 80%, transparent) bottom / 100%
+    1px no-repeat;
+  box-shadow: none;
+  font-weight: inherit;
+  color: var(--bg3-gold-bright);
+  text-shadow: 0 0 8px rgb(230 201 138 / 0.45);
+}
+
+.tabs button[aria-selected="true"]::after,
+#profiles button[aria-current="true"]::after,
+.segmented button[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 5px;
+  height: 5px;
+  background: var(--bg3-gold-bright);
+  transform: translateX(-50%) rotate(45deg);
+  pointer-events: none;
+}
+
+.tabs button:hover,
+#profiles button:hover {
+  background-color: var(--bg3-wash);
+}
+
+#settings-tabs {
+  border-bottom: none;
+}
+
+/* ---- Mods ---- */
+
+.mod-list {
+  position: relative;
+  background: rgb(8 6 5 / 0.7);
+  padding: 12px 16px;
+}
+
+/* The scrolled jewels in the middle of the top and bottom edges, centred on
+   the frame's outer line (half a pixel inside the box, which is 1px of
+   transparent border out from where these are placed). */
+.mod-list::before,
+.mod-list::after {
+  content: "";
+  display: var(--bg3-flourish);
+  position: absolute;
+  left: calc(50% - 60px);
+  width: 120px;
+  height: 24px;
+  background: url("img/swirl.svg") center / 120px 24px no-repeat;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mod-list::before {
+  top: -12.5px;
+}
+
+.mod-list::after {
+  bottom: -12.5px;
+}
+
+.mod-row + .mod-row {
+  border-top: none;
+  background: var(--bg3-divider) top / 100% 1px no-repeat;
+}
+
+.mod-row:hover {
+  background-color: var(--bg3-wash);
+}
+
+.mod-row.expanded {
+  background-color: rgb(201 162 95 / 0.05);
+}
+
+.mod-list > li.dragging {
+  background: var(--pw-surface);
+  outline: 1px solid var(--bg3-gold-dim);
+}
+
+.result {
+  background: var(--bg3-panel);
+  border-color: var(--bg3-gold-dim);
+}
+
+.result:hover {
+  border-color: var(--bg3-gold);
+}
+
+.card-sheet {
+  background: linear-gradient(180deg, #1a140f, #0e0b08);
+}
+
+.tag,
+.badge {
+  border-color: rgb(201 162 95 / 0.4);
+  color: #c9b48a;
+}
+
+.mod-priority.set {
+  color: var(--bg3-gold-bright);
+  border-color: var(--bg3-gold);
+}

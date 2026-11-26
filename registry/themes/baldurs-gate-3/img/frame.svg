@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="120" height="120" viewBox="0 0 120 120">
+  <!-- A box's border for border-image (slice 32, outset 6): a gold line with
+       a darker one just inside it. The top-left and bottom-right corners are
+       ornate: the line bows in around a jewel, with a leaf pointing in and a
+       curl on each arm. The other two corners are plain, the lines crossing
+       over a small diamond. The edges between are just the two lines, so they
+       stretch cleanly. -->
+  <defs>
+    <g id="curls" fill="none" stroke-linecap="round">
+      <!-- Outward, sitting on the line where it leaves the bow. -->
+      <path d="M18 6.5 C19 3.5 22.5 2.2 24.5 3.8 C26 5 24.8 6.6 23.5 5.6" stroke="#d9b874" stroke-width="0.9"/>
+      <!-- The inner line, ending in a curl short of the corner. -->
+      <path d="M32 9.5 H24 C22 9.5 21 11 22.2 12 C23 12.6 24 12 23.6 11.2" stroke="#6e5530" stroke-width="0.8"/>
+    </g>
+    <g id="ornate">
+      <path d="M32 6.5 H18 A11.5 11.5 0 0 1 6.5 18 V32" fill="none" stroke="#b8924f"/>
+      <use xlink:href="#curls"/>
+      <use xlink:href="#curls" transform="matrix(0 1 1 0 0 0)"/>
+      <!-- Jewel, a stem to the bow, and a leaf past it pointing inward. -->
+      <path d="M9.5 9.5 L14.6 14.6" stroke="#d9b874" stroke-width="0.9"/>
+      <path d="M14.6 14.6 C18 15 20 17.5 21 21 C17.5 20 15 18 14.6 14.6 Z" fill="#d9b874"/>
+      <path d="M6.5 0.5 L12.5 6.5 L6.5 12.5 L0.5 6.5 Z" fill="#d9b874"/>
+      <path d="M6.5 3.5 L9.5 6.5 L6.5 9.5 L3.5 6.5 Z" fill="#120e0a"/>
+      <circle cx="6.5" cy="6.5" r="1.2" fill="#f0d89c"/>
+    </g>
+    <g id="plain" fill="none">
+      <path d="M32 6.5 H3 M6.5 32 V3" stroke="#b8924f"/>
+      <path d="M32 9.5 H9.5 V32" stroke="#6e5530" stroke-width="0.8"/>
+      <path d="M6.5 3.8 L9.2 6.5 L6.5 9.2 L3.8 6.5 Z" fill="#d9b874"/>
+    </g>
+  </defs>
+  <g fill="none">
+    <path d="M30 6.5 H90 M30 113.5 H90 M6.5 30 V90 M113.5 30 V90" stroke="#b8924f"/>
+    <path d="M30 9.5 H90 M30 110.5 H90 M9.5 30 V90 M110.5 30 V90" stroke="#6e5530" stroke-width="0.8"/>
+  </g>
+  <use xlink:href="#ornate"/>
+  <use xlink:href="#ornate" transform="matrix(-1 0 0 -1 120 120)"/>
+  <use xlink:href="#plain" transform="matrix(-1 0 0 1 120 0)"/>
+  <use xlink:href="#plain" transform="matrix(1 0 0 -1 0 120)"/>
+</svg>

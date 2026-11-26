@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="12" viewBox="0 0 240 12">
+  <!-- Under a heading: a small jewel, then a double line that fades out. -->
+  <defs>
+    <linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="12" y1="0" x2="240" y2="0">
+      <stop offset="0" stop-color="#c9a25f"/>
+      <stop offset="1" stop-color="#c9a25f" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <path d="M5.5 1 L10.5 6 L5.5 11 L0.5 6 Z" fill="#d9b874"/>
+  <path d="M5.5 3.5 L8 6 L5.5 8.5 L3 6 Z" fill="#120e0a"/>
+  <path d="M12 5.5 H240" stroke="url(#fade)"/>
+  <path d="M14 8.5 H180" stroke="url(#fade)" stroke-width="0.6"/>
+</svg>

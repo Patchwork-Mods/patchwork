@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="120" height="24" viewBox="0 0 120 24">
+  <!-- The middle of a long edge, centred on the frame's line (y = 12): a
+       jewel the line runs into, with a pair of scrolls and a tendril on each
+       side. -->
+  <defs>
+    <g id="half" fill="none" stroke="#d9b874" stroke-width="0.9" stroke-linecap="round">
+      <path d="M52 12 C48 12 46 8 42 7 C38 6 35 8.5 36 11 C36.7 12.6 39 12.4 39 10.8"/>
+      <path d="M52 12 C48 12 46 16 42 17 C38 18 35 15.5 36 13 C36.7 11.4 39 11.6 39 13.2"/>
+      <path d="M42 7 C35 3 27 4 21 9"/>
+      <path d="M42 17 C35 21 27 20 21 15"/>
+      <circle cx="20.4" cy="9.6" r="1" fill="#d9b874" stroke="none"/>
+      <circle cx="20.4" cy="14.4" r="1" fill="#d9b874" stroke="none"/>
+    </g>
+  </defs>
+  <use xlink:href="#half"/>
+  <use xlink:href="#half" transform="matrix(-1 0 0 1 120 0)"/>
+  <path d="M60 4 L68 12 L60 20 L52 12 Z" fill="#120e0a" stroke="#d9b874"/>
+  <path d="M60 8.5 L63.5 12 L60 15.5 L56.5 12 Z" fill="#e6c98a"/>
+</svg>
