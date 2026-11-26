@@ -1531,7 +1531,9 @@ a.quiet-link:hover,
 
 /* Empty, they'd still take a gap each in the tab's column. */
 #mod-notices:empty,
-#mod-problems:empty {
+#mod-problems:empty,
+/* An empty list view would show just its frame, as a stray line. */
+#mods:empty {
   display: none;
 }
 
