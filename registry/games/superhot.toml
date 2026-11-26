@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/superhot/superhot-cover-360x480.web
 [sources.thunderstore]
 community = "superhot"
 
+[sources.nexus]
+game_domain = "superhot"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

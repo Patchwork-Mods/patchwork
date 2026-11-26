@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/lethal-company/lethal-company-cover
 [sources.thunderstore]
 community = "lethal-company"
 
+[sources.nexus]
+game_domain = "lethalcompany"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

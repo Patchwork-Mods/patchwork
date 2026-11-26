@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/back-to-the-dawn/back-to-the-dawn-c
 [sources.thunderstore]
 community = "back-to-the-dawn"
 
+[sources.nexus]
+game_domain = "backtothedawn"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

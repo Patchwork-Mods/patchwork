@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/bendy-and-the-ink-machine/bendy-and
 [sources.thunderstore]
 community = "bendy-and-the-ink-machine"
 
+[sources.nexus]
+game_domain = "bendyandtheinkmachine"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

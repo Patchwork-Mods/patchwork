@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/cities-skylines-ii/cities-skylines-
 [sources.thunderstore]
 community = "cities-skylines-ii"
 
+[sources.nexus]
+game_domain = "citiesskylines2"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

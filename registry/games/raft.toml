@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/raft/raft-cover-360x480.webp"
 [sources.thunderstore]
 community = "raft"
 
+[sources.nexus]
+game_domain = "raft"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

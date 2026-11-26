@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/nine-sols/nine-sols-cover-360x480.w
 [sources.thunderstore]
 community = "nine-sols"
 
+[sources.nexus]
+game_domain = "ninesols"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

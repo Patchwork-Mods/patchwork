@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/sons-of-the-forest/sons-of-the-fore
 [sources.thunderstore]
 community = "sons-of-the-forest"
 
+[sources.nexus]
+game_domain = "sonsoftheforest"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

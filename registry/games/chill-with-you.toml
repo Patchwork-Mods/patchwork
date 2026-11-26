@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/chill-with-you/chill-with-you-cover
 [sources.thunderstore]
 community = "chill-with-you"
 
+[sources.nexus]
+game_domain = "chillwithyoulofistory"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/last-train-outta-wormtown/last-trai
 [sources.thunderstore]
 community = "last-train-outta-wormtown"
 
+[sources.nexus]
+game_domain = "lasttrainouttawormtown"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

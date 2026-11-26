@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/papers-please/papers-please-cover-3
 [sources.thunderstore]
 community = "papers-please"
 
+[sources.nexus]
+game_domain = "papersplease"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

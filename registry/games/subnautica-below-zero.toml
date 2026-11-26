@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/subnautica-below-zero/subna
 [sources.thunderstore]
 community = "subnautica-below-zero"
 
+[sources.nexus]
+game_domain = "subnauticabelowzero"
+
 [deployer]
 kind = "rules"
 

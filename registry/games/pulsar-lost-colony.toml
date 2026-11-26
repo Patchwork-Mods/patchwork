@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/pulsar-lost-colony/pulsar-lost-colo
 [sources.thunderstore]
 community = "pulsar-lost-colony"
 
+[sources.nexus]
+game_domain = "pulsarlostcolony"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

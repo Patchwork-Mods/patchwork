@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/against/against-cover-360x4
 [sources.thunderstore]
 community = "against"
 
+[sources.nexus]
+game_domain = "against"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

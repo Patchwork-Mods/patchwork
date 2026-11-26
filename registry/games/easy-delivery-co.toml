@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/easy-delivery-co/easy-delivery-co-c
 [sources.thunderstore]
 community = "easy-delivery-co"
 
+[sources.nexus]
+game_domain = "easydeliveryco"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

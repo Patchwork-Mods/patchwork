@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/return-of-the-obra-dinn/return-of-t
 [sources.thunderstore]
 community = "return-of-the-obra-dinn"
 
+[sources.nexus]
+game_domain = "returnoftheobradinn"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

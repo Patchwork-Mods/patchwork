@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/h3vr/h3vr-cover-360x480.webp"
 [sources.thunderstore]
 community = "h3vr"
 
+[sources.nexus]
+game_domain = "hotdogshorseshoesandhandgrenades"
+
 [deployer]
 kind = "rules"
 

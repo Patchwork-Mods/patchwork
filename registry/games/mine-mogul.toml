@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/mine-mogul/mine-mogul-cover-360x480
 [sources.thunderstore]
 community = "mine-mogul"
 
+[sources.nexus]
+game_domain = "minemogul"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

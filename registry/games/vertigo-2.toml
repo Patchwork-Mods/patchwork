@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/vertigo-2/vertigo-2-cover-360x480.w
 [sources.thunderstore]
 community = "vertigo-2"
 
+[sources.nexus]
+game_domain = "vertigo2"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

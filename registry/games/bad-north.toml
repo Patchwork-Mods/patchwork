@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/bad-north/bad-north-cover-360x480.w
 [sources.thunderstore]
 community = "bad-north"
 
+[sources.nexus]
+game_domain = "badnorthjotunnedition"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

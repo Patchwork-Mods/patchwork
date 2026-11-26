@@ -1,0 +1,31 @@
+# Rules for BepInEx games' mods from Nexus Mods, which has no package
+# format: archives are packed however their authors liked. bepinex-loader
+# includes this first, so every BepInEx game gets it. Most archives need
+# nothing special: `BepInEx/plugins/X.dll`, `plugins/X.dll` and a bare
+# `X.dll`, in a folder or not, are handled by the usual rules.
+# See rulesets/bepinex.toml for what each field means.
+
+# Leftovers from zipping on a Mac, which BepInEx would try to load.
+[[rules]]
+sources = "nexus"
+folder = "__MACOSX"
+skip = true
+
+[[rules]]
+sources = "nexus"
+files = "**/._*"
+skip = true
+
+# BepInEx itself, or a mod with it bundled (ValheimPlus, modpacks): laid out
+# from the game directory, with winhttp.dll, doorstop_config.ini and so on
+# next to the BepInEx folder, so it goes in as packed. Recognized by the
+# preloader, which only BepInEx ships (BepInEx.Preloader.dll in 5,
+# BepInEx.Preloader.Core.dll in 6), at the top or in one folder.
+[[rules]]
+sources = "nexus"
+has = "BepInEx/core/BepInEx.Preloader*.dll"
+
+[[rules]]
+sources = "nexus"
+has = "*/BepInEx/core/BepInEx.Preloader*.dll"
+strip = 1

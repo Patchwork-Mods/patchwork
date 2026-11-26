@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/ale-and-tale-tavern/ale-and-tale-ta
 [sources.thunderstore]
 community = "ale-and-tale-tavern"
 
+[sources.nexus]
+game_domain = "aleandtaletavern"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

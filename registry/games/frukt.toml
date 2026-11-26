@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/frukt/frukt-cover-360x480.webp"
 [sources.thunderstore]
 community = "frukt"
 
+[sources.nexus]
+game_domain = "frukt"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

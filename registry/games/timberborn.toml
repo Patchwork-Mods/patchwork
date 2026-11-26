@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/timberborn/timberborn-cover-360x480
 [sources.thunderstore]
 community = "timberborn"
 
+[sources.nexus]
+game_domain = "timberborn"
+
 [deployer]
 kind = "rules"
 

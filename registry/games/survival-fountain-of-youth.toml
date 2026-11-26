@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/survival-fountain-of-youth/survival
 [sources.thunderstore]
 community = "survival-fountain-of-youth"
 
+[sources.nexus]
+game_domain = "survivalfountainofyouth"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

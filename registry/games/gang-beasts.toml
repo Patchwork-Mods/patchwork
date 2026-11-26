@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/gang-beasts/gang-beasts-cover-360x4
 [sources.thunderstore]
 community = "gang-beasts"
 
+[sources.nexus]
+game_domain = "gangbeasts"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

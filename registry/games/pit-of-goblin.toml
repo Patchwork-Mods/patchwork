@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/pit-of-goblin/pit-of-goblin-cover-3
 [sources.thunderstore]
 community = "pit-of-goblin"
 
+[sources.nexus]
+game_domain = "pitofgoblin"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

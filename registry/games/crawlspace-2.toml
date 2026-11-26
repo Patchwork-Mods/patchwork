@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/crawlspace-2/crawlspace-2-cover-360
 [sources.thunderstore]
 community = "crawlspace-2"
 
+[sources.nexus]
+game_domain = "crawlspace2"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

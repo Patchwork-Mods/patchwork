@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/enter-the-gungeon/enter-the-gungeon
 [sources.thunderstore]
 community = "enter-the-gungeon"
 
+[sources.nexus]
+game_domain = "enterthegungeon"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

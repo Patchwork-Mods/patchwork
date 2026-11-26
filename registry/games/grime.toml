@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/grime/grime-cover-360x480.webp"
 [sources.thunderstore]
 community = "grime"
 
+[sources.nexus]
+game_domain = "grime"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

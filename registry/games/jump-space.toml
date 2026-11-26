@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/jump-space/jump-space-cover-360x480
 [sources.thunderstore]
 community = "jump-space"
 
+[sources.nexus]
+game_domain = "jumpspace"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

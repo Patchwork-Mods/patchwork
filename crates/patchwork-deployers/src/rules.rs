@@ -44,6 +44,11 @@ use serde::Deserialize;
 /// to = "Mods/{mod}/{path}"
 ///
 /// [[deployer.rules]]
+/// sources = "nexus"
+/// has = "BepInEx/core/BepInEx.Preloader*.dll"  # mods with a file like this
+/// to = "{path}"
+///
+/// [[deployer.rules]]
 /// kinds = "map"
 /// to = "Levels/{id}/{path}"  # the mod's id at its source, for a folder of its own
 ///
@@ -138,6 +143,9 @@ struct Rule {
     /// Globs for the id of the source the mod came from, like `modio`, for
     /// games whose sources package mods differently.
     sources: Option<Patterns>,
+    /// Globs for paths in the mod: the rule only applies to mods with a
+    /// file matching one, e.g. to recognize a loader by what's in it.
+    has: Option<Patterns>,
     #[serde(default)]
     strip: usize,
     to: Option<String>,
@@ -159,6 +167,7 @@ struct CompiledRule {
     mods: Option<GlobSet>,
     kinds: Option<GlobSet>,
     sources: Option<GlobSet>,
+    has: Option<GlobSet>,
     strip: usize,
     to: String,
     skip: bool,
@@ -225,6 +234,7 @@ impl RulesDeployer {
                         && rule.mods.is_none()
                         && rule.kinds.is_none()
                         && rule.sources.is_none()
+                        && rule.has.is_none()
                         && rule.strip == 0
                         && rule.to.is_none()
                         && !rule.skip;
@@ -339,6 +349,7 @@ impl RulesDeployer {
         let mods = self.patterns(rule.mods)?;
         let kinds = self.patterns(rule.kinds)?;
         let sources = self.patterns(rule.sources)?;
+        let has = self.patterns(rule.has)?;
         if let Some(folder) = &rule.folder
             && (folder.is_empty() || folder.contains(['/', '\\']))
         {
@@ -352,6 +363,7 @@ impl RulesDeployer {
             mods,
             kinds,
             sources,
+            has,
             strip: rule.strip,
             to: rule.to.unwrap_or_else(|| "{path}".to_owned()),
             skip: rule.skip,
@@ -365,22 +377,31 @@ impl RulesDeployer {
             None => Vec::new(),
         };
         let mut outside = 0;
+        let mut files = Vec::new();
+        for file in &m.files {
+            if top.is_empty() {
+                files.push((file, file.rel.clone()));
+                continue;
+            }
+            let parts: Vec<_> = file.rel.components().collect();
+            let inside = parts.len() > top.len()
+                && parts.iter().zip(&top).all(|(p, t)| p.to_lowercase() == *t);
+            if !inside {
+                outside += 1;
+                continue;
+            }
+            let rel = RelPath::new(&parts[top.len()..].join("/")).map_err(|e| self.error(e))?;
+            files.push((file, rel));
+        }
+        let has = rules_had(&setup.rules, files.iter().map(|(_, rel)| rel));
+        let who = Who {
+            has: &has,
+            ..Who::of(m)
+        };
         let mut unmatched = Vec::new();
         let mut used = 0;
-        for file in &m.files {
-            let rel = if top.is_empty() {
-                file.rel.clone()
-            } else {
-                let parts: Vec<_> = file.rel.components().collect();
-                let inside = parts.len() > top.len()
-                    && parts.iter().zip(&top).all(|(p, t)| p.to_lowercase() == *t);
-                if !inside {
-                    outside += 1;
-                    continue;
-                }
-                RelPath::new(&parts[top.len()..].join("/")).map_err(|e| self.error(e))?
-            };
-            let outcome = place(&setup.rules, &Who::of(m), &rel)
+        for (file, rel) in &files {
+            let outcome = place(&setup.rules, &who, rel)
                 .map_err(|e| self.error(format!("`{}`: {e}", m.name)))?;
             match outcome {
                 Outcome::Place(dst) => {
@@ -504,6 +525,8 @@ struct Who<'a> {
     kind: Option<&'a str>,
     /// Its source's id.
     source: &'a str,
+    /// For each rule, whether the mod has a file matching its `has`.
+    has: &'a [bool],
 }
 
 impl<'a> Who<'a> {
@@ -513,8 +536,25 @@ impl<'a> Who<'a> {
             id: &m.id,
             kind: m.kind.as_deref(),
             source: &m.source,
+            has: &[],
         }
     }
+}
+
+/// For each of `rules`, whether a mod with these files has one matching its
+/// `has`, worked out once per mod rather than for every file.
+fn rules_had<'a>(
+    rules: &[CompiledRule],
+    files: impl Iterator<Item = &'a RelPath> + Clone,
+) -> Vec<bool> {
+    rules
+        .iter()
+        .map(|r| {
+            r.has
+                .as_ref()
+                .is_some_and(|h| files.clone().any(|rel| h.is_match(rel.as_str())))
+        })
+        .collect()
 }
 
 /// Where the file at `rel` in the mod `who` goes.
@@ -530,7 +570,7 @@ fn place(rules: &[CompiledRule], who: &Who<'_>, rel: &RelPath) -> Result<Outcome
             .filter_map(|r| r.folder.as_deref())
             .any(|f| f.eq_ignore_ascii_case(dir))
     });
-    for rule in rules {
+    for (i, rule) in rules.iter().enumerate() {
         if !rule.files.is_match(rel.as_str())
             || rule.mods.as_ref().is_some_and(|m| !m.is_match(mod_name))
             || rule
@@ -541,6 +581,7 @@ fn place(rules: &[CompiledRule], who: &Who<'_>, rel: &RelPath) -> Result<Outcome
                 .sources
                 .as_ref()
                 .is_some_and(|s| !s.is_match(who.source))
+            || (rule.has.is_some() && !who.has.get(i).copied().unwrap_or(false))
         {
             continue;
         }

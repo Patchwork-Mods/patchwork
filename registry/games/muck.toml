@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/muck/muck-cover-360x480.webp"
 [sources.thunderstore]
 community = "muck"
 
+[sources.nexus]
+game_domain = "muck"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

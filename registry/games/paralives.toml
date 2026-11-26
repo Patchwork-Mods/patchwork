@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/paralives/paralives-cover-360x480.w
 [sources.thunderstore]
 community = "paralives"
 
+[sources.nexus]
+game_domain = "paralives"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

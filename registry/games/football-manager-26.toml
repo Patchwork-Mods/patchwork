@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/football-manager-26/football-manage
 [sources.thunderstore]
 community = "football-manager-26"
 
+[sources.nexus]
+game_domain = "footballmanager26"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

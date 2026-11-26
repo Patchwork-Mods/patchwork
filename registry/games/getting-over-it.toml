@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/getting-over-it/getting-over-it-cov
 [sources.thunderstore]
 community = "getting-over-it"
 
+[sources.nexus]
+game_domain = "gettingoveritwithbennettfoddy"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

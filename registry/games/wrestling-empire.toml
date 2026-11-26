@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/wrestling-empire/wrestling-empire-c
 [sources.thunderstore]
 community = "wrestling-empire"
 
+[sources.nexus]
+game_domain = "wrestlingempire"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

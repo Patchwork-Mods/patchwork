@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/wobbly-life/wobbly-life-cover-360x4
 [sources.thunderstore]
 community = "wobbly-life"
 
+[sources.nexus]
+game_domain = "wobblylife"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

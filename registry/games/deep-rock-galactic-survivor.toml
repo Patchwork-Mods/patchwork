@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/deep-rock-galactic-survivor/deep-ro
 [sources.thunderstore]
 community = "deep-rock-galactic-survivor"
 
+[sources.nexus]
+game_domain = "deeprockgalacticsurvivor"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/gloomwood/gloomwood-cover-360x480.w
 [sources.thunderstore]
 community = "gloomwood"
 
+[sources.nexus]
+game_domain = "gloomwood"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

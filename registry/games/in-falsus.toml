@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/in-falsus/in-falsus-cover-360x480.w
 [sources.thunderstore]
 community = "in-falsus"
 
+[sources.nexus]
+game_domain = "infalsus"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

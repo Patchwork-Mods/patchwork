@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/sunkenland/sunkenland-cover-360x480
 [sources.thunderstore]
 community = "sunkenland"
 
+[sources.nexus]
+game_domain = "sunkenland"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

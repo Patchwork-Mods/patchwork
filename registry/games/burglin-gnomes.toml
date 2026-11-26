@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/burglin-gnomes/burglin-gnomes-cover
 [sources.thunderstore]
 community = "burglin-gnomes"
 
+[sources.nexus]
+game_domain = "burglingnomes"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/cairn/cairn-cover-360x480.webp"
 [sources.thunderstore]
 community = "cairn"
 
+[sources.nexus]
+game_domain = "cairn"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/yapyap/yapyap-cover-360x480.webp"
 [sources.thunderstore]
 community = "yapyap"
 
+[sources.nexus]
+game_domain = "yapyap"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

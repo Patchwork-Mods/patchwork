@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/megabonk/megabonk-cover-360x480.web
 [sources.thunderstore]
 community = "megabonk"
 
+[sources.nexus]
+game_domain = "megabonk"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

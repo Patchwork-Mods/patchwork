@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/beton-brutal/beton-brutal-cover-360
 [sources.thunderstore]
 community = "beton-brutal"
 
+[sources.nexus]
+game_domain = "betonbrutal"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/atlyss/atlyss-cover-360x480.webp"
 [sources.thunderstore]
 community = "atlyss"
 
+[sources.nexus]
+game_domain = "atlyss"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

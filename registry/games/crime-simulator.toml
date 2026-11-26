@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/crime-simulator/crime-simulator-cov
 [sources.thunderstore]
 community = "crime-simulator"
 
+[sources.nexus]
+game_domain = "crimesimulator"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

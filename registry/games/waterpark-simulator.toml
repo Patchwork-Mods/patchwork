@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/waterpark-simulator/waterpark-simul
 [sources.thunderstore]
 community = "waterpark-simulator"
 
+[sources.nexus]
+game_domain = "waterparksimulator"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

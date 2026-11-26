@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/dale-dawson-stationery-supplies/dal
 [sources.thunderstore]
 community = "dale-dawson-stationery-supplies"
 
+[sources.nexus]
+game_domain = "daleanddawsonsstationarysupplies"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

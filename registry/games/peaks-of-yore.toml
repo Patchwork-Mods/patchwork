@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/peaks-of-yore/peaks-of-yore-cover-3
 [sources.thunderstore]
 community = "peaks-of-yore"
 
+[sources.nexus]
+game_domain = "peaksofyore"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

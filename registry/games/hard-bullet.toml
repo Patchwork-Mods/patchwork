@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/hard-bullet/hard-bullet-cov
 [sources.thunderstore]
 community = "hard-bullet"
 
+[sources.nexus]
+game_domain = "hardbullet"
+
 [deployer]
 kind = "rules"
 

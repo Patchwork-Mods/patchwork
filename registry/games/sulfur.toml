@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/sulfur/sulfur-cover-360x480.webp"
 [sources.thunderstore]
 community = "sulfur"
 
+[sources.nexus]
+game_domain = "sulfur"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

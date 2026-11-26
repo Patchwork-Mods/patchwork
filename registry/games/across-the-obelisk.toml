@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/across-the-obelisk/across-the-obeli
 [sources.thunderstore]
 community = "across-the-obelisk"
 
+[sources.nexus]
+game_domain = "acrosstheobelisk"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/mycopunk/mycopunk-cover-360x480.web
 [sources.thunderstore]
 community = "mycopunk"
 
+[sources.nexus]
+game_domain = "mycopunk"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

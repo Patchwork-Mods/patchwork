@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/fate-reawakened/fate-reawakened-cov
 [sources.thunderstore]
 community = "fate-reawakened"
 
+[sources.nexus]
+game_domain = "fatereawakened"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/how-to-fish/how-to-fish-cover-360x4
 [sources.thunderstore]
 community = "how-to-fish"
 
+[sources.nexus]
+game_domain = "howtofish"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

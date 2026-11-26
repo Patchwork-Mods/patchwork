@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/v-rising/v-rising-cover-360x480.web
 [sources.thunderstore]
 community = "v-rising"
 
+[sources.nexus]
+game_domain = "vrising"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

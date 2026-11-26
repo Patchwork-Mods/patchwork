@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/five-nights-at-freddys-into-the-pit
 [sources.thunderstore]
 community = "five-nights-at-freddys-into-the-pit"
 
+[sources.nexus]
+game_domain = "fnafintothepit"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

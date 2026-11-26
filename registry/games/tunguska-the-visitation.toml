@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/tunguska-the-visitation/tunguska-th
 [sources.thunderstore]
 community = "tunguska-the-visitation"
 
+[sources.nexus]
+game_domain = "tunguskathevisitation"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

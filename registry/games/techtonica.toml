@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/techtonica/techtonica-cover-360x480
 [sources.thunderstore]
 community = "techtonica"
 
+[sources.nexus]
+game_domain = "techtonica"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

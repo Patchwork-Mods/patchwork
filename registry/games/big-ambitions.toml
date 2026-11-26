@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/big-ambitions/big-ambitions-cover-3
 [sources.thunderstore]
 community = "big-ambitions"
 
+[sources.nexus]
+game_domain = "bigambitions"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

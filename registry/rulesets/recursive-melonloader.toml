@@ -8,6 +8,15 @@
 [[rules]]
 ruleset = "recursive-melonloader-loader"
 
+# Nexus mods' DLLs outside MelonLoader's folders, which
+# nexus-melonloader.toml (included by the loader's ruleset) routes. They
+# can't go in a folder of their own, which MelonLoader would only look in
+# if it had a manifest.json.
+[[rules]]
+sources = "nexus"
+files = "**/*.dll"
+to = "Mods/{file}"
+
 # A UserData folder at the top of the package is the mod's own data.
 [[rules]]
 files = "UserData/**"

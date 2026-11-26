@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/lost-skies/lost-skies-cover-360x480
 [sources.thunderstore]
 community = "lost-skies"
 
+[sources.nexus]
+game_domain = "lostskies"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

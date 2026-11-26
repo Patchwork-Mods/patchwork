@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/roadside-research/roadside-research
 [sources.thunderstore]
 community = "roadside-research"
 
+[sources.nexus]
+game_domain = "roadsideresearch"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

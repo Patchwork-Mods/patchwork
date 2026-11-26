@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/soulstone-survivors/soulstone-survi
 [sources.thunderstore]
 community = "soulstone-survivors"
 
+[sources.nexus]
+game_domain = "soulstonesurvivors"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

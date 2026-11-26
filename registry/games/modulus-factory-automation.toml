@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/modulus-factory-automation/modulus-
 [sources.thunderstore]
 community = "modulus-factory-automation"
 
+[sources.nexus]
+game_domain = "modulusfactoryautomation"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

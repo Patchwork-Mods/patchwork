@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/island-market-simulator/island-mark
 [sources.thunderstore]
 community = "island-market-simulator"
 
+[sources.nexus]
+game_domain = "islandmarketsimulator"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

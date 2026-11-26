@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/aska/aska-cover-360x480.webp"
 [sources.thunderstore]
 community = "aska"
 
+[sources.nexus]
+game_domain = "aska"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

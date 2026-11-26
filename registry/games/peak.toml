@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/peak/peak-cover-360x480.webp"
 [sources.thunderstore]
 community = "peak"
 
+[sources.nexus]
+game_domain = "peak"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

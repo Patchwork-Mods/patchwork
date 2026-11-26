@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/superhot-mind-control-delete/superh
 [sources.thunderstore]
 community = "superhot-mind-control-delete"
 
+[sources.nexus]
+game_domain = "superhotmindcontroldelete"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

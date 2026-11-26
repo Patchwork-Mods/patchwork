@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/monster-train-2/monster-train-2-cov
 [sources.thunderstore]
 community = "monster-train-2"
 
+[sources.nexus]
+game_domain = "monstertrain2"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

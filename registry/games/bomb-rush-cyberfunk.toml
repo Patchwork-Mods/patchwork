@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/bomb-rush-cyberfunk/bomb-rush-cyber
 [sources.thunderstore]
 community = "bomb-rush-cyberfunk"
 
+[sources.nexus]
+game_domain = "bombrushcyberfunk"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

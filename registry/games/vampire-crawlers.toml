@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/vampire-crawlers/vampire-crawlers-c
 [sources.thunderstore]
 community = "vampire-crawlers"
 
+[sources.nexus]
+game_domain = "vampirecrawlerstheturbowildcardfromvampiresurvivors"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

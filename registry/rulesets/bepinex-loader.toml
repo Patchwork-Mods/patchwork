@@ -6,6 +6,10 @@
 # contents of a loader pack's root folder go in the game directory, and
 # the rest of the pack is left out.
 
+# Nexus Mods archives aren't packages, so they get rules of their own.
+[[rules]]
+ruleset = "nexus-bepinex"
+
 # Matched by folder rather than by name, so a pack from a local zip works too.
 [[rules]]
 files = "{BepInExPack*,BepInEx_Valheim_Full}/**"
@@ -26,6 +30,7 @@ files = "**"
 skip = true
 mods = [
     "1F31A-BepInEx_Valheim_Full",
+    "Alto_Modding-BepInExPack_Alto",
     "ApproximatelyUp_Modding-BepInExPack_ApproximatelyUp",
     "bbepis-BepInEx_Rogue_Tower",
     "bbepis-BepInExPack",
@@ -109,6 +114,7 @@ mods = [
     "WhisperOfTheHouse_Modding-BepInExPack_WhisperOfTheHouse",
     "xiaoxiao921-BepInExPack",
     "xiaoye97-BepInEx",
+    "Yakari-BepInExPack_SWYF",
     "Zinal001-BepInExPack_MECHANICA",
 ]
 

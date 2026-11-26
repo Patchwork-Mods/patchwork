@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/boneworks/boneworks-cover-360x480.w
 [sources.thunderstore]
 community = "boneworks"
 
+[sources.nexus]
+game_domain = "boneworks"
+
 [deployer]
 kind = "rules"
 

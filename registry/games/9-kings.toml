@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/9-kings/9-kings-cover-360x480.webp"
 [sources.thunderstore]
 community = "9-kings"
 
+[sources.nexus]
+game_domain = "9kings"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

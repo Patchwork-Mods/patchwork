@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/lens-island/lens-island-cover-360x4
 [sources.thunderstore]
 community = "lens-island"
 
+[sources.nexus]
+game_domain = "lensisland"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/hollow-knight-silksong/hollow-knigh
 [sources.thunderstore]
 community = "hollow-knight-silksong"
 
+[sources.nexus]
+game_domain = "hollowknightsilksong"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

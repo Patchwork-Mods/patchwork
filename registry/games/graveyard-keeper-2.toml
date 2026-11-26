@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/graveyard-keeper-2/graveyard-keeper
 [sources.thunderstore]
 community = "graveyard-keeper-2"
 
+[sources.nexus]
+game_domain = "graveyardkeeper2"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

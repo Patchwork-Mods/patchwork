@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/nivalis-nights/nivalis-nights-cover
 [sources.thunderstore]
 community = "nivalis-nights"
 
+[sources.nexus]
+game_domain = "nivalisnights"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/return-from-core/return-from-core-c
 [sources.thunderstore]
 community = "return-from-core"
 
+[sources.nexus]
+game_domain = "returnfromcore"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

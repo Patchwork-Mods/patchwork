@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/iron-nest/iron-nest-cover-360x480.w
 [sources.thunderstore]
 community = "iron-nest"
 
+[sources.nexus]
+game_domain = "ironnest"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

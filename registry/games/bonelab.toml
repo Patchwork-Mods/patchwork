@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/bonelab/bonelab-cover-360x480.webp"
 [sources.thunderstore]
 community = "bonelab"
 
+[sources.nexus]
+game_domain = "bonelab"
+
 [deployer]
 kind = "rules"
 

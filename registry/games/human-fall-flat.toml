@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/human-fall-flat/human-fall-flat-cov
 [sources.thunderstore]
 community = "human-fall-flat"
 
+[sources.nexus]
+game_domain = "humanfallflat"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

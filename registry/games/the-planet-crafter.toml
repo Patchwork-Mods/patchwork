@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/the-planet-crafter/the-planet-craft
 [sources.thunderstore]
 community = "the-planet-crafter"
 
+[sources.nexus]
+game_domain = "planetcrafter"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

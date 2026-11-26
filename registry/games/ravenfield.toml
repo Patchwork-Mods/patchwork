@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/ravenfield/ravenfield-cover
 [sources.thunderstore]
 community = "ravenfield"
 
+[sources.nexus]
+game_domain = "ravenfield"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/grey-hack/grey-hack-cover-360x480.w
 [sources.thunderstore]
 community = "grey-hack"
 
+[sources.nexus]
+game_domain = "greyhack"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

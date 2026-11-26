@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/chrono-ark/chrono-ark-cover
 [sources.thunderstore]
 community = "chrono-ark"
 
+[sources.nexus]
+game_domain = "chronoark"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

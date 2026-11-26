@@ -13,6 +13,10 @@ fn registry_ruleset(id: &str) -> Option<toml::Table> {
         "melonloader-loader" => {
             include_str!("../../../../registry/rulesets/melonloader-loader.toml")
         }
+        "nexus-bepinex" => include_str!("../../../../registry/rulesets/nexus-bepinex.toml"),
+        "nexus-melonloader" => {
+            include_str!("../../../../registry/rulesets/nexus-melonloader.toml")
+        }
         _ => return None,
     };
     Some(toml::from_str(text).unwrap())
@@ -26,6 +30,8 @@ fn parse(text: &str) -> Result<Vec<CompiledRule>> {
         "recursive-melonloader",
         "recursive-melonloader-loader",
         "melonloader-loader",
+        "nexus-bepinex",
+        "nexus-melonloader",
     ]
     .into_iter()
     .map(|id| (id, registry_ruleset(id).unwrap()))
@@ -55,6 +61,7 @@ fn kind_dst(
         id: "an-id",
         kind,
         source: "local",
+        has: &[],
     };
     match place(rules, &who, &RelPath::new(path).unwrap()).unwrap() {
         Outcome::Place(p) => Some(p.to_string()),
@@ -235,6 +242,7 @@ fn mod_filters_and_escapes() {
                 mods: mods.map(|m| Patterns::One(m.to_owned())),
                 kinds: None,
                 sources: None,
+                has: None,
                 strip: 0,
                 to: Some(to.to_owned()),
                 skip: false,
@@ -254,6 +262,7 @@ fn mod_filters_and_escapes() {
         id: "m",
         kind: None,
         source: "local",
+        has: &[],
     };
     assert!(place(&evil, &who, &RelPath::new("x").unwrap()).is_err());
 }
@@ -286,6 +295,7 @@ to = "BepInEx/plugins/{mod}/{file}"
             id: "m",
             kind: None,
             source,
+            has: &[],
         };
         match place(&rules, &who, &RelPath::new(path).unwrap()).unwrap() {
             Outcome::Place(p) => Some(p.to_string()),
@@ -557,6 +567,7 @@ fn rulesets_say_which_files_are_config_through_includes() {
     let tables: Vec<(&str, toml::Table)> = vec![
         ("bepinex", registry_ruleset("bepinex").unwrap()),
         ("bepinex-loader", registry_ruleset("bepinex-loader").unwrap()),
+        ("nexus-bepinex", registry_ruleset("nexus-bepinex").unwrap()),
         (
             "outer",
             toml::from_str(
@@ -582,6 +593,7 @@ fn id_placeholder() {
         id: "25f",
         kind: Some("map"),
         source: "beatsaver",
+        has: &[],
     };
     let placed = place(&rules, &who, &RelPath::new("sub/Info.dat").unwrap()).unwrap();
     assert!(matches!(placed, Outcome::Place(p) if p.to_string() == "Levels/25f/sub/Info.dat"));
@@ -611,6 +623,7 @@ fn rules_can_place_in_other_roots() {
         id: "m",
         kind: None,
         source: "local",
+        has: &[],
     };
     assert!(place(&bad, &who, &RelPath::new("x").unwrap()).is_err());
 }
@@ -645,5 +658,289 @@ fn mod_with_nothing_for_the_game_says_so() {
     assert!(
         warnings[0].starts_with("nothing in `Cool` goes in the game"),
         "{warnings:?}"
+    );
+}
+
+/// Where each of an archive's files goes, for a mod from `source`, with
+/// `has` worked out from the whole archive as a deploy does.
+fn archive(rules: &[CompiledRule], source: &str, files: &[&str]) -> Vec<Option<String>> {
+    let rels: Vec<_> = files.iter().map(|f| RelPath::new(f).unwrap()).collect();
+    let has = rules_had(rules, rels.iter());
+    let who = Who {
+        name: "M",
+        id: "1",
+        kind: None,
+        source,
+        has: &has,
+    };
+    rels.iter()
+        .map(|rel| match place(rules, &who, rel).unwrap() {
+            Outcome::Place(p) => Some(p.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn check_archive(rules: &[CompiledRule], source: &str, cases: &[(&str, Option<&str>)]) {
+    let files: Vec<_> = cases.iter().map(|(f, _)| *f).collect();
+    for ((file, expected), got) in cases.iter().zip(archive(rules, source, &files)) {
+        assert_eq!(got.as_deref(), *expected, "{source}: {file}");
+    }
+}
+
+#[test]
+fn has_needs_a_matching_file_in_the_mod() {
+    let rules = parse(
+        r#"
+[[rules]]
+has = "*.esp"
+to = "Data/{path}"
+
+[[rules]]
+to = "other/{path}"
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        archive(&rules, "local", &["a.esp", "b.txt"]),
+        [Some("Data/a.esp".to_owned()), Some("Data/b.txt".to_owned())]
+    );
+    assert_eq!(
+        archive(&rules, "local", &["sub/a.esp", "b.txt"]),
+        [
+            Some("other/sub/a.esp".to_owned()),
+            Some("other/b.txt".to_owned())
+        ]
+    );
+}
+
+/// Layouts of real Nexus archives for BepInEx games (Valheim, Subnautica,
+/// Lethal Company), from the file listings Nexus shows.
+#[test]
+fn nexus_bepinex_archives() {
+    let rules = bepinex();
+    // Plain mods need nothing Nexus-specific.
+    check_archive(
+        &rules,
+        "nexus",
+        &[(
+            "LongshipUpgrades.dll",
+            Some("BepInEx/plugins/M/LongshipUpgrades.dll"),
+        )],
+    );
+    check_archive(
+        &rules,
+        "nexus",
+        &[(
+            "BepInEx/plugins/LokiTrap/LokiTrap.dll",
+            Some("BepInEx/plugins/M/LokiTrap/LokiTrap.dll"),
+        )],
+    );
+    check_archive(
+        &rules,
+        "nexus",
+        &[(
+            "FirstPersonPerspective/BepInEx/plugins/FirstPersonPerspective.dll",
+            Some("BepInEx/plugins/M/FirstPersonPerspective.dll"),
+        )],
+    );
+    check_archive(
+        &rules,
+        "nexus",
+        &[(
+            "plugins/CoreWoodExtras.dll",
+            Some("BepInEx/plugins/M/CoreWoodExtras.dll"),
+        )],
+    );
+    check_archive(
+        &rules,
+        "nexus",
+        &[(
+            "Digitalroot.Valheim.EternalFire/Digitalroot.Valheim.EternalFire.dll",
+            Some("BepInEx/plugins/M/Digitalroot.Valheim.EternalFire.dll"),
+        )],
+    );
+    check_archive(
+        &rules,
+        "nexus",
+        &[(
+            "BepInEx/patchers/MortarBepInExBridge.Patcher.dll",
+            Some("BepInEx/patchers/M/MortarBepInExBridge.Patcher.dll"),
+        )],
+    );
+    // A Mac zip's resource forks are left out.
+    check_archive(
+        &rules,
+        "nexus",
+        &[
+            (
+                "Creature Outcrops/OutcropCreatures.dll",
+                Some("BepInEx/plugins/M/OutcropCreatures.dll"),
+            ),
+            ("__MACOSX/Creature Outcrops/._OutcropCreatures.dll", None),
+        ],
+    );
+
+    // BepInEx bundled with a mod (SkToolbox) goes in as packed.
+    let bundled = [
+        ("winhttp.dll", Some("winhttp.dll")),
+        ("doorstop_config.ini", Some("doorstop_config.ini")),
+        (
+            "doorstop_libs/libdoorstop_x64.so",
+            Some("doorstop_libs/libdoorstop_x64.so"),
+        ),
+        (
+            "unstripped_corlib/UnityEngine.dll",
+            Some("unstripped_corlib/UnityEngine.dll"),
+        ),
+        (
+            "BepInEx/config/BepInEx.cfg",
+            Some("BepInEx/config/BepInEx.cfg"),
+        ),
+        (
+            "BepInEx/core/BepInEx.Preloader.dll",
+            Some("BepInEx/core/BepInEx.Preloader.dll"),
+        ),
+        (
+            "BepInEx/core/0Harmony.dll",
+            Some("BepInEx/core/0Harmony.dll"),
+        ),
+        (
+            "BepInEx/plugins/SkToolboxValheim.dll",
+            Some("BepInEx/plugins/SkToolboxValheim.dll"),
+        ),
+        ("SkToolbox Readme.txt", Some("SkToolbox Readme.txt")),
+    ];
+    check_archive(&rules, "nexus", &bundled);
+    // Packed in a folder of its own, and BepInEx 6.
+    check_archive(
+        &rules,
+        "nexus",
+        &[
+            ("Valheim_Bepinex_5.4.5/winhttp.dll", Some("winhttp.dll")),
+            (
+                "Valheim_Bepinex_5.4.5/BepInEx/core/BepInEx.Preloader.Core.dll",
+                Some("BepInEx/core/BepInEx.Preloader.Core.dll"),
+            ),
+            (
+                "Valheim_Bepinex_5.4.5/BepInEx/XUnity.AutoTranslator/Translators/X.dll",
+                Some("BepInEx/XUnity.AutoTranslator/Translators/X.dll"),
+            ),
+        ],
+    );
+    // From anywhere else, those files are a mod's as before.
+    check_archive(
+        &rules,
+        "local",
+        &[
+            ("winhttp.dll", Some("BepInEx/plugins/M/winhttp.dll")),
+            (
+                "BepInEx/core/BepInEx.Preloader.dll",
+                Some("BepInEx/core/M/BepInEx.Preloader.dll"),
+            ),
+        ],
+    );
+}
+
+/// Layouts of real Nexus archives for MelonLoader 0.7 games (Schedule I,
+/// BONELAB, Bloons TD 6), from the file listings Nexus shows.
+#[test]
+fn nexus_recursive_melonloader_archives() {
+    let rules = parse("[[rules]]\nruleset = \"recursive-melonloader\"\n").unwrap();
+    check_archive(
+        &rules,
+        "nexus",
+        &[
+            // MelonLoader only loads a Mods subfolder with a manifest.json,
+            // so these can't have a folder of their own.
+            ("Mods/QuickDelivery.dll", Some("Mods/QuickDelivery.dll")),
+            ("mods/Rollin.dll", Some("Mods/Rollin.dll")),
+            (
+                "DeliveryAppPlusPlus.dll",
+                Some("Mods/DeliveryAppPlusPlus.dll"),
+            ),
+            (
+                "StackedInventory-1.1.0/StackedInventory.dll",
+                Some("Mods/StackedInventory.dll"),
+            ),
+            (
+                "DayNightCycle/DayNightCycle/Mods/DayNightCycle.dll",
+                Some("Mods/DayNightCycle.dll"),
+            ),
+            ("Mods/OWO/HitDefault.owo", Some("Mods/OWO/HitDefault.owo")),
+            (
+                "UserLibs/Translators/BaiduTranslate.dll",
+                Some("UserLibs/Translators/BaiduTranslate.dll"),
+            ),
+            ("UserLibs/OWO.dll", Some("UserLibs/OWO.dll")),
+            (
+                "UserData/BetterEmployees/config.json",
+                Some("UserData/BetterEmployees/config.json"),
+            ),
+            (
+                "Plugins/Tobey.BepInExMelonLoaderWizard.MLPlugin.dll",
+                Some("Plugins/Tobey.BepInExMelonLoaderWizard.MLPlugin.dll"),
+            ),
+            ("__MACOSX/._UltimateCrosspathing.dll", None),
+            // Anything else is kept, where MelonLoader won't load it.
+            ("readme.txt", Some("Mods/M/readme.txt")),
+        ],
+    );
+    // MelonLoader bundled with a mod goes in as packed, even its own
+    // Plugins folder.
+    check_archive(
+        &rules,
+        "nexus",
+        &[
+            ("Schedule_I_UA/version.dll", Some("version.dll")),
+            (
+                "Schedule_I_UA/MelonLoader/net6/MelonLoader.dll",
+                Some("MelonLoader/net6/MelonLoader.dll"),
+            ),
+            (
+                "Schedule_I_UA/MelonLoader/Dependencies/Il2CppAssemblyGenerator/Cpp2IL/Plugins/P.dll",
+                Some("MelonLoader/Dependencies/Il2CppAssemblyGenerator/Cpp2IL/Plugins/P.dll"),
+            ),
+            (
+                "Schedule_I_UA/Mods/Translation.dll",
+                Some("Mods/Translation.dll"),
+            ),
+        ],
+    );
+    // Thunderstore packages still get a folder each.
+    check_archive(
+        &rules,
+        "thunderstore",
+        &[
+            ("Mods/Cool.dll", Some("Mods/M/Mods/Cool.dll")),
+            ("manifest.json", Some("Mods/M/manifest.json")),
+        ],
+    );
+}
+
+#[test]
+fn nexus_old_melonloader_archives() {
+    let rules = parse("[[rules]]\nruleset = \"melonloader-loader\"\n").unwrap();
+    check_archive(
+        &rules,
+        "nexus",
+        &[
+            (
+                "MelonLoader/MelonLoader.dll",
+                Some("MelonLoader/MelonLoader.dll"),
+            ),
+            ("version.dll", Some("version.dll")),
+        ],
+    );
+    check_archive(
+        &rules,
+        "nexus",
+        &[
+            ("Mods/RealView.dll", Some("Mods/RealView.dll")),
+            (
+                "UserData/MarrowLink/a.wav",
+                Some("UserData/MarrowLink/a.wav"),
+            ),
+        ],
     );
 }

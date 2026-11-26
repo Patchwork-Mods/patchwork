@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/ena-dream-bbq/ena-dream-bbq-cover-3
 [sources.thunderstore]
 community = "ena-dream-bbq"
 
+[sources.nexus]
+game_domain = "enadreambbq"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

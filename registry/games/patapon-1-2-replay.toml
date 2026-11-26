@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/patapon-1-2-replay/patapon-1-2-repl
 [sources.thunderstore]
 community = "patapon-1-2-replay"
 
+[sources.nexus]
+game_domain = "patapon12replay"
+
 [deployer]
 kind = "rules"
 

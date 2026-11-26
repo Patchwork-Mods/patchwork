@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/carrier-deck/carrier-deck-cover-360
 [sources.thunderstore]
 community = "carrier-deck"
 
+[sources.nexus]
+game_domain = "carrierdeck"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

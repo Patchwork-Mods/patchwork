@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/another-crabs-treasure/another-crab
 [sources.thunderstore]
 community = "another-crabs-treasure"
 
+[sources.nexus]
+game_domain = "anothercrabstreasure"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

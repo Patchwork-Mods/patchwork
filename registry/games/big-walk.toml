@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/big-walk/big-walk-cover-360x480.web
 [sources.thunderstore]
 community = "big-walk"
 
+[sources.nexus]
+game_domain = "bigwalk"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

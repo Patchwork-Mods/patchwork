@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/moonlighter/moonlighter-cover-360x4
 [sources.thunderstore]
 community = "moonlighter"
 
+[sources.nexus]
+game_domain = "moonlighter"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

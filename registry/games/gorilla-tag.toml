@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/gorilla-tag/gorilla-tag-cover-360x4
 [sources.thunderstore]
 community = "gorilla-tag"
 
+[sources.nexus]
+game_domain = "gorillatag"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

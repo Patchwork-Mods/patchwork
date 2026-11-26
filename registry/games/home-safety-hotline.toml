@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/home-safety-hotline/home-safety-hot
 [sources.thunderstore]
 community = "home-safety-hotline"
 
+[sources.nexus]
+game_domain = "homesafetyhotline"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

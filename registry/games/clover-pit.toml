@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/clover-pit/clover-pit-cover-360x480
 [sources.thunderstore]
 community = "clover-pit"
 
+[sources.nexus]
+game_domain = "cloverpit"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

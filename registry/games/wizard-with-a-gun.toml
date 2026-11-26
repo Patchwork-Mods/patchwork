@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/wizard-with-a-gun/wizard-with-a-gun
 [sources.thunderstore]
 community = "wizard-with-a-gun"
 
+[sources.nexus]
+game_domain = "wizardwithagun"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

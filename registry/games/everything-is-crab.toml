@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/everything-is-crab/everything-is-cr
 [sources.thunderstore]
 community = "everything-is-crab"
 
+[sources.nexus]
+game_domain = "everythingiscrab"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

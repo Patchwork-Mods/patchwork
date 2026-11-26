@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/pac-man-world-re-pac/pac-man-world-
 [sources.thunderstore]
 community = "pac-man-world-re-pac"
 
+[sources.nexus]
+game_domain = "pacmanworldrepcac"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

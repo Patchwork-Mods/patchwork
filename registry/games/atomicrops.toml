@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/atomicrops/atomicrops-cover-360x480
 [sources.thunderstore]
 community = "atomicrops"
 
+[sources.nexus]
+game_domain = "atomicrops"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

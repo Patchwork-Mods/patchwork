@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/sineus-arena-survivors/sineus-arena
 [sources.thunderstore]
 community = "sineus-arena-survivors"
 
+[sources.nexus]
+game_domain = "sineusarenasurvivors"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

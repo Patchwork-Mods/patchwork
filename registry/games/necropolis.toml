@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/necropolis/necropolis-cover-360x480
 [sources.thunderstore]
 community = "necropolis"
 
+[sources.nexus]
+game_domain = "necropolis"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

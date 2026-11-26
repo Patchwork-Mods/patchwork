@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/cryo/cryo-cover-360x480.webp"
 [sources.thunderstore]
 community = "cryo"
 
+[sources.nexus]
+game_domain = "cryo"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

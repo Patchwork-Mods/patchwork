@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/the-farmer-was-replaced/the-farmer-
 [sources.thunderstore]
 community = "the-farmer-was-replaced"
 
+[sources.nexus]
+game_domain = "thefarmerwasreplaced"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/receiver-2/receiver-2-cover-360x480
 [sources.thunderstore]
 community = "receiver-2"
 
+[sources.nexus]
+game_domain = "receiver2"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

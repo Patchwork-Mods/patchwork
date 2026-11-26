@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/shadows-of-doubt/shadows-of-doubt-c
 [sources.thunderstore]
 community = "shadows-of-doubt"
 
+[sources.nexus]
+game_domain = "shadowsofdoubt"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

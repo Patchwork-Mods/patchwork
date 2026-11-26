@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/blue-prince/blue-prince-cover-360x4
 [sources.thunderstore]
 community = "blue-prince"
 
+[sources.nexus]
+game_domain = "blueprince"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

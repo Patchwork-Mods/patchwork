@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/patch-quest/patch-quest-cover-360x4
 [sources.thunderstore]
 community = "patch-quest"
 
+[sources.nexus]
+game_domain = "patchquest"
+
 [deployer]
 kind = "rules"
 

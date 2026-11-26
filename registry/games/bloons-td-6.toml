@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/bloons-td-6/bloons-td-6-cover-360x4
 [sources.thunderstore]
 community = "bloons-td-6"
 
+[sources.nexus]
+game_domain = "bloonstd6"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

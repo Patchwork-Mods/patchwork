@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/magicraft/magicraft-cover-360x480.w
 [sources.thunderstore]
 community = "magicraft"
 
+[sources.nexus]
+game_domain = "magicraft"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

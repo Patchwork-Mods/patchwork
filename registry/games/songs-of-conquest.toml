@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/songs-of-conquest/songs-of-conquest
 [sources.thunderstore]
 community = "songs-of-conquest"
 
+[sources.nexus]
+game_domain = "songsofconquest"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

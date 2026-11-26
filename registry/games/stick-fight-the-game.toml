@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/stick-fight-the-game/stick-fight-th
 [sources.thunderstore]
 community = "stick-fight-the-game"
 
+[sources.nexus]
+game_domain = "stickfightthegame"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

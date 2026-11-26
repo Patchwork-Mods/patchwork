@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/repo/repo-cover-360x480.webp"
 [sources.thunderstore]
 community = "repo"
 
+[sources.nexus]
+game_domain = "repo"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/baby-steps/baby-steps-cover-360x480
 [sources.thunderstore]
 community = "baby-steps"
 
+[sources.nexus]
+game_domain = "babysteps"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/castle-story/castle-story-cover-360
 [sources.thunderstore]
 community = "castle-story"
 
+[sources.nexus]
+game_domain = "castlestory"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

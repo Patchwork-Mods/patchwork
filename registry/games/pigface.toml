@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/pigface/pigface-cover-360x480.webp"
 [sources.thunderstore]
 community = "pigface"
 
+[sources.nexus]
+game_domain = "pigface"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

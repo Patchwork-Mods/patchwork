@@ -290,7 +290,14 @@ fn search_needs_a_searchable_source() {
     let env = Env::new();
     env.run(&["profile", "new", "lethal-company/main"]);
     // checked before anything goes over the network
-    let err = env.fails(&["search", "morecompany", "--sort", "relevance"]);
+    let err = env.fails(&[
+        "search",
+        "morecompany",
+        "--source",
+        "thunderstore",
+        "--sort",
+        "relevance",
+    ]);
     assert!(
         err.contains("thunderstore can't sort by relevance"),
         "{err}"

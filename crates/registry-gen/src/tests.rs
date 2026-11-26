@@ -111,8 +111,25 @@ fn communities() -> BTreeMap<String, Community> {
     BTreeMap::from([(ror2.identifier.clone(), ror2)])
 }
 
+fn nexus_games() -> Vec<NexusGame> {
+    serde_json::from_value(serde_json::json!([
+        // matched by its domain, since the name differs
+        { "name": "Risk of Rain II", "domainName": "riskofrain2", "modCount": 5 },
+        { "name": "Outward", "domainName": "outward", "modCount": 282 },
+        // in NEXUS_OVERRIDES
+        { "name": "Hot Dogs, Horseshoes & Hand Grenades", "domainName": "hotdogshorseshoesandhandgrenades", "modCount": 34 },
+        // two with the same name: the one with more mods wins
+        { "name": "Schedule I", "domainName": "scheduleiold", "modCount": 2 },
+        { "name": "Schedule  I!", "domainName": "schedule1", "modCount": 1682 },
+        // no mods, so left out
+        { "name": "Backpack Hero", "domainName": "backpackhero", "modCount": 0 },
+    ]))
+    .unwrap()
+}
+
 fn games() -> BTreeMap<String, GameDef> {
-    generate_games(&schema(), &communities())
+    let nexus = nexus_games();
+    generate_games(&schema(), &communities(), &NexusIndex::new(&nexus))
         .unwrap()
         .into_iter()
         .map(|(id, text)| {
@@ -221,15 +238,17 @@ fn loader_ruleset_covers_every_pack() {
     assert_eq!(config.len(), 1);
     assert_eq!(config[0]["files"].as_str(), Some("BepInEx/config/**/*.cfg"));
     assert_eq!(config[0]["format"].as_str(), Some("bepinex.cfg"));
+    // Nexus mods' rules come first.
+    assert_eq!(rules[0]["ruleset"].as_str(), Some("nexus-bepinex"));
     assert_eq!(
-        rules[0]["files"].as_str(),
+        rules[1]["files"].as_str(),
         Some("{BepInExPack*,BepInEx_Valheim_Full}/**")
     );
     assert_eq!(
-        rules[1]["mods"].as_str(),
+        rules[2]["mods"].as_str(),
         Some("bbepis-BepInEx_Rogue_Tower")
     );
-    let skipped: Vec<_> = rules[3]["mods"]
+    let skipped: Vec<_> = rules[4]["mods"]
         .as_array()
         .unwrap()
         .iter()
@@ -331,13 +350,16 @@ fn melonloader_rulesets_list_their_packs() {
         assert_eq!(config[0]["format"].as_str(), Some("generic.toml"));
     }
 
+    for id in ["melonloader-loader", "recursive-melonloader-loader"] {
+        assert_eq!(rules(id)[0]["ruleset"].as_str(), Some("nexus-melonloader"));
+    }
     let old = rules("melonloader-loader");
-    assert_eq!(old[0]["mods"].as_str(), Some("LavaGang-MelonLoader"));
-    assert_eq!(old[0]["skip"].as_bool(), Some(true));
-    assert_eq!(old[1]["files"].as_str(), Some("**"));
+    assert_eq!(old[1]["mods"].as_str(), Some("LavaGang-MelonLoader"));
+    assert_eq!(old[1]["skip"].as_bool(), Some(true));
+    assert_eq!(old[2]["files"].as_str(), Some("**"));
 
     let recursive = rules("recursive-melonloader-loader");
-    let mods: Vec<_> = recursive[0]["mods"]
+    let mods: Vec<_> = recursive[1]["mods"]
         .as_array()
         .unwrap()
         .iter()
@@ -347,8 +369,8 @@ fn melonloader_rulesets_list_their_packs() {
         mods,
         ["LavaGang-MelonLoader", "SHMCD_Modding-MelonLoader_SHMCD"]
     );
-    assert!(recursive[0].get("skip").is_none());
-    assert_eq!(recursive[1]["skip"].as_bool(), Some(true));
+    assert!(recursive[1].get("skip").is_none());
+    assert_eq!(recursive[2]["skip"].as_bool(), Some(true));
 }
 
 #[test]
@@ -365,6 +387,61 @@ fn ambiguous_folders_are_an_error() {
     routes.push(route("Other/plugins", "state", &[], false));
     let game: R2Game = serde_json::from_value(r2("Twice", "game", routes)).unwrap();
     assert!(mod_rules(&game).is_err());
+}
+
+#[test]
+fn nexus_pages_are_matched_by_name() {
+    let games = games();
+    let domain = |id: &str| {
+        games[id]
+            .sources
+            .get("nexus")
+            .map(|n| n["game_domain"].as_str().unwrap().to_owned())
+    };
+    assert_eq!(domain("risk-of-rain-2").as_deref(), Some("riskofrain2"));
+    // Servers and other editions use the game's page.
+    assert_eq!(
+        domain("risk-of-rain-2-server").as_deref(),
+        Some("riskofrain2")
+    );
+    assert_eq!(domain("outward").as_deref(), Some("outward"));
+    assert_eq!(domain("outward-definitive").as_deref(), Some("outward"));
+    assert_eq!(
+        domain("h3vr").as_deref(),
+        Some("hotdogshorseshoesandhandgrenades")
+    );
+    assert_eq!(domain("schedule-i").as_deref(), Some("schedule1"));
+    assert_eq!(domain("backpack-hero"), None);
+    // Thunderstore stays first.
+    let text = generate_games(&schema(), &communities(), &NexusIndex::new(&nexus_games()))
+        .unwrap()
+        .into_iter()
+        .find(|(id, _)| id == "outward")
+        .unwrap()
+        .1;
+    let thunderstore = text.find("[sources.thunderstore]").unwrap();
+    assert!(
+        thunderstore < text.find("[sources.nexus]").unwrap(),
+        "{text}"
+    );
+}
+
+#[test]
+fn nexus_overrides_must_name_real_games() {
+    let nexus = nexus_games();
+    let index = NexusIndex::new(&nexus);
+    assert!(
+        check_nexus_overrides(
+            &index,
+            &[
+                ("h3vr", Some("hotdogshorseshoesandhandgrenades")),
+                ("raft", None)
+            ]
+        )
+        .is_ok()
+    );
+    let err = check_nexus_overrides(&index, &[("h3vr", Some("h3vr"))]).unwrap_err();
+    assert!(err.to_string().contains("h3vr"), "{err}");
 }
 
 #[test]

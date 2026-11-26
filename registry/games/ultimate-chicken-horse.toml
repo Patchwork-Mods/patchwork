@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/ultimate-chicken-horse/ultimate-chi
 [sources.thunderstore]
 community = "ultimate-chicken-horse"
 
+[sources.nexus]
+game_domain = "ultimatechickenhorse"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -1,0 +1,53 @@
+# Rules for MelonLoader games' mods from Nexus Mods, which has no package
+# format: archives are packed however their authors liked, usually as a bare
+# `X.dll` or laid out from the game directory, with Mods, Plugins, UserLibs
+# and UserData folders. Both MelonLoader loader rulesets include this first,
+# so every MelonLoader game gets it. See rulesets/bepinex.toml for what each
+# field means.
+
+# Leftovers from zipping on a Mac, which MelonLoader would try to load.
+[[rules]]
+sources = "nexus"
+folder = "__MACOSX"
+skip = true
+
+[[rules]]
+sources = "nexus"
+files = "**/._*"
+skip = true
+
+# MelonLoader itself, or a mod with it bundled: laid out from the game
+# directory, with version.dll next to the MelonLoader folder, so it goes in
+# as packed. Recognized by MelonLoader.dll (in net6 and net35 since 0.6), at
+# the top or in one folder.
+[[rules]]
+sources = "nexus"
+has = "MelonLoader/{MelonLoader.dll,net*/MelonLoader.dll}"
+
+[[rules]]
+sources = "nexus"
+has = "*/MelonLoader/{MelonLoader.dll,net*/MelonLoader.dll}"
+strip = 1
+
+# MelonLoader's folders, wherever they are in the archive. They go straight
+# in the game's: MelonLoader 0.7 only looks in a subfolder of Mods that has
+# a manifest.json, which Nexus mods don't, so they can't have one each.
+[[rules]]
+sources = "nexus"
+folder = "Mods"
+to = "Mods/{path}"
+
+[[rules]]
+sources = "nexus"
+folder = "Plugins"
+to = "Plugins/{path}"
+
+[[rules]]
+sources = "nexus"
+folder = "UserLibs"
+to = "UserLibs/{path}"
+
+[[rules]]
+sources = "nexus"
+folder = "UserData"
+to = "UserData/{path}"

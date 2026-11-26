@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/gamble-with-your-friends/gamble-wit
 [sources.thunderstore]
 community = "gamble-with-your-friends"
 
+[sources.nexus]
+game_domain = "gamblewithyourfriends"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

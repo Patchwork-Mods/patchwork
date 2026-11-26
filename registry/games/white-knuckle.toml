@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/white-knuckle/white-knuckle-cover-3
 [sources.thunderstore]
 community = "white-knuckle"
 
+[sources.nexus]
+game_domain = "whiteknuckle"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

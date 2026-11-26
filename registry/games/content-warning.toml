@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/content-warning/content-warning-cov
 [sources.thunderstore]
 community = "content-warning"
 
+[sources.nexus]
+game_domain = "contentwarning"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

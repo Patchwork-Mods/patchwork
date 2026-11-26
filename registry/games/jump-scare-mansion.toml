@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/jump-scare-mansion/jump-scare-mansi
 [sources.thunderstore]
 community = "jump-scare-mansion"
 
+[sources.nexus]
+game_domain = "spookysjumpscaremansion"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

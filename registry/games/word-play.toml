@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/word-play/word-play-cover-360x480.w
 [sources.thunderstore]
 community = "word-play"
 
+[sources.nexus]
+game_domain = "wordplay"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/gatekeeper/gatekeeper-cover-360x480
 [sources.thunderstore]
 community = "gatekeeper"
 
+[sources.nexus]
+game_domain = "gatekeeper"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/stonewards/stonewards-cover-360x480
 [sources.thunderstore]
 community = "stonewards"
 
+[sources.nexus]
+game_domain = "stonewards"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

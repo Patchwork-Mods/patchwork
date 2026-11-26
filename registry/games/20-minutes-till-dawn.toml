@@ -6,10 +6,13 @@ schema = 1
 id = "20-minutes-till-dawn"
 name = "20 Minutes Till Dawn"
 description = "20 Minutes Till Dawn is a survival roguelite where endless hordes of creatures lurk from the dark. Craft an array of overpowering builds and eradicate waves of Lovecraftian nightmares. Will you be able to survive the night?"
-image = "https://ccdn.thunderstore.io/live/community/20-minutes-till-dawn/20-minutes-till-dawn-cover-360x480.png"
+image = "https://ccdn.thunderstore.io/assets/20-minutes-till-dawn/20-minutes-till-dawn-cover-360x480.webp"
 
 [sources.thunderstore]
 community = "20-minutes-till-dawn"
+
+[sources.nexus]
+game_domain = "20minutestildawn"
 
 [deployer]
 kind = "rules"

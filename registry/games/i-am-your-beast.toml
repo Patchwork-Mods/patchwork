@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/i-am-your-beast/i-am-your-beast-cov
 [sources.thunderstore]
 community = "i-am-your-beast"
 
+[sources.nexus]
+game_domain = "iamyourbeast"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

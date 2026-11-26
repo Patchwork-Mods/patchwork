@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/superhot-vr/superhot-vr-cover-360x4
 [sources.thunderstore]
 community = "superhot-vr"
 
+[sources.nexus]
+game_domain = "superhotvr"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

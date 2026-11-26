@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/gtfo/gtfo-cover-360x480.webp"
 [sources.thunderstore]
 community = "gtfo"
 
+[sources.nexus]
+game_domain = "gtfo"
+
 [deployer]
 kind = "rules"
 

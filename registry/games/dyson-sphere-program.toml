@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/dyson-sphere-program/dyson-sphere-p
 [sources.thunderstore]
 community = "dyson-sphere-program"
 
+[sources.nexus]
+game_domain = "dysonsphereprogram"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

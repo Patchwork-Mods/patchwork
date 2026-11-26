@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/totally-accurate-battle-simulator/t
 [sources.thunderstore]
 community = "totally-accurate-battle-simulator"
 
+[sources.nexus]
+game_domain = "totallyaccuratebattlesimulator"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

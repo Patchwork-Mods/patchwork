@@ -6,6 +6,10 @@
 # RecursiveMelonLoaderInstaller does: only the loader's own files go in the
 # game directory. Its proxy DLL is version.dll or winhttp.dll.
 
+# Nexus Mods archives aren't packages, so they get rules of their own.
+[[rules]]
+ruleset = "nexus-melonloader"
+
 [[rules]]
 mods = [
     "HomeSafetyHotline_Modding-MelonLoader_HomeSafetyHotline",

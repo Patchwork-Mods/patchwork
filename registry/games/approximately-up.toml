@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/approximately-up/approximately-up-c
 [sources.thunderstore]
 community = "approximately-up"
 
+[sources.nexus]
+game_domain = "approximatelyup"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

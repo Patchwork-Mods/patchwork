@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/disco-elysium/disco-elysium-cover-3
 [sources.thunderstore]
 community = "disco-elysium"
 
+[sources.nexus]
+game_domain = "discoelysium"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

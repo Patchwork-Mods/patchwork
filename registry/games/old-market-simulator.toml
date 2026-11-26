@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/old-market-simulator/old-market-sim
 [sources.thunderstore]
 community = "old-market-simulator"
 
+[sources.nexus]
+game_domain = "oldmarketsimulator"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

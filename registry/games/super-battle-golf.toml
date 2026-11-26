@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/super-battle-golf/super-battle-golf
 [sources.thunderstore]
 community = "super-battle-golf"
 
+[sources.nexus]
+game_domain = "superbattlegolf"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

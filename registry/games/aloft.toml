@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/aloft/aloft-cover-360x480_4
 [sources.thunderstore]
 community = "aloft"
 
+[sources.nexus]
+game_domain = "aloft"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

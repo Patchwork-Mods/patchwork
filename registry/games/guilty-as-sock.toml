@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/guilty-as-sock/guilty-as-sock-cover
 [sources.thunderstore]
 community = "guilty-as-sock"
 
+[sources.nexus]
+game_domain = "guiltyassock"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

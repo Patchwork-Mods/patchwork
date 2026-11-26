@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/miside/miside-cover-360x480.webp"
 [sources.thunderstore]
 community = "miside"
 
+[sources.nexus]
+game_domain = "miside"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

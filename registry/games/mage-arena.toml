@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/mage-arena/mage-arena-cover-360x480
 [sources.thunderstore]
 community = "mage-arena"
 
+[sources.nexus]
+game_domain = "magearena"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

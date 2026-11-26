@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/below-the-stone/below-the-stone-cov
 [sources.thunderstore]
 community = "below-the-stone"
 
+[sources.nexus]
+game_domain = "belowthestone"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

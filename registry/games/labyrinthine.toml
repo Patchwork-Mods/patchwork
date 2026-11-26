@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/labyrinthine/labyrinthine-cover-360
 [sources.thunderstore]
 community = "labyrinthine"
 
+[sources.nexus]
+game_domain = "labyrinthine"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/west-of-loathing/west-of-loathing-c
 [sources.thunderstore]
 community = "west-of-loathing"
 
+[sources.nexus]
+game_domain = "westofloathing"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

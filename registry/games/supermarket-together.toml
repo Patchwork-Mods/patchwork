@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/supermarket-together/supermarket-to
 [sources.thunderstore]
 community = "supermarket-together"
 
+[sources.nexus]
+game_domain = "supermarkettogether"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

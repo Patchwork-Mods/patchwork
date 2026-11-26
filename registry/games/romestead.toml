@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/romestead/romestead-cover-360x480.w
 [sources.thunderstore]
 community = "romestead"
 
+[sources.nexus]
+game_domain = "romestead"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

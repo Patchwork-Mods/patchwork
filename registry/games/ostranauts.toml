@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/ostranauts/ostranauts-cover-360x480
 [sources.thunderstore]
 community = "ostranauts"
 
+[sources.nexus]
+game_domain = "ostranauts"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

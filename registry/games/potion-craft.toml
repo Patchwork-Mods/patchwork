@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/potion-craft/potion-craft-c
 [sources.thunderstore]
 community = "potion-craft"
 
+[sources.nexus]
+game_domain = "potioncraftalchemistsimulator"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

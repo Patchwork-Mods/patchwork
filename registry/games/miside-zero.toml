@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/miside-zero/miside-zero-cover-360x4
 [sources.thunderstore]
 community = "miside-zero"
 
+[sources.nexus]
+game_domain = "misidezero"
+
 [deployer]
 kind = "rules"
 rulesets = ["recursive-melonloader"]

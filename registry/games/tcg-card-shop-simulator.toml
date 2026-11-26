@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/tcg-card-shop-simulator/tcg-card-sh
 [sources.thunderstore]
 community = "tcg-card-shop-simulator"
 
+[sources.nexus]
+game_domain = "tcgcardshopsimulator"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

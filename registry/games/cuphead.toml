@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/cuphead/cuphead-cover-360x480.webp"
 [sources.thunderstore]
 community = "cuphead"
 
+[sources.nexus]
+game_domain = "cuphead"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

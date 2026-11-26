@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/sailwind/sailwind-cover-360x480.web
 [sources.thunderstore]
 community = "sailwind"
 
+[sources.nexus]
+game_domain = "sailwind"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

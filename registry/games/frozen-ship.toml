@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/frozen-ship/frozen-ship-cover-360x4
 [sources.thunderstore]
 community = "frozen-ship"
 
+[sources.nexus]
+game_domain = "frozenship"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

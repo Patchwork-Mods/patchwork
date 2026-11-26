@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/against-the-storm/against-the-storm
 [sources.thunderstore]
 community = "against-the-storm"
 
+[sources.nexus]
+game_domain = "againstthestorm"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

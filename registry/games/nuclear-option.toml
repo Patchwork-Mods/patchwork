@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/nuclear-option/nuclear-option-cover
 [sources.thunderstore]
 community = "nuclear-option"
 
+[sources.nexus]
+game_domain = "nuclearoption"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

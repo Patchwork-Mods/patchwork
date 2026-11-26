@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/wildfrost/wildfrost-cover-360x480.w
 [sources.thunderstore]
 community = "wildfrost"
 
+[sources.nexus]
+game_domain = "wildfrost"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

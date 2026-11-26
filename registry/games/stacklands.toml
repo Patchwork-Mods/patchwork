@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/stacklands/stacklands-cover
 [sources.thunderstore]
 community = "stacklands"
 
+[sources.nexus]
+game_domain = "stacklands"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

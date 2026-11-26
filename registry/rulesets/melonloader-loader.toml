@@ -5,6 +5,10 @@
 # MelonLoader before 0.7, installed like r2modman's MelonLoaderInstaller
 # does: everything in the pack but its metadata goes in the game directory.
 
+# Nexus Mods archives aren't packages, so they get rules of their own.
+[[rules]]
+ruleset = "nexus-melonloader"
+
 [[rules]]
 mods = "LavaGang-MelonLoader"
 files = "{manifest.json,icon.png,README.md}"

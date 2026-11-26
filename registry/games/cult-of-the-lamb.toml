@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/cult-of-the-lamb/cult-of-th
 [sources.thunderstore]
 community = "cult-of-the-lamb"
 
+[sources.nexus]
+game_domain = "cultofthelamb"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

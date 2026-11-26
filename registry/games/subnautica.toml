@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/subnautica/subnautica-cover-360x480
 [sources.thunderstore]
 community = "subnautica"
 
+[sources.nexus]
+game_domain = "subnautica"
+
 [deployer]
 kind = "rules"
 

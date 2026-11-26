@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/inscryption/inscryption-cover-360x4
 [sources.thunderstore]
 community = "inscryption"
 
+[sources.nexus]
+game_domain = "inscryption"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

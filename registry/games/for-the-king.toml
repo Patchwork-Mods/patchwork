@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/live/community/for-the-king/for-the-king-c
 [sources.thunderstore]
 community = "for-the-king"
 
+[sources.nexus]
+game_domain = "fortheking"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

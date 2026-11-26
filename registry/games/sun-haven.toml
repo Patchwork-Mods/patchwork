@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/sun-haven/sun-haven-cover-360x480.w
 [sources.thunderstore]
 community = "sun-haven"
 
+[sources.nexus]
+game_domain = "sunhaven"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

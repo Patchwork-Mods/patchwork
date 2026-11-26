@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/lethal-league-blaze/lethal-league-b
 [sources.thunderstore]
 community = "lethal-league-blaze"
 
+[sources.nexus]
+game_domain = "lethalleagueblaze"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

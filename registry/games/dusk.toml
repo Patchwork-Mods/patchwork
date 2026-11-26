@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/dusk/dusk-cover-360x480.webp"
 [sources.thunderstore]
 community = "dusk"
 
+[sources.nexus]
+game_domain = "dusk"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

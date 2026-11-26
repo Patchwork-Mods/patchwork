@@ -109,13 +109,25 @@ since the next run overwrites them. Change the generator instead. For a
 one-off, remove the header: the generator leaves files without it alone.
 It also deletes generated games that are no longer in the schema.
 
-Two rulesets are hand-written:
+Games that Nexus Mods also has a page for get `[sources.nexus]` as a second
+source. They're matched by name against Nexus's game list (from its public
+GraphQL API, no key needed), ignoring case and punctuation; servers and other
+editions share the game's page. Wrong or missing matches are fixed in
+`NEXUS_OVERRIDES` in `crates/registry-gen/src/main.rs`, and games with no
+mods on Nexus are left out. `--schema`, `--communities` and `--nexus-games`
+read the downloads from files instead.
+
+These rulesets are hand-written:
 
 - `rulesets/bepinex.toml`. A test checks that it matches what the
   generator would produce for the usual BepInEx layout.
 - `rulesets/recursive-melonloader.toml`. Every game on MelonLoader 0.7 or
   later uses it, because r2modman puts each mod in a folder of its own for
   those games, whatever the schema's install rules say.
+- `rulesets/nexus-bepinex.toml` and `rulesets/nexus-melonloader.toml`: rules
+  for mods from Nexus Mods, whose archives aren't packages and come laid out
+  however their authors packed them. The loader rulesets include them first,
+  so every game on that loader gets them.
 
 ## Runners
 

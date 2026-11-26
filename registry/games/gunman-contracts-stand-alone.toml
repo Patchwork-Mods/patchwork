@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/gunman-contracts-stand-alone/gunman
 [sources.thunderstore]
 community = "gunman-contracts-stand-alone"
 
+[sources.nexus]
+game_domain = "gunmancontractsstandalone"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

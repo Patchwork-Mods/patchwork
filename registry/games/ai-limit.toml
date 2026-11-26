@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/ai-limit/ai-limit-cover-360x480.web
 [sources.thunderstore]
 community = "ai-limit"
 
+[sources.nexus]
+game_domain = "ailimit"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

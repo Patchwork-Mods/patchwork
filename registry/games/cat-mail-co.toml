@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/cat-mail-co/cat-mail-co-cover-360x4
 [sources.thunderstore]
 community = "cat-mail-co"
 
+[sources.nexus]
+game_domain = "catmailco"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

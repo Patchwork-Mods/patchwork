@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/shift-at-midnight/shift-at-midnight
 [sources.thunderstore]
 community = "shift-at-midnight"
 
+[sources.nexus]
+game_domain = "shiftatmidnight"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

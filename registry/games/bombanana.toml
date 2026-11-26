@@ -11,6 +11,9 @@ image = "https://ccdn.thunderstore.io/assets/bombanana/bombanana-cover-360x480.w
 [sources.thunderstore]
 community = "bombanana"
 
+[sources.nexus]
+game_domain = "bombanana"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]

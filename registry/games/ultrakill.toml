@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/ultrakill/ultrakill-cover-360x480.w
 [sources.thunderstore]
 community = "ultrakill"
 
+[sources.nexus]
+game_domain = "ultrakill"
+
 [deployer]
 kind = "rules"
 

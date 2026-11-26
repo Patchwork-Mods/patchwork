@@ -10,6 +10,9 @@ image = "https://ccdn.thunderstore.io/assets/erenshor/erenshor-cover-360x480.web
 [sources.thunderstore]
 community = "erenshor"
 
+[sources.nexus]
+game_domain = "erenshor"
+
 [deployer]
 kind = "rules"
 rulesets = ["bepinex"]
