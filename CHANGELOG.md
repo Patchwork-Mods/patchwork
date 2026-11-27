@@ -15,6 +15,7 @@ dialog shows, so the heading has to match the version being released.
   - Patchwork's data can now be moved to another folder or drive, bringing over everything in it
   - Mod files can also be moved on their own
 - Every folder in game and profile settings has an Open button
+- Now supports dependencies being links to other mod managers
 - Changing a game's folder (or how mods are linked) while mods are deployed offers to undeploy them and deploy them again in the new place
 
 ### Games

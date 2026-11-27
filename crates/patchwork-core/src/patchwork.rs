@@ -47,7 +47,8 @@ use crate::settings::{Origin, SettingSpec, SettingState, Settings};
 use crate::share::{Bundled, FormatContext, ProfileFormat, SharedProfile, sanitize_name};
 use crate::source::{
     ArtifactFormat, ArtifactLocation, Download, FileChoice, LinkedFile, ModSpec, Need,
-    PendingDownload, ResolvedMod, Source, SourceContext, SourceFile, is_archive_name,
+    PendingDownload, ResolvedMod, SoftDependency, Source, SourceContext, SourceFile,
+    is_archive_name,
 };
 use crate::store::Store;
 use crate::sync::dedupe_names;
@@ -974,20 +975,8 @@ impl Patchwork {
     pub fn parse_link(&self, game: &str, link: &str) -> Result<ModSpec> {
         const FALLBACK: &str = "url";
         let link = link.trim();
-        let registry = self.registry();
-        let def = &registry.game(game)?.value;
-        let settings = self.settings();
-        for (id, source) in self.sources.iter().filter(|(id, _)| *id != FALLBACK) {
-            let ctx = SourceContext {
-                game: def,
-                config: def.sources.get(id),
-                settings: settings.source(id),
-                env: None,
-                links: registry.links(),
-            };
-            if let Some(spec) = source.parse_url(&ctx, link)? {
-                return Ok(spec);
-            }
+        if let Some(spec) = self.source_link(game, link)? {
+            return Ok(spec);
         }
         let is_http = link.starts_with("https://") || link.starts_with("http://");
         if is_http && self.sources.contains_key(FALLBACK) {
@@ -1000,6 +989,44 @@ impl Patchwork {
         Err(Error::invalid(format!(
             "`{link}` isn't a link patchwork recognizes"
         )))
+    }
+
+    /// The mod that `link` is a page of, asking each source but the `url`
+    /// one (which takes any link) whether it's one of theirs.
+    fn source_link(&self, game: &str, link: &str) -> Result<Option<ModSpec>> {
+        let registry = self.registry();
+        let def = &registry.game(game)?.value;
+        let settings = self.settings();
+        for (id, source) in self.sources.iter().filter(|(id, _)| *id != "url") {
+            let ctx = SourceContext {
+                game: def,
+                config: def.sources.get(id),
+                settings: settings.source(id),
+                env: None,
+                links: registry.links(),
+            };
+            if let Some(spec) = source.parse_url(&ctx, link)? {
+                return Ok(Some(spec));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Gives soft dependencies that only have a page a key, when the page
+    /// is one of a source's mods, so they can be added and found in the
+    /// profile. Nexus lists a Thunderstore page this way, for one. Pages
+    /// that are a source's but for another game stay as they are.
+    fn key_soft_links<'a>(
+        &self,
+        game: &str,
+        soft: impl IntoIterator<Item = &'a mut SoftDependency>,
+    ) {
+        for dep in soft.into_iter().filter(|d| d.key.is_none()) {
+            let Some(url) = &dep.url else { continue };
+            if let Ok(Some(spec)) = self.source_link(game, url) {
+                dep.key = Some(mod_key(&spec.source, &spec.id));
+            }
+        }
     }
 
     /// The files a mod could be added to `profile` as, when its spec doesn't
@@ -1720,6 +1747,7 @@ impl Patchwork {
                     .await?
             }
         };
+        self.key_soft_links(&loaded.game, &mut resolved.soft_dependencies);
         Provided::of(&registry, game)?
             .drop_provided(&mut resolved.dependencies, &mut resolved.soft_dependencies);
         Ok(resolved)
@@ -2002,6 +2030,9 @@ impl Patchwork {
         for u in unmet {
             self.reporter.report(Event::Warning(u.to_string()));
         }
+        // and ones locked before links were looked at
+        let soft = lock.mods.iter_mut().flat_map(|m| &mut m.soft_dependencies);
+        self.key_soft_links(&loaded.game, soft);
         // Mods locked for the first time say what they might need, once.
         let provided = self.provided(&loaded.game)?;
         for m in lock.mods.iter().filter(|m| !known.contains_key(&m.key())) {

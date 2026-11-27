@@ -4399,7 +4399,8 @@ async fn replaced_dependencies_give_way_to_the_mod_replacing_them() {
 }
 
 /// Resolves every mod to the same download, listing an unsure soft
-/// dependency, an optional one and one on another site.
+/// dependency, an optional one, one on another site and one that's only a
+/// link to one of its own mods (`https://soft.example/<id>`).
 struct WithSoft(String);
 
 #[async_trait::async_trait]
@@ -4439,11 +4440,25 @@ impl Source for WithSoft {
                     Need::Unknown,
                     Some("https://example.com"),
                 ),
+                soft(
+                    None,
+                    "Linked",
+                    Need::Unknown,
+                    Some("https://soft.example/linked"),
+                ),
             ],
             game_versions: None,
             env: Default::default(),
             kind: None,
         })
+    }
+
+    fn parse_url(&self, _: &SourceContext<'_>, url: &str) -> Result<Option<ModSpec>> {
+        Ok(url.strip_prefix("https://soft.example/").map(|id| ModSpec {
+            source: "soft".to_owned(),
+            id: id.to_owned(),
+            version: None,
+        }))
     }
 }
 
@@ -4482,7 +4497,11 @@ async fn soft_dependencies_are_shown_not_installed() {
     assert_eq!(lock.mods.len(), 1, "soft dependencies aren't locked");
     let said = notices.0.lock().unwrap().clone();
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("`Lib`, `Elsewhere`"), "{}", said[0]);
+    assert!(
+        said[0].contains("`Lib`, `Elsewhere`, `Linked`"),
+        "{}",
+        said[0]
+    );
     assert!(!said[0].contains("Extra"), "optional ones aren't mentioned");
 
     // only the first time it's locked
@@ -4498,7 +4517,11 @@ async fn soft_dependencies_are_shown_not_installed() {
         .filter(|d| d.missing())
         .map(|d| d.ident.as_str())
         .collect();
-    assert_eq!(missing, ["soft:extra", "https://example.com"]);
+    // a link to a source's mod gets that mod's key
+    assert_eq!(
+        missing,
+        ["soft:extra", "https://example.com", "soft:linked"]
+    );
 
     pw.set_ignored(&profile, "app", "soft:lib", false).unwrap();
     assert!(
@@ -6247,8 +6270,12 @@ async fn what_the_game_provides_is_left_out() {
         .open()
         .unwrap();
     let mut game = new_game("my-game", "none");
-    // by key and by name
-    game.provided = vec!["soft:lib".to_owned(), "elsewhere".to_owned()];
+    // by key, by name, and by the key a link turns out to be
+    game.provided = vec![
+        "soft:lib".to_owned(),
+        "elsewhere".to_owned(),
+        "soft:linked".to_owned(),
+    ];
     pw.add_game(game).unwrap();
     let profile = pw.create_profile("my-game", "default").unwrap();
     let spec = ModSpec {
