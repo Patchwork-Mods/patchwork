@@ -1,5 +1,5 @@
 // Settings: the app-wide dialog, in tabs, for sources' settings (a Nexus API
-// key, say), which program opens nxm:// links (links.js), linking computers (sync.js), background sync (daemon.js) and
+// key, say), which program opens nxm:// links (links.js), linking computers (sync.js), background sync (daemon.js), patchwork's own folders (locations.js) and
 // who the user plays as (setup.js), and the app's look (theme.js), each
 // saved as it's changed and undone with the buttons by the title
 // (autosave.js);
@@ -11,6 +11,7 @@ import { invoke, run, status, windowFixes } from "./state.js";
 import { $, h, link, pickFolder } from "./dom.js";
 import { renderComputers } from "./sync.js";
 import { renderDaemon } from "./daemon.js";
+import { renderFolders } from "./locations.js";
 import { renderLinks } from "./links.js";
 import { renderAppearance } from "./theme.js";
 import { autosave } from "./autosave.js";
@@ -228,15 +229,15 @@ saving.watch($("#settings-sources"), (input) => {
   );
 });
 
-/** Opens the dialog, on `tab` if given ("accounts", "computers", "daemon"
- * or "appearance"), otherwise where it was last left. It opens straight
+/** Opens the dialog, on `tab` if given ("accounts", "computers", "daemon",
+ * "folders" or "appearance"), otherwise where it was last left. It opens straight
  * away and each part fills in as it loads, since some are slow (asking
  * xdg-mime about nxm:// links can take a second or more). */
 export async function openSettings(tab) {
   $("#links-state").textContent = "Checking…";
   $("#links-handle").hidden = true;
   saving.open({ tab });
-  const loads = [render(), renderComputers(), renderDaemon(), renderLinks(), renderAppearance()];
+  const loads = [render(), renderComputers(), renderDaemon(), renderFolders(), renderLinks(), renderAppearance()];
   const failed = (await Promise.allSettled(loads)).find((r) => r.status === "rejected");
   if (failed) saving.showError(failed.reason);
 }

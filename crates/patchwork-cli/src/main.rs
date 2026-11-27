@@ -10,6 +10,7 @@ use patchwork_core::paths::Paths;
 mod common;
 mod config;
 mod daemon;
+mod data;
 mod deploy;
 mod deps;
 mod folder;
@@ -25,6 +26,7 @@ mod sync;
 use crate::common::MoveTo;
 use crate::config::ConfigCommand;
 use crate::daemon::DaemonCommand;
+use crate::data::DataCommand;
 use crate::deploy::{OrderCommand, print_op};
 use crate::game::GameCommand;
 use crate::profile::ProfileCommand;
@@ -316,6 +318,11 @@ enum Command {
     /// app nor the CLI is running, such as keeping synced profiles in step.
     #[command(subcommand)]
     Daemon(DaemonCommand),
+    /// Show where patchwork keeps its files, or move its data folder.
+    Data {
+        #[command(subcommand)]
+        command: Option<DataCommand>,
+    },
     /// Update patchwork to the newest release.
     SelfUpdate {
         /// Only say whether there's a newer release.
@@ -403,6 +410,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
     let command = match cli.command {
         Command::Daemon(command) => return daemon::run(paths, command).await,
+        Command::Data { command } => return data::run(paths, command),
         command => command,
     };
 
@@ -470,7 +478,9 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Provide { name, file } => mods::provide(&pw, &cli.profile, name, file).await?,
         Command::Link { link } => mods::link(&pw, link).await?,
         Command::Status => deploy::status(&pw, &cli.profile)?,
-        Command::SelfUpdate { .. } | Command::Daemon(_) => unreachable!("handled before opening"),
+        Command::SelfUpdate { .. } | Command::Daemon(_) | Command::Data { .. } => {
+            unreachable!("handled before opening")
+        }
     }
     Ok(())
 }

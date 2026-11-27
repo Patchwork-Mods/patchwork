@@ -336,6 +336,7 @@ impl Builder {
             )));
         }
         let lock = StateLock::acquire(&self.paths.lock_file())?;
+        relocate::remove_leftover(&self.paths, self.reporter.as_ref());
         let registry = load_registry(&self.paths, &registered.deployers)?;
         let settings = Settings::load(&self.paths, &source_specs(&registered.sources))?;
         for problem in &settings.problems {
@@ -3789,6 +3790,7 @@ mod local;
 mod options;
 mod personal;
 mod profiles;
+mod relocate;
 mod sets;
 mod sync;
 mod synced_sets;
@@ -3798,6 +3800,7 @@ pub use config::{ConfigFileInfo, ConfigSet, ConfigView, SaveTo, SharedSetting};
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use lists::ListInfo;
 pub use options::{ModOptionsInfo, ModOptionsView};
+pub use relocate::{DataMove, MoveProgress};
 pub use sync::{Applied as SyncApplied, ProfileChange};
 
 /// What to call `resolved` when its own name is taken: its name with its

@@ -305,3 +305,13 @@ fn pause_new(paths: &Paths) -> Option<Paused> {
     }
     None
 }
+
+/// Stops the daemon for moving the data folder, which it has open while it
+/// runs. Starting the app again starts it again, if it's installed.
+pub fn stop_for_move(app: &App) {
+    let paths = app.pw.paths();
+    if let Err(e) = daemon::stop(paths) {
+        eprintln!("couldn't stop the daemon: {e:#}");
+    }
+    app.daemon.0.lock().unwrap().take();
+}

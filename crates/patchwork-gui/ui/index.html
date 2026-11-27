@@ -472,6 +472,7 @@
 					<div class="row">
 						<input id="game-settings-path" name="path" placeholder="/path/to/game" autocomplete="off">
 						<button type="button" data-browse="path">Browse…</button>
+						<button type="button" data-open-folder="install" title="Open the install folder">Open</button>
 					</div>
 					<small class="muted">Undeploy first to move a game that has mods deployed.</small>
 				</div>
@@ -520,6 +521,7 @@
 						<div class="row">
 							<input id="game-settings-prefix-input" name="prefix" autocomplete="off">
 							<button type="button" data-browse="prefix">Browse…</button>
+							<button type="button" data-open-folder="prefix" title="Open the Wine prefix">Open</button>
 						</div>
 						<small class="muted">Where a Windows game keeps its files when it runs through Proton or Wine.</small>
 					</div>
@@ -564,6 +566,7 @@
 						<button type="button" role="tab" data-tab="accounts" aria-selected="true">Accounts</button>
 						<button type="button" role="tab" data-tab="computers">My computers</button>
 						<button type="button" role="tab" data-tab="daemon">Background</button>
+						<button type="button" role="tab" data-tab="folders">Folders</button>
 						<button type="button" role="tab" data-tab="appearance">Appearance</button>
 					</div>
 				</header>
@@ -641,6 +644,15 @@
 						<button type="button" id="daemon-install" class="primary">Install</button>
 					</div>
 				</fieldset>
+				<!-- Where patchwork keeps its own files, and moving its data
+				     folder somewhere else; see locations.js. -->
+				<fieldset id="app-folders" class="stack" data-panel="folders">
+					<legend>Folders</legend>
+					<p class="muted">Where Patchwork keeps its own files. Each game's folders are in its own settings.</p>
+					<p id="app-folders-home" class="muted hint" hidden></p>
+					<ul id="app-folders-list" class="app-folders"></ul>
+					<p id="app-folders-error" class="error" hidden></p>
+				</fieldset>
 				<fieldset id="appearance" class="stack" data-panel="appearance">
 					<legend>Appearance</legend>
 					<!-- One button per theme for every game, filled in by theme.js.
@@ -715,7 +727,10 @@
 							<option value="on">A folder of its own</option>
 							<option value="off">The game's folder</option>
 						</select>
-						<small id="profile-settings-dir" class="muted"></small>
+						<span class="row">
+							<small id="profile-settings-dir" class="muted grow"></small>
+							<button type="button" id="profile-settings-open" title="Open the profile's own folder">Open</button>
+						</span>
 						<small class="muted">Only on this computer. Undeploy first to change this while it's deployed.</small>
 					</label>
 				</fieldset>
@@ -940,6 +955,39 @@
 				<ul id="missed-list" class="missed-list"></ul>
 				<div class="row end">
 					<button value="close" class="primary">Close</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- Moving the data folder: what it'd do, then how far it's got;
+		     see locations.js. -->
+		<dialog id="data-move-dialog">
+			<form method="dialog" class="stack">
+				<h2>Move Patchwork's data</h2>
+				<p id="data-move-summary"></p>
+				<div class="field">
+					<span>New folder</span>
+					<div class="row">
+						<input id="data-move-to" type="text" readonly aria-label="Where the data folder goes">
+						<button type="button" id="data-move-pick">Change…</button>
+					</div>
+				</div>
+				<p id="data-move-how" class="muted"></p>
+				<div id="data-move-conflicts" class="stack" hidden>
+					<p class="error">That folder already has things with the same names as Patchwork's, so it can't go there.
+						Pick an empty folder, or move these out of the way first:</p>
+					<ul id="data-move-conflict-list" class="muted"></ul>
+				</div>
+				<div id="data-move-progress" class="stack" hidden>
+					<progress id="data-move-bar" max="1" value="0"></progress>
+					<p id="data-move-progress-text" class="hint"></p>
+				</div>
+				<p id="data-move-error" class="error" hidden></p>
+				<div class="row end">
+					<button value="cancel" id="data-move-close">Cancel</button>
+					<button type="button" id="data-move-stop" hidden>Stop</button>
+					<button type="button" id="data-move-restart" hidden>Restart Patchwork</button>
+					<button type="button" id="data-move-go" class="primary">Move and restart</button>
 				</div>
 			</form>
 		</dialog>

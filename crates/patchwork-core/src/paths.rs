@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Error, Result};
+use serde::{Deserialize, Serialize};
+
+use crate::error::IoContext;
+use crate::{Error, Result, fsutil};
 
 /// Where patchwork keeps its state on disk.
 ///
@@ -23,8 +26,10 @@ pub struct Paths {
 
 impl Paths {
     /// Uses `$PATCHWORK_HOME` if set (handy for tests and portable installs),
-    /// otherwise the platform's standard directories. `$PATCHWORK_REGISTRY_PATH`
-    /// is a list of extra registry directories, separated like `$PATH`.
+    /// otherwise the platform's standard directories, with the data folder
+    /// wherever `<config>/locations.toml` says it was moved to (see
+    /// [`Paths::located`]). `$PATCHWORK_REGISTRY_PATH` is a list of extra
+    /// registry directories, separated like `$PATH`.
     pub fn from_env() -> Result<Self> {
         let mut paths = match std::env::var_os("PATCHWORK_HOME") {
             Some(home) => Self::rooted(Path::new(&home)),
@@ -45,7 +50,32 @@ impl Paths {
                 .filter(|p| !p.as_os_str().is_empty())
                 .collect();
         }
-        Ok(paths)
+        paths.located()
+    }
+
+    /// These paths with the data folder where [`Locations`] says it is, if
+    /// it was moved. A moved data folder that isn't there (on a drive
+    /// that's unplugged, say) is an error rather than a fresh, empty one.
+    pub fn located(mut self) -> Result<Self> {
+        let locations = Locations::load(&self)?;
+        if let Some(data) = locations.data {
+            if !data.is_dir() {
+                return Err(Error::invalid(format!(
+                    "patchwork's data folder {} isn't there. If it's on a drive that isn't \
+                     connected, connect it; to start again without it, remove {}",
+                    data.display(),
+                    self.locations().display()
+                )));
+            }
+            self.data = data;
+        }
+        Ok(self)
+    }
+
+    /// Where the data folder was moved to; see [`Locations`]. It's in
+    /// `config` so it's found before the data folder is.
+    pub fn locations(&self) -> PathBuf {
+        self.config.join("locations.toml")
     }
 
     pub fn rooted(root: &Path) -> Self {
@@ -192,5 +222,35 @@ impl Paths {
 
     pub fn lock_file(&self) -> PathBuf {
         self.data.join(".lock")
+    }
+}
+
+/// Where patchwork's folders were moved to, in `<config>/locations.toml`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub struct Locations {
+    /// The data folder, when it isn't in the usual place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<PathBuf>,
+    /// A data folder that was copied from, removed the next time patchwork
+    /// opens (it was still open while it was copied).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leftover: Option<PathBuf>,
+}
+
+impl Locations {
+    pub fn load(paths: &Paths) -> Result<Self> {
+        Ok(fsutil::read_toml(&paths.locations())?.unwrap_or_default())
+    }
+
+    pub fn save(&self, paths: &Paths) -> Result<()> {
+        let path = paths.locations();
+        if *self == Self::default() {
+            return match std::fs::remove_file(&path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).at(&path),
+                _ => Ok(()),
+            };
+        }
+        fsutil::write_toml(&path, self)
     }
 }

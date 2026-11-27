@@ -318,3 +318,13 @@ pub async fn wait_for_files(handle: &AppHandle, profile: &ProfileRef) -> CmdResu
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
+
+/// Stops syncing for good, closing the node's files, for moving the data
+/// folder they're in. The app restarts afterwards.
+pub async fn stop(app: &App) {
+    if let Some(node) = app.sync.node.get()
+        && let Err(e) = node.stop().await
+    {
+        eprintln!("couldn't stop syncing: {e:#}");
+    }
+}

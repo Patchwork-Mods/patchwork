@@ -11,6 +11,9 @@ dialog shows, so the heading has to match the version being released.
   - You can keep personal folders of mods to not share
   - Folders in shared profiles can be made optional, so each person picks whether to use them
 - Right-clicking a mod, game, search result, dependency or folder shows what you can do with it
+- Settings has a new tab to show patchwork's folders (data, config, etc.)
+  - Patchwork's data can now be moved to another folder or drive, bringing over everything in it
+- Every folder in game and profile settings has an Open button
 
 ### Games
 - Added Beat Saber and BeatMods support

@@ -120,7 +120,8 @@ function gameMenu(g) {
       label: "Open install folder",
       title: g.install,
       disabled: g.missing,
-      run: () => invoke("open_install_folder", { game: g.id }).catch((err) => status(String(err), true)),
+      run: () =>
+        invoke("open_game_folder", { game: g.id, folder: "install" }).catch((err) => status(String(err), true)),
     },
     g.install && { label: "Copy install folder path", title: g.install, run: () => copyString(g.install, "Copied the path") },
   ];
@@ -507,12 +508,22 @@ function rootField(root, set) {
       { class: "row" },
       h("input", { id, name, value: set ?? "", placeholder: root.path ?? "Not found", autocomplete: "off" }),
       h("button", { type: "button", "data-browse": name }, "Browse…"),
+      h("button", { type: "button", "data-open-folder": root.id, title: `Open the ${root.id} folder` }, "Open"),
     ),
     h("small", { class: "muted" }, root.origin === "set" ? "" : found),
   );
 }
 
 $("#game-settings").addEventListener("click", () => openGameSettings(state.game, "general"));
+
+// "Open" next to a folder opens it as saved, wherever patchwork finds it.
+settingsForm.addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-open-folder]");
+  if (!button) return;
+  invoke("open_game_folder", { game: settingsGame, folder: button.dataset.openFolder }).catch((err) =>
+    status(String(err), true),
+  );
+});
 
 /** Fills in General for game `id`, from what's saved. */
 async function fillGeneral(id) {

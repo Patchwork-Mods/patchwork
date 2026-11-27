@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -42,6 +42,31 @@ pub(super) struct Origins {
 /// Showing a profile asks for every local mod's origin, so reading the file
 /// each time made that quadratic.
 pub(super) type OriginsCache = Option<(Option<(SystemTime, u64)>, Arc<Origins>)>;
+
+/// The local mods file at `file` with every origin `rebase` gives a new
+/// path for changed, as its new text, or `None` if none changed. For moving
+/// the data folder, which captured mods are added from.
+pub(super) fn rebase_origins(
+    file: &Path,
+    rebase: &dyn Fn(&Path) -> Option<PathBuf>,
+) -> Result<Option<String>> {
+    let Some(mut origins) = fsutil::read_toml::<Origins>(file)? else {
+        return Ok(None);
+    };
+    let mut changed = false;
+    for path in origins.origins.values_mut() {
+        if let Some(new) = rebase(path) {
+            *path = new;
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    toml::to_string_pretty(&origins)
+        .map(Some)
+        .map_err(|e| Error::parse(file, e))
+}
 
 impl Patchwork {
     /// Where local mod `id` was added from on this machine, if it was.

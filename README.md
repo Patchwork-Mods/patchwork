@@ -228,6 +228,11 @@ Everything is plain files under `<config>` and `<data>` (see
 - `<data>/backups/<game>/`: game files that mods replaced, put back by
   `patchwork undeploy`
 
+Settings → Folders in the app (or `patchwork data`) shows each of these and
+opens them. To put `<data>` on another drive, use **Move…** there (or
+`patchwork data move <folder>`). It brings over everything in the folder,
+and what's deployed stays deployed.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for building from source, how the

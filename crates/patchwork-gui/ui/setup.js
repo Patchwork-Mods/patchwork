@@ -73,6 +73,12 @@ function fill(p) {
   }
 }
 
+$("#profile-settings-open").addEventListener("click", () =>
+  invoke("open_profile_folder", { profile: state.profile.id }).catch(() =>
+    status("The profile's own folder isn't there yet; deploying it to its own folder makes it", true),
+  ),
+);
+
 async function openSetup() {
   const p = state.profile;
   fill(p);

@@ -4,6 +4,8 @@ All of patchwork's state is plain files under two directories. `<config>`
 and `<data>` are the platform's usual config and data directories, such as
 `~/.config/patchwork` and `~/.local/share/patchwork` on Linux. If
 `PATCHWORK_HOME` is set, everything goes in that one directory instead.
+The data folder can be moved somewhere else (Settings → Folders, or
+`patchwork data move`); `<config>/locations.toml` then says where it is.
 
 ## Config
 
@@ -12,6 +14,12 @@ and `<data>` are the platform's usual config and data directories, such as
 - `<config>/daemon.toml`: see Daemon below
 - `<config>/follows.toml`: the mods followed for update notifications, as
   `source:id` (`mods`); the same on linked computers
+- `<config>/locations.toml`: where the data folder was moved to
+  (`data`), and the one it was moved from (`leftover`), removed the next
+  time patchwork opens. Moving renames or copies everything over, then
+  rewrites the paths into it that `deployments/` and `local-mods.toml`
+  keep, and deployed symlinks. A moved data folder that's missing (on an
+  unplugged drive, say) is an error, never a fresh empty one
 - `<config>/gui.toml`: the app's own preferences, such as which theme is
   picked, for every game and for single games (`[theme.games]`), and the
   games starred as favorites (`favorites`)

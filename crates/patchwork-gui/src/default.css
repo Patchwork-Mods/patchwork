@@ -3044,6 +3044,40 @@ textarea {
   font-size: 12px;
 }
 
+/* Settings → Folders, patchwork's own folders; see locations.js. */
+.app-folders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-folder .grow,
+#profile-settings-instance .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-folder-path {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+#data-move-dialog {
+  width: min(560px, 90vw);
+}
+
+#data-move-dialog input {
+  flex: 1;
+  min-width: 0;
+}
+
+#data-move-bar {
+  width: 100%;
+}
+
 /* Add game dialog */
 
 .field {

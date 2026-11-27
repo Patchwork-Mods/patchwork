@@ -330,6 +330,13 @@ impl Node {
     }
 
     pub async fn shutdown(self) -> Result<()> {
+        self.stop().await
+    }
+
+    /// Stops the node in place, closing its files, for when it can't be
+    /// given up (like moving patchwork's data folder, which it's in). It
+    /// can't be used afterwards.
+    pub async fn stop(&self) -> Result<()> {
         self.router.shutdown().await?;
         // the blob store can stop without answering, which is just as
         // stopped

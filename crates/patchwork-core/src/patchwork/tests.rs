@@ -6259,3 +6259,5 @@ async fn what_the_game_provides_is_left_out() {
     assert_eq!(left, ["Extra"]);
     assert!(notices.0.lock().unwrap().is_empty(), "nothing to point out");
 }
+
+mod relocate;
