@@ -234,6 +234,7 @@ fn hitman_def() -> GameDef {
         image: None,
         hidden: false,
         accent: None,
+        provided: Vec::new(),
         sources: Default::default(),
         deployer: DeployerSpec {
             kind: "smf".to_owned(),

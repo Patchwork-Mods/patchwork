@@ -429,3 +429,31 @@ async fn rejects_other_communities() {
         .unwrap_err();
     assert!(err.to_string().contains("isn't listed"), "{err}");
 }
+
+#[tokio::test]
+#[ignore = "needs network"]
+async fn softens_dependencies_from_other_communities() {
+    let mut game = lethal_company();
+    game.sources.get_mut("thunderstore").unwrap().insert(
+        "community".to_owned(),
+        toml::Value::String("riskofrain2".to_owned()),
+    );
+    let ctx = SourceContext {
+        game: &game,
+        config: game.sources.get("thunderstore"),
+        settings: None,
+        env: None,
+        links: patchwork_core::links::Links::none(),
+    };
+    // 2.2.4 depends on BepInEx-BepInExPack, which Risk of Rain 2 has as
+    // bbepis-BepInExPack
+    let resolved = Thunderstore
+        .resolve(&ctx, "mattymatty-AsyncLoggers", Some("2.2.4"))
+        .await
+        .unwrap();
+    assert!(resolved.dependencies.is_empty(), "{resolved:?}");
+    assert_eq!(
+        resolved.soft_dependencies[0].name.as_deref(),
+        Some("BepInEx-BepInExPack")
+    );
+}

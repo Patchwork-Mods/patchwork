@@ -75,6 +75,7 @@ impl Env {
             image: None,
             hidden: false,
             accent: None,
+            provided: Vec::new(),
             sources: Default::default(),
             deployer: DeployerSpec {
                 kind: KIND.to_owned(),

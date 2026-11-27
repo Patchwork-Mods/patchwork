@@ -46,6 +46,7 @@ pub mod packaging;
 pub mod paths;
 pub mod personal;
 pub mod profile;
+pub mod provided;
 pub mod registry;
 pub mod relpath;
 pub mod search;

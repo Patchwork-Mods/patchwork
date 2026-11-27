@@ -188,6 +188,7 @@ fn new_game(id: &str, kind: &str) -> GameDef {
         image: None,
         hidden: false,
         accent: None,
+        provided: Vec::new(),
         sources: BTreeMap::new(),
         deployer: crate::game::DeployerSpec {
             kind: kind.to_owned(),
@@ -4483,7 +4484,7 @@ async fn soft_dependencies_are_shown_not_installed() {
     pw.set_ignored(&profile, "app", "soft:lib", true).unwrap();
     let loaded = pw.load_profile(&profile).unwrap();
     assert_eq!(loaded.mods[0].ignores, ["soft:lib"]);
-    let soft = lock.soft_dependencies(&loaded, "soft:app");
+    let soft = lock.soft_dependencies(&loaded, "soft:app", &Default::default());
     let missing: Vec<&str> = soft
         .iter()
         .filter(|d| d.missing())
@@ -6225,4 +6226,36 @@ async fn a_linked_folder_a_friend_makes_optional_is_this_profiles() {
     ));
     pw.keep_folder_here(&a, "QOL").unwrap();
     assert!(pw.sets("my-game").unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn what_the_game_provides_is_left_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let notices = Notices::default();
+    let pw = Patchwork::builder(Paths::rooted(tmp.path()))
+        .source(WithSoft(serve_once("200 OK", b"mod bytes")))
+        .deployer(NoDeployer)
+        .reporter(notices.clone())
+        .open()
+        .unwrap();
+    let mut game = new_game("my-game", "none");
+    // by key and by name
+    game.provided = vec!["soft:lib".to_owned(), "elsewhere".to_owned()];
+    pw.add_game(game).unwrap();
+    let profile = pw.create_profile("my-game", "default").unwrap();
+    let spec = ModSpec {
+        source: "soft".to_owned(),
+        id: "app".to_owned(),
+        version: None,
+    };
+    pw.add_mod(&profile, spec, None, true).await.unwrap();
+
+    let lock = pw.lock(&profile, false).await.unwrap();
+    let left: Vec<&str> = lock.mods[0]
+        .soft_dependencies
+        .iter()
+        .map(|d| d.label())
+        .collect();
+    assert_eq!(left, ["Extra"]);
+    assert!(notices.0.lock().unwrap().is_empty(), "nothing to point out");
 }

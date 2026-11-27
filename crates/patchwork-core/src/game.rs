@@ -32,6 +32,16 @@ pub struct GameDef {
     /// is open, unless the game has a theme of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent: Option<Accent>,
+    /// What the game's deployer or extensions do themselves, so mods that
+    /// list it as a dependency don't get it: globs matched, ignoring case,
+    /// against dependencies' `source:id` and soft dependencies' names. They
+    /// are hidden on the Add mods tab too. See [`crate::provided`].
+    ///
+    /// ```toml
+    /// provided = ["nexus:200", "Simple Mod Framework"]
+    /// ```
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provided: Vec<String>,
     /// Per-source settings, e.g. `[sources.thunderstore] community = "..."`.
     #[serde(default)]
     pub sources: BTreeMap<String, toml::Table>,

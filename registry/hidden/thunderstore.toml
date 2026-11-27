@@ -10,3 +10,8 @@ ids = [
     "*-BepInExPack",
     "*-BepInExPack_*",
 ]
+
+# Mods that do the same job: a soft dependency on one counts as had when the
+# profile has another. A mod published for several games may list another
+# game's BepInEx pack, which isn't in this game's community.
+alike = [["*-BepInExPack", "*-BepInExPack_*"]]

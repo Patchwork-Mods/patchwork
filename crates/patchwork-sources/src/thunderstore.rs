@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use jiff::Timestamp;
@@ -7,8 +8,8 @@ use patchwork_core::Result;
 use patchwork_core::changelog::{ChangelogEntry, split_markdown};
 use patchwork_core::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use patchwork_core::source::{
-    ArtifactFormat, ArtifactLocation, Dependency, ModSpec, ResolvedMod, Source, SourceContext,
-    VersionReq, compare_dotted, url_parts,
+    ArtifactFormat, ArtifactLocation, Dependency, ModSpec, Need, ResolvedMod, SoftDependency,
+    Source, SourceContext, VersionReq, compare_dotted, url_parts,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -318,19 +319,17 @@ impl Source for Thunderstore {
     ) -> Result<ResolvedMod> {
         let config = config(ctx)?;
         let response = get_thunderstore_package(id, version).await?;
-        if !response
-            .package
-            .community_listings
-            .iter()
-            .any(|l| l.community.as_deref() == Some(config.community.as_str()))
-        {
+        let listed = remember_communities(id, &response.package);
+        if !listed.contains(&config.community) {
             return Err(error(format!(
                 "{id} isn't listed in the {} community",
                 config.community
             )));
         }
-        thunderstore_to_resolved_mod(response.clone())
-            .ok_or_else(|| error(format!("could not resolve thunderstore mod: {response:?}")))
+        let mut resolved = thunderstore_to_resolved_mod(response.clone())
+            .ok_or_else(|| error(format!("could not resolve thunderstore mod: {response:?}")))?;
+        soften_unlisted_dependencies(&mut resolved, &config.community).await;
+        Ok(resolved)
     }
 
     fn lists_versions(&self) -> bool {
@@ -527,6 +526,75 @@ async fn read_json<T: DeserializeOwned>(url: &str, response: reqwest::Response) 
 fn split_id(id: &str) -> Result<(&str, &str)> {
     id.split_once('-')
         .ok_or_else(|| error(format!("`{id}` should look like `Namespace-Name`")))
+}
+
+/// Which communities packages are listed in, by id, and when we asked.
+/// Resolving a profile asks about the same libraries over and over.
+static COMMUNITIES: LazyLock<Mutex<HashMap<String, Listed>>> = LazyLock::new(Mutex::default);
+const COMMUNITIES_FOR: Duration = Duration::from_secs(10 * 60);
+
+/// When we asked, and what Thunderstore said.
+type Listed = (Instant, Vec<String>);
+
+fn remember_communities(id: &str, package: &PackageExperimental) -> Vec<String> {
+    let communities: Vec<String> = package
+        .community_listings
+        .iter()
+        .filter_map(|l| l.community.clone())
+        .collect();
+    COMMUNITIES
+        .lock()
+        .unwrap()
+        .insert(id.to_owned(), (Instant::now(), communities.clone()));
+    communities
+}
+
+async fn communities(id: &str) -> Result<Vec<String>> {
+    if let Some((at, known)) = COMMUNITIES.lock().unwrap().get(id)
+        && at.elapsed() < COMMUNITIES_FOR
+    {
+        return Ok(known.clone());
+    }
+    let (namespace, name) = split_id(id)?;
+    let package: PackageExperimental =
+        get_json(format!("{API}/package/{namespace}/{name}/")).await?;
+    Ok(remember_communities(id, &package))
+}
+
+/// Authors who publish to several communities sometimes depend on a package
+/// that's only in some of them, like `BepInEx-BepInExPack`, which Risk of
+/// Rain 2 has as `bbepis-BepInExPack`. Those can't be installed here, so
+/// they're shown to the user instead, like r2modman, which only looks in the
+/// game's community.
+async fn soften_unlisted_dependencies(resolved: &mut ResolvedMod, community: &str) {
+    let mut kept = Vec::new();
+    for dep in std::mem::take(&mut resolved.dependencies) {
+        match communities(&dep.id).await {
+            Ok(listed) if !listed.iter().any(|c| c == community) => {
+                resolved
+                    .soft_dependencies
+                    .push(unlisted(&dep.id, community));
+            }
+            // on errors, resolving it will say what's wrong
+            _ => kept.push(dep),
+        }
+    }
+    resolved.dependencies = kept;
+}
+
+fn unlisted(id: &str, community: &str) -> SoftDependency {
+    SoftDependency {
+        // patchwork can't get it for this game
+        key: None,
+        name: Some(id.to_owned()),
+        need: Need::Unknown,
+        notes: Some(format!(
+            "The mod lists it, but it isn't in the {community} community, so the game may already have it under another name."
+        )),
+        url: id.split_once('-').map(|(namespace, name)| {
+            format!("https://thunderstore.io/package/{namespace}/{name}/")
+        }),
+    }
 }
 
 async fn get_thunderstore_package(id: &str, version: Option<&str>) -> Result<PackageVersion> {

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::compat::{EnvSupport, GameVersions};
 use crate::hash::ContentHash;
+use crate::provided::Provided;
 use crate::source::{ArtifactFormat, ArtifactLocation, SoftDependency, VersionReq};
 
 /// Schema 2 added [`ArtifactLocation::Source`] artifacts. Schema 3 added
@@ -278,11 +279,13 @@ impl SoftDependencyInfo {
 
 impl Lockfile {
     /// The soft dependencies of locked mod `key`, with whether `profile`
-    /// has each. Empty if it isn't locked.
+    /// has each. Empty if it isn't locked. Ones the game `provided`s are
+    /// left out, and ones like a locked mod (see [`Provided`]) count as had.
     pub fn soft_dependencies(
         &self,
         profile: &crate::profile::Profile,
         key: &str,
+        provided: &Provided,
     ) -> Vec<SoftDependencyInfo> {
         let Some(locked) = self.mods.iter().find(|m| m.has_key(key)) else {
             return Vec::new();
@@ -296,6 +299,7 @@ impl Lockfile {
             .find(|m| is_key(&m.source, &m.id, key))
             .map_or(&[][..], |m| &m.ignores[..]);
         let replacements = profile.replacements();
+        let locked_keys: Vec<String> = self.mods.iter().map(|m| m.key()).collect();
         let name_of = |key: &str| {
             profile
                 .mods
@@ -312,11 +316,15 @@ impl Lockfile {
         locked
             .soft_dependencies
             .iter()
+            .filter(|dep| !provided.provides_soft(dep))
             .map(|dep| {
                 let installed = dep
                     .key
                     .as_deref()
-                    .and_then(|key| name_of(key).or_else(|| name_of(replacements.get(key)?)));
+                    .and_then(|key| name_of(key).or_else(|| name_of(replacements.get(key)?)))
+                    .or_else(|| {
+                        name_of(provided.alike_in(dep, locked_keys.iter().map(String::as_str))?)
+                    });
                 SoftDependencyInfo {
                     ident: dep.ident().to_owned(),
                     ignored: ignores.iter().any(|i| i == dep.ident()),

@@ -40,6 +40,7 @@ use crate::options::{ModOptions, ModTransform};
 use crate::order::{self, ModFacts, Position, SortKey};
 use crate::paths::Paths;
 use crate::profile::{Folder, Profile, ProfileMod, ProfileRef, no_such_mod, validate_name};
+use crate::provided::Provided;
 use crate::registry::Registry;
 use crate::search::{Category, ModSummary, SearchPage, SearchQuery, SortBy};
 use crate::settings::{Origin, SettingSpec, SettingState, Settings};
@@ -1703,19 +1704,28 @@ impl Patchwork {
             env: env.as_ref(),
             links: registry.links(),
         };
-        match origin {
+        let mut resolved = match origin {
             Some(path) => {
                 let path = path.to_string_lossy();
                 let mut resolved = source.resolve(&ctx, &path, spec.version.as_deref()).await?;
                 resolved.id = spec.id.clone();
-                Ok(resolved)
+                resolved
             }
             None => {
                 source
                     .resolve(&ctx, &spec.id, spec.version.as_deref())
-                    .await
+                    .await?
             }
-        }
+        };
+        Provided::of(&registry, game)?
+            .drop_provided(&mut resolved.dependencies, &mut resolved.soft_dependencies);
+        Ok(resolved)
+    }
+
+    /// What `game` doesn't need installed (see [`Provided`]).
+    pub fn provided(&self, game: &str) -> Result<Provided> {
+        let registry = self.registry();
+        Provided::of(&registry, &registry.game(game)?.value)
     }
 
     // Searching
@@ -1990,9 +2000,10 @@ impl Patchwork {
             self.reporter.report(Event::Warning(u.to_string()));
         }
         // Mods locked for the first time say what they might need, once.
+        let provided = self.provided(&loaded.game)?;
         for m in lock.mods.iter().filter(|m| !known.contains_key(&m.key())) {
             let unsure: Vec<String> = lock
-                .soft_dependencies(&loaded, &m.key())
+                .soft_dependencies(&loaded, &m.key(), &provided)
                 .into_iter()
                 .filter(|d| d.missing() && d.dependency.need == Need::Unknown)
                 .map(|d| d.dependency.label().to_owned())

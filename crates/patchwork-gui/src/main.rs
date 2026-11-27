@@ -748,12 +748,14 @@ fn profile_detail(pw: &Patchwork, id: String) -> CmdResult<ProfileDetail> {
         .enumerate()
         .map(|(i, m)| (m.name.clone(), i))
         .collect();
+    // at worst, provided ones are listed too
+    let provided = pw.provided(&loaded.game).unwrap_or_default();
     let mut soft_dependencies: HashMap<String, Vec<SoftDependencyInfo>> = loaded
         .mods
         .iter()
         .filter_map(|m| {
             let key = mod_key(&m.source, &m.id);
-            let soft = lock.as_ref()?.soft_dependencies(&loaded, &key);
+            let soft = lock.as_ref()?.soft_dependencies(&loaded, &key, &provided);
             Some((key, soft))
         })
         .collect();
@@ -876,6 +878,7 @@ fn create_game(app: State<'_, App>, game: NewGame) -> CmdResult<()> {
         image: None,
         hidden: false,
         accent: None,
+        provided: Vec::new(),
         sources,
         deployer: DeployerSpec {
             kind: "rules".to_owned(),
@@ -2012,6 +2015,8 @@ async fn search(app: State<'_, App>, query: Search) -> CmdResult<FoundPage> {
     };
     // a broken entry just hides nothing; the registry test catches it
     let defaults = HiddenMods::of(&app.pw.registry(), &source).unwrap_or_default();
+    // and so does what the game does itself, which nobody needs to add
+    let provided = app.pw.provided(&game).unwrap_or_default();
     let page = app.pw.search(&game, &source, &query).await.map_err(msg)?;
     let prefs = themes::GuiPrefs::load(&app.pw.paths().config).unwrap_or_default();
     let chosen = prefs.hidden_mods.get(&game);
@@ -2022,7 +2027,7 @@ async fn search(app: State<'_, App>, query: Search) -> CmdResult<FoundPage> {
             let key = format!("{}:{}", item.source, item.id);
             chosen
                 .and_then(|c| c.get(&key).copied())
-                .unwrap_or_else(|| defaults.hides(&item.id))
+                .unwrap_or_else(|| defaults.hides(&item.id) || provided.provides(&key))
         })
         .map(|item| item.id.clone())
         .collect();

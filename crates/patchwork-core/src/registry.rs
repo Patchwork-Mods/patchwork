@@ -383,6 +383,7 @@ const COSMETIC_GAME_FIELDS: &[&str] = &[
     "accent",
     "detect",
     "launch",
+    "provided",
 ];
 
 /// Moves what game definitions used to have where it is now, so older

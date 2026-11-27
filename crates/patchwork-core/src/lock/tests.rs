@@ -131,7 +131,7 @@ fn soft_dependencies_say_what_the_profile_has() {
     )
     .unwrap();
 
-    let info = lock.soft_dependencies(&profile, "thunderstore:app");
+    let info = lock.soft_dependencies(&profile, "thunderstore:app", &Default::default());
     let have: Vec<(&str, Option<&str>, bool)> = info
         .iter()
         .map(|i| (i.ident.as_str(), i.installed.as_deref(), i.missing()))

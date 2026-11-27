@@ -170,6 +170,7 @@ pub(crate) fn soft_deps(
     {
         bail!("{} has no mod named `{name}`", loaded.label());
     }
+    let provided = pw.provided(&loaded.game)?;
     let mut any = false;
     for m in loaded
         .mods
@@ -177,7 +178,7 @@ pub(crate) fn soft_deps(
         .filter(|m| name.as_ref().is_none_or(|n| *n == m.name))
     {
         let soft: Vec<_> = lock
-            .soft_dependencies(&loaded, &mod_key(&m.source, &m.id))
+            .soft_dependencies(&loaded, &mod_key(&m.source, &m.id), &provided)
             .into_iter()
             .filter(|d| !missing || d.missing())
             .collect();
@@ -237,9 +238,10 @@ pub(crate) fn ignore(pw: &Patchwork, explicit: &Option<String>, args: Ignore) ->
     let m = loaded
         .find(&name)
         .with_context(|| format!("{} has no mod named `{name}`", loaded.label()))?;
+    let provided = pw.provided(&loaded.game)?;
     let soft = pw
         .load_lock(&profile)?
-        .map(|l| l.soft_dependencies(&loaded, &mod_key(&m.source, &m.id)))
+        .map(|l| l.soft_dependencies(&loaded, &mod_key(&m.source, &m.id), &provided))
         .unwrap_or_default();
     let ident = soft
         .iter()

@@ -82,6 +82,7 @@ The tables a definition can have:
 | `[sources.<id>]` | where mods come from, and each source's settings (Thunderstore community, Nexus `game_domain`, Modrinth project types, mod.io `game` and `id`, ModLinks `mods` and `api` catalogs, BeatMods `game` and `platforms`, BeatMods assets `game` and `types`, each type with the mod that loads it, BeatSaver's `needs` and `uses`: the mod every map needs and the mods its difficulties' features come from) |
 | `[deployer]` | how mods' files are placed: `kind` (`rules`, `bethesda`, `smf`), plus `rulesets` and `rules` for the `rules` deployer, whose `to` can use `{path}`, `{file}`, `{mod}` (its name) and `{id}` (its id at its source) |
 | `link` | `copy` (the default), `hardlink` or `symlink`. Hardlinks fall back to copying across drives |
+| `provided` | what the deployer or its extensions do themselves, like Simple Mod Framework for HITMAN, so mods that list it as a dependency don't get it, and it's hidden on Add mods: globs matched, ignoring case, against dependencies' `source:id` and soft dependencies' names |
 | `[[config]]` | which files are config the user can change from patchwork (`files`, `format`), and for one file, settings the game always needs (`set`, by group and then setting, which deploying applies under the profile's own and starts the file with if it isn't there yet) |
 | `[detect]` | how to find the game: Steam app ids, its folder name, and exes that should be there, plus `[[detect.version]]` probes that read the installed version: an exe's file version (`exe`), a key in a JSON file (`json`) or a regex match in any file, text or binary (`regex`) |
 | `[versions]` | how to tell which version of the game is installed, so mods can say which ones they support |
@@ -220,6 +221,18 @@ ids = ["ebkr-r2modman", "*-BepInExPack"]
 
 A user can hide more mods, or show one of these again, from the Add mods
 tab; that's kept per game in `<config>/gui.toml`.
+
+`alike` lists groups of mods that do the same job, so a soft dependency on
+one (by `source:id`, or by name for ones the source can't get) counts as
+had when the profile has another. Every BepInEx game has its own pack, and
+mods published for several games sometimes list another game's:
+
+```toml
+alike = [["*-BepInExPack", "*-BepInExPack_*"]]
+```
+
+What a game does itself, rather than what one mod does for another, is the
+game definition's `provided` instead.
 
 ## Other data
 

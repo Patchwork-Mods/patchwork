@@ -6,6 +6,10 @@ description = "HITMAN 3 and the rest of the World of Assassination trilogy. Take
 # than copied into the game folder (falling back to a copy across drives).
 link = "hardlink"
 
+# The smf deployer does what Simple Mod Framework does, so mods that list
+# SMF as a requirement don't get it, and it isn't offered on Add mods.
+provided = ["nexus:200", "Simple Mod Framework"]
+
 [sources.nexus]
 game_domain = "hitman3"
 
