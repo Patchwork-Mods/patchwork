@@ -23,6 +23,8 @@ dialog shows, so the heading has to match the version being released.
   - Sabers, notes, avatars and platforms from BeatMods' assets, each with the mod that loads it; paste an asset's page or one-click link to add it
   - Custom maps from BeatSaver, with SongCore to load them
 - Added Baldur's Gate 3 support
+- HELLDIVERS 2 mods now let you pick their options and mixes in the mod's settings
+- Mods with variants but no manifest are pointed out on the mod list, saying which variant wins
 
 ### Themes
 - Added a Baldur's Gate 3 theme

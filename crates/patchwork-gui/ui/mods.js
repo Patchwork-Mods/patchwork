@@ -179,16 +179,6 @@ function authorLink(item) {
   return a;
 }
 
-/** Marks a mod with choices nothing's been picked in yet, like an
- * installer's options, so it's deployed with the defaults. */
-function optionsMark(m) {
-  const unpicked = (m.options ?? []).filter((o) => !o.saved);
-  if (!unpicked.length) return null;
-  const what = unpicked.map((o) => o.title.toLowerCase()).join(" or ");
-  const why = `Nothing's been picked in its ${what} yet, so it's deployed with the defaults`;
-  return h("span", { class: "mod-options muted", title: why }, "default options");
-}
-
 const PRIORITY_TITLE =
   "Priority: mods with a higher one load later, so they win when two change the same file, wherever they are in the list. Mods with the same priority go by their place in it. Click to change it, or use the arrow keys.";
 
@@ -493,7 +483,6 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
           modTitle(m, item),
           issueMark(m),
           conflictMark(m),
-          optionsMark(m),
           requirementsMark(m),
           followToggle(m),
         ),
@@ -870,7 +859,6 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
       { class: "card-marks" },
       issueMark(m),
       conflictMark(m),
-      optionsMark(m),
       requirementsMark(m),
     ),
     update,

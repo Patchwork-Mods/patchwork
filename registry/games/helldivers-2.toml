@@ -11,6 +11,10 @@ game_domain = "helldivers2"
 [deployer]
 kind = "helldivers"
 
+# Picks from mods' `manifest.json` options, and says when a mod without one
+# has variants that all get deployed.
+[ext.helldivers]
+
 [detect]
 steam = [553850]
 folder = "Helldivers 2"

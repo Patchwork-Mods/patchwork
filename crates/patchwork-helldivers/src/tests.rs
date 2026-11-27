@@ -1,5 +1,7 @@
 use patchwork_core::ext::testing::TestGame;
 
+use patchwork_core::options::Answer;
+
 use super::*;
 
 const A: &str = "9ba626afa44a3aa3";
@@ -157,16 +159,170 @@ fn warns_about_mods_without_patches_and_with_variants() {
             .iter()
             .any(|w| w.starts_with("Empty has no patch files"))
     );
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.starts_with("Variants patches the same archive"))
-    );
+    let variants = "Variants has more than one version of the same patches, in “Blue” and “Red”, which usually means you're meant to pick one. It doesn't say how to pick, so all of them are deployed, and “Red” wins where they overlap.";
+    assert!(warnings.iter().any(|w| w == variants), "{warnings:?}");
+    // It's an issue with the mod too, so it's shown with the profile.
+    let issues = t.issues().unwrap();
+    let issue = issues.iter().find(|i| i.message == variants).unwrap();
+    assert_eq!(issue.mods, ["Variants"]);
     // Blue sorts first, so Red goes over it.
     assert_eq!(
         t.read(&format!("data/{A}.patch_1")).unwrap(),
         format!("Red/{A}.patch_0")
     );
+}
+
+/// A mod made for the community's mod manager, as the Remastered mods are
+/// packed: two options, the first with two mixes.
+fn with_manifest() -> Vec<(String, Vec<u8>)> {
+    let manifest = r#"{
+        "Version": 1,
+        "Guid": "45e0d8ff-7a17-449a-b7d8-8f8e86b19350",
+        "Name": "Units Remastered",
+        "Options": [
+            {
+                "Name": "Bots",
+                "Description": "Louder bots.",
+                "Image": "botlogo.png",
+                "Include": ["Bots"],
+                "SubOptions": [
+                    { "Name": "Standard Mix", "Include": ["Bots/Standard Mix"] },
+                    { "Name": "TF2 Mix", "Include": ["Bots\\TF2 Mix"] }
+                ]
+            },
+            { "Name": "Bugs", "Include": ["Bugs"] }
+        ]
+    }"#;
+    [
+        ("manifest.json".to_owned(), manifest.as_bytes().to_vec()),
+        ("BotLogo.png".to_owned(), b"png".to_vec()),
+    ]
+    .into_iter()
+    .chain(patch("Bots/Standard Mix/", A, 0))
+    .chain(patch("Bots/TF2 Mix/", A, 0))
+    .chain(patch("Bugs/", A, 0))
+    .chain(patch("Bugs/", B, 0))
+    .collect()
+}
+
+#[test]
+fn a_manifest_picks_the_first_sub_option_of_every_option() {
+    let t = game().mod_files("Units", with_manifest());
+    let plan = t.deploy().unwrap();
+    assert!(plan.warnings().is_empty(), "{:?}", plan.warnings());
+    assert!(t.issues().unwrap().is_empty());
+    // In the manifest's order: Bots' mix, then Bugs.
+    assert_eq!(
+        t.read(&format!("data/{A}.patch_0")).unwrap(),
+        format!("Bots/Standard Mix/{A}.patch_0")
+    );
+    assert_eq!(
+        t.read(&format!("data/{A}.patch_1.stream")).unwrap(),
+        format!("Bugs/{A}.patch_0.stream")
+    );
+    assert_eq!(
+        t.read(&format!("data/{B}.patch_0")).unwrap(),
+        format!("Bugs/{B}.patch_0")
+    );
+    assert!(!t.exists(&format!("data/{A}.patch_2")));
+}
+
+#[test]
+fn a_manifests_options_can_be_picked() {
+    let t = game().mod_files("Units", with_manifest());
+    let view = t.options("Units").unwrap();
+    assert_eq!(view.form.title, "Units Remastered");
+    let groups = &view.form.pages[0].groups;
+    assert_eq!(
+        groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+        ["options", "option:Bots"]
+    );
+    let bots = &groups[0].items()[0];
+    assert!(bots.picked);
+    assert_eq!(bots.description.as_deref(), Some("Louder bots."));
+    // The manifest gets the picture's case wrong.
+    assert_eq!(bots.image.as_ref().map(|i| i.as_str()), Some("BotLogo.png"));
+    assert_eq!(view.form.summary.as_deref(), Some("Deploys 3 patches."));
+
+    t.answer_options(
+        "Units",
+        &[
+            Answer::picks("options", vec!["Bots".to_owned()]),
+            Answer::picks("option:Bots", vec!["TF2 Mix".to_owned()]),
+        ],
+    )
+    .unwrap();
+    t.deploy().unwrap();
+    assert_eq!(
+        t.read(&format!("data/{A}.patch_0")).unwrap(),
+        format!("Bots/TF2 Mix/{A}.patch_0")
+    );
+    assert!(!t.exists(&format!("data/{A}.patch_1")));
+    assert!(!t.exists(&format!("data/{B}.patch_0")));
+
+    // Turning Bots off hides its mixes but keeps what was picked.
+    let view = t
+        .options_for(
+            "Units",
+            &[Answer::picks("options", vec!["Bugs".to_owned()])],
+        )
+        .unwrap();
+    let groups = &view.form.pages[0].groups;
+    assert_eq!(groups.len(), 1);
+    assert!(
+        view.form
+            .answers
+            .iter()
+            .any(|a| a.group == "option:Bots" && a.items == ["TF2 Mix"])
+    );
+}
+
+#[test]
+fn an_older_manifest_picks_one_folder() {
+    let t = game().mod_files(
+        "Old",
+        [(
+            "Old/manifest.json".to_owned(),
+            br#"{ "Guid": "x", "Name": "Old", "Options": ["Loud", "Quiet"] }"#.to_vec(),
+        )]
+        .into_iter()
+        .chain(patch("Old/Loud/", A, 0))
+        .chain(patch("Old/Quiet/", A, 0)),
+    );
+    t.deploy().unwrap();
+    assert_eq!(
+        t.read(&format!("data/{A}.patch_0")).unwrap(),
+        format!("Old/Loud/{A}.patch_0")
+    );
+    assert!(!t.exists(&format!("data/{A}.patch_1")));
+    t.answer_options("Old", &[Answer::picks("variant", vec!["Quiet".to_owned()])])
+        .unwrap();
+    t.deploy().unwrap();
+    assert_eq!(
+        t.read(&format!("data/{A}.patch_0")).unwrap(),
+        format!("Old/Quiet/{A}.patch_0")
+    );
+}
+
+#[test]
+fn a_manifest_without_options_deploys_what_is_next_to_it() {
+    let t = game().mod_files(
+        "Plain",
+        [(
+            "manifest.json".to_owned(),
+            br#"{ "Version": 1, "Name": "Plain" }"#.to_vec(),
+        )]
+        .into_iter()
+        .chain(patch("", A, 0))
+        .chain(patch("Extras/", A, 0)),
+    );
+    t.deploy().unwrap();
+    assert_eq!(
+        t.read(&format!("data/{A}.patch_0")).unwrap(),
+        format!("{A}.patch_0")
+    );
+    assert!(!t.exists(&format!("data/{A}.patch_1")));
+    assert!(t.options("Plain").is_err());
 }
 
 #[test]

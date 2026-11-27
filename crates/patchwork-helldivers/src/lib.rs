@@ -20,12 +20,15 @@
 //! ```
 //!
 //! Files that aren't patches (readmes, previews, `manifest.json`) are left
-//! out. Mods with several variants in folders of their own are deployed
-//! whole, with a warning, until choosing options is supported.
+//! out. A mod's `manifest.json`, as the community's mod manager reads it,
+//! says which of its folders to use (see [`manifest`]); a mod without one
+//! that has variants in folders of their own is deployed whole, and the
+//! `helldivers.variants` check says so.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 
+use patchwork_core::check::{Check, CheckContext, Problem};
 use patchwork_core::deploy::{
     BuildContext, DeployContext, Deployer, DesiredState, Dest, GameFiles, InstalledMod, ModFile,
     Placement, Src,
@@ -45,9 +48,14 @@ impl Extension for Helldivers {
     }
 
     fn register(&self, ext: &mut Registrar<'_>) {
-        ext.deployer(HelldiversDeployer);
+        ext.deployer(HelldiversDeployer)
+            .mod_transform("manifest", manifest::Manifest)
+            .mod_options("manifest", manifest::Manifest)
+            .check("variants", Variants);
     }
 }
+
+mod manifest;
 
 pub struct HelldiversDeployer;
 
@@ -178,16 +186,6 @@ impl Deployer for HelldiversDeployer {
                 ));
                 continue;
             }
-            let mut folders: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-            for (folder, archive, _) in patches.keys() {
-                folders.entry(archive).or_default().insert(folder);
-            }
-            if folders.values().any(|f| f.len() > 1) {
-                desired.warnings.push(format!(
-                    "{} patches the same archive from more than one folder, which usually means it has variants to choose between; all of them are deployed, later folders over earlier ones",
-                    m.name
-                ));
-            }
             for ((_, archive, _), files) in &patches {
                 let n = next.entry(archive.clone()).or_insert(0);
                 for (part, file) in PARTS.iter().zip(files) {
@@ -231,6 +229,60 @@ impl Deployer for HelldiversDeployer {
             .collect();
         names.sort();
         Ok(Some(ContentHash::of(names.join("\n").as_bytes())))
+    }
+}
+
+/// Mods with the same patches in more than one folder, which are usually
+/// variants to pick between, that nothing (like a manifest) has picked
+/// from: they're all deployed.
+pub struct Variants;
+
+impl Check for Variants {
+    fn check(&self, _: &CheckContext<'_>, mods: &[InstalledMod]) -> Vec<Problem> {
+        mods.iter()
+            .filter_map(|m| {
+                let mut by_archive: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for (folder, archive, _) in patches(m).into_keys() {
+                    by_archive.entry(archive).or_default().insert(folder);
+                }
+                let folders: BTreeSet<String> = by_archive
+                    .into_values()
+                    .filter(|f| f.len() > 1)
+                    .flatten()
+                    .collect();
+                if folders.is_empty() {
+                    return None;
+                }
+                // Patches are numbered by folder, so the last one wins.
+                let last = folders.last()?;
+                let quoted = |f: &str| {
+                    if f.is_empty() {
+                        "the mod's top folder".to_owned()
+                    } else {
+                        format!("“{f}”")
+                    }
+                };
+                const SHOWN: usize = 4;
+                let mut list: Vec<String> = folders.iter().take(SHOWN).map(|f| quoted(f)).collect();
+                if folders.len() > SHOWN {
+                    list.push(format!("{} more", folders.len() - SHOWN));
+                }
+                let list = match list.split_last() {
+                    Some((end, rest)) if !rest.is_empty() => {
+                        format!("{} and {end}", rest.join(", "))
+                    }
+                    _ => list.concat(),
+                };
+                Some(
+                    Problem::warning(format!(
+                        "{} has more than one version of the same patches, in {list}, which usually means you're meant to pick one. It doesn't say how to pick, so all of them are deployed, and {} wins where they overlap.",
+                        m.name,
+                        quoted(last)
+                    ))
+                    .about_mod(&m.name),
+                )
+            })
+            .collect()
     }
 }
 
