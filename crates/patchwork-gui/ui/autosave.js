@@ -180,7 +180,9 @@ class Autosave {
    * Saves a change to `label` (what's changed, like "install folder") by
    * running `work` in turn. `work` resolves to null if there was nothing
    * to save, or else to how to take it back, `{ undo, redo }`, without
-   * which it can't be undone; it can say what to show with `message` too.
+   * which it can't be undone; it can say what to show with `message` too,
+   * and give `afterwards`, something to do once it's said it's saved (like
+   * deploying again, which says how that went itself).
    * Resolves to whether something was saved. `tab` is where it's shown,
    * to go back to when it's undone.
    */
@@ -198,6 +200,8 @@ class Autosave {
     if (!saved) return false;
     if (saved.undo) this.record({ label, tab, undo: saved.undo, redo: saved.redo }, history);
     status(saved.message ?? `Saved the ${label}`);
+    // its own errors are in the status bar already
+    if (saved.afterwards) await this.queue(saved.afterwards).catch(() => {});
     return true;
   }
 

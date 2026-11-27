@@ -127,7 +127,8 @@ pub async fn apply_fix(
                 app.pw.remove_mod(&r, &name)?;
             }
         }
-        Fix::Undeploy { game, instance } => {
+        // the window tries again and deploys after a Redeploy
+        Fix::Undeploy { game, instance } | Fix::Redeploy { game, instance, .. } => {
             let target = undeploy_target(game, instance)?;
             let _work = app.work.start()?;
             let job = Job::start(&app);
@@ -177,12 +178,12 @@ pub(crate) fn parse_set(id: &str) -> CmdResult<uuid::Uuid> {
         .map_err(|_| format!("`{id}` isn't a set's id").into())
 }
 
-/// What [`Fix::Undeploy`] would take out, for the blocker's dialog to list
+/// What [`Fix::Undeploy`] (or [`Fix::Redeploy`]) would take out, for the blocker's dialog to list
 /// before the user picks it. Unlike `plan_undeploy`, it isn't kept for
 /// `apply_plan`: `apply_fix` plans it again.
 #[tauri::command]
 pub fn preview_undeploy(app: State<'_, App>, fix: Fix) -> CmdResult<PlanSummary> {
-    let Fix::Undeploy { game, instance } = fix else {
+    let (Fix::Undeploy { game, instance } | Fix::Redeploy { game, instance, .. }) = fix else {
         return Err("only an undeploy can be previewed".into());
     };
     let plan = app

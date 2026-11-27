@@ -160,6 +160,17 @@ pub enum Fix {
         game: String,
         instance: Option<ProfileName>,
     },
+    /// Undeploy like [`Fix::Undeploy`], then, once what it was for is done
+    /// (a change to the game's folders, or to how its mods are linked),
+    /// deploy `profile`, which was deployed there, again: the mods move
+    /// over to the game's new folder, or are placed the new way.
+    /// Applying it only undeploys; frontends try what it was for again,
+    /// then deploy.
+    Redeploy {
+        game: String,
+        instance: Option<ProfileName>,
+        profile: ProfileName,
+    },
     /// Deploy the profile again.
     Deploy,
     /// Use `path` as where `game` is installed.
@@ -222,6 +233,7 @@ impl Fix {
             Fix::RemoveMods { names } if names.len() == 1 => "Remove it".to_owned(),
             Fix::RemoveMods { .. } => "Remove them".to_owned(),
             Fix::Undeploy { .. } => "Undeploy and continue".to_owned(),
+            Fix::Redeploy { .. } => "Undeploy and deploy again".to_owned(),
             Fix::Deploy => "Deploy".to_owned(),
             Fix::SetGamePath { .. } => "Use this folder".to_owned(),
             Fix::ChooseGamePath { .. } => "Choose folder…".to_owned(),
@@ -251,7 +263,7 @@ impl Fix {
             }
             Fix::UpdateMods { names, .. } => format!("Updating {}…", names.join(", ")),
             Fix::RemoveMods { names } => format!("Removing {}…", names.join(", ")),
-            Fix::Undeploy { .. } => "Undeploying…".to_owned(),
+            Fix::Undeploy { .. } | Fix::Redeploy { .. } => "Undeploying…".to_owned(),
             Fix::Deploy => "Deploying…".to_owned(),
             Fix::SetGamePath { .. } | Fix::ChooseGamePath { .. } => {
                 "Setting the game's folder…".to_owned()
@@ -293,10 +305,17 @@ impl Fix {
                     .collect();
                 removes.join(" && ")
             }
+            // the CLI doesn't try again for the user, so deploying after is
+            // theirs to do, as with Undeploy
             Fix::Undeploy {
                 instance: Some(p), ..
+            }
+            | Fix::Redeploy {
+                instance: Some(p), ..
             } => format!("patchwork --profile {} undeploy", p.label),
-            Fix::Undeploy { game, .. } => format!("patchwork undeploy {game}"),
+            Fix::Undeploy { game, .. } | Fix::Redeploy { game, .. } => {
+                format!("patchwork undeploy {game}")
+            }
             Fix::Deploy => on("deploy".to_owned()),
             Fix::SetGamePath { game, path } => {
                 format!("patchwork game set-path {game} {}", path.display())

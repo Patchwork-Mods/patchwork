@@ -362,10 +362,13 @@ async fn main() -> ExitCode {
                 ),
                 Some(e) => {
                     let fixes = e.blocker().map(|b| b.fixes).unwrap_or_default();
-                    let commands: Vec<_> = fixes
+                    let mut commands: Vec<_> = fixes
                         .iter()
                         .map(|fix| fix.command(profile.as_deref()))
                         .collect();
+                    // fixes the window tells apart (undeploying, with or
+                    // without deploying after) can be one command here
+                    commands.dedup();
                     match commands.as_slice() {
                         [] => {}
                         [command] => eprintln!("to fix it, run `{command}`"),

@@ -2212,12 +2212,20 @@ async fn game_settings_override_the_definition() {
         Some("hi".into())
     );
 
-    // files already placed can't change how they're linked
+    // files already placed can't change how they're linked, but they can
+    // be undeployed and deployed again
     install.link = Some(LinkMethod::Symlink);
     let err = pw.set_game_install("my-game", install.clone()).unwrap_err();
+    let fixes = err.blocker().unwrap().fixes;
     assert!(
-        matches!(err.fix(), Some(crate::fix::Fix::Undeploy { .. })),
-        "{err}"
+        matches!(
+            fixes.as_slice(),
+            [
+                crate::fix::Fix::Redeploy { instance: None, profile: p, .. },
+                crate::fix::Fix::Undeploy { instance: None, .. },
+            ] if p.id == profile.to_string()
+        ),
+        "{fixes:?}"
     );
     pw.apply(
         &pw.plan_undeploy(&DeployTarget::Game("my-game".into()))
@@ -2356,7 +2364,7 @@ async fn games_deploy_to_their_other_roots() {
         .insert(appdata_id.clone(), tmp.path().to_owned());
     let err = pw.set_game_install("my-game", install).unwrap_err();
     assert!(
-        matches!(err.fix(), Some(crate::fix::Fix::Undeploy { .. })),
+        matches!(err.fix(), Some(crate::fix::Fix::Redeploy { profile: p, .. }) if p.id == profile.to_string()),
         "{err}"
     );
 

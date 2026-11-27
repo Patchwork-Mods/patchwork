@@ -1,6 +1,6 @@
 // The game picker, adding a game, and a game's settings.
 
-import { gameInfo, invoke, profilesOf, run, state, status } from "./state.js";
+import { gameInfo, invoke, invokeResolving, profilesOf, run, state, status } from "./state.js";
 import { $, copyString, h, initials, pickFolder } from "./dom.js";
 import { onContext } from "./menu.js";
 import { refresh, renderProfile, renderSidebar, switchProfile } from "./profile.js";
@@ -627,7 +627,8 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 /** Saves game `id`'s General as `settings`, for undo and redo, and shows it
  *  if the dialog's on that game. */
 async function setGeneral(id, settings) {
-  await invoke("set_game_settings", { game: id, settings });
+  // moving back while mods are deployed offers to move them too
+  await invokeResolving("set_game_settings", { game: id, settings });
   gameChanged = true;
   if (settingsGame === id && settingsDialog.open) await saving.refill(() => fillGeneral(id));
 }
@@ -664,12 +665,20 @@ saving.watch(settingsForm, (field) => {
       const settings = readGeneral();
       const before = savedGeneral;
       if (!settings || same(settings, before)) return null;
-      await invoke("set_game_settings", { game: id, settings });
+      // a new folder (or link method) while mods are deployed offers to
+      // undeploy them and deploy them again once it's saved
+      const after = [];
+      await invokeResolving("set_game_settings", { game: id, settings }, { after });
       savedGeneral = settings;
       gameChanged = true;
+      const afterwards = after.length
+        ? async () => {
+            for (const followUp of after) await followUp();
+          }
+        : null;
       // a game just set up has nothing to go back to
-      if (!before) return {};
-      return { undo: () => setGeneral(id, before), redo: () => setGeneral(id, settings) };
+      if (!before) return { afterwards };
+      return { undo: () => setGeneral(id, before), redo: () => setGeneral(id, settings), afterwards };
     },
     { tab: "general" },
   );

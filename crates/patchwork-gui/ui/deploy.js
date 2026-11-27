@@ -4,6 +4,7 @@ import {
   fixPreviews,
   gameInfo,
   invoke,
+  invokeResolving,
   listen,
   run,
   showWarnings,
@@ -48,6 +49,14 @@ export async function deployProfile(id, { verify = false, button = "#deploy", me
 
 // A blocker's or issue's Deploy (see state.js).
 windowFixes.deploy = (_fix, id) => deployProfile(id);
+
+// A blocker's Undeploy and deploy again (see state.js), for a change to a
+// game's folders or how its mods are linked: it undeploys, the change is
+// made, and then the profile that was deployed there is deployed again.
+windowFixes.redeploy = async (fix, id) => {
+  await invokeResolving("apply_fix", { id, fix });
+  return { afterwards: () => deployProfile(fix.profile.id) };
+};
 
 /** Deploys profile `id` before playing, with Play showing Cancel meanwhile. */
 export const deployFirst = (id) =>
@@ -132,9 +141,9 @@ $("#plan-dialog").addEventListener("close", async () => {
   }
 });
 
-// A blocker's Undeploy and continue lists what it takes out, like Undeploy
+// A blocker's Undeploy and continue (or and deploy again) lists what it takes out, like Undeploy
 // in the menu does, since picking it is all the asking there is.
-fixPreviews.undeploy = async (fix) => {
+fixPreviews.undeploy = fixPreviews.redeploy = async (fix) => {
   const plan = await invoke("preview_undeploy", { fix });
   const files = plan.ops.length;
   return h(

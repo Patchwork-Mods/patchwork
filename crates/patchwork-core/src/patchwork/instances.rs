@@ -13,7 +13,7 @@ use super::Patchwork;
 use crate::deploy::DeployTarget;
 use crate::error::IoContext;
 use crate::event::Event;
-use crate::fix::{Fix, ProfileName};
+use crate::fix::{Blocker, Fix, ProfileName};
 use crate::fsutil;
 use crate::game::LaunchDefs;
 use crate::launch::{Launch, LaunchOption};
@@ -163,14 +163,7 @@ impl Patchwork {
         message: String,
         why: &str,
     ) -> Result<Error> {
-        let registry = self.registry();
-        let game = &registry.game(target.game())?.value.name;
-        let place = match target {
-            DeployTarget::Game(_) => format!("{game}'s folder"),
-            DeployTarget::Instance { profile, .. } => {
-                format!("{}'s instance", self.load_profile(profile)?.label())
-            }
-        };
+        let place = self.place_of(target)?;
         Ok(Error::blocked(
             message,
             format!("Mods are deployed to {place}"),
@@ -181,6 +174,67 @@ impl Patchwork {
             ),
             self.undeploy_fix(target)?,
         ))
+    }
+
+    /// Like [`Patchwork::undeploy_first`], for a change to where or how
+    /// `target`'s mods are deployed, which `deployed` (the profile there,
+    /// from its deploy state) can be deployed again after: the blocker
+    /// suggests [`Fix::Redeploy`], with [`Fix::Undeploy`] for just taking
+    /// them out. Only the latter when the profile's gone.
+    pub(super) fn redeploy_after(
+        &self,
+        target: &DeployTarget,
+        deployed: Option<&str>,
+        message: String,
+        why: &str,
+    ) -> Result<Error> {
+        let profile = deployed
+            .and_then(|p| p.parse::<ProfileRef>().ok())
+            .and_then(|p| Some((self.load_profile(&p).ok()?.label(), p)));
+        let Some((label, profile)) = profile else {
+            return self.undeploy_first(target, message, why);
+        };
+        let undeploy = self.undeploy_fix(target)?;
+        let Fix::Undeploy { game, instance } = undeploy.clone() else {
+            unreachable!("undeploy_fix gives an undeploy")
+        };
+        let place = self.place_of(target)?;
+        Ok(Error::blocked_by(
+            message,
+            Blocker::with_fixes(
+                format!("Mods are deployed to {place}"),
+                format!(
+                    "{why} Patchwork can take every file it put in {place} back out, putting \
+                     back any of the game's own files they replaced, make the change, and then \
+                     deploy {label} again. Or it can just undeploy, and you deploy again when \
+                     you like. Your profiles stay as they are either way."
+                ),
+                vec![
+                    Fix::Redeploy {
+                        game,
+                        instance,
+                        profile: ProfileName {
+                            id: profile.to_string(),
+                            label,
+                        },
+                    },
+                    undeploy,
+                ],
+            ),
+        ))
+    }
+
+    /// What to call `target` in a blocker: the game's folder, or a
+    /// profile's instance.
+    fn place_of(&self, target: &DeployTarget) -> Result<String> {
+        let registry = self.registry();
+        let game = &registry.game(target.game())?.value.name;
+        Ok(match target {
+            DeployTarget::Game(_) => format!("{game}'s folder"),
+            DeployTarget::Instance { profile, .. } => {
+                format!("{}'s instance", self.load_profile(profile)?.label())
+            }
+        })
     }
 
     /// Whether `target` has anything of `profile`'s that patchwork would

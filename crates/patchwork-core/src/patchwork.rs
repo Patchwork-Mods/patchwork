@@ -642,8 +642,9 @@ impl Patchwork {
                 ..install.clone()
             };
             if let Some((_, was)) = state.moved_root(&resolve_roots(def, &roots).roots()) {
-                return Err(self.undeploy_first(
+                return Err(self.redeploy_after(
                     &target,
+                    state.profile.as_deref(),
                     format!("mods are still deployed to {}", was.display()),
                     &format!(
                         "Mods are still deployed to {}, so they have to come out of there \
@@ -659,8 +660,9 @@ impl Patchwork {
             if was.unwrap_or(def.link) != install.link.unwrap_or(def.link)
                 && !state.files.is_empty()
             {
-                return Err(self.undeploy_first(
+                return Err(self.redeploy_after(
                     &target,
+                    state.profile.as_deref(),
                     format!(
                         "mods are still deployed to {}, so how they're linked can't change",
                         state.root.display()

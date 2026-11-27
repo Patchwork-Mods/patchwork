@@ -92,13 +92,19 @@ export const errorText = (e) => (e instanceof Error ? e.message : String(e));
  * so they're just asked whether to try again. Fails with an Error saying
  * what was in the way if they cancel, with the command's error if a fix
  * didn't clear it, or with the command's error as it is otherwise.
+ *
+ * A fix can have something done once the command's gone through (like
+ * deploying again after a game's folder moved). That's done before this
+ * resolves, or, given an `after` list, put there for the caller to do.
  */
-export async function invokeResolving(command, args) {
+export async function invokeResolving(command, args, { after } = {}) {
   const tried = new Set();
   const key = (fix) => JSON.stringify(fix);
+  const followUps = [];
   for (;;) {
+    let result;
     try {
-      return await invoke(command, args);
+      result = await invoke(command, args);
     } catch (e) {
       const blocker = e?.blocker;
       if (!blocker) throw e;
@@ -112,10 +118,18 @@ export async function invokeResolving(command, args) {
       tried.add(key(choice));
       status(choice.doing);
       const retry = await applyFix(choice, id);
+      if (retry?.afterwards) {
+        followUps.push(retry.afterwards);
+        continue;
+      }
       // the fix did what was asked itself
       if (retry && typeof retry === "object") return retry.done;
       if (!retry) throw new Error(`Cancelled: ${blocker.title}`);
+      continue;
     }
+    if (after) after.push(...followUps);
+    else for (const followUp of followUps) await followUp();
+    return result;
   }
 }
 
@@ -123,7 +137,9 @@ export async function invokeResolving(command, args) {
  * How the window applies the fixes main.rs can't, by the fix's type (see
  * core's fix.rs): functions taking the fix and the profile id, resolving to
  * whether what it was for can be tried again. The modules with the UI each
- * one needs put them here. One that does what was asked itself (like
+ * one needs put them here. One that needs something done once what it was
+ * for has gone through resolves to `{ afterwards }`, a function doing it
+ * (see `invokeResolving`). One that does what was asked itself (like
  * going back to a deploy with a choice the command didn't have) resolves
  * to `{ done }`, which is what the command gives instead.
  */
