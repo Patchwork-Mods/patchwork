@@ -847,6 +847,37 @@ button.link {
   top: 0;
   left: 0;
   min-width: 160px;
+  /* a long one, like a mod's versions, scrolls */
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
+}
+
+/* The › on an item that opens a submenu, and the item it's open from. */
+.context-menu .submenu-arrow {
+  color: var(--pw-muted);
+}
+
+.context-menu button[aria-expanded="true"] {
+  background: var(--pw-hover);
+}
+
+/* The one picked of a set, like the version a mod's pinned to. */
+.context-menu button[aria-checked] {
+  justify-content: flex-start;
+}
+
+.context-menu button[aria-checked]::before {
+  content: "";
+  width: 1em;
+  margin-right: -8px;
+}
+
+.context-menu button[aria-checked="true"]::before {
+  content: "✓";
+}
+
+.context-menu button:disabled {
+  opacity: 0.5;
 }
 
 .menu-items button.danger-text,

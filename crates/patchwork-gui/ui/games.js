@@ -1,7 +1,8 @@
 // The game picker, adding a game, and a game's settings.
 
 import { gameInfo, invoke, profilesOf, run, state, status } from "./state.js";
-import { $, h, initials, pickFolder } from "./dom.js";
+import { $, copyString, h, initials, pickFolder } from "./dom.js";
+import { onContext } from "./menu.js";
 import { refresh, renderProfile, renderSidebar, switchProfile } from "./profile.js";
 import { selectTab } from "./browse.js";
 import { go } from "./nav.js";
@@ -77,7 +78,7 @@ async function findGames(games, query) {
 
 function gameCard(g) {
   const count = profilesOf(g.id).length;
-  return h(
+  const card = h(
     "li",
     {},
     favoriteButton(g),
@@ -96,6 +97,33 @@ function gameCard(g) {
           : null,
     ),
   );
+  onContext(card, () => gameMenu(g));
+  return card;
+}
+
+/** What right-clicking a game on the picker offers. */
+function gameMenu(g) {
+  const on = state.overview.favorites.includes(g.id);
+  const profiles = profilesOf(g.id);
+  return [
+    { label: "Open", run: () => go(() => openGame(g.id)) },
+    profiles.length > 1 && {
+      label: "Open profile",
+      items: profiles.map((p) => ({ label: p.name, run: () => go(() => openGame(g.id, p.id)) })),
+    },
+    "-",
+    { label: on ? "Unfavorite" : "Favorite", run: () => setFavorite(g, !on) },
+    { label: "Game settings…", run: () => openGameSettings(g.id, "general") },
+    { label: "Edit appearance…", run: () => openGameSettings(g.id, "appearance") },
+    g.install && "-",
+    g.install && {
+      label: "Open install folder",
+      title: g.install,
+      disabled: g.missing,
+      run: () => invoke("open_install_folder", { game: g.id }).catch((err) => status(String(err), true)),
+    },
+    g.install && { label: "Copy install folder path", title: g.install, run: () => copyString(g.install, "Copied the path") },
+  ];
 }
 
 const starPath = "M12 2.5l2.9 6 6.6.8-4.9 4.6 1.3 6.5L12 17.2l-5.9 3.2 1.3-6.5-4.9-4.6 6.6-.8z";

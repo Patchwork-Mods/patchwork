@@ -10,7 +10,8 @@
 // eye by the Filter menu shows them all again, to unhide one.
 
 import { gameInfo, invoke, run, sourceName, state, status } from "./state.js";
-import { $, eyeIcon, eyeOffIcon, h, ms, nextFrame } from "./dom.js";
+import { $, copyString, eyeIcon, eyeOffIcon, h, ms, nextFrame, openExternal } from "./dom.js";
+import { onContext } from "./menu.js";
 import { renderProfile } from "./profile.js";
 import { cardMain } from "./mods.js";
 import { refreshDetails } from "./details.js";
@@ -458,6 +459,24 @@ export function resultCard(item, added, { labelled = false } = {}) {
       isAdded ? "Added" : "Add",
     ),
   );
+  onContext(card, () => {
+    const add = card.querySelector("button.add");
+    return [
+      {
+        label: add.disabled ? "Added" : fileAdded(item, added) ? "Add another of its files" : "Add",
+        disabled: add.disabled,
+        run: () => add.click(),
+      },
+      {
+        label: item.hidden ? "Unhide" : "Hide from searches",
+        run: () => setHidden(item, card, !item.hidden),
+      },
+      "-",
+      item.url && { label: `View on ${sourceName(item.source)}`, title: item.url, run: () => openExternal(item.url) },
+      item.author_url && { label: "Open the author's page", title: item.author_url, run: () => openExternal(item.author_url) },
+      item.url && { label: "Copy link", run: () => copyString(item.url, "Copied the link") },
+    ];
+  });
   return card;
 }
 

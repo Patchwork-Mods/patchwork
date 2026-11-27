@@ -10,6 +10,7 @@ dialog shows, so the heading has to match the version being released.
   - Shared folders carry their mods' config settings
   - You can keep personal folders of mods to not share
   - Folders in shared profiles can be made optional, so each person picks whether to use them
+- Right-clicking a mod, game, search result, dependency or folder shows what you can do with it
 
 ### Games
 - Added Beat Saber and BeatMods support

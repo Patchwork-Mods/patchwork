@@ -2572,6 +2572,20 @@ fn set_favorite(app: State<'_, App>, game: String, favorite: bool) -> CmdResult<
     Ok(file.save(config)?)
 }
 
+/// Opens a game's install folder in the file manager. The folder is looked
+/// up here rather than taken from the window, so it can only open one.
+#[tauri::command]
+fn open_install_folder(app: State<'_, App>, game: String) -> CmdResult<()> {
+    let install = app.pw.game_install(&game).map_err(msg)?;
+    let Some(path) = install.map(|i| i.path) else {
+        return Err(msg(format!("{game} has no install folder set")));
+    };
+    if !path.is_dir() {
+        return Err(msg(format!("{} isn't there any more", path.display())));
+    }
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(msg)
+}
+
 #[tauri::command]
 fn theme_list(app: State<'_, App>) -> ThemeList {
     let (catalog, prefs, mut problems) = load_themes(&app);
@@ -2812,6 +2826,7 @@ fn main() {
             theme_list,
             set_theme_prefs,
             set_favorite,
+            open_install_folder,
             set_mod_hidden,
             selfupdate::check_for_update,
             selfupdate::install_update,

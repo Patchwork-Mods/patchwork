@@ -28,6 +28,7 @@ import { $, chevronIcon, folderIcon, h } from "./dom.js";
 import { errorText, invoke, run, state, status } from "./state.js";
 import { showProfile } from "./profile.js";
 import { dragHandle, saveOrder } from "./reorder.js";
+import { onContext, popupMenu } from "./menu.js";
 
 /** The folders shown closed, by id; the viewer's own, kept between runs. */
 const collapsed = new Set();
@@ -243,39 +244,48 @@ export function folderSection({ folder, mods, all }, { item, layout, movable }) 
           state.profile.devicesLinked ? "Only on your computers" : "Only on this computer",
         ),
     ];
-  section.append(
-    h(
-      "div",
-      { class: "folder-head" },
-      // an empty folder has no place in the order to move
-      movable && all.length > 0 && dragHandle(
-        { name: folder.name },
-        { save: saveTop, title: "Drag to move the whole folder in the load order." },
-      ),
-      arrow,
-      h(
-        "span",
-        { class: "folder-title", onclick: flip },
-        folderIcon(),
-        h("span", { class: "folder-name" }, folder.name),
-        shared,
-        h("span", { class: "folder-count muted" }),
-      ),
-      h(
-        "label",
-        {
-          class: "switch",
-          title: folder.optional
-            ? "Turn this folder's mods on or off, just for you"
-            : "Turn all of this folder's mods on or off",
-        },
-        toggle,
-      ),
-      menu,
+  const head = h(
+    "div",
+    { class: "folder-head" },
+    // an empty folder has no place in the order to move
+    movable && all.length > 0 && dragHandle(
+      { name: folder.name },
+      { save: saveTop, title: "Drag to move the whole folder in the load order." },
     ),
-    list,
-    empty,
+    arrow,
+    h(
+      "span",
+      { class: "folder-title", onclick: flip },
+      folderIcon(),
+      h("span", { class: "folder-name" }, folder.name),
+      shared,
+      h("span", { class: "folder-count muted" }),
+    ),
+    h(
+      "label",
+      {
+        class: "switch",
+        title: folder.optional
+          ? "Turn this folder's mods on or off, just for you"
+          : "Turn all of this folder's mods on or off",
+      },
+      toggle,
+    ),
+    menu,
   );
+  onContext(head, () => [
+    {
+      label: section.classList.contains("collapsed") ? "Show its mods" : "Hide its mods",
+      run: flip,
+    },
+    {
+      label: toggle.checked ? "Turn its mods off" : "Turn its mods on",
+      run: () => toggle.click(),
+    },
+    "-",
+    ...items,
+  ]);
+  section.append(head, list, empty);
   setOpen(open);
   refreshFolder(section);
   return section;
@@ -333,35 +343,38 @@ export function folderButton(m, iconAction) {
     class: "mod-folder-button",
     title: "Folder: put it in a folder, or take it out of one",
     "aria-haspopup": "menu",
-    onclick: (e) => {
-      const own = folderOf(m);
-      const others = state.profile.folders.filter((f) => f !== own && !f.personal);
-      // a synced profile's mods can be kept to this person's own computers,
-      // unless they're a shared set's; a followed one's added mods are
-      // already, and the rest are whoever shares it's
-      const personal = state.profile.following
-        ? null
-        : own?.personal
-        ? { label: "Share with everyone", run: () => setPersonal(m, false) }
-        : state.profile.synced &&
-          !own?.linked && { label: `Keep on ${where()} only`, run: () => setPersonal(m, true) };
-      popupMenu(e.currentTarget, [
-        ...others.map((f) => ({
-          label: f.linked ? `Move to ${f.name} (shared)` : f.optional ? `Move to ${f.name} (optional)` : `Move to ${f.name}`,
-          run: () => moveTo(m, f),
-        })),
-        own &&
-          !own.personal && {
-            label: own.linked ? `Take out of ${own.name}, in every profile` : `Take out of ${own.name}`,
-            run: () => moveTo(m, null),
-          },
-        (others.length > 0 || (own && !own.personal)) && "-",
-        { label: "New folder…", run: () => newFolder([m.name]) },
-        personal && "-",
-        personal,
-      ]);
-    },
+    onclick: (e) => popupMenu(e.currentTarget, folderItems(m)),
   });
+}
+
+/** What can be done with a mod's folder, for its folder button's menu and its right-click one. */
+export function folderItems(m) {
+  const own = folderOf(m);
+  const others = state.profile.folders.filter((f) => f !== own && !f.personal);
+  // a synced profile's mods can be kept to this person's own computers,
+  // unless they're a shared set's; a followed one's added mods are
+  // already, and the rest are whoever shares it's
+  const personal = state.profile.following
+    ? null
+    : own?.personal
+    ? { label: "Share with everyone", run: () => setPersonal(m, false) }
+    : state.profile.synced &&
+      !own?.linked && { label: `Keep on ${where()} only`, run: () => setPersonal(m, true) };
+  return [
+    ...others.map((f) => ({
+      label: f.linked ? `Move to ${f.name} (shared)` : f.optional ? `Move to ${f.name} (optional)` : `Move to ${f.name}`,
+      run: () => moveTo(m, f),
+    })),
+    own &&
+      !own.personal && {
+        label: own.linked ? `Take out of ${own.name}, in every profile` : `Take out of ${own.name}`,
+        run: () => moveTo(m, null),
+      },
+    "-",
+    { label: "New folder…", run: () => newFolder([m.name]) },
+    "-",
+    personal,
+  ];
 }
 
 async function moveTo(m, folder) {
@@ -607,63 +620,3 @@ async function useFolder(other, link, personal) {
       : `Copied ${other.name} in as a folder`,
   );
 }
-
-// A menu popped up under a button, on the page itself so a card can't clip
-// it. `items` are `{ label, run, danger }`, "-" for a line between, or
-// false to leave out.
-
-let popup = null;
-
-function closePopup() {
-  popup?.remove();
-  popup = null;
-}
-
-function popupMenu(anchor, items) {
-  const wasOpen = popup?.anchor === anchor;
-  closePopup();
-  // a second click on its button closes it
-  if (wasOpen) return;
-  const menu = h(
-    "div",
-    { class: "menu-items context-menu", role: "menu" },
-    ...items.filter(Boolean).map((item) =>
-      item === "-"
-        ? h("hr")
-        : h(
-            "button",
-            {
-              type: "button",
-              role: "menuitem",
-              class: item.danger ? "danger-text" : "",
-              onclick: () => {
-                closePopup();
-                Promise.resolve(item.run()).catch(() => {});
-              },
-            },
-            item.label,
-          ),
-    ),
-  );
-  document.body.append(menu);
-  popup = menu;
-  popup.anchor = anchor;
-  // below the button, kept inside the window
-  const box = anchor.getBoundingClientRect();
-  const x = Math.min(box.left, innerWidth - menu.offsetWidth - 4);
-  const below = box.bottom + 4;
-  const y = below + menu.offsetHeight > innerHeight ? box.top - menu.offsetHeight - 4 : below;
-  menu.style.left = `${Math.max(x, 0)}px`;
-  menu.style.top = `${Math.max(y, 0)}px`;
-  menu.querySelector("button")?.focus();
-}
-
-document.addEventListener("pointerdown", (e) => {
-  if (popup && !popup.contains(e.target) && !popup.anchor.contains(e.target)) closePopup();
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closePopup();
-});
-document.addEventListener("scroll", closePopup, true);
-addEventListener("blur", closePopup);
-addEventListener("resize", closePopup);

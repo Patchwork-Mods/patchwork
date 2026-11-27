@@ -1,18 +1,20 @@
 // The open profile's mods, as cards or list rows.
 
-import { run, state, status } from "./state.js";
+import { run, sourceName, state, status } from "./state.js";
 import {
   $,
   ago,
   bellIcon,
   chevronIcon,
   compact,
+  copyString,
   h,
   initials,
   gamepadIcon,
   historyIcon,
   link,
   linkIcon,
+  openExternal,
   pencilIcon,
   tagIcon,
   trashIcon,
@@ -22,11 +24,12 @@ import { isHidden, modQuery, modTags } from "./toolbar.js";
 import { updateMod } from "./deploy.js";
 import { showChangelog } from "./changelog.js";
 import { dragHandle, dragging } from "./reorder.js";
-import { arrange, folderButton, folderOf, folderSection, friends, refreshFolder, saveTop } from "./folders.js";
+import { arrange, folderButton, folderItems, folderOf, folderSection, friends, refreshFolder, saveTop } from "./folders.js";
 import { conflictMark } from "./conflicts.js";
 import { describeVersions, gameVersionsOf, showGameVersions } from "./gameversions.js";
 import { requirementsList, requirementsMark } from "./requirements.js";
-import { settingsButton } from "./config.js";
+import { settingsButton, settingsOf } from "./config.js";
+import { onContext } from "./menu.js";
 import { showEditMod } from "./editmod.js";
 import { ADD_TAB, selectTab } from "./browse.js";
 import { go } from "./nav.js";
@@ -128,18 +131,22 @@ function followToggle(m) {
     e.stopPropagation();
     button.disabled = true;
     try {
-      const follow = !m.followed;
-      const { unheard } = await run("set_followed", { source: m.source, id: m.id, follow });
-      m.followed = follow;
+      await setFollowed(m, !m.followed);
       show();
-      if (!follow) status(`Stopped following ${m.name}`);
-      else if (unheard) status(`Following ${m.name}, but nothing will tell you yet: ${unheard} (Settings → Background)`);
-      else status(`Following ${m.name}; you'll get a notification when a new version is out`);
     } finally {
       button.disabled = false;
     }
   });
   return button;
+}
+
+/** Follows a mod, or stops following it; see followToggle(). */
+async function setFollowed(m, follow) {
+  const { unheard } = await run("set_followed", { source: m.source, id: m.id, follow });
+  m.followed = follow;
+  if (!follow) status(`Stopped following ${m.name}`);
+  else if (unheard) status(`Following ${m.name}, but nothing will tell you yet: ${unheard} (Settings → Background)`);
+  else status(`Following ${m.name}; you'll get a notification when a new version is out`);
 }
 
 /** A small icon button with its name as a hidden label (which themes may
@@ -500,6 +507,7 @@ function modRow(m, { movable, onToggle, onRemove, onVersion }) {
   updateNotes.set(key, { el: update, onVersion });
 
   const row = h("li", { class: m.enabled ? "mod-row" : "mod-row disabled", "data-name": m.name });
+  onContext(row, () => modMenu(m, row, { onRemove, onVersion }));
   const arrow = h(
     "button",
     {
@@ -585,6 +593,68 @@ function rowDetails(m, item, onRemove) {
       gameVersionsButton(m),
       iconAction(trashIcon(), "Remove", { class: "danger", title: `Remove ${m.name}`, onclick: onRemove }),
     ),
+  ];
+}
+
+/**
+ * What right-clicking a mod's row or card (`el`) offers: everything its
+ * switch, buttons and menus do, in one place.
+ */
+function modMenu(m, el, { onRemove, onVersion }) {
+  const item = cardItem(m);
+  const settings = settingsOf(m);
+  const chip = el.querySelector(".mod-priority");
+  const priority = m.priority ?? 0;
+  const versions = m.versioned ? (m.versions ?? []) : [];
+  return [
+    {
+      label: m.enabled ? "Disable" : "Enable",
+      run: () => el.querySelector('input[role="switch"]')?.click(),
+    },
+    m.update && !m.version && { label: `Update to ${m.update}`, run: () => updateMod(m) },
+    m.update && m.version && { label: `Pin to ${m.update}`, run: () => onVersion?.(m.update) },
+    versions.length > 0 && {
+      label: "Version",
+      items: [
+        { label: m.locked ? `Latest (${m.locked})` : "Latest", checked: !m.version, run: () => onVersion?.(null) },
+        "-",
+        ...versions.map((v) => ({ label: v, checked: v === m.version, run: () => onVersion?.(v) })),
+      ],
+    },
+    "-",
+    { label: "Edit…", run: () => showEditMod(m) },
+    settings.length === 1 && { label: `${settings[0].label}…`, title: settings[0].about, run: settings[0].open },
+    settings.length > 1 && {
+      label: "Settings",
+      items: settings.map((s) => ({ label: `${s.label}…`, title: s.about, run: s.open })),
+    },
+    { label: "Folder", items: folderItems(m) },
+    chip && {
+      label: "Priority",
+      items: [
+        { label: "Load last", run: () => savePriority(m, extremePriority(m, true)) },
+        { label: "Load first", run: () => savePriority(m, extremePriority(m, false)) },
+        priority !== 0 && { label: "Reset to 0", run: () => savePriority(m, 0) },
+        "-",
+        { label: "Set…", run: () => openPriority(chip, m) },
+      ],
+    },
+    m.versioned && { label: "Changelog", run: () => showChangelog(m) },
+    { label: "Game versions…", run: () => showGameVersions(m) },
+    (m.versioned || m.followed) && {
+      label: m.followed ? "Stop following" : "Follow",
+      title: m.followed ? FOLLOWED : "Get a notification when a new version is out",
+      run: async () => {
+        await setFollowed(m, !m.followed);
+        summaryViews.get(m.key)?.();
+      },
+    },
+    "-",
+    item.url && { label: `View on ${sourceName(m.source)}`, title: item.url, run: () => openExternal(item.url) },
+    item.author_url && { label: "Open the author's page", title: item.author_url, run: () => openExternal(item.author_url) },
+    { label: "Copy its id", run: () => copyString(`${m.source}:${m.shownId}`, `Copied ${m.source}:${m.shownId}`) },
+    "-",
+    { label: "Remove…", danger: true, run: onRemove },
   ];
 }
 
@@ -843,6 +913,7 @@ function modCard(m, { movable, onToggle, onRemove, onVersion }) {
       trashIcon(),
     ),
   );
+  onContext(card, () => modMenu(m, card, { onRemove, onVersion }));
   // The sheet rises as far as what hangs below it needs, up to the strip
   // of picture left showing; CSS raises it while hovered or focused.
   const measure = () => {
@@ -1256,7 +1327,7 @@ function dependencyRow(d) {
         ),
         replaceMenu(d),
       ];
-  return h(
+  const row = h(
     "li",
     {
       class: ["mod-row dependency-row", d.replacedBy && "replaced", !d.inUse && "disabled"].filter(Boolean).join(" "),
@@ -1266,6 +1337,22 @@ function dependencyRow(d) {
     head,
     ...actions,
   );
+  onContext(row, () => {
+    const url = d.summary?.url;
+    return [
+      d.replacedBy
+        ? { label: "Stop replacing", run: () => row.querySelector("button")?.click() }
+        : { label: "Add to list", run: () => row.querySelector("button")?.click() },
+      !d.replacedBy && {
+        label: "Replace with",
+        items: state.profile.mods.map((m) => ({ label: m.name, run: () => replaceWith(d, m) })),
+      },
+      "-",
+      url && { label: `View on ${sourceName(d.source)}`, title: url, run: () => openExternal(url) },
+      { label: "Copy its id", run: () => copyString(d.key, `Copied ${d.key}`) },
+    ];
+  });
+  return row;
 }
 
 /** A menu of the profile's mods, to pick one to stand in for `d`. */

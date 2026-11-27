@@ -166,7 +166,8 @@ function markShown() {
 const filesOwned = () => (owned.id === state.profile?.id ? owned.byMod : new Map());
 
 /** Everything `m` has settings in, each with a label and a way to open it. */
-function settingsOf(m) {
+/** The settings a mod has: its installer options and the config files it owns. */
+export function settingsOf(m) {
   const fileName = (f) => f.title ?? f.path.split("/").pop();
   const all = [
     ...(m.options ?? []).map((o) => ({

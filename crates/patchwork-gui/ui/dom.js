@@ -39,6 +39,22 @@ export async function copyText(field) {
   status("Copied to the clipboard");
 }
 
+/** Copies `text` to the clipboard, saying `done` once it has. */
+export async function copyString(text, done = "Copied to the clipboard") {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // as copyText() does, from a field that's only there for it
+    const field = h("textarea", { style: "position: fixed; opacity: 0" });
+    field.value = text;
+    document.body.append(field);
+    field.select();
+    document.execCommand("copy");
+    field.remove();
+  }
+  status(done);
+}
+
 /** Opens a URL in the browser rather than the app. */
 export function openExternal(url) {
   window.__TAURI__.opener.openUrl(url).catch((err) => status(String(err), true));
