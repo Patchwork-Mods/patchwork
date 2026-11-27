@@ -1,14 +1,14 @@
 //! `patchwork data`: where patchwork keeps its own files, and moving its
-//! data folder somewhere else.
+//! data folder, or just its mods' files, somewhere else.
 
 use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
-use patchwork_core::Patchwork;
 use patchwork_core::cancel::Cancel;
 use patchwork_core::paths::{Locations, Paths};
+use patchwork_core::{Movable, Patchwork};
 use patchwork_daemon::service;
 
 use crate::open;
@@ -22,6 +22,11 @@ pub(crate) enum DataCommand {
     /// as what's in the data folder.
     Move {
         to: PathBuf,
+        /// Move only mods' files, which are most of the data folder's
+        /// size. To put them back, move them to where `patchwork data`
+        /// says they usually are.
+        #[arg(long)]
+        mods: bool,
         /// Only say what it would move.
         #[arg(long)]
         dry_run: bool,
@@ -36,37 +41,48 @@ pub(crate) fn run(paths: Paths, command: Option<DataCommand>) -> Result<()> {
             let pw = open(paths, crate::Printer)?;
             show(&pw)
         }
-        Some(DataCommand::Move { to, dry_run }) => move_data(paths, to, dry_run),
+        Some(DataCommand::Move { to, mods, dry_run }) => {
+            let what = if mods { Movable::Store } else { Movable::Data };
+            move_data(paths, what, to, dry_run)
+        }
     }
 }
 
 fn show(pw: &Patchwork) -> Result<()> {
     let paths = pw.paths();
-    let moved = Locations::load(paths)?.data.is_some();
+    let locations = Locations::load(paths)?;
+    let moved = |yes: bool| if yes { " (moved)" } else { "" };
     println!("settings   {}", paths.config.display());
     println!(
         "data       {}{}",
         paths.data.display(),
-        if moved { " (moved)" } else { "" }
+        moved(locations.data.is_some())
     );
-    println!("  mods     {}", paths.store().display());
+    println!(
+        "  mods     {}{}",
+        paths.store().display(),
+        moved(locations.store.is_some())
+    );
+    if locations.store.is_some() {
+        println!("           usually {}", paths.default_store().display());
+    }
     println!("cache      {}", paths.cache.display());
     Ok(())
 }
 
-fn move_data(paths: Paths, to: PathBuf, dry_run: bool) -> Result<()> {
+fn move_data(paths: Paths, what: Movable, to: PathBuf, dry_run: bool) -> Result<()> {
     let to = std::path::absolute(&to)?;
     if dry_run {
         let _paused = patchwork_daemon::pause(&paths)?;
         let pw = open(paths, crate::Printer)?;
-        return print_plan(&pw, &to).map(drop);
+        return print_plan(&pw, what, &to).map(drop);
     }
     // it has files in the data folder open while it runs, even paused
     let was_running = patchwork_daemon::stop(&paths)?;
     let pw = open(paths, crate::Printer)?;
-    print_plan(&pw, &to)?;
+    print_plan(&pw, what, &to)?;
     let mut shown = 0;
-    let moved = pw.move_data(&to, &Cancel::never(), &mut |p| {
+    let moved = pw.move_folder(what, &to, &Cancel::never(), &mut |p| {
         let percent = (p.done * 100).checked_div(p.total).unwrap_or(100);
         if percent != shown {
             shown = percent;
@@ -81,19 +97,23 @@ fn move_data(paths: Paths, to: PathBuf, dry_run: bool) -> Result<()> {
     }
     moved?;
     println!(
-        "Moved patchwork's data to {}. The old folder is removed the next time patchwork opens.",
+        "Moved {} to {}. The old folder is removed the next time patchwork opens.",
+        match what {
+            Movable::Data => "patchwork's data",
+            Movable::Store => "mods' files",
+        },
         to.display()
     );
     Ok(())
 }
 
 /// Says what moving to `to` would do, failing if it can't.
-fn print_plan(pw: &Patchwork, to: &std::path::Path) -> Result<()> {
-    let plan = pw.plan_data_move(to)?;
+fn print_plan(pw: &Patchwork, what: Movable, to: &std::path::Path) -> Result<()> {
+    let plan = pw.plan_move(what, to)?;
     if !plan.conflicts.is_empty() {
         bail!(
-            "{} already has {}, which the data folder has too; pick an empty folder, or move those \
-             out of the way first",
+            "{} already has {}, which the folder being moved has too; pick an empty folder, or \
+             move those out of the way first",
             to.display(),
             plan.conflicts.join(", ")
         );

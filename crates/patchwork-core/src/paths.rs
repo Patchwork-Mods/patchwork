@@ -14,6 +14,9 @@ pub struct Paths {
     pub config: PathBuf,
     pub data: PathBuf,
     pub cache: PathBuf,
+    /// Where mods' files are, when they were moved out of the data folder
+    /// on their own; see [`Paths::store`].
+    pub moved_store: Option<PathBuf>,
     /// Extra registry directories from `$PATCHWORK_REGISTRY_PATH`, loaded on
     /// top of installed registries. Meant for working on definitions without
     /// rebuilding, e.g. pointing at this repo's `registry/`.
@@ -40,6 +43,7 @@ impl Paths {
                     config: dirs.config_dir().to_owned(),
                     data: dirs.data_dir().to_owned(),
                     cache: dirs.cache_dir().to_owned(),
+                    moved_store: None,
                     extra_registries: Vec::new(),
                     keychain: true,
                 }
@@ -53,27 +57,38 @@ impl Paths {
         paths.located()
     }
 
-    /// These paths with the data folder where [`Locations`] says it is, if
-    /// it was moved. A moved data folder that isn't there (on a drive
-    /// that's unplugged, say) is an error rather than a fresh, empty one.
+    /// These paths with the data folder and store where [`Locations`] says
+    /// they are, if they were moved. A moved folder that isn't there (on a
+    /// drive that's unplugged, say) is an error rather than a fresh, empty
+    /// one.
     pub fn located(mut self) -> Result<Self> {
         let locations = Locations::load(&self)?;
+        let file = self.locations();
+        let missing = |what: &str, path: &Path| {
+            Error::invalid(format!(
+                "{what} {} isn't there. If it's on a drive that isn't connected, connect it; \
+                 to start again without it, remove {}",
+                path.display(),
+                file.display()
+            ))
+        };
         if let Some(data) = locations.data {
             if !data.is_dir() {
-                return Err(Error::invalid(format!(
-                    "patchwork's data folder {} isn't there. If it's on a drive that isn't \
-                     connected, connect it; to start again without it, remove {}",
-                    data.display(),
-                    self.locations().display()
-                )));
+                return Err(missing("patchwork's data folder", &data));
             }
             self.data = data;
+        }
+        if let Some(store) = locations.store {
+            if !store.is_dir() {
+                return Err(missing("the folder of mods' files", &store));
+            }
+            self.moved_store = Some(store);
         }
         Ok(self)
     }
 
-    /// Where the data folder was moved to; see [`Locations`]. It's in
-    /// `config` so it's found before the data folder is.
+    /// Where the data folder and store were moved to; see [`Locations`].
+    /// It's in `config` so it's found before the data folder is.
     pub fn locations(&self) -> PathBuf {
         self.config.join("locations.toml")
     }
@@ -83,6 +98,7 @@ impl Paths {
             config: root.join("config"),
             data: root.join("data"),
             cache: root.join("cache"),
+            moved_store: None,
             extra_registries: Vec::new(),
             keychain: false,
         }
@@ -97,7 +113,16 @@ impl Paths {
         self.data.join("registries")
     }
 
+    /// Every mod's files, content-addressed: in the data folder unless
+    /// they were moved somewhere else on their own.
     pub fn store(&self) -> PathBuf {
+        self.moved_store
+            .clone()
+            .unwrap_or_else(|| self.default_store())
+    }
+
+    /// Where the store usually is, in the data folder.
+    pub fn default_store(&self) -> PathBuf {
         self.data.join("store")
     }
 
@@ -236,6 +261,14 @@ pub struct Locations {
     /// opens (it was still open while it was copied).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leftover: Option<PathBuf>,
+    /// The store of mods' files, when it was moved out of the data folder
+    /// on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store: Option<PathBuf>,
+    /// A store that was moved away from, removed the next time patchwork
+    /// opens, like `leftover`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_leftover: Option<PathBuf>,
 }
 
 impl Locations {

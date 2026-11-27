@@ -2,8 +2,8 @@
 //! own folders (Settings → Folders), each game's folders, and profiles'
 //! own folders. Folders are looked up here from what's asked for, rather
 //! than taken as paths from the window, so it can only open ones patchwork
-//! knows about. Also moving the data folder; see
-//! [`patchwork_core::Patchwork::move_data`].
+//! knows about. Also moving the data folder, or just the mods' files; see
+//! [`patchwork_core::Patchwork::move_folder`].
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use patchwork_core::cancel::Cancel;
 use patchwork_core::deploy::DeployTarget;
 use patchwork_core::paths::Locations;
-use patchwork_core::{DataMove, MoveProgress};
+use patchwork_core::{DataMove, Movable, MoveProgress};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -28,14 +28,17 @@ pub struct AppFolder {
     path: String,
     /// Whether it's there yet; some are only made once they're needed.
     exists: bool,
+    /// Whether it was moved from where it usually is.
+    moved: bool,
+    /// Where it usually is, to move it back to, for a moved folder that
+    /// can be.
+    usual: Option<String>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppFolders {
     folders: Vec<AppFolder>,
-    /// Whether the data folder was moved from where it usually is.
-    moved: bool,
     /// Set when `$PATCHWORK_HOME` keeps everything in one place.
     home: Option<String>,
 }
@@ -57,20 +60,24 @@ const APP_FOLDERS: [&str; 6] = ["config", "data", "store", "profiles", "backups"
 
 #[tauri::command]
 pub fn app_folders(app: State<'_, App>) -> CmdResult<AppFolders> {
+    let locations = Locations::load(app.pw.paths()).map_err(msg)?;
+    let usual_store = app.pw.paths().default_store();
     let folders = APP_FOLDERS
         .into_iter()
         .map(|id| {
             let path = app_folder(&app, id)?;
+            let store_moved = id == "store" && locations.store.is_some();
             Ok(AppFolder {
                 id,
                 exists: path.is_dir(),
                 path: path.display().to_string(),
+                moved: (id == "data" && locations.data.is_some()) || store_moved,
+                usual: store_moved.then(|| usual_store.display().to_string()),
             })
         })
         .collect::<CmdResult<_>>()?;
     Ok(AppFolders {
         folders,
-        moved: Locations::load(app.pw.paths()).map_err(msg)?.data.is_some(),
         home: std::env::var_os("PATCHWORK_HOME").map(|h| PathBuf::from(h).display().to_string()),
     })
 }
@@ -152,33 +159,39 @@ pub fn open_profile_folder(app: State<'_, App>, profile: String) -> CmdResult<()
     open_dir(&app.pw.instance_dir(&profile))
 }
 
-/// What moving the data folder to `to` would do, to ask before doing it.
+/// What moving `what` (the data folder, or the store) to `to` would do,
+/// to ask before doing it.
 #[tauri::command]
-pub async fn plan_data_move(handle: AppHandle, to: String) -> CmdResult<DataMove> {
+pub async fn plan_data_move(handle: AppHandle, what: Movable, to: String) -> CmdResult<DataMove> {
     // sizing the store reads every file in it
     tauri::async_runtime::spawn_blocking(move || {
-        handle.state::<App>().pw.plan_data_move(Path::new(&to))
+        handle.state::<App>().pw.plan_move(what, Path::new(&to))
     })
     .await
     .map_err(msg)?
     .map_err(msg)
 }
 
-/// Moves the data folder to `to`, sending progress as
+/// Moves `what` (the data folder, or the store) to `to`, sending progress as
 /// `patchwork://data-move`, then restarts the app to use it. Syncing and
 /// the daemon stop first, since they have files in it open, so this only
 /// returns if the move fails (or is cancelled), and then the app has to be
 /// restarted for them to start again; the window says so.
 #[tauri::command]
-pub async fn move_data(handle: AppHandle, app: State<'_, App>, to: String) -> CmdResult<()> {
+pub async fn move_data(
+    handle: AppHandle,
+    app: State<'_, App>,
+    what: Movable,
+    to: String,
+) -> CmdResult<()> {
     let _work = app.work.start()?;
     if app.job.lock().unwrap().is_some() {
         return Err(msg("wait for the deploy to finish first"));
     }
-    let plan = app.pw.plan_data_move(Path::new(&to)).map_err(msg)?;
+    let plan = app.pw.plan_move(what, Path::new(&to)).map_err(msg)?;
     if !plan.conflicts.is_empty() {
         return Err(msg(format!(
-            "{to} already has {}, which patchwork's data folder has too",
+            "{to} already has {}, which the folder being moved has too",
             plan.conflicts.join(", ")
         )));
     }
@@ -191,7 +204,7 @@ pub async fn move_data(handle: AppHandle, app: State<'_, App>, to: String) -> Cm
         let app = window.state::<App>();
         let mut last = Instant::now() - PROGRESS_EVERY;
         app.pw
-            .move_data(Path::new(&to), &cancel, &mut |p: MoveProgress| {
+            .move_folder(what, Path::new(&to), &cancel, &mut |p: MoveProgress| {
                 if last.elapsed() >= PROGRESS_EVERY || p.done == p.total {
                     last = Instant::now();
                     let _ = window.emit("patchwork://data-move", p);

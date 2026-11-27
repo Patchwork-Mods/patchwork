@@ -1,6 +1,6 @@
 // Settings → Folders: where patchwork keeps its own files, how big each
-// is, opening them, and moving the data folder somewhere else (a bigger
-// drive, say), with what's in it brought over. The backend looks folders
+// is, opening them, and moving the data folder, or just the mods' files,
+// somewhere else (a bigger drive, say), with what's in it brought over. The backend looks folders
 // up by id, so the window can only open ones patchwork knows about (see
 // locations.rs).
 
@@ -15,9 +15,19 @@ const FOLDERS = {
   data: {
     name: "Data",
     about: "Profiles, mods' files, backups of game files mods replaced, and what's deployed where.",
-    movable: true,
+    movable: "Where should Patchwork's data go?",
+    title: "Move Patchwork's data",
+    // a folder of its own, in a folder with other things in
+    own: "patchwork",
   },
-  store: { name: "Mod files", about: "Every mod's files, kept once however many profiles use them. In Data." },
+  store: {
+    name: "Mod files",
+    about: "Every mod's files, kept once however many profiles use them. Usually in Data; it's most of its size, so it can move on its own.",
+    movedAbout: "Every mod's files, kept once however many profiles use them. Moved out of Data.",
+    movable: "Where should the mods' files go?",
+    title: "Move mods' files",
+    own: "patchwork-mods",
+  },
   profiles: { name: "Profiles", about: "Each profile's mod list and lockfile. In Data." },
   backups: { name: "Backups", about: "The game files mods replaced, put back when they're undeployed. In Data." },
   cache: { name: "Cache", about: "Downloads in progress and what sources last said. Safe to delete." },
@@ -32,11 +42,11 @@ export function size(bytes) {
 
 /** Fills in the Folders tab, with sizes as they're worked out. */
 export async function renderFolders() {
-  const { folders, moved, home } = await invoke("app_folders");
+  const { folders, home } = await invoke("app_folders");
   const homeNote = $("#app-folders-home");
   homeNote.hidden = !home;
   homeNote.textContent = home ? `PATCHWORK_HOME puts everything in ${home}.` : "";
-  $("#app-folders-list").replaceChildren(...folders.map((f) => folderRow(f, moved)));
+  $("#app-folders-list").replaceChildren(...folders.map(folderRow));
   for (const f of folders) {
     if (!f.exists) continue;
     invoke("folder_size", { id: f.id }).then(
@@ -49,7 +59,7 @@ export async function renderFolders() {
   }
 }
 
-function folderRow(f, moved) {
+function folderRow(f) {
   const about = FOLDERS[f.id] ?? { name: f.id, about: "" };
   const open = () => invoke("open_app_folder", { id: f.id }).catch((err) => status(String(err), true));
   return h(
@@ -58,39 +68,53 @@ function folderRow(f, moved) {
     h(
       "div",
       { class: "row" },
-      h("b", { class: "grow" }, about.name, f.id === "data" && moved ? h("small", { class: "muted" }, " (moved)") : null),
+      h("b", { class: "grow" }, about.name, f.moved ? h("small", { class: "muted" }, " (moved)") : null),
       h("small", { class: "muted", "data-size": f.id }, f.exists ? "…" : "Not made yet"),
     ),
     h("code", { class: "app-folder-path", title: f.path }, f.path),
-    h("small", { class: "muted" }, about.about),
+    h("small", { class: "muted" }, (f.moved && about.movedAbout) || about.about),
     h(
       "div",
       { class: "row end" },
       h("button", { type: "button", onclick: () => copyString(f.path, "Copied the path") }, "Copy path"),
       h("button", { type: "button", onclick: open }, "Open"),
-      about.movable ? h("button", { type: "button", onclick: () => startMove() }, "Move…") : null,
+      f.usual
+        ? h(
+            "button",
+            { type: "button", title: `Back to ${f.usual}`, onclick: () => startMove(f.id, f.usual) },
+            "Move back",
+          )
+        : null,
+      about.movable ? h("button", { type: "button", onclick: () => startMove(f.id) }, "Move…") : null,
     ),
   );
 }
 
-// Moving the data folder.
+// Moving the data folder, or the mods' files (the store).
 
 const dialog = $("#data-move-dialog");
 const sep = (path) => (path.includes("\\") && !path.includes("/") ? "\\" : "/");
 const join = (dir, name) => (dir.endsWith(sep(dir)) ? dir + name : dir + sep(dir) + name);
 const baseName = (path) => path.split(/[\\/]/).filter(Boolean).pop() ?? "";
 
+/** What's being moved: `data` or `store`. */
+let what = "data";
+/** Where it usually is, which it can go back to as it is. */
+let usual = null;
 /** The plan shown, once one's been worked out. */
 let plan = null;
 let moving = false;
 
 async function pick() {
-  const picked = await window.__TAURI__.dialog.open({ directory: true, title: "Where should Patchwork's data go?" });
+  const picked = await window.__TAURI__.dialog.open({ directory: true, title: FOLDERS[what].movable });
   return picked || null;
 }
 
-async function startMove() {
-  const picked = await pick();
+/** Moves folder `id` to `to`, or to a folder picked first. */
+async function startMove(id, to = null) {
+  what = id;
+  usual = to;
+  const picked = to ?? (await pick());
   if (!picked) return;
   resetDialog();
   dialog.showModal();
@@ -100,6 +124,7 @@ async function startMove() {
 function resetDialog() {
   plan = null;
   moving = false;
+  $("#data-move-title").textContent = FOLDERS[what].title;
   $("#data-move-summary").textContent = "Working out how much there is…";
   $("#data-move-to").value = "";
   $("#data-move-how").textContent = "";
@@ -123,16 +148,18 @@ function showError(err) {
 
 /**
  * Works out moving to `picked`. A folder with other things in it gets a
- * `patchwork` folder of its own in it, rather than the data spread among
- * them, unless it's called that already.
+ * folder of its own in it (`patchwork`, or `patchwork-mods` for mods'
+ * files), rather than what's moved spread among them, unless it's called
+ * that already. Where it usually is is used as it is.
  */
 async function showPlan(picked) {
   $("#data-move-error").hidden = true;
   $("#data-move-go").disabled = true;
+  const own = FOLDERS[what].own;
   try {
-    let next = await invoke("plan_data_move", { to: picked });
-    if (!next.empty && baseName(picked).toLowerCase() !== "patchwork") {
-      next = await invoke("plan_data_move", { to: join(picked, "patchwork") });
+    let next = await invoke("plan_data_move", { what, to: picked });
+    if (!next.empty && picked !== usual && baseName(picked).toLowerCase() !== own) {
+      next = await invoke("plan_data_move", { what, to: join(picked, own) });
     }
     plan = next;
   } catch (err) {
@@ -151,8 +178,13 @@ async function showPlan(picked) {
       : plan.sameDrive === false
         ? "It's on another drive, so everything is copied, which can take a while. The old folder is removed once Patchwork has restarted."
         : "If it's on another drive, everything is copied, which can take a while.",
+    what === "store" && plan.sameDrive !== true
+      ? "Hard links can't reach another drive, so games set to deploy by hard link get copies from then on."
+      : "",
     "Deployed mods stay deployed. Syncing and background work stop while it moves, and Patchwork restarts afterwards.",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
   const conflicts = plan.conflicts;
   $("#data-move-conflicts").hidden = !conflicts.length;
   $("#data-move-conflict-list").replaceChildren(...conflicts.map((c) => h("li", {}, h("code", {}, c))));
@@ -176,7 +208,7 @@ $("#data-move-go").addEventListener("click", async () => {
   $("#data-move-progress-text").textContent = "Starting…";
   try {
     // restarts the app once it's done, so this only returns if it failed
-    await invoke("move_data", { to: plan.to });
+    await invoke("move_data", { what, to: plan.to });
   } catch (err) {
     moving = false;
     $("#data-move-progress").hidden = true;

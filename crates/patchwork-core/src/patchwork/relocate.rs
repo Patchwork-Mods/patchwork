@@ -1,4 +1,5 @@
-//! Moving patchwork's data folder somewhere else, such as a bigger drive.
+//! Moving patchwork's data folder, or just its store of mods' files,
+//! somewhere else, such as a bigger drive.
 //!
 //! What's in it goes over as it is: renamed when the new place is on the
 //! same drive, otherwise copied. A few files keep absolute paths into it
@@ -7,8 +8,8 @@
 //! then does `<config>/locations.toml` (see [`Locations`]) point at the new
 //! folder; anything going wrong before that puts everything back as it was.
 //!
-//! The folder can't be removed while this process still has it open, so
-//! it's removed the next time patchwork opens ([`remove_leftover`]). The
+//! The old folder can't be removed while this process still has it open,
+//! so it's removed the next time patchwork opens ([`remove_leftover`]). The
 //! [`Patchwork`] that moved it mustn't be used afterwards: its paths are the
 //! old ones.
 
@@ -16,7 +17,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use super::Patchwork;
@@ -31,21 +32,32 @@ use crate::{Error, Result};
 /// The state lock's file, which stays behind with the process holding it.
 const LOCK: &str = ".lock";
 
-/// What moving the data folder to `to` would do; see
-/// [`Patchwork::plan_data_move`].
+/// Which of patchwork's folders can be moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Movable {
+    /// The whole data folder, store and all (unless the store was moved on
+    /// its own).
+    Data,
+    /// Just the store of mods' files, which is most of the data folder's
+    /// size. Moved back by moving it to [`Paths::default_store`].
+    Store,
+}
+
+/// What moving a folder to `to` would do; see [`Patchwork::plan_move`].
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataMove {
+    pub what: Movable,
     pub from: PathBuf,
     pub to: PathBuf,
     /// How much there is to move.
     pub bytes: u64,
     pub files: u64,
-    /// What's in the data folder that `to` already has something called
-    /// too. It can't be moved there while there's any.
+    /// What's in the folder that `to` already has something called too. It can't be moved there while there's any.
     pub conflicts: Vec<String>,
     /// Whether `to` has nothing in it yet (or isn't there), so it would
-    /// hold only patchwork's data.
+    /// hold only what's moved.
     pub empty: bool,
     /// Whether `to` is on the same drive, so moving is quick rather than a
     /// copy. `None` where that can't be told beforehand.
@@ -60,10 +72,34 @@ pub struct MoveProgress {
 }
 
 impl Patchwork {
-    /// Checks that the data folder can be moved to `to`, which can be a new
-    /// folder or one that's already there, and says how much that is.
+    /// [`Patchwork::plan_move`] of the data folder.
     pub fn plan_data_move(&self, to: &Path) -> Result<DataMove> {
-        let from = &self.paths.data;
+        self.plan_move(Movable::Data, to)
+    }
+
+    /// [`Patchwork::move_folder`] of the data folder.
+    pub fn move_data(
+        &self,
+        to: &Path,
+        cancel: &Cancel,
+        progress: &mut dyn FnMut(MoveProgress),
+    ) -> Result<()> {
+        self.move_folder(Movable::Data, to, cancel, progress)
+    }
+
+    /// Where `what` is now.
+    fn movable(&self, what: Movable) -> PathBuf {
+        match what {
+            Movable::Data => self.paths.data.clone(),
+            Movable::Store => self.paths.store(),
+        }
+    }
+
+    /// Checks that `what` can be moved to `to`, which can be a new folder
+    /// or one that's already there, and says how much that is.
+    pub fn plan_move(&self, what: Movable, to: &Path) -> Result<DataMove> {
+        let paths = &self.paths;
+        let from = self.movable(what);
         if !to.is_absolute() {
             return Err(Error::invalid(format!(
                 "{} isn't a full path; pick a folder",
@@ -73,22 +109,62 @@ impl Patchwork {
         if to.exists() && !to.is_dir() {
             return Err(Error::invalid(format!("{} isn't a folder", to.display())));
         }
-        let real_from = fs::canonicalize(from).at(from)?;
+        let real_from = canonical_ish(&from);
         let real_to = canonical_ish(to);
+        let overlaps = |a: &Path, b: &Path| a.starts_with(b) || b.starts_with(a);
+        let (name, here) = match what {
+            Movable::Data => ("data folder", "patchwork's data"),
+            Movable::Store => ("mods' files", "the mods' files"),
+        };
+        let is = if what == Movable::Data { "is" } else { "are" };
         if real_to == real_from {
-            return Err(Error::invalid("that's where patchwork's data already is"));
+            return Err(Error::invalid(format!("that's where {here} already {is}")));
         }
-        if real_to.starts_with(&real_from) || real_from.starts_with(&real_to) {
-            return Err(Error::invalid(
-                "the data folder can't move into itself, or into a folder it's in",
-            ));
+        if overlaps(&real_to, &real_from) {
+            return Err(Error::invalid(format!(
+                "the {name} can't move into {}, or into a folder {} in",
+                if what == Movable::Data {
+                    "itself"
+                } else {
+                    "themselves"
+                },
+                if what == Movable::Data {
+                    "it's"
+                } else {
+                    "they're"
+                },
+            )));
         }
-        if real_to.starts_with(fs::canonicalize(&self.paths.config).unwrap_or_default()) {
-            return Err(Error::invalid(
-                "the data folder can't go in patchwork's settings folder",
-            ));
+        if real_to.starts_with(canonical_ish(&paths.config)) {
+            return Err(Error::invalid(format!(
+                "the {name} can't go in patchwork's settings folder"
+            )));
         }
-        let entries = entries(from)?;
+        match what {
+            // a store moved on its own stays where it is
+            Movable::Data if paths.store() != paths.default_store() => {
+                if overlaps(&real_to, &canonical_ish(&paths.store())) {
+                    return Err(Error::invalid(
+                        "the data folder can't go in or around the folder mods' files were \
+                         moved to",
+                    ));
+                }
+            }
+            Movable::Data => {}
+            // its usual place is in the data folder; anywhere else in it
+            // would move along with the data folder, and then be lost
+            Movable::Store => {
+                let data = canonical_ish(&paths.data);
+                if real_to != canonical_ish(&paths.default_store()) && overlaps(&real_to, &data) {
+                    return Err(Error::invalid(format!(
+                        "the mods' files can only go in the data folder where they usually \
+                         are, {}",
+                        paths.default_store().display()
+                    )));
+                }
+            }
+        }
+        let entries = entries(&from)?;
         let conflicts = entries
             .iter()
             .filter(|name| to.join(name).symlink_metadata().is_ok())
@@ -101,45 +177,52 @@ impl Patchwork {
             files += f;
         }
         Ok(DataMove {
-            from: from.clone(),
+            what,
+            same_drive: same_drive(&from, to),
+            from,
             to: to.to_owned(),
             bytes,
             files,
             conflicts,
             empty: fs::read_dir(to).map_or(true, |mut d| d.next().is_none()),
-            same_drive: same_drive(from, to),
         })
     }
 
-    /// Moves the data folder to `to` (see the module docs), reporting how
-    /// far it's got. Stops with [`Error::Cancelled`] once `cancel` is, with
+    /// Moves `what` to `to` (see the module docs), reporting how far it's
+    /// got. Stops with [`Error::Cancelled`] once `cancel` is, with
     /// everything back as it was. Patchwork has to be opened again
     /// afterwards to use the new folder.
-    pub fn move_data(
+    pub fn move_folder(
         &self,
+        what: Movable,
         to: &Path,
         cancel: &Cancel,
         progress: &mut dyn FnMut(MoveProgress),
     ) -> Result<()> {
-        self.move_data_by(to, true, cancel, progress)
+        self.move_by(what, to, true, cancel, progress)
     }
 
-    /// [`Patchwork::move_data`], copying everything when `rename` is false,
-    /// as between drives.
-    pub(super) fn move_data_by(
+    /// [`Patchwork::move_folder`], copying everything when `rename` is
+    /// false, as between drives.
+    pub(super) fn move_by(
         &self,
+        what: Movable,
         to: &Path,
         rename: bool,
         cancel: &Cancel,
         progress: &mut dyn FnMut(MoveProgress),
     ) -> Result<()> {
-        let plan = self.plan_data_move(to)?;
+        let plan = self.plan_move(what, to)?;
         if !plan.conflicts.is_empty() {
             return Err(Error::invalid(format!(
-                "{} already has {}, which patchwork's data folder has too. Pick an empty \
-                 folder, or move those out of the way first",
+                "{} already has {}, which {} too. Pick an empty folder, or move those out of \
+                 the way first",
                 to.display(),
-                plan.conflicts.join(", ")
+                plan.conflicts.join(", "),
+                match what {
+                    Movable::Data => "patchwork's data folder has",
+                    Movable::Store => "the folder of mods' files has",
+                }
             )));
         }
         let created = !to.exists();
@@ -147,6 +230,10 @@ impl Patchwork {
         let mut moving = Moving {
             from: plan.from.clone(),
             to: to.to_owned(),
+            data: match what {
+                Movable::Data => to.to_owned(),
+                Movable::Store => self.paths.data.clone(),
+            },
             rename,
             done: 0,
             total: plan.bytes,
@@ -156,55 +243,75 @@ impl Patchwork {
             relinked: Vec::new(),
             linked: HashMap::new(),
         };
-        match moving.run(self, cancel, progress) {
-            Ok(()) => {
-                let mut locations = Locations::load(&self.paths)?;
-                locations.data = Some(to.to_owned());
-                locations.leftover = Some(plan.from);
-                if let Err(e) = locations.save(&self.paths) {
-                    moving.undo(self.reporter.as_ref());
-                    if created {
-                        let _ = fs::remove_dir(to);
-                    }
-                    return Err(e);
+        let finished = moving.run(self, cancel, progress).and_then(|()| {
+            let mut locations = Locations::load(&self.paths)?;
+            match what {
+                Movable::Data => {
+                    locations.data = Some(to.to_owned());
+                    locations.leftover = Some(plan.from);
                 }
-                Ok(())
-            }
-            Err(e) => {
-                moving.undo(self.reporter.as_ref());
-                if created {
-                    let _ = fs::remove_dir(to);
+                Movable::Store => {
+                    locations.store = (to != self.paths.default_store()).then(|| to.to_owned());
+                    locations.store_leftover = Some(plan.from);
                 }
-                Err(e)
             }
+            locations.save(&self.paths)
+        });
+        if let Err(e) = finished {
+            moving.undo(self.reporter.as_ref());
+            if created {
+                let _ = fs::remove_dir(to);
+            }
+            return Err(e);
         }
+        Ok(())
     }
 }
 
-/// Removes the data folder that was moved away from, once nothing has it
-/// open. Called on opening patchwork, with the state lock held.
+/// Removes the data folder, or store, that was moved away from, once
+/// nothing has it open. Called on opening patchwork, with the state lock
+/// held.
 pub(super) fn remove_leftover(paths: &Paths, reporter: &dyn Reporter) {
     let Ok(mut locations) = Locations::load(paths) else {
         return;
     };
-    let Some(old) = locations.leftover.clone() else {
+    if locations.leftover.is_none() && locations.store_leftover.is_none() {
         return;
-    };
-    if old != paths.data && old.join(LOCK).is_file() {
-        // something that opened patchwork before it moved still has it
-        let Ok(lock) = StateLock::acquire(&old.join(LOCK)) else {
-            return;
-        };
-        drop(lock);
-        if let Err(e) = fs::remove_dir_all(&old) {
+    }
+    if let Some(old) = locations.store_leftover.take() {
+        // nothing else has patchwork open while the lock is held
+        let (real_old, store) = (canonical_ish(&old), canonical_ish(&paths.store()));
+        let in_use = real_old.starts_with(&store) || store.starts_with(&real_old);
+        if !in_use
+            && let Err(e) = fs::remove_dir_all(&old)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
             reporter.report(Event::Warning(format!(
-                "couldn't remove {}, where patchwork's data was before it moved ({e}); \
-                 it can be deleted",
+                "couldn't remove {}, where mods' files were before they moved ({e}); it can \
+                 be deleted",
                 old.display()
             )));
         }
     }
-    locations.leftover = None;
+    if let Some(old) = locations.leftover.take()
+        && old != paths.data
+        && old.join(LOCK).is_file()
+    {
+        // something that opened patchwork before it moved still has it
+        match StateLock::acquire(&old.join(LOCK)) {
+            Err(_) => locations.leftover = Some(old),
+            Ok(lock) => {
+                drop(lock);
+                if let Err(e) = fs::remove_dir_all(&old) {
+                    reporter.report(Event::Warning(format!(
+                        "couldn't remove {}, where patchwork's data was before it moved \
+                         ({e}); it can be deleted",
+                        old.display()
+                    )));
+                }
+            }
+        }
+    }
     if let Err(e) = locations.save(paths) {
         reporter.report(Event::Warning(e.to_string()));
     }
@@ -214,6 +321,9 @@ pub(super) fn remove_leftover(paths: &Paths, reporter: &dyn Reporter) {
 struct Moving {
     from: PathBuf,
     to: PathBuf,
+    /// Where the data folder is once it's moved, which has what's
+    /// deployed and the like in it to rewrite.
+    data: PathBuf,
     /// Whether to try renaming entries before copying them.
     rename: bool,
     done: u64,
@@ -341,7 +451,7 @@ impl Moving {
     /// came from, where originals were backed up to, and profiles' own
     /// folders.
     fn rewrite_deployments(&mut self) -> Result<()> {
-        let dir = self.to.join("deployments");
+        let dir = self.data.join("deployments");
         let Ok(list) = fs::read_dir(&dir) else {
             return Ok(());
         };
@@ -379,10 +489,10 @@ impl Moving {
 
     /// Local mods captured into the data folder were added from there.
     fn rewrite_origins(&mut self, pw: &Patchwork) -> Result<()> {
-        let file = self.to.join(
+        let file = self.data.join(
             pw.paths
                 .local_mods()
-                .strip_prefix(&self.from)
+                .strip_prefix(&pw.paths.data)
                 .expect("local mods are in the data folder"),
         );
         if let Some(text) = super::local::rebase_origins(&file, &|p| self.rebase(p))? {
@@ -391,12 +501,12 @@ impl Moving {
         Ok(())
     }
 
-    /// Symlinks in the moved folder that point into the old one, such as a
-    /// profile's own folder deployed by symlinking.
+    /// Symlinks in the data folder that point into the old place, such as
+    /// a profile's own folder deployed by symlinking.
     fn relink_inside(&mut self) -> Result<()> {
         let mut links = Vec::new();
-        for entry in WalkDir::new(&self.to).follow_links(false) {
-            let entry = entry.map_err(|e| walk_error(&self.to, e))?;
+        for entry in WalkDir::new(&self.data).follow_links(false) {
+            let entry = entry.map_err(|e| walk_error(&self.data, e))?;
             if entry.file_type().is_symlink() {
                 links.push(entry.into_path());
             }
@@ -409,7 +519,7 @@ impl Moving {
 
     /// Files deployed into games' folders by symlinking.
     fn relink_deployed(&mut self) -> Result<()> {
-        let dir = self.to.join("deployments");
+        let dir = self.data.join("deployments");
         let Ok(list) = fs::read_dir(&dir) else {
             return Ok(());
         };
@@ -424,8 +534,8 @@ impl Moving {
             let roots = state.roots();
             for dest in state.files.keys() {
                 let Ok(link) = roots.path(dest) else { continue };
-                // in the moved folder, these were done already
-                if !link.starts_with(&self.to) {
+                // in the data folder, these were done already
+                if !link.starts_with(&self.data) {
                     self.relink(&link)?;
                 }
             }
@@ -484,11 +594,16 @@ impl Moving {
     }
 }
 
-/// What's in the data folder to move: everything but the state lock,
-/// which stays with this process.
+/// What's in a folder to move: everything but the state lock, which stays
+/// with this process. Nothing, if it isn't there yet (the store is made
+/// once it's needed).
 fn entries(dir: &Path) -> Result<Vec<String>> {
     let mut names = Vec::new();
-    for entry in fs::read_dir(dir).at(dir)? {
+    let list = match fs::read_dir(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(names),
+        list => list.at(dir)?,
+    };
+    for entry in list {
         let name = entry.at(dir)?.file_name().to_string_lossy().into_owned();
         if name != LOCK {
             names.push(name);

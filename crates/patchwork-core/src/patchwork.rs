@@ -3802,7 +3802,7 @@ pub use config::{ConfigFileInfo, ConfigSet, ConfigView, SaveTo, SharedSetting};
 pub use history::{Change, HISTORY_LIMIT, HistoryEntry};
 pub use lists::ListInfo;
 pub use options::{ModOptionsInfo, ModOptionsView};
-pub use relocate::{DataMove, MoveProgress};
+pub use relocate::{DataMove, Movable, MoveProgress};
 pub use sync::{Applied as SyncApplied, ProfileChange};
 
 /// What to call `resolved` when its own name is taken: its name with its

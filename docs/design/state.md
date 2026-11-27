@@ -5,7 +5,8 @@ and `<data>` are the platform's usual config and data directories, such as
 `~/.config/patchwork` and `~/.local/share/patchwork` on Linux. If
 `PATCHWORK_HOME` is set, everything goes in that one directory instead.
 The data folder can be moved somewhere else (Settings → Folders, or
-`patchwork data move`); `<config>/locations.toml` then says where it is.
+`patchwork data move`), and so can just `<data>/store/` (`--mods`);
+`<config>/locations.toml` then says where they are.
 
 ## Config
 
@@ -16,9 +17,12 @@ The data folder can be moved somewhere else (Settings → Folders, or
   `source:id` (`mods`); the same on linked computers
 - `<config>/locations.toml`: where the data folder was moved to
   (`data`), and the one it was moved from (`leftover`), removed the next
-  time patchwork opens. Moving renames or copies everything over, then
-  rewrites the paths into it that `deployments/` and `local-mods.toml`
-  keep, and deployed symlinks. A moved data folder that's missing (on an
+  time patchwork opens; likewise `store` and `store-leftover` for a store
+  moved on its own. A moved store can't be in the data folder other than
+  at `<data>/store/`, where it goes back to (and `store` is dropped).
+  Moving renames or copies everything over, then rewrites the paths into
+  it that `deployments/` and `local-mods.toml` keep, and symlinks deployed
+  to games or in the data folder. A moved folder that's missing (on an
   unplugged drive, say) is an error, never a fresh empty one
 - `<config>/gui.toml`: the app's own preferences, such as which theme is
   picked, for every game and for single games (`[theme.games]`), and the
@@ -51,7 +55,8 @@ The data folder can be moved somewhere else (Settings → Folders, or
 
 ## Store
 
-- `<data>/store/`: mod files, content-addressed by BLAKE3 hash
+- `<data>/store/`: mod files, content-addressed by BLAKE3 hash, unless
+  `locations.toml` says they were moved
 - `<data>/source-files/`: which stored file each download is
 
 ## Deploying

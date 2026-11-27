@@ -645,7 +645,7 @@
 					</div>
 				</fieldset>
 				<!-- Where patchwork keeps its own files, and moving its data
-				     folder somewhere else; see locations.js. -->
+				     folder or mods' files somewhere else; see locations.js. -->
 				<fieldset id="app-folders" class="stack" data-panel="folders">
 					<legend>Folders</legend>
 					<p class="muted">Where Patchwork keeps its own files. Each game's folders are in its own settings.</p>
@@ -959,16 +959,16 @@
 			</form>
 		</dialog>
 
-		<!-- Moving the data folder: what it'd do, then how far it's got;
-		     see locations.js. -->
+		<!-- Moving the data folder, or just the mods' files: what it'd do,
+		     then how far it's got; see locations.js. -->
 		<dialog id="data-move-dialog">
 			<form method="dialog" class="stack">
-				<h2>Move Patchwork's data</h2>
+				<h2 id="data-move-title">Move Patchwork's data</h2>
 				<p id="data-move-summary"></p>
 				<div class="field">
 					<span>New folder</span>
 					<div class="row">
-						<input id="data-move-to" type="text" readonly aria-label="Where the data folder goes">
+						<input id="data-move-to" type="text" readonly aria-label="Where it goes">
 						<button type="button" id="data-move-pick">Change…</button>
 					</div>
 				</div>

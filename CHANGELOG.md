@@ -13,6 +13,7 @@ dialog shows, so the heading has to match the version being released.
 - Right-clicking a mod, game, search result, dependency or folder shows what you can do with it
 - Settings has a new tab to show patchwork's folders (data, config, etc.)
   - Patchwork's data can now be moved to another folder or drive, bringing over everything in it
+  - Mod files can also be moved on their own
 - Every folder in game and profile settings has an Open button
 - Changing a game's folder (or how mods are linked) while mods are deployed offers to undeploy them and deploy them again in the new place
 
