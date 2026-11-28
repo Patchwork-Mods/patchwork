@@ -56,21 +56,37 @@ export function status(text, isError = false) {
   const el = $("#status");
   el.textContent = text;
   el.classList.toggle("error", isError);
-  // An undo, or warnings, only make sense next to the message they're about.
+  // An undo only makes sense next to the message it's about. Warnings
+  // stay until they've been looked at, since they're easy to miss.
   $("#undo").hidden = true;
-  $("#status-warnings").hidden = true;
+  if (warningsSeen) $("#status-warnings").hidden = true;
 }
 
-/** Says `message` in the status bar, with a button to read `warnings` if there are any. */
+/** Whether the warnings #status-warnings shows have been opened. */
+let warningsSeen = true;
+
+/** Says `message` in the status bar, with a button to read `warnings` if
+ * there are any, which stays until it's clicked. */
 export function showWarnings(message, warnings) {
   if (!warnings.length) return status(message);
   const count = warnings.length;
-  status(`${message}, with ${count} warning${count === 1 ? "" : "s"}`);
+  const what = `${count} warning${count === 1 ? "" : "s"}`;
+  warningsSeen = true;
+  status(`${message}, with ${what}`);
+  warningsSeen = false;
   $("#warnings-list").replaceChildren(...warnings.map((w) => h("li", {}, w)));
-  $("#status-warnings").hidden = false;
+  const button = $("#status-warnings");
+  button.textContent = `\u26a0 Show ${what}`;
+  button.title = message;
+  button.classList.add("unseen");
+  button.hidden = false;
 }
 
-$("#status-warnings").addEventListener("click", () => $("#warnings-dialog").showModal());
+$("#status-warnings").addEventListener("click", (e) => {
+  warningsSeen = true;
+  e.currentTarget.classList.remove("unseen");
+  $("#warnings-dialog").showModal();
+});
 
 /** Runs a command, showing its error in the status bar if it fails. */
 export async function run(command, args) {

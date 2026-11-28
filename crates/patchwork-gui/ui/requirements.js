@@ -85,9 +85,10 @@ function requirementRow(m, d) {
       h("span", { class: "requirement-name" }, link(page, labelOf(d))),
       h("span", { class: `requirement-need ${d.need}` }, need),
       have,
+      // the page's own note on it, kept to one short line
+      d.notes && h("span", { class: "requirement-notes muted", title: d.notes }, d.notes),
       h("span", { class: "requirement-actions" }, actions),
     ),
-    d.notes && h("p", { class: "muted" }, d.notes),
   );
 }
 
@@ -159,12 +160,54 @@ async function setIgnored(m, d, ignored, button) {
 }
 
 // Locking a mod for the first time says what it may need, once. It's kept
-// above the mods until dismissed, since the status bar moves on quickly.
+// above the mods, since the status bar moves on quickly, until dismissed or
+// until the mod has nothing left to point out (each is added or ignored).
+
+/** The mods that said what they may need, as { profile, name, missing }. */
+let notices = [];
 
 listen("patchwork://event", ({ payload: e }) => {
-  if (e.kind !== "notice") return;
-  const close = h("button", { type: "button", class: "dismiss", "aria-label": "Dismiss", title: "Dismiss" }, "×");
-  const item = h("li", {}, h("span", {}, e.message), close);
-  close.addEventListener("click", () => item.remove());
-  $("#mod-notices").append(item);
+  if (e.kind !== "maybeNeeded") return;
+  notices = notices.filter((n) => n.profile !== e.profile || n.name !== e.name);
+  notices.push({ profile: e.profile, name: e.name, missing: e.missing });
+  renderNotices();
 });
+
+/**
+ * The names of what of `n.missing` is still to add or ignore. The event can
+ * come before the profile shown has the mod or its soft dependencies, so
+ * one it doesn't know of yet still counts.
+ */
+function stillMissing(n) {
+  const soft = modNamed(n.name)?.softDependencies ?? [];
+  return n.missing.flatMap((label) => {
+    // the core's label, which doesn't look at the summary
+    const d = soft.find((d) => (d.name ?? d.key ?? d.url) === label);
+    if (!d) return [label];
+    return d.installed || d.ignored ? [] : [labelOf(d)];
+  });
+}
+
+/** Shows the open profile's notices, dropping the ones with nothing left. */
+export function renderNotices() {
+  const p = state.profile;
+  const items = [];
+  notices = notices.filter((n) => {
+    if (n.profile !== p?.id) return true;
+    const missing = stillMissing(n);
+    if (!missing.length) return false;
+    const close = h("button", { type: "button", class: "dismiss", "aria-label": "Dismiss", title: "Dismiss" }, "×");
+    close.addEventListener("click", () => {
+      notices = notices.filter((o) => o !== n);
+      renderNotices();
+    });
+    const review = h(
+      "button",
+      { type: "button", class: "link", title: "Add or ignore them", onclick: () => showRequirements(n.name) },
+      "Review",
+    );
+    items.push(h("li", {}, h("span", {}, h("strong", {}, n.name), ` may need ${missing.join(", ")}`), review, close));
+    return true;
+  });
+  $("#mod-notices").replaceChildren(...items);
+}

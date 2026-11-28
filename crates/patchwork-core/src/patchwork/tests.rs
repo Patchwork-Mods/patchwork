@@ -4462,14 +4462,17 @@ impl Source for WithSoft {
     }
 }
 
-/// Keeps the notices it's given.
+/// A mod, and what it was said to maybe need.
+type MaybeNeeded = (String, Vec<String>);
+
+/// Keeps what mods are said to maybe need.
 #[derive(Clone, Default)]
-struct Notices(Arc<std::sync::Mutex<Vec<String>>>);
+struct Notices(Arc<std::sync::Mutex<Vec<MaybeNeeded>>>);
 
 impl crate::event::Reporter for Notices {
     fn report(&self, event: Event) {
-        if let Event::Notice(notice) = event {
-            self.0.lock().unwrap().push(notice);
+        if let Event::MaybeNeeded { name, missing, .. } = event {
+            self.0.lock().unwrap().push((name, missing));
         }
     }
 }
@@ -4497,12 +4500,8 @@ async fn soft_dependencies_are_shown_not_installed() {
     assert_eq!(lock.mods.len(), 1, "soft dependencies aren't locked");
     let said = notices.0.lock().unwrap().clone();
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(
-        said[0].contains("`Lib`, `Elsewhere`, `Linked`"),
-        "{}",
-        said[0]
-    );
-    assert!(!said[0].contains("Extra"), "optional ones aren't mentioned");
+    // optional ones (Extra) aren't mentioned
+    assert_eq!(said[0].1, ["Lib", "Elsewhere", "Linked"], "{said:?}");
 
     // only the first time it's locked
     pw.lock(&profile, false).await.unwrap();

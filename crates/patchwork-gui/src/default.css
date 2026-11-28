@@ -1550,8 +1550,13 @@ a.quiet-link:hover,
   color: var(--pw-muted);
 }
 
-.requirements p {
-  margin: 2px 0 0;
+.requirement-notes {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 24em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
 }
 
@@ -2625,6 +2630,12 @@ body.mod-settings-shown .mod-row .mod-settings[hidden] {
 
 #status.error {
   color: var(--pw-danger);
+}
+
+/* Warnings nobody's opened yet, so they stand out until they are. */
+#status-warnings.unseen {
+  border-color: var(--pw-warning);
+  color: var(--pw-warning);
 }
 
 /* Deploy dialog */

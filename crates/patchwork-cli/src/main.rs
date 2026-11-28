@@ -342,9 +342,26 @@ impl Reporter for Printer {
             Event::Building { step } => eprintln!("   building {step}"),
             Event::Applying(op) => print_op(&op),
             Event::Warning(warning) => eprintln!("warning: {warning}"),
-            Event::Notice(notice) => eprintln!("note: {notice}"),
+            Event::MaybeNeeded { name, missing, .. } => {
+                eprintln!("note: {}", maybe_needed(&name, &missing))
+            }
         }
     }
+}
+
+/// Says that `name` lists `missing` without saying whether it needs them.
+fn maybe_needed(name: &str, missing: &[String]) -> String {
+    let what = missing
+        .iter()
+        .map(|n| format!("`{n}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let them = if missing.len() == 1 { "it" } else { "them" };
+    format!(
+        "{name} lists {what} as a requirement, but its source doesn't say whether \
+         that's required or optional, so patchwork didn't install {them} \
+         (see `patchwork soft-deps {name}`, or `patchwork ignore` {them})"
+    )
 }
 
 #[tokio::main]

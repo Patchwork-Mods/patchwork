@@ -17,6 +17,8 @@ dialog shows, so the heading has to match the version being released.
 - Every folder in game and profile settings has an Open button
 - Now supports dependencies being links to other mod managers
 - Changing a game's folder (or how mods are linked) while mods are deployed offers to undeploy them and deploy them again in the new place
+- Deploy warnings stay in the status bar until you've opened them
+- Downloads from the browser can be reopened from the status bar
 
 ### Games
 - Added Beat Saber and BeatMods support
@@ -25,6 +27,7 @@ dialog shows, so the heading has to match the version being released.
   - Custom maps from BeatSaver, with SongCore to load them
 - Added Baldur's Gate 3 support
 - HELLDIVERS 2 mods now let you pick their options and mixes in the mod's settings
+- Ignored HD2ModManager and HD2 Arsenal in the Helldivers 2 mod list
 - Mods with variants but no manifest are pointed out on the mod list, saying which variant wins
 
 ### Themes

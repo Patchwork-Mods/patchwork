@@ -4,6 +4,9 @@ name = "HELLDIVERS 2"
 description = "Takes mods made of patch files (`<archive>.patch_0` and the like). Each one is renumbered when it's deployed, so mods that change the same archive all load, later mods over earlier ones."
 # Patches with textures and sounds can be hundreds of megabytes.
 link = "hardlink"
+# Other mod managers, which mods list as requirements "for easy
+# installation"; patchwork does what they do.
+provided = ["nexus:109", "nexus:4664", "HD2ModManager", "HD2 Arsenal*"]
 
 [sources.nexus]
 game_domain = "helldivers2"

@@ -27,9 +27,14 @@ pub enum Event {
     },
     Applying(DeployOp),
     Warning(String),
-    /// Something worth knowing that isn't a problem, like that a new mod
-    /// lists other mods it might need.
-    Notice(String),
+    /// A mod in `profile` locked for the first time lists the mods in
+    /// `missing` without saying whether it needs them, and the profile
+    /// doesn't have them. Not a problem, just worth knowing, once.
+    MaybeNeeded {
+        profile: String,
+        name: String,
+        missing: Vec<String>,
+    },
 }
 
 pub trait Reporter: Send + Sync {

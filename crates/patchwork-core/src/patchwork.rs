@@ -2043,8 +2043,11 @@ impl Patchwork {
                 .map(|d| d.dependency.label().to_owned())
                 .collect();
             if !unsure.is_empty() {
-                self.reporter
-                    .report(Event::Notice(unsure_dependencies_notice(&m.name, &unsure)));
+                self.reporter.report(Event::MaybeNeeded {
+                    profile: profile.to_string(),
+                    name: m.name.clone(),
+                    missing: unsure,
+                });
             }
         }
         self.save_lock(profile, &lock)?;
@@ -3768,25 +3771,6 @@ fn personal_needs_newer(loaded: &Profile, unmet: &[&UnmetRequirement]) -> Error 
             loaded.label()
         ),
         Fix::RemoveMods { names },
-    )
-}
-
-fn unsure_dependencies_notice(name: &str, unsure: &[String]) -> String {
-    let (what, them) = match unsure {
-        [one] => (format!("`{one}`"), "it"),
-        _ => (
-            unsure
-                .iter()
-                .map(|n| format!("`{n}`"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            "them",
-        ),
-    };
-    format!(
-        "{name} lists {what} as a requirement, but its source doesn't say whether \
-         that's required or optional, so patchwork didn't install {them}; \
-         add or ignore {them} from {name}'s details"
     )
 }
 

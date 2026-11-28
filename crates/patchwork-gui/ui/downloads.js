@@ -22,8 +22,14 @@ const sameFile = (a, b) =>
   a.game === b.game && a.source === b.source && a.id === b.id && a.file === b.file;
 
 listen("patchwork://pending", ({ payload }) => {
-  waiting = payload.map((pending) => ({ pending, done: false }));
-  profileId = state.profile?.id ?? null;
+  // Deploying again while some are still on their way keeps how they're
+  // going, rather than starting their rows over.
+  const id = state.profile?.id ?? null;
+  const before = id === profileId ? waiting : [];
+  waiting = payload.map(
+    (pending) => before.find((w) => sameFile(w.pending.file, pending.file)) ?? { pending, done: false },
+  );
+  profileId = id;
   render();
   $("#downloads-status").hidden = true;
   const dialog = $("#downloads-dialog");
@@ -91,7 +97,17 @@ function showProgress(row, { downloaded, total }) {
 
 function render() {
   $("#downloads-list").replaceChildren(...waiting.map(row));
+  const left = waiting.filter((w) => !w.done).length;
+  const button = $("#status-downloads");
+  button.hidden = !left;
+  button.textContent = `Downloads (${left} left)`;
+  button.title = "Show the mods waiting on downloads from the browser";
 }
+
+$("#status-downloads").addEventListener("click", () => {
+  const dialog = $("#downloads-dialog");
+  if (!dialog.open) dialog.showModal();
+});
 
 function row(item) {
   const buttons = [
@@ -155,6 +171,7 @@ function markDone(item) {
 async function finish() {
   $("#downloads-dialog").close();
   waiting = [];
+  render();
   if (!profileId) return;
   status("Locking…");
   const profile = await run("lock_profile", { id: profileId });

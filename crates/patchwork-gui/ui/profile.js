@@ -27,6 +27,7 @@ import { go } from "./nav.js";
 import { hasSetup, setupSummary } from "./setup.js";
 import { showGameVersions } from "./gameversions.js";
 import { profileStarter } from "./profilestart.js";
+import { renderNotices } from "./requirements.js";
 
 /** Reloads everything, staying on whichever screen and profile is open. */
 export async function refresh() {
@@ -146,6 +147,7 @@ export function renderDeploy(p) {
 export function renderProfile({ keepMods = false } = {}) {
   const p = state.profile;
   renderDeploy(p);
+  renderNotices();
   $("#profile-settings").hidden = !hasSetup(p);
   $("#revert").hidden = !p?.hasChanges;
   $("#update").disabled = !p?.mods.length;

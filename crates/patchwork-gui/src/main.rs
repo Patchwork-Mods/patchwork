@@ -119,7 +119,15 @@ impl Reporter for Emit {
             Event::Building { step } => UiEvent::Building { step },
             Event::Applying(op) => UiEvent::Applying(op.into()),
             Event::Warning(message) => UiEvent::Warning { message },
-            Event::Notice(message) => UiEvent::Notice { message },
+            Event::MaybeNeeded {
+                profile,
+                name,
+                missing,
+            } => UiEvent::MaybeNeeded {
+                profile,
+                name,
+                missing,
+            },
         };
         // Nothing useful to do if the window's gone.
         let _ = self.0.emit("patchwork://event", event);
@@ -150,8 +158,10 @@ enum UiEvent {
     Warning {
         message: String,
     },
-    Notice {
-        message: String,
+    MaybeNeeded {
+        profile: String,
+        name: String,
+        missing: Vec<String>,
     },
 }
 
